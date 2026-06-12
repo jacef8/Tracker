@@ -568,6 +568,7 @@
   <!-- Row 2: Action buttons -->
   <div class="topbar-row2">
     <div class="icon-btn" id="pin-toggle-btn" title="Drop a pin">&#128205;<span class="badge" id="pin-badge" style="display:none">0</span></div>
+    <div class="icon-btn" id="pin-feed-btn" title="Pin feed">&#128276;<span class="badge" id="pin-feed-badge" style="display:none">0</span></div>
     <div class="icon-btn" id="pin-list-btn" title="Pin list">&#128203;</div>
     <div class="icon-btn" id="chat-toggle-btn" title="Group chat">&#128172;<span class="badge" id="chat-badge" style="display:none">0</span></div>
     <div class="icon-btn" id="users-toggle-btn" title="Who&#39;s online">&#128101;</div>
@@ -632,6 +633,16 @@
     <button id="clear-all-pins-btn" style="flex:1;padding:7px;background:var(--bg);border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-size:12px;cursor:pointer">Clear All Pins</button>
   </div>
   <div id="pin-list-items"></div>
+</div>
+
+<!-- ══ PIN FEED PANEL ═════════════════════════════════════════════════════ -->
+<div id="pin-feed-panel">
+  <div class="chat-header">
+    <span class="chat-title">&#128205; Pin Feed</span>
+    <span id="pin-feed-count" style="font-size:11px;color:var(--muted);margin-right:auto;padding-left:8px"></span>
+    <button class="close-chat" id="close-pin-feed">&#10005;</button>
+  </div>
+  <div id="pin-feed-items"></div>
 </div>
 
 <!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
@@ -777,48 +788,98 @@ function waitForFirebase(cb) {
 }
 
 // ══ ROOM LIST ════════════════════════════════════════════════════
-// Reads all groups that have active users and shows them as tappable cards
+// Reads all groups active in the last 24 hours and shows them as tappable cards
 function loadRoomList() {
   waitForFirebase(fb => {
     fb.onValue(fb.ref(fb.db, 'gl'), snap => {
       const all = snap.val() || {};
       const listEl = document.getElementById('room-list');
       const now = Date.now();
-      const STALE = 5 * 60 * 1000; // hide groups where everyone went stale > 5 min
+      const LIVE_MS  = 90 * 1000;          // active right now (< 90 sec)
+      const STALE_MS = 24 * 60 * 60 * 1000; // used in last 24 hours
 
-      const active = [];
-      Object.entries(all).forEach(([key, group]) => {
-        const users = group.users || {};
-        const live = Object.values(users).filter(u => (now - (u.ts || 0)) < STALE);
-        if (live.length > 0) {
-          // Reconstruct display name from key (underscores back to spaces, title case)
-          const displayName = key.replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase());
-          active.push({ key, displayName, count: live.length, names: live.map(u => u.name) });
+      const rooms = [];
+      Object.entries(all).forEach(function(entry) {
+        var key   = entry[0];
+        var group = entry[1];
+        var users = group.users ? Object.values(group.users) : [];
+        var pins  = group.pins  ? Object.keys(group.pins).length : 0;
+
+        // Find the most recent activity across all users
+        var lastActive = 0;
+        users.forEach(function(u) { if ((u.ts || 0) > lastActive) lastActive = u.ts || 0; });
+
+        // Also check most recent pin drop
+        if (group.pins) {
+          Object.values(group.pins).forEach(function(p) {
+            if ((p.ts || 0) > lastActive) lastActive = p.ts || 0;
+          });
         }
+
+        // Skip groups with zero activity ever
+        if (!lastActive) return;
+
+        // Only show groups active in last 24 hours
+        if (now - lastActive > STALE_MS) return;
+
+        var liveUsers  = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
+        var liveCount  = liveUsers.length;
+        var liveNames  = liveUsers.map(function(u) { return u.name; });
+
+        // Fix title case: "liberty_hunt" -> "Liberty Hunt"
+        var displayName = key.replace(/_/g, ' ')
+          .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+
+        // Human-readable last active time
+        var diffMin = Math.floor((now - lastActive) / 60000);
+        var diffHr  = Math.floor(diffMin / 60);
+        var lastStr = diffMin < 1   ? 'just now'
+                    : diffMin < 60  ? diffMin + 'm ago'
+                    : diffHr  < 24  ? diffHr  + 'h ago'
+                    : 'over a day ago';
+
+        rooms.push({ key, displayName, liveCount, liveNames, pins, lastActive, lastStr });
       });
 
-      if (active.length === 0) {
-        listEl.innerHTML = '<div class="room-empty">No active groups yet — create one below.</div>';
+      if (rooms.length === 0) {
+        listEl.innerHTML = '<div class="room-empty">No recent groups — create one below.</div>';
         return;
       }
 
+      // Sort: live groups first, then by most recent activity
+      rooms.sort(function(a, b) {
+        if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
+        return b.lastActive - a.lastActive;
+      });
+
       listEl.innerHTML = '';
-      active.sort((a, b) => b.count - a.count).forEach(room => {
-        const item = document.createElement('div');
+      rooms.forEach(function(room) {
+        var item = document.createElement('div');
         item.className = 'room-item';
-        item.innerHTML = `
-          <div class="room-item-left">
-            <div class="room-name">${room.displayName}</div>
-            <div class="room-meta">${room.count} online · ${room.names.slice(0,3).join(', ')}${room.names.length > 3 ? '…' : ''}</div>
-          </div>
-          <button class="room-join-btn">Join</button>
-        `;
-        item.querySelector('.room-join-btn').addEventListener('click', () => {
+
+        var statusHTML = room.liveCount > 0
+          ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
+            + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0,3).join(', ')
+              + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
+          : '<span style="color:var(--muted)">Last active ' + room.lastStr + '</span>';
+
+        var pinText = room.pins > 0
+          ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '')
+          : '';
+
+        item.innerHTML =
+          '<div class="room-item-left">' +
+            '<div class="room-name">' + room.displayName + '</div>' +
+            '<div class="room-meta">' + statusHTML + pinText + '</div>' +
+          '</div>' +
+          '<button class="room-join-btn">Join</button>';
+
+        item.querySelector('.room-join-btn').addEventListener('click', function() {
           document.getElementById('inp-group').value = room.displayName;
-          // Scroll to button and highlight
           document.getElementById('inp-group').style.borderColor = 'var(--accent)';
-          setTimeout(() => document.getElementById('inp-group').style.borderColor = '', 1500);
-          // Auto-join if name is already filled
+          setTimeout(function() {
+            document.getElementById('inp-group').style.borderColor = '';
+          }, 1500);
           if (document.getElementById('inp-name').value.trim()) handleJoin();
         });
         listEl.appendChild(item);
@@ -826,8 +887,6 @@ function loadRoomList() {
     });
   });
 }
-
-// Start loading room list immediately
 loadRoomList();
 
 // ══ SESSION PERSISTENCE ══════════════════════════════════════════
@@ -1474,6 +1533,8 @@ function listenPins() {
     if (document.getElementById('pin-list-drawer').classList.contains('open')) {
       renderPinList(pins);
     }
+    // Refresh pin feed if open
+    if (pinFeedOpen) { renderPinFeed(pins); }
 
     // Update pin count badge
     const pinCount = Object.keys(pins).length;
@@ -1517,7 +1578,68 @@ document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
   toast('All pins cleared');
 });
 
-// ══ PIN LIST ══════════════════════════════════════════════════════
+// ══ PIN FEED ══════════════════════════════════════════════════════
+let pinFeedOpen = false;
+
+function renderPinFeed(pins) {
+  const container = document.getElementById('pin-feed-items');
+  const countEl   = document.getElementById('pin-feed-count');
+  const entries   = Object.entries(pins || {});
+  countEl.textContent = entries.length ? entries.length + ' pin' + (entries.length > 1 ? 's' : '') : '';
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="pin-feed-empty">No pins yet.<br>Long press the map to drop one.</div>';
+    return;
+  }
+
+  entries.sort(function(a,b){ return b[1].ts - a[1].ts; });
+  var gps = window._lastGPS;
+  var now = Date.now();
+
+  container.innerHTML = '';
+  entries.forEach(function(entry) {
+    var pid = entry[0], pin = entry[1];
+    var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
+    var isMine = pin.droppedBy === userId;
+    var isNew  = (now - pin.ts) < 300000;
+    var distStr = '', bearStr = '';
+    if (gps) {
+      distStr = distanceMiles(gps.lat, gps.lng, pin.lat, pin.lng);
+      bearStr = getBearing(gps.lat, gps.lng, pin.lat, pin.lng);
+    }
+
+    var card = document.createElement('div');
+    card.className = 'pin-feed-card' + (isNew && !isMine ? ' is-new' : '');
+
+    var distHTML = distStr
+      ? '<div class="pin-feed-dist">&#128205; ' + distStr + ' &middot; ' + bearStr + '</div>'
+      : '';
+    var mineTag = isMine ? ' &nbsp;&#9679; MINE' : '';
+    var ring = isMine ? '#f0a500' : 'rgba(255,255,255,.3)';
+
+    card.innerHTML =
+      '<div class="pin-feed-dot" style="background:' + def.color + ';border:3px solid ' + ring + '">' +
+        def.label +
+      '</div>' +
+      '<div class="pin-feed-body">' +
+        '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + mineTag + '</div>' +
+        '<div class="pin-feed-label">' + (pin.label || '(no description)') + '</div>' +
+        distHTML +
+        '<div class="pin-feed-meta">' + pin.name + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+      '</div>' +
+      '<div class="pin-feed-arrow">\u203a</div>';
+
+    card.addEventListener('click', function() {
+      map.flyTo({ center: [pin.lng, pin.lat], zoom: 17, duration: 1200 });
+      document.getElementById('pin-feed-panel').classList.remove('open');
+      pinFeedOpen = false;
+    });
+
+    container.appendChild(card);
+  });
+}
+
+// ══ PIN LIST ═════════════════════════════════════════════════════════
 function timeAgo(ts) {
   const diff = Date.now() - ts;
   const m = Math.floor(diff / 60000);
@@ -1589,14 +1711,34 @@ document.getElementById('pin-list-btn').addEventListener('click', () => {
   const isOpen = drawer.classList.toggle('open');
   if (isOpen) { renderPinList(lastPins); clearUnreadPins(); }
   document.getElementById('user-drawer').classList.remove('open');
+  document.getElementById('pin-feed-panel').classList.remove('open');
+  pinFeedOpen = false;
 });
 
-document.getElementById('unread-pin-bubble').addEventListener('click', () => {
-  const drawer = document.getElementById('pin-list-drawer');
-  drawer.classList.add('open');
-  renderPinList(lastPins);
+document.getElementById('pin-feed-btn').addEventListener('click', () => {
+  pinFeedOpen = !pinFeedOpen;
+  document.getElementById('pin-feed-panel').classList.toggle('open', pinFeedOpen);
+  if (pinFeedOpen) {
+    renderPinFeed(lastPins);
+    clearUnreadPins();
+    document.getElementById('chat-panel').classList.remove('open');
+    document.getElementById('user-drawer').classList.remove('open');
+    document.getElementById('pin-list-drawer').classList.remove('open');
+  }
+});
+
+document.getElementById('close-pin-feed').addEventListener('click', () => {
+  pinFeedOpen = false;
+  document.getElementById('pin-feed-panel').classList.remove('open');
+});
+
+document.getElementById('unread-pin-bubble').addEventListener('click', function() {
+  pinFeedOpen = true;
+  document.getElementById('pin-feed-panel').classList.add('open');
+  renderPinFeed(lastPins);
   clearUnreadPins();
   document.getElementById('user-drawer').classList.remove('open');
+  document.getElementById('chat-panel').classList.remove('open');
 });
 document.getElementById('close-pin-list').addEventListener('click', () => {
   document.getElementById('pin-list-drawer').classList.remove('open');
@@ -1765,13 +1907,11 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     cat: selectedCat, label, name: userName,
     droppedBy: userId, ts: Date.now()
   });
-  const chatMsg = `${selectedCat} at ${pendingCoords.lat.toFixed(5)}, ${pendingCoords.lng.toFixed(5)}${label ? ' — ' + label : ''}`;
-  sendChat(chatMsg, true);
   map.flyTo({ center: [pendingCoords.lng, pendingCoords.lat], zoom: 16 });
   document.getElementById('pin-modal').classList.remove('show');
   document.getElementById('pin-label-input').value = '';
   pendingCoords = null;
-  toast('Pin dropped & sent to chat ✓');
+  toast('Pin dropped ✓');
 });
 
 document.getElementById('pin-label-input').addEventListener('keydown', e => {
