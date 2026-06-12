@@ -593,6 +593,21 @@
     </button>
 
     <!-- iOS install hint -->
+    <!-- Install tip card — shown if not already installed as PWA -->
+    <div id="install-tip" style="display:none;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.3);border-radius:12px;padding:14px 16px;font-size:13px;line-height:1.6;margin-top:4px">
+      <div style="font-weight:700;color:var(--accent);margin-bottom:8px">&#128242; Install for best experience</div>
+      <div id="install-tip-android" style="display:none;color:var(--text)">
+        <strong>Android (Chrome):</strong><br>
+        Tap the <strong style="color:var(--accent)">three dots &#8942;</strong> menu in Chrome &rarr; tap <strong style="color:var(--accent)">Add to Home screen</strong> &rarr; tap <strong style="color:var(--accent)">Install</strong><br>
+        <span style="color:var(--muted);font-size:11px">Full screen, keeps screen on, works offline</span>
+      </div>
+      <div id="install-tip-ios" style="display:none;color:var(--text)">
+        <strong>iPhone / iPad (Safari only):</strong><br>
+        Tap the <strong style="color:var(--accent)">Share &#11014;</strong> button at the bottom &rarr; scroll to <strong style="color:var(--accent)">Add to Home Screen</strong> &rarr; tap <strong style="color:var(--accent)">Add</strong><br>
+        <span style="color:var(--muted);font-size:11px">Must use Safari &mdash; Chrome on iOS cannot install PWAs</span>
+      </div>
+      <button id="dismiss-install-tip" style="margin-top:10px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0;text-decoration:underline">Dismiss</button>
+    </div>
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       📱 On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
@@ -1029,6 +1044,42 @@ function enterMap(name, group, uid) {
     listenTrails();
   });
 }
+
+// ══ INSTALL TIP ══════════════════════════════════════════════════
+(function showInstallTip() {
+  // Don't show if already installed as PWA
+  var isInstalled = window.matchMedia('(display-mode: standalone)').matches
+                 || window.navigator.standalone === true;
+  if (isInstalled) return;
+
+  // Don't show if user already dismissed it
+  try { if (localStorage.getItem('install-tip-dismissed')) return; } catch(e) {}
+
+  var isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isAndroid = /android/i.test(navigator.userAgent);
+  var isChrome  = /chrome/i.test(navigator.userAgent) && !/edg/i.test(navigator.userAgent);
+  var isSafari  = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
+
+  var tip = document.getElementById('install-tip');
+  if (!tip) return;
+
+  if (isIOS && isSafari) {
+    document.getElementById('install-tip-ios').style.display = 'block';
+    tip.style.display = 'block';
+  } else if (isAndroid && isChrome) {
+    document.getElementById('install-tip-android').style.display = 'block';
+    tip.style.display = 'block';
+  } else if (!isIOS && !isAndroid) {
+    // Desktop — show Android instructions as generic guide
+    document.getElementById('install-tip-android').style.display = 'block';
+    tip.style.display = 'block';
+  }
+
+  document.getElementById('dismiss-install-tip').addEventListener('click', function() {
+    tip.style.display = 'none';
+    try { localStorage.setItem('install-tip-dismissed', '1'); } catch(e) {}
+  });
+})();
 
 // ══ AUTO-RESUME ═══════════════════════════════════════════════════
 // If we have a saved session, skip the join screen entirely
