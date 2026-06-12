@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="GroundLink" />
+<meta name="theme-color" content="#0d1117" />
+<title>GroundLink</title>
+
+<!-- PWA manifest -->
+<link rel="manifest" href="/manifest.json" />
+<!-- Apple touch icon (iOS home screen) -->
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+<!-- Mapbox -->
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, push, onValue, remove }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
+  const firebaseConfig = {
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
+    messagingSenderId: "371034128407",
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
+  };
+  // ─── CONFIGURE YOUR MAPBOX TOKEN HERE ──────────────────────────────
+  window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
+  // ───────────────────────────────────────────────────────────────────
+
+  const app = initializeApp(firebaseConfig);
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0d1117;
+    --surface: #161b22;
+    --border:  #30363d;
+    --accent:  #f0a500;
+    --accent2: #e05a2b;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --danger:  #f85149;
+    --radius:  10px;
+    --chat-h:  230px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bot: env(safe-area-inset-bottom, 0px);
+    font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px; color: var(--text);
+  }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+  /* ── Join screen ── */
+  #join-screen {
+    position: fixed; inset: 0; z-index: 900;
+    background: var(--bg);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: calc(var(--safe-top) + 20px) 0 calc(var(--safe-bot) + 20px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  .join-card {
+    width: min(420px, 92vw);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 28px 24px 24px;
+    display: flex; flex-direction: column; gap: 16px;
+    margin: auto;
+  }
+  .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
+  .join-title { font-size: 24px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+  .join-sub { font-size: 13px; color: var(--muted); }
+  .field-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .join-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 15px;
+    outline: none; transition: border-color .15s; -webkit-appearance: none;
+  }
+  .join-input:focus { border-color: var(--accent); }
+  .join-hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .btn-primary {
+    width: 100%; padding: 14px;
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: #0d1117; font-size: 15px; font-weight: 700;
+    cursor: pointer; transition: opacity .15s; -webkit-appearance: none;
+  }
+  .btn-primary:active { opacity: .82; }
+
+  /* ── Install banner (shown before install) ── */
+  #install-banner {
+    display: none;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 12px; padding: 12px 16px; margin-top: -8px;
+    font-size: 13px; align-items: center; gap: 10px;
+  }
+  #install-banner.show { display: flex; }
+  #install-btn {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+
+  /* ── Wake lock indicator ── */
+  #wakelock-indicator {
+    position: fixed; bottom: calc(20px + var(--safe-bot)); left: 14px; z-index: 150;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 11px;
+    font-size: 11px; color: var(--muted);
+    display: none; align-items: center; gap: 6px;
+  }
+  #wakelock-indicator.active { display: flex; border-color: #3fb950; color: #3fb950; }
+  .wl-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ── Map ── */
+  #map { position: fixed; inset: 0; }
+  /* Mapbox nav control pushed down past topbar */
+  .mapboxgl-ctrl-top-left { top: calc(60px + var(--safe-top)) !important; left: 10px !important; }
+
+  /* ── Top bar ── */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    padding-top: calc(var(--safe-top) + 6px);
+    padding-left: max(14px, env(safe-area-inset-left, 14px));
+    padding-right: max(14px, env(safe-area-inset-right, 14px));
+    padding-bottom: 10px; gap: 10px;
+    background: rgba(13,17,23,.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    min-height: calc(54px + var(--safe-top));
+  }
+  .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .app-name { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; flex-shrink: 0; }
+  .group-chip {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 11px;
+    font-size: 12px; color: var(--text); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 150px; display: flex; align-items: center; gap: 6px;
+  }
+  .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .icon-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 17px; position: relative; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active { border-color: var(--accent); }
+  .badge {
+    position: absolute; top: -5px; right: -5px;
+    background: var(--danger); border-radius: 10px;
+    min-width: 17px; height: 17px; padding: 0 4px;
+    font-size: 10px; font-weight: 700; color: #fff;
+    display: none; align-items: center; justify-content: center;
+  }
+
+  /* ── Pin mode bar ── */
+  #pin-mode-bar {
+    position: fixed; top: calc(60px + var(--safe-top)); left: 50%; transform: translateX(-50%);
+    z-index: 400;
+    background: var(--accent2); border-radius: 20px;
+    padding: 8px 18px; font-size: 13px; font-weight: 700; color: #fff;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(224,90,43,.45); white-space: nowrap;
+  }
+  #pin-mode-bar.active { display: flex; }
+  .cancel-mode {
+    background: rgba(0,0,0,.2); border: none; border-radius: 12px;
+    padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
+  }
+
+  /* ── Chat panel ── */
+  #chat-panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+    height: calc(var(--chat-h) + var(--safe-bot));
+    background: rgba(13,17,23,.97);
+    backdrop-filter: blur(16px);
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transform: translateY(100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+  }
+  #chat-panel.open { transform: translateY(0); }
+  .chat-header {
+    padding: 10px 14px 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .chat-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .close-chat { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 0 2px; }
+  #chat-messages {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 8px 12px; display: flex; flex-direction: column; gap: 5px;
+    scroll-behavior: smooth;
+  }
+  .msg {
+    max-width: 82%; padding: 7px 11px;
+    border-radius: 12px; font-size: 13px; line-height: 1.45; word-break: break-word;
+  }
+  .msg.mine { align-self: flex-end; background: var(--accent); color: #0d1117; border-bottom-right-radius: 3px; }
+  .msg.theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg .sender { font-size: 10px; font-weight: 700; margin-bottom: 2px; opacity: .65; }
+  .msg.pin-msg { border-left: 3px solid var(--accent2); }
+  .chat-input-row {
+    padding: 7px 10px;
+    padding-bottom: calc(10px + var(--safe-bot));
+    display: flex; gap: 8px; flex-shrink: 0;
+  }
+  #chat-input {
+    flex: 1; padding: 10px 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  #chat-input:focus { border-color: var(--accent); }
+  #chat-send {
+    background: var(--accent); border: none; border-radius: 20px;
+    padding: 10px 16px; color: #0d1117; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
+  /* ── User drawer ── */
+  #user-drawer {
+    position: fixed; top: calc(52px + var(--safe-top)); right: 0; bottom: 0; z-index: 300;
+    width: 210px;
+    background: rgba(22,27,34,.98);
+    backdrop-filter: blur(16px);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    padding: 14px 12px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  #user-drawer.open { transform: translateX(0); }
+  .drawer-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); flex-shrink: 0; }
+  .user-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .user-item:active { border-color: var(--accent); }
+  .user-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+  }
+  .uname { font-size: 13px; font-weight: 600; }
+  .ustatus { font-size: 11px; color: var(--muted); }
+
+  /* ── Pin modal ── */
+  #pin-modal {
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,.6);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  #pin-modal.show { display: flex; }
+  .pin-sheet {
+    width: min(480px, 100%);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 18px;
+    padding-bottom: calc(24px + var(--safe-bot));
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .pin-sheet-title { font-size: 15px; font-weight: 700; }
+  .pin-coords { font-size: 12px; color: var(--muted); font-family: monospace; margin-top: -8px; }
+  .pin-cats { display: flex; gap: 7px; flex-wrap: wrap; }
+  .cat-btn {
+    padding: 6px 12px; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg); color: var(--muted);
+    font-size: 12px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .cat-btn.active { border-color: var(--accent2); color: var(--accent2); background: rgba(224,90,43,.1); }
+  .pin-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  .pin-input:focus { border-color: var(--accent2); }
+  .pin-actions { display: flex; gap: 10px; }
+  .btn-drop {
+    flex: 1; padding: 13px;
+    background: var(--accent2); border: none; border-radius: var(--radius);
+    color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .btn-cancel {
+    padding: 13px 16px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--muted); font-size: 14px; cursor: pointer;
+  }
+
+  /* ── Locate me ── */
+  #locate-me {
+    position: fixed;
+    bottom: calc(20px + var(--safe-bot));
+    right: 14px; z-index: 150;
+    width: 46px; height: 46px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 50%; display: none; align-items: center; justify-content: center;
+    font-size: 20px; cursor: pointer;
+    box-shadow: 0 2px 14px rgba(0,0,0,.5);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #locate-me:active { border-color: var(--accent); }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; top: calc(62px + var(--safe-top)); left: 50%;
+    transform: translateX(-50%) translateY(-80px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 8px 18px;
+    font-size: 13px; color: var(--text); white-space: nowrap;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1); z-index: 600;
+    pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── Mapbox popup overrides ── */
+  .mapboxgl-popup-content {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 10px 14px !important;
+    color: var(--text) !important;
+    font-family: inherit !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
+    min-width: 150px;
+  }
+  .mapboxgl-popup-tip { display: none; }
+  .pop-cat { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+  .pop-label { font-size: 15px; font-weight: 700; margin-bottom: 6px; line-height: 1.3; }
+  .pop-dist { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
+  .pop-coords { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 4px; }
+  .pop-meta { font-size: 12px; color: var(--muted); }
+  .pop-del { background: none; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 12px; cursor: pointer; margin-top: 10px; display: block; width: 100%; padding: 6px; }
+  .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none; }
+
+  /* ── Room list ── */
+  #room-list-section { display: flex; flex-direction: column; gap: 8px; }
+  .room-list-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+  .room-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-radius: var(--radius);
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer; transition: border-color .15s; gap: 10px;
+  }
+  .room-item:active { border-color: var(--accent); }
+  .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .room-name { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .room-meta { font-size: 11px; color: var(--muted); }
+  .room-join-btn {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  .room-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px 0; }
+  .room-loading { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; }
+  .divider-or {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em;
+  }
+  .divider-or::before, .divider-or::after { content:''; flex:1; height:1px; background: var(--border); }
+</style>
+</head>
+<body>
+
+<!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
+<div id="join-screen" style="display:none">
+  <div class="join-card">
+    <div>
+      <div class="join-logo">GroundLink</div>
+      <div class="join-title">Live Field Map</div>
+      <div class="join-sub" style="margin-top:4px">Satellite map · Live positions · Shared pins · Group chat</div>
+    </div>
+
+    <!-- Install prompt (Android Chrome) -->
+    <div id="install-banner">
+      <span>📲 Install for best experience</span>
+      <button id="install-btn">Add to Home Screen</button>
+    </div>
+
+    <div>
+      <div class="field-label">Your name</div>
+      <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+    </div>
+
+    <!-- Active rooms list -->
+    <div id="room-list-section">
+      <div class="room-list-label">Active Groups</div>
+      <div id="room-list"><div class="room-loading">Loading groups…</div></div>
+    </div>
+
+    <div class="divider-or">or create / join by name</div>
+
+    <div>
+      <div class="field-label">Group name</div>
+      <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
+      <div class="join-hint">Type any name — everyone who matches joins the same map.</div>
+    </div>
+
+    <button class="btn-primary" id="join-btn">Open Map →</button>
+
+    <!-- iOS install hint -->
+    <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
+      📱 On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOP BAR ════════════════════════════════════════════════════════ -->
+<div id="topbar" style="display:none">
+  <div class="topbar-left">
+    <div class="app-name">GroundLink</div>
+    <div class="group-chip">
+      <span class="online-dot"></span>
+      <span id="group-name-label"></span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="icon-btn" id="pin-toggle-btn" title="Drop a pin">📍</div>
+    <div class="icon-btn" id="chat-toggle-btn" title="Group chat">
+      💬<span class="badge" id="chat-badge">0</span>
+    </div>
+    <div class="icon-btn" id="users-toggle-btn" title="Who's online">👥</div>
+    <div class="icon-btn" id="switch-group-btn" title="Switch group">⚙️</div>
+  </div>
+</div>
+
+<!-- ══ MAP ════════════════════════════════════════════════════════════ -->
+<div id="map"></div>
+
+<!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
+<div id="pin-mode-bar">
+  📍 Tap the map to place a pin
+  <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
+</div>
+
+<!-- ══ LOCATE ME ════════════════════════════════════════════════════ -->
+<div id="locate-me">🎯</div>
+
+<!-- ══ WAKE LOCK INDICATOR ══════════════════════════════════════════ -->
+<div id="wakelock-indicator">
+  <span class="wl-dot"></span>
+  <span>Screen staying on</span>
+</div>
+
+<!-- ══ CHAT PANEL ════════════════════════════════════════════════════ -->
+<div id="chat-panel">
+  <div class="chat-header">
+    <span class="chat-title" id="chat-panel-title">Group Chat</span>
+    <button class="close-chat" id="close-chat">✕</button>
+  </div>
+  <div id="chat-messages"></div>
+  <div class="chat-input-row">
+    <input id="chat-input" placeholder="Message the group…" maxlength="300" autocomplete="off" />
+    <button id="chat-send">Send</button>
+  </div>
+</div>
+
+<!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
+<div id="user-drawer">
+  <div class="drawer-title">On the map</div>
+  <div id="user-list"></div>
+</div>
+
+<!-- ══ PIN MODAL ═════════════════════════════════════════════════════ -->
+<div id="pin-modal">
+  <div class="pin-sheet">
+    <div>
+      <div class="pin-sheet-title">Drop a Pin</div>
+      <div class="pin-coords" id="pin-coords-label"></div>
+    </div>
+    <div class="pin-cats" id="pin-cats">
+      <button class="cat-btn active" data-cat="Waypoint">📌 Waypoint</button>
+      <button class="cat-btn" data-cat="Deer Stand">🦌 Deer Stand</button>
+      <button class="cat-btn" data-cat="Game Trail">🐾 Game Trail</button>
+      <button class="cat-btn" data-cat="Harvest">🎯 Harvest</button>
+      <button class="cat-btn" data-cat="Feeder">🌽 Feeder</button>
+      <button class="cat-btn" data-cat="Water">💧 Water</button>
+      <button class="cat-btn" data-cat="Camp">🏕️ Camp</button>
+      <button class="cat-btn" data-cat="Hazard">⚠️ Hazard</button>
+    </div>
+    <input class="pin-input" id="pin-label-input" placeholder="Describe this pin — goes to group chat…" maxlength="140" />
+    <div class="pin-actions">
+      <button class="btn-cancel" id="pin-cancel">Cancel</button>
+      <button class="btn-drop" id="pin-confirm">Drop Pin → Chat</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOAST ═════════════════════════════════════════════════════════ -->
+<div id="toast"></div>
+
+<script>
+// ══ STATE ════════════════════════════════════════════════════════
+let map, db, fbRef, fbSet, fbPush, fbOnValue, fbRemove;
+let groupName = '', userId = '', userName = '';
+let pinMode = false, pendingCoords = null;
+let userMarkers = {}, pinMarkers = {};
+let chatOpen = false, unreadCount = 0;
+let selectedCat = 'Waypoint';
+let wakeLock = null;
+let deferredInstallPrompt = null;
+
+const COLORS = ['#f0a500','#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff'];
+
+// ══ SERVICE WORKER ════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(console.warn);
+}
+
+// ══ PWA INSTALL PROMPT (Android Chrome) ══════════════════════════
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  document.getElementById('install-banner').classList.add('show');
+});
+
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  const { outcome } = await deferredInstallPrompt.userChoice;
+  if (outcome === 'accepted') {
+    document.getElementById('install-banner').classList.remove('show');
+    toast('GroundLink installed ✓');
+  }
+  deferredInstallPrompt = null;
+});
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('install-banner').classList.remove('show');
+});
+
+// ══ UTILS ════════════════════════════════════════════════════════
+function toast(msg, ms = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
+}
+function userColor(uid) {
+  let h = 0;
+  for (const c of uid) h = (h << 5) - h + c.charCodeAt(0);
+  return COLORS[Math.abs(h) % COLORS.length];
+}
+function initials(name) {
+  return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+function genUid() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+}
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ══ WAKE LOCK ════════════════════════════════════════════════════
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    document.getElementById('wakelock-indicator').classList.add('active');
+    wakeLock.addEventListener('release', () => {
+      document.getElementById('wakelock-indicator').classList.remove('active');
+    });
+  } catch (e) {
+    console.warn('Wake lock failed:', e.message);
+  }
+}
+
+// Re-acquire wake lock when page becomes visible again
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && wakeLock === null) {
+    await acquireWakeLock();
+  }
+});
+
+// ══ WAIT FOR FIREBASE ════════════════════════════════════════════
+function waitForFirebase(cb) {
+  if (window._fb) { cb(window._fb); return; }
+  const t = setInterval(() => { if (window._fb) { clearInterval(t); cb(window._fb); } }, 80);
+}
+
+// ══ ROOM LIST ════════════════════════════════════════════════════
+// Reads all groups that have active users and shows them as tappable cards
+function loadRoomList() {
+  waitForFirebase(fb => {
+    fb.onValue(fb.ref(fb.db, 'gl'), snap => {
+      const all = snap.val() || {};
+      const listEl = document.getElementById('room-list');
+      const now = Date.now();
+      const STALE = 5 * 60 * 1000; // hide groups where everyone went stale > 5 min
+
+      const active = [];
+      Object.entries(all).forEach(([key, group]) => {
+        const users = group.users || {};
+        const live = Object.values(users).filter(u => (now - (u.ts || 0)) < STALE);
+        if (live.length > 0) {
+          // Reconstruct display name from key (underscores back to spaces, title case)
+          const displayName = key.replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase());
+          active.push({ key, displayName, count: live.length, names: live.map(u => u.name) });
+        }
+      });
+
+      if (active.length === 0) {
+        listEl.innerHTML = '<div class="room-empty">No active groups yet — create one below.</div>';
+        return;
+      }
+
+      listEl.innerHTML = '';
+      active.sort((a, b) => b.count - a.count).forEach(room => {
+        const item = document.createElement('div');
+        item.className = 'room-item';
+        item.innerHTML = `
+          <div class="room-item-left">
+            <div class="room-name">${room.displayName}</div>
+            <div class="room-meta">${room.count} online · ${room.names.slice(0,3).join(', ')}${room.names.length > 3 ? '…' : ''}</div>
+          </div>
+          <button class="room-join-btn">Join</button>
+        `;
+        item.querySelector('.room-join-btn').addEventListener('click', () => {
+          document.getElementById('inp-group').value = room.displayName;
+          // Scroll to button and highlight
+          document.getElementById('inp-group').style.borderColor = 'var(--accent)';
+          setTimeout(() => document.getElementById('inp-group').style.borderColor = '', 1500);
+          // Auto-join if name is already filled
+          if (document.getElementById('inp-name').value.trim()) handleJoin();
+        });
+        listEl.appendChild(item);
+      });
+    });
+  });
+}
+
+// Start loading room list immediately
+loadRoomList();
+
+// ══ SESSION PERSISTENCE ══════════════════════════════════════════
+// userId is stored permanently — same device = same dot on the map
+function getSavedSession() {
+  try {
+    return {
+      name:   localStorage.getItem('gl_name'),
+      group:  localStorage.getItem('gl_group'),
+      uid:    localStorage.getItem('gl_uid'),
+    };
+  } catch(_) { return {}; }
+}
+
+function saveSession(name, group, uid) {
+  try {
+    localStorage.setItem('gl_name',  name);
+    localStorage.setItem('gl_group', group);
+    localStorage.setItem('gl_uid',   uid);
+  } catch(_) {}
+}
+
+function enterMap(name, group, uid) {
+  userName  = name;
+  groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+  userId    = uid;
+
+  saveSession(name, group, uid);
+
+  waitForFirebase(fb => {
+    db = fb.db; fbRef = fb.ref; fbSet = fb.set;
+    fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
+
+    document.getElementById('join-screen').style.display = 'none';
+    document.getElementById('topbar').style.display = 'flex';
+    document.getElementById('locate-me').style.display = 'flex';
+    document.getElementById('group-name-label').textContent = group;
+    document.getElementById('chat-panel-title').textContent = group + ' Chat';
+
+    acquireWakeLock();
+    initMap();
+    startLocationSharing();
+    listenUsers();
+    listenPins();
+    listenChat();
+  });
+}
+
+// ══ AUTO-RESUME ═══════════════════════════════════════════════════
+// If we have a saved session, skip the join screen entirely
+(function tryResume() {
+  const s = getSavedSession();
+  if (s.name && s.group && s.uid) {
+    // Resume immediately — no join screen
+    enterMap(s.name, s.group, s.uid);
+    return;
+  }
+  // No saved session — show join screen
+  showJoinScreen();
+})();
+
+function showJoinScreen() {
+  document.getElementById('join-screen').style.display = 'flex';
+
+  // iOS install hint
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+    document.getElementById('ios-hint').style.display = 'block';
+  }
+
+  document.getElementById('join-btn').addEventListener('click', handleJoin);
+  document.getElementById('inp-group').addEventListener('keydown', e => { if (e.key === 'Enter') handleJoin(); });
+  document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
+}
+
+function handleJoin() {
+  const name  = document.getElementById('inp-name').value.trim();
+  const group = document.getElementById('inp-group').value.trim();
+  if (!name)  { toast('Enter your name'); return; }
+  if (!group) { toast('Enter a group name'); return; }
+  const uid = genUid(); // new uid only on first-ever join
+  enterMap(name, group, uid);
+}
+
+// ══ MAP ══════════════════════════════════════════════════════════
+function initMap() {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    center: [-84.5, 30.42],
+    zoom: 13,
+    attributionControl: false
+  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
+
+  map.on('click', e => {
+    if (!pinMode) return;
+    pendingCoords = e.lngLat;
+    document.getElementById('pin-coords-label').textContent =
+      e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
+    document.getElementById('pin-modal').classList.add('show');
+    setTimeout(() => document.getElementById('pin-label-input').focus(), 120);
+    disablePinMode();
+  });
+}
+
+// ══ LOCATION ═════════════════════════════════════════════════════
+function startLocationSharing() {
+  if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
+
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      lat, lng, name: userName, accuracy: Math.round(accuracy), ts: Date.now()
+    });
+    if (!window._firstFix) {
+      map.flyTo({ center: [lng, lat], zoom: 15 });
+      window._firstFix = true;
+    }
+  }, err => {
+    console.warn('GPS:', err.message);
+    toast('GPS unavailable — check location permissions');
+  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
+
+  // Best-effort cleanup on close
+  window.addEventListener('beforeunload', () => {
+    try { fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); } catch(_) {}
+  });
+}
+
+// ══ USERS ════════════════════════════════════════════════════════
+const STALE_MS = 5 * 60 * 1000; // 5 min — hide sessions that stopped updating
+
+function listenUsers() {
+  fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+    const allUsers = snap.val() || {};
+    const now = Date.now();
+
+    // Filter out stale ghost sessions
+    const users = Object.fromEntries(
+      Object.entries(allUsers).filter(([, d]) => (now - (d.ts || 0)) < STALE_MS)
+    );
+
+    // Remove stale entries from Firebase so they don't pile up
+    Object.entries(allUsers).forEach(([uid, d]) => {
+      if ((now - (d.ts || 0)) >= STALE_MS) {
+        fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
+      }
+    });
+
+    const listEl = document.getElementById('user-list');
+    listEl.innerHTML = '';
+
+    // Remove markers for users no longer present
+    Object.keys(userMarkers).forEach(uid => {
+      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; }
+    });
+
+    Object.entries(users).forEach(([uid, data]) => {
+      const isMine = uid === userId;
+      const color  = userColor(uid);
+
+      if (!userMarkers[uid]) {
+        const el = document.createElement('div');
+        Object.assign(el.style, {
+          width: '36px', height: '36px', borderRadius: '50%',
+          background: color, border: `3px solid ${isMine ? '#f0a500' : '#fff'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '12px', fontWeight: '700', color: '#0d1117',
+          boxShadow: '0 2px 10px rgba(0,0,0,.5)', cursor: 'pointer',
+          fontFamily: 'system-ui, sans-serif', userSelect: 'none'
+        });
+        el.textContent = initials(data.name);
+
+        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false });
+        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([data.lng, data.lat])
+          .setPopup(popup)
+          .addTo(map);
+      } else {
+        userMarkers[uid].setLngLat([data.lng, data.lat]);
+      }
+
+      // Always refresh popup with latest data
+      userMarkers[uid].getPopup().setHTML(`
+        <div class="pop-cat" style="color:${color}">${isMine ? 'YOU' : 'TEAMMATE'}</div>
+        <div class="pop-label">${data.name}</div>
+        <div class="pop-meta">±${data.accuracy ?? '?'}m · ${formatTime(data.ts)}</div>
+      `);
+
+      const row = document.createElement('div');
+      row.className = 'user-item';
+      row.innerHTML = `
+        <div class="user-avatar" style="background:${color};color:#0d1117">${initials(data.name)}</div>
+        <div>
+          <div class="uname">${data.name}${isMine ? ' (you)' : ''}</div>
+          <div class="ustatus">Live · ${formatTime(data.ts)}</div>
+        </div>
+      `;
+      row.addEventListener('click', () => {
+        map.flyTo({ center: [data.lng, data.lat], zoom: 17 });
+        document.getElementById('user-drawer').classList.remove('open');
+      });
+      listEl.appendChild(row);
+    });
+  });
+}
+
+// ══ PIN DEFINITIONS ══════════════════════════════════════════════
+const PIN_TYPES = {
+  'Waypoint':   { color: '#f0a500', path: '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>' },
+  'Deer Stand': { color: '#8B5E3C', path: '<path d="M12 2L8 8h2v2H7l-3 5h3v7h2v-5h4v5h2v-7h3l-3-5h-3V8h2z"/>' },
+  'Game Trail': { color: '#5a8a3c', path: '<path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6z"/>' },
+  'Harvest':    { color: '#c0392b', path: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>' },
+  'Feeder':     { color: '#27ae60', path: '<path d="M18 6h-2V4h2V2H6v2h2v2H6C4.9 6 4 6.9 4 8v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-4 0h-4V4h4v2zm1 12H9v-2h6v2zm2-5H7v-2h10v2z"/>' },
+  'Water':      { color: '#2980b9', path: '<path d="M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z"/>' },
+  'Camp':       { color: '#e67e22', path: '<path d="M12 3L2 21h20L12 3zm0 3.99L19.53 19H4.47L12 6.99zM11 16v2h2v-2zm0-6v4h2v-4z"/>' },
+  'Hazard':     { color: '#e74c3c', path: '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>' },
+};
+
+function makePinSVG(color, iconPath) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="46" viewBox="0 0 36 46" style="display:block">
+    <defs><filter id="ds" x="-30%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="rgba(0,0,0,0.55)"/>
+    </filter></defs>
+    <path d="M18 1C9.72 1 3 7.72 3 16c0 10.5 15 29 15 29S33 26.5 33 16C33 7.72 26.28 1 18 1z"
+          fill="${color}" filter="url(#ds)"/>
+    <circle cx="18" cy="15" r="10" fill="white" opacity="0.93"/>
+    <g transform="translate(6,3)"><svg viewBox="0 0 24 24" width="24" height="24" fill="${color}">${iconPath}</svg></g>
+  </svg>`;
+}
+
+function distanceMiles(lat1, lng1, lat2, lng2) {
+  const R = 3958.8;
+  const dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return d < 0.1 ? Math.round(d*5280)+' ft' : d.toFixed(2)+' mi';
+}
+
+function getBearing(lat1, lng1, lat2, lng2) {
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const y = Math.sin(dLng)*Math.cos(lat2*Math.PI/180);
+  const x = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dLng);
+  const b = Math.atan2(y,x)*180/Math.PI;
+  return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((b+360)%360)/45)%8];
+}
+
+// ══ PINS ═════════════════════════════════════════════════════════
+function listenPins() {
+  fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
+    const pins = snap.val() || {};
+    Object.keys(pinMarkers).forEach(pid => {
+      if (!pins[pid]) { pinMarkers[pid].remove(); delete pinMarkers[pid]; }
+    });
+    Object.entries(pins).forEach(([pid, pin]) => {
+      if (pinMarkers[pid]) return;
+
+      const isNew = (Date.now() - pin.ts) < 8000 && pin.droppedBy !== userId;
+      const def = PIN_TYPES[pin.cat] || PIN_TYPES['Waypoint'];
+
+      const el = document.createElement('div');
+      el.style.cssText = 'cursor:pointer;width:36px;height:46px;user-select:none;transition:transform .15s;';
+      el.innerHTML = makePinSVG(def.color, def.path);
+      el.addEventListener('mouseenter', () => el.style.transform = 'scale(1.2)');
+      el.addEventListener('mouseleave', () => el.style.transform = '');
+
+      const myM = userMarkers[userId];
+      let distStr = '', bearStr = '';
+      if (myM) {
+        const me = myM.getLngLat();
+        distStr = distanceMiles(me.lat, me.lng, pin.lat, pin.lng);
+        bearStr = getBearing(me.lat, me.lng, pin.lat, pin.lng);
+      }
+
+      const canDel = pin.droppedBy === userId;
+      const popup = new mapboxgl.Popup({ offset: [0, -42], closeButton: false, maxWidth: '270px' })
+        .setHTML(`
+          <div class="pop-cat" style="color:${def.color}">${pin.cat || 'Waypoint'}</div>
+          <div class="pop-label">${pin.label || '(no description)'}</div>
+          ${distStr ? `<div class="pop-dist">📍 ${distStr} ${bearStr}</div>` : ''}
+          <div class="pop-coords">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</div>
+          <div class="pop-meta">By ${pin.name} · ${formatTime(pin.ts)}</div>
+          ${canDel ? `<button class="pop-del" onclick="deletePin('${pid}')">Remove pin</button>` : ''}
+        `);
+
+      pinMarkers[pid] = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([pin.lng, pin.lat])
+        .setPopup(popup)
+        .addTo(map);
+
+      if (isNew) {
+        toast(`New pin from ${pin.name}: ${pin.cat}${pin.label ? ' — '+pin.label : ''}`, 4000);
+        map.flyTo({ center: [pin.lng, pin.lat], zoom: 16, duration: 1800 });
+        el.animate([
+          {transform:'scale(1)',opacity:1},
+          {transform:'scale(1.5)',opacity:.7},
+          {transform:'scale(1)',opacity:1}
+        ], {duration:500, iterations:3});
+      }
+    });
+  });
+}
+
+window.deletePin = pid => {
+  fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
+  toast('Pin removed');
+};
+
+// ══ CHAT ═════════════════════════════════════════════════════════
+function listenChat() {
+  fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
+    const msgs = snap.val() || {};
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    Object.values(msgs).sort((a, b) => a.ts - b.ts).forEach(m => {
+      const isMine = m.uid === userId;
+      const div = document.createElement('div');
+      div.className = `msg ${isMine ? 'mine' : 'theirs'}${m.isPin ? ' pin-msg' : ''}`;
+      div.innerHTML = (isMine ? '' : `<div class="sender">${m.name}</div>`) + m.text;
+      container.appendChild(div);
+    });
+    container.scrollTop = container.scrollHeight;
+    if (!chatOpen) {
+      unreadCount++;
+      const badge = document.getElementById('chat-badge');
+      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      badge.style.display = 'flex';
+    }
+  });
+}
+
+function sendChat(text, isPin = false) {
+  if (!text.trim()) return;
+  const r = fbPush(fbRef(db, `gl/${groupName}/chat`));
+  fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
+}
+
+document.getElementById('chat-send').addEventListener('click', () => {
+  const inp = document.getElementById('chat-input');
+  sendChat(inp.value); inp.value = '';
+});
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const inp = document.getElementById('chat-input');
+    sendChat(inp.value); inp.value = '';
+  }
+});
+
+// ══ PIN FLOW ═════════════════════════════════════════════════════
+function enablePinMode() {
+  pinMode = true;
+  document.getElementById('pin-mode-bar').classList.add('active');
+  map.getCanvas().style.cursor = 'crosshair';
+}
+function disablePinMode() {
+  pinMode = false;
+  document.getElementById('pin-mode-bar').classList.remove('active');
+  map.getCanvas().style.cursor = '';
+}
+
+document.getElementById('pin-toggle-btn').addEventListener('click', () => {
+  pinMode ? disablePinMode() : enablePinMode();
+});
+document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
+
+document.getElementById('pin-cats').addEventListener('click', e => {
+  if (!e.target.classList.contains('cat-btn')) return;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  selectedCat = e.target.dataset.cat;
+});
+
+document.getElementById('pin-cancel').addEventListener('click', () => {
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  pendingCoords = null;
+});
+
+document.getElementById('pin-confirm').addEventListener('click', () => {
+  if (!pendingCoords) return;
+  const label = document.getElementById('pin-label-input').value.trim();
+  const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
+  fbSet(pinRef, {
+    lat: pendingCoords.lat, lng: pendingCoords.lng,
+    cat: selectedCat, label, name: userName,
+    droppedBy: userId, ts: Date.now()
+  });
+  const chatMsg = `${selectedCat} at ${pendingCoords.lat.toFixed(5)}, ${pendingCoords.lng.toFixed(5)}${label ? ' — ' + label : ''}`;
+  sendChat(chatMsg, true);
+  map.flyTo({ center: [pendingCoords.lng, pendingCoords.lat], zoom: 16 });
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  pendingCoords = null;
+  toast('Pin dropped & sent to chat ✓');
+});
+
+document.getElementById('pin-label-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('pin-confirm').click();
+});
+
+// ══ UI TOGGLES ═══════════════════════════════════════════════════
+document.getElementById('chat-toggle-btn').addEventListener('click', () => {
+  chatOpen = !chatOpen;
+  document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+  if (chatOpen) {
+    unreadCount = 0;
+    document.getElementById('chat-badge').style.display = 'none';
+    setTimeout(() => {
+      document.getElementById('chat-messages').scrollTop = 99999;
+      document.getElementById('chat-input').focus();
+    }, 280);
+  }
+});
+document.getElementById('close-chat').addEventListener('click', () => {
+  chatOpen = false;
+  document.getElementById('chat-panel').classList.remove('open');
+});
+document.getElementById('users-toggle-btn').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.toggle('open');
+});
+document.getElementById('map').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.remove('open');
+});
+
+// ══ SWITCH GROUP ═════════════════════════════════════════════════
+document.getElementById('switch-group-btn').addEventListener('click', () => {
+  if (!confirm('Switch to a different group? You will leave the current map.')) return;
+  // Clear saved session so join screen appears fresh
+  try { localStorage.removeItem('gl_uid'); } catch(_) {}
+  location.reload();
+});
+
+// ══ LOCATE ME ════════════════════════════════════════════════════
+document.getElementById('locate-me').addEventListener('click', () => {
+  const m = userMarkers[userId];
+  if (m) { const ll = m.getLngLat(); map.flyTo({ center: [ll.lng, ll.lat], zoom: 17 }); }
+  else toast('Waiting for GPS fix…');
+});
+</script>
+</body>
+</html>
