@@ -12,7 +12,7 @@
   import { getDatabase, ref, onValue, remove }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  // Using your existing config
+  // Using your existing GroundLink config
   const firebaseConfig = {
     apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
     authDomain:        "tracker-58b87.firebaseapp.com",
@@ -20,7 +20,8 @@
     projectId:         "tracker-58b87",
     storageBucket:     "tracker-58b87.firebasestorage.app",
     messagingSenderId: "371034128407",
-    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52"
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
   };
 
   const app = initializeApp(firebaseConfig);
@@ -40,7 +41,7 @@
   
   .group-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
   .group-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
-  .group-name { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
+  .group-name { font-size: 18px; font-weight: bold; margin-bottom: 4px; text-transform: capitalize; }
   .group-stats { font-size: 12px; color: #8b949e; line-height: 1.5; }
   
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid #30363d; }
@@ -89,14 +90,22 @@ function loadAdmin() {
         }
 
         container.innerHTML = '';
+        
+        // Sort alphabetically by group name
+        entries.sort((a, b) => a[0].localeCompare(b[0]));
+
         entries.forEach(([key, group]) => {
           const userCount = group.users ? Object.keys(group.users).length : 0;
           const pinCount = group.pins ? Object.keys(group.pins).length : 0;
           const trailCount = group.trails ? Object.keys(group.trails).length : 0;
+          const chatCount = group.chat ? Object.keys(group.chat).length : 0;
           
           let lastActive = 0;
           if (group.users) {
             Object.values(group.users).forEach(u => { if (u.ts > lastActive) lastActive = u.ts; });
+          }
+          if (group.pins) {
+            Object.values(group.pins).forEach(p => { if (p.ts > lastActive) lastActive = p.ts; });
           }
 
           const card = document.createElement('div');
@@ -104,12 +113,13 @@ function loadAdmin() {
           card.innerHTML = `
             <div class="group-header">
               <div>
-                <div class="group-name">${key}</div>
+                <div class="group-name">${key.replace(/_/g, ' ')}</div>
                 <div class="group-stats">
-                  Users: ${userCount} <br>
-                  Pins: ${pinCount} <br>
-                  Trails active: ${trailCount} <br>
-                  Last active: ${timeAgo(lastActive)}
+                  Active Users: ${userCount} <br>
+                  Pins Dropped: ${pinCount} <br>
+                  Trails Active: ${trailCount} <br>
+                  Chat Messages: ${chatCount} <br>
+                  Last Activity: ${timeAgo(lastActive)}
                 </div>
               </div>
             </div>
@@ -117,6 +127,7 @@ function loadAdmin() {
               <button class="btn btn-danger" onclick="deleteNode('gl/${key}', 'Entire Room: ${key}')">Nuke Room</button>
               <button class="btn btn-warn" onclick="deleteNode('gl/${key}/pins', 'All Pins in ${key}')">Clear Pins</button>
               <button class="btn btn-warn" onclick="deleteNode('gl/${key}/trails', 'All Trails in ${key}')">Clear Trails</button>
+              <button class="btn btn-warn" onclick="deleteNode('gl/${key}/chat', 'Chat History in ${key}')">Clear Chat</button>
             </div>
           `;
           container.appendChild(card);
@@ -128,7 +139,9 @@ function loadAdmin() {
 
 window.deleteNode = function(path, name) {
   if (confirm(`Are you sure you want to delete [ ${name} ]?\nThis cannot be undone.`)) {
-    window._fb.remove(window._fb.ref(window._fb.db, path));
+    window._fb.remove(window._fb.ref(window._fb.db, path))
+      .then(() => alert(`${name} successfully deleted.`))
+      .catch(err => alert(`Error: ${err.message}`));
   }
 };
 
