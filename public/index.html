@@ -596,15 +596,20 @@
 
 <!-- ══ TOP BAR ════════════════════════════════════════════════════════ -->
 <div id="topbar" style="display:none">
-  <!-- Row 1: App name + group -->
+  <!-- Row 1: App name + group + exit -->
   <div class="topbar-row1">
     <div class="app-name">GroundLink</div>
     <div class="group-chip">
       <span class="online-dot"></span>
       <span id="group-name-label"></span>
     </div>
+    <div id="switch-group-btn" title="Leave group" style="
+      background:var(--surface);border:1px solid var(--border);
+      border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;
+      color:var(--muted);cursor:pointer;white-space:nowrap;flex-shrink:0;
+      -webkit-tap-highlight-color:transparent;">EXIT</div>
   </div>
-  <!-- Row 2: Action buttons -->
+  <!-- Row 2: 7 action buttons -->
   <div class="topbar-row2">
     <div class="icon-btn" id="pin-toggle-btn" title="Drop a pin">&#128205;<span class="badge" id="pin-badge" style="display:none">0</span></div>
     <div class="icon-btn" id="pin-feed-btn" title="Pin feed">&#128276;<span class="badge" id="pin-feed-badge" style="display:none">0</span></div>
@@ -612,8 +617,7 @@
     <div class="icon-btn" id="chat-toggle-btn" title="Group chat">&#128172;<span class="badge" id="chat-badge" style="display:none">0</span></div>
     <div class="icon-btn" id="users-toggle-btn" title="Who&#39;s online">&#128101;</div>
     <div class="icon-btn" id="breadcrumb-btn" title="Toggle breadcrumbs">&#128062;<span id="breadcrumb-dot" style="position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></div>
-    <div class="icon-btn" id="measure-btn" title="Measure distance">&#128207;</div>
-    <div class="icon-btn" id="switch-group-btn" title="Leave group / Switch group" style="font-size:14px;font-weight:700;color:var(--muted)">EXIT</div>
+    <div class="icon-btn" id="measure-btn" title="Measure">&#128207;</div>
   </div>
 </div>
 <!-- ══ MAP ════════════════════════════════════════════════════════════ -->
@@ -1088,7 +1092,8 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
-    center: [-84.5, 30.42], zoom: 13, attributionControl: false
+    center: [-98.5, 39.5], zoom: 3, // zoomed out — GPS will fly to real location
+    attributionControl: false
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
 
@@ -1872,24 +1877,35 @@ function listenTrails() {
 
 // ══ CHAT ═════════════════════════════════════════════════════════
 function listenChat() {
+  const joinedAt = Date.now(); // only count messages after this moment
+  let initialLoad = true;
+
   fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
     const msgs = snap.val() || {};
     const container = document.getElementById('chat-messages');
+    const sorted = Object.values(msgs).sort((a, b) => a.ts - b.ts);
+
     container.innerHTML = '';
-    Object.values(msgs).sort((a, b) => a.ts - b.ts).forEach(m => {
+    sorted.forEach(m => {
       const isMine = m.uid === userId;
       const div = document.createElement('div');
-      div.className = `msg ${isMine ? 'mine' : 'theirs'}${m.isPin ? ' pin-msg' : ''}`;
-      div.innerHTML = (isMine ? '' : `<div class="sender">${m.name}</div>`) + m.text;
+      div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
+      div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text;
       container.appendChild(div);
     });
     container.scrollTop = container.scrollHeight;
-    if (!chatOpen) {
-      unreadCount++;
-      const badge = document.getElementById('chat-badge');
-      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
-      badge.style.display = 'flex';
+
+    // Only badge for NEW messages (after we joined) and not our own
+    if (!chatOpen && !initialLoad) {
+      const newMsgs = sorted.filter(m => m.ts > joinedAt && m.uid !== userId);
+      if (newMsgs.length > 0) {
+        unreadCount++;
+        const badge = document.getElementById('chat-badge');
+        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        badge.style.display = 'flex';
+      }
     }
+    initialLoad = false;
   });
 }
 
