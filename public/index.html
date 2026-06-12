@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="GroundLink" />
+<meta name="theme-color" content="#0d1117" />
+<title>GroundLink</title>
+
+<!-- PWA manifest -->
+<link rel="manifest" href="/manifest.json" />
+<!-- Apple touch icon (iOS home screen) -->
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+<!-- Mapbox -->
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, push, onValue, remove }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
+  const firebaseConfig = {
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
+    messagingSenderId: "371034128407",
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
+  };
+  // ─── CONFIGURE YOUR MAPBOX TOKEN HERE ──────────────────────────────
+  window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
+  // ───────────────────────────────────────────────────────────────────
+
+  const app = initializeApp(firebaseConfig);
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0d1117;
+    --surface: #161b22;
+    --border:  #30363d;
+    --accent:  #f0a500;
+    --accent2: #e05a2b;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --danger:  #f85149;
+    --radius:  10px;
+    --chat-h:  230px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bot: env(safe-area-inset-bottom, 0px);
+    font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px; color: var(--text);
+  }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+  /* ── Join screen ── */
+  #join-screen {
+    position: fixed; inset: 0; z-index: 900;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--safe-top) 0 var(--safe-bot);
+  }
+  .join-card {
+    width: min(400px, 92vw);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 34px 28px 28px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
+  .join-title { font-size: 24px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+  .join-sub { font-size: 13px; color: var(--muted); }
+  .field-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .join-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 15px;
+    outline: none; transition: border-color .15s; -webkit-appearance: none;
+  }
+  .join-input:focus { border-color: var(--accent); }
+  .join-hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .btn-primary {
+    width: 100%; padding: 14px;
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: #0d1117; font-size: 15px; font-weight: 700;
+    cursor: pointer; transition: opacity .15s; -webkit-appearance: none;
+  }
+  .btn-primary:active { opacity: .82; }
+
+  /* ── Install banner (shown before install) ── */
+  #install-banner {
+    display: none;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 12px; padding: 12px 16px; margin-top: -8px;
+    font-size: 13px; align-items: center; gap: 10px;
+  }
+  #install-banner.show { display: flex; }
+  #install-btn {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+
+  /* ── Wake lock indicator ── */
+  #wakelock-indicator {
+    position: fixed; bottom: calc(20px + var(--safe-bot)); left: 14px; z-index: 150;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 11px;
+    font-size: 11px; color: var(--muted);
+    display: none; align-items: center; gap: 6px;
+  }
+  #wakelock-indicator.active { display: flex; border-color: #3fb950; color: #3fb950; }
+  .wl-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ── Map ── */
+  #map { position: fixed; inset: 0; }
+
+  /* ── Top bar ── */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    padding-top: var(--safe-top);
+    background: rgba(13,17,23,.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding-left: 14px; padding-right: 14px;
+    padding-bottom: 10px; gap: 10px;
+    min-height: calc(52px + var(--safe-top));
+  }
+  .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .app-name { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; flex-shrink: 0; }
+  .group-chip {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 11px;
+    font-size: 12px; color: var(--text); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 150px; display: flex; align-items: center; gap: 6px;
+  }
+  .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .icon-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 17px; position: relative; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active { border-color: var(--accent); }
+  .badge {
+    position: absolute; top: -5px; right: -5px;
+    background: var(--danger); border-radius: 10px;
+    min-width: 17px; height: 17px; padding: 0 4px;
+    font-size: 10px; font-weight: 700; color: #fff;
+    display: none; align-items: center; justify-content: center;
+  }
+
+  /* ── Pin mode bar ── */
+  #pin-mode-bar {
+    position: fixed; top: calc(60px + var(--safe-top)); left: 50%; transform: translateX(-50%);
+    z-index: 400;
+    background: var(--accent2); border-radius: 20px;
+    padding: 8px 18px; font-size: 13px; font-weight: 700; color: #fff;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(224,90,43,.45); white-space: nowrap;
+  }
+  #pin-mode-bar.active { display: flex; }
+  .cancel-mode {
+    background: rgba(0,0,0,.2); border: none; border-radius: 12px;
+    padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
+  }
+
+  /* ── Chat panel ── */
+  #chat-panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+    height: calc(var(--chat-h) + var(--safe-bot));
+    background: rgba(13,17,23,.97);
+    backdrop-filter: blur(16px);
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transform: translateY(100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+  }
+  #chat-panel.open { transform: translateY(0); }
+  .chat-header {
+    padding: 10px 14px 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .chat-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .close-chat { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 0 2px; }
+  #chat-messages {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 8px 12px; display: flex; flex-direction: column; gap: 5px;
+    scroll-behavior: smooth;
+  }
+  .msg {
+    max-width: 82%; padding: 7px 11px;
+    border-radius: 12px; font-size: 13px; line-height: 1.45; word-break: break-word;
+  }
+  .msg.mine { align-self: flex-end; background: var(--accent); color: #0d1117; border-bottom-right-radius: 3px; }
+  .msg.theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg .sender { font-size: 10px; font-weight: 700; margin-bottom: 2px; opacity: .65; }
+  .msg.pin-msg { border-left: 3px solid var(--accent2); }
+  .chat-input-row {
+    padding: 7px 10px;
+    padding-bottom: calc(10px + var(--safe-bot));
+    display: flex; gap: 8px; flex-shrink: 0;
+  }
+  #chat-input {
+    flex: 1; padding: 10px 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  #chat-input:focus { border-color: var(--accent); }
+  #chat-send {
+    background: var(--accent); border: none; border-radius: 20px;
+    padding: 10px 16px; color: #0d1117; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
+  /* ── User drawer ── */
+  #user-drawer {
+    position: fixed; top: calc(52px + var(--safe-top)); right: 0; bottom: 0; z-index: 300;
+    width: 210px;
+    background: rgba(22,27,34,.98);
+    backdrop-filter: blur(16px);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    padding: 14px 12px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  #user-drawer.open { transform: translateX(0); }
+  .drawer-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); flex-shrink: 0; }
+  .user-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .user-item:active { border-color: var(--accent); }
+  .user-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+  }
+  .uname { font-size: 13px; font-weight: 600; }
+  .ustatus { font-size: 11px; color: var(--muted); }
+
+  /* ── Pin modal ── */
+  #pin-modal {
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,.6);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  #pin-modal.show { display: flex; }
+  .pin-sheet {
+    width: min(480px, 100%);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 18px;
+    padding-bottom: calc(24px + var(--safe-bot));
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .pin-sheet-title { font-size: 15px; font-weight: 700; }
+  .pin-coords { font-size: 12px; color: var(--muted); font-family: monospace; margin-top: -8px; }
+  .pin-cats { display: flex; gap: 7px; flex-wrap: wrap; }
+  .cat-btn {
+    padding: 6px 12px; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg); color: var(--muted);
+    font-size: 12px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .cat-btn.active { border-color: var(--accent2); color: var(--accent2); background: rgba(224,90,43,.1); }
+  .pin-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  .pin-input:focus { border-color: var(--accent2); }
+  .pin-actions { display: flex; gap: 10px; }
+  .btn-drop {
+    flex: 1; padding: 13px;
+    background: var(--accent2); border: none; border-radius: var(--radius);
+    color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .btn-cancel {
+    padding: 13px 16px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--muted); font-size: 14px; cursor: pointer;
+  }
+
+  /* ── Locate me ── */
+  #locate-me {
+    position: fixed;
+    bottom: calc(20px + var(--safe-bot));
+    right: 14px; z-index: 150;
+    width: 46px; height: 46px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 50%; display: none; align-items: center; justify-content: center;
+    font-size: 20px; cursor: pointer;
+    box-shadow: 0 2px 14px rgba(0,0,0,.5);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #locate-me:active { border-color: var(--accent); }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; top: calc(62px + var(--safe-top)); left: 50%;
+    transform: translateX(-50%) translateY(-80px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 8px 18px;
+    font-size: 13px; color: var(--text); white-space: nowrap;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1); z-index: 600;
+    pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── Mapbox popup overrides ── */
+  .mapboxgl-popup-content {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 10px 14px !important;
+    color: var(--text) !important;
+    font-family: inherit !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
+    min-width: 150px;
+  }
+  .mapboxgl-popup-tip { display: none; }
+  .pop-cat { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent2); margin-bottom: 3px; }
+  .pop-label { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .pop-meta { font-size: 11px; color: var(--muted); }
+  .pop-del { background: none; border: none; color: var(--danger); font-size: 11px; cursor: pointer; margin-top: 7px; display: block; }
+  .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
+<div id="join-screen">
+  <div class="join-card">
+    <div>
+      <div class="join-logo">GroundLink</div>
+      <div class="join-title">Live Field Map</div>
+      <div class="join-sub" style="margin-top:6px">Satellite map · Live positions · Shared pins · Group chat</div>
+    </div>
+
+    <!-- Install prompt (Android Chrome) -->
+    <div id="install-banner">
+      <span>📲 Install for best experience</span>
+      <button id="install-btn">Add to Home Screen</button>
+    </div>
+
+    <div>
+      <div class="field-label">Your name</div>
+      <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+    </div>
+
+    <div>
+      <div class="field-label">Group name</div>
+      <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
+      <div class="join-hint">Everyone who types the same group name shares the same live map.</div>
+    </div>
+
+    <button class="btn-primary" id="join-btn">Open Map →</button>
+
+    <!-- iOS manual install instructions (shown after join if not standalone) -->
+    <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
+      📱 On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> to keep the screen on longer and get a home screen icon.
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOP BAR ════════════════════════════════════════════════════════ -->
+<div id="topbar" style="display:none">
+  <div class="topbar-left">
+    <div class="app-name">GroundLink</div>
+    <div class="group-chip">
+      <span class="online-dot"></span>
+      <span id="group-name-label"></span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="icon-btn" id="pin-toggle-btn" title="Drop a pin">📍</div>
+    <div class="icon-btn" id="chat-toggle-btn" title="Group chat">
+      💬<span class="badge" id="chat-badge">0</span>
+    </div>
+    <div class="icon-btn" id="users-toggle-btn" title="Who's online">👥</div>
+  </div>
+</div>
+
+<!-- ══ MAP ════════════════════════════════════════════════════════════ -->
+<div id="map"></div>
+
+<!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
+<div id="pin-mode-bar">
+  📍 Tap the map to place a pin
+  <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
+</div>
+
+<!-- ══ LOCATE ME ════════════════════════════════════════════════════ -->
+<div id="locate-me">🎯</div>
+
+<!-- ══ WAKE LOCK INDICATOR ══════════════════════════════════════════ -->
+<div id="wakelock-indicator">
+  <span class="wl-dot"></span>
+  <span>Screen staying on</span>
+</div>
+
+<!-- ══ CHAT PANEL ════════════════════════════════════════════════════ -->
+<div id="chat-panel">
+  <div class="chat-header">
+    <span class="chat-title" id="chat-panel-title">Group Chat</span>
+    <button class="close-chat" id="close-chat">✕</button>
+  </div>
+  <div id="chat-messages"></div>
+  <div class="chat-input-row">
+    <input id="chat-input" placeholder="Message the group…" maxlength="300" autocomplete="off" />
+    <button id="chat-send">Send</button>
+  </div>
+</div>
+
+<!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
+<div id="user-drawer">
+  <div class="drawer-title">On the map</div>
+  <div id="user-list"></div>
+</div>
+
+<!-- ══ PIN MODAL ═════════════════════════════════════════════════════ -->
+<div id="pin-modal">
+  <div class="pin-sheet">
+    <div>
+      <div class="pin-sheet-title">Drop a Pin</div>
+      <div class="pin-coords" id="pin-coords-label"></div>
+    </div>
+    <div class="pin-cats" id="pin-cats">
+      <button class="cat-btn active" data-cat="📍 General">📍 General</button>
+      <button class="cat-btn" data-cat="⚠️ Hazard">⚠️ Hazard</button>
+      <button class="cat-btn" data-cat="🎯 Target">🎯 Target</button>
+      <button class="cat-btn" data-cat="🚗 Vehicle">🚗 Vehicle</button>
+      <button class="cat-btn" data-cat="🏕️ Camp">🏕️ Camp</button>
+      <button class="cat-btn" data-cat="🔴 Urgent">🔴 Urgent</button>
+    </div>
+    <input class="pin-input" id="pin-label-input" placeholder="Describe this pin — goes to group chat…" maxlength="140" />
+    <div class="pin-actions">
+      <button class="btn-cancel" id="pin-cancel">Cancel</button>
+      <button class="btn-drop" id="pin-confirm">Drop Pin → Chat</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOAST ═════════════════════════════════════════════════════════ -->
+<div id="toast"></div>
+
+<script>
+// ══ STATE ════════════════════════════════════════════════════════
+let map, db, fbRef, fbSet, fbPush, fbOnValue, fbRemove;
+let groupName = '', userId = '', userName = '';
+let pinMode = false, pendingCoords = null;
+let userMarkers = {}, pinMarkers = {};
+let chatOpen = false, unreadCount = 0;
+let selectedCat = '📍 General';
+let wakeLock = null;
+let deferredInstallPrompt = null;
+
+const COLORS = ['#f0a500','#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff'];
+
+// ══ SERVICE WORKER ════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(console.warn);
+}
+
+// ══ PWA INSTALL PROMPT (Android Chrome) ══════════════════════════
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  document.getElementById('install-banner').classList.add('show');
+});
+
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  const { outcome } = await deferredInstallPrompt.userChoice;
+  if (outcome === 'accepted') {
+    document.getElementById('install-banner').classList.remove('show');
+    toast('GroundLink installed ✓');
+  }
+  deferredInstallPrompt = null;
+});
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('install-banner').classList.remove('show');
+});
+
+// ══ UTILS ════════════════════════════════════════════════════════
+function toast(msg, ms = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
+}
+function userColor(uid) {
+  let h = 0;
+  for (const c of uid) h = (h << 5) - h + c.charCodeAt(0);
+  return COLORS[Math.abs(h) % COLORS.length];
+}
+function initials(name) {
+  return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+function genUid() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+}
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ══ WAKE LOCK ════════════════════════════════════════════════════
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    document.getElementById('wakelock-indicator').classList.add('active');
+    wakeLock.addEventListener('release', () => {
+      document.getElementById('wakelock-indicator').classList.remove('active');
+    });
+  } catch (e) {
+    console.warn('Wake lock failed:', e.message);
+  }
+}
+
+// Re-acquire wake lock when page becomes visible again
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && wakeLock === null) {
+    await acquireWakeLock();
+  }
+});
+
+// ══ WAIT FOR FIREBASE ════════════════════════════════════════════
+function waitForFirebase(cb) {
+  if (window._fb) { cb(window._fb); return; }
+  const t = setInterval(() => { if (window._fb) { clearInterval(t); cb(window._fb); } }, 80);
+}
+
+// ══ JOIN FORM ════════════════════════════════════════════════════
+// Show iOS hint if not already installed as standalone
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+  document.getElementById('ios-hint').style.display = 'block';
+}
+
+document.getElementById('join-btn').addEventListener('click', handleJoin);
+document.getElementById('inp-group').addEventListener('keydown', e => { if (e.key === 'Enter') handleJoin(); });
+document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
+
+function handleJoin() {
+  const name  = document.getElementById('inp-name').value.trim();
+  const group = document.getElementById('inp-group').value.trim();
+  if (!name)  { toast('Enter your name'); return; }
+  if (!group) { toast('Enter a group name'); return; }
+
+  userName  = name;
+  groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+  userId    = genUid();
+
+  // Save for quick rejoin
+  try {
+    localStorage.setItem('gl_name', name);
+    localStorage.setItem('gl_group', group);
+  } catch(_) {}
+
+  waitForFirebase(fb => {
+    db = fb.db; fbRef = fb.ref; fbSet = fb.set;
+    fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
+
+    document.getElementById('join-screen').style.display = 'none';
+    document.getElementById('topbar').style.display = 'flex';
+    document.getElementById('locate-me').style.display = 'flex';
+    document.getElementById('group-name-label').textContent = group;
+    document.getElementById('chat-panel-title').textContent = group + ' Chat';
+
+    acquireWakeLock();
+    initMap();
+    startLocationSharing();
+    listenUsers();
+    listenPins();
+    listenChat();
+  });
+}
+
+// Pre-fill from last session
+try {
+  const ln = localStorage.getItem('gl_name');
+  const lg = localStorage.getItem('gl_group');
+  if (ln) document.getElementById('inp-name').value = ln;
+  if (lg) document.getElementById('inp-group').value = lg;
+} catch(_) {}
+
+// ══ MAP ══════════════════════════════════════════════════════════
+function initMap() {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    center: [-84.5, 30.42],
+    zoom: 13,
+    attributionControl: false
+  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
+
+  map.on('click', e => {
+    if (!pinMode) return;
+    pendingCoords = e.lngLat;
+    document.getElementById('pin-coords-label').textContent =
+      e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
+    document.getElementById('pin-modal').classList.add('show');
+    setTimeout(() => document.getElementById('pin-label-input').focus(), 120);
+    disablePinMode();
+  });
+}
+
+// ══ LOCATION ═════════════════════════════════════════════════════
+function startLocationSharing() {
+  if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
+
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      lat, lng, name: userName, accuracy: Math.round(accuracy), ts: Date.now()
+    });
+    if (!window._firstFix) {
+      map.flyTo({ center: [lng, lat], zoom: 15 });
+      window._firstFix = true;
+    }
+  }, err => {
+    console.warn('GPS:', err.message);
+    toast('GPS unavailable — check location permissions');
+  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
+
+  // Best-effort cleanup on close
+  window.addEventListener('beforeunload', () => {
+    try { fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); } catch(_) {}
+  });
+}
+
+// ══ USERS ════════════════════════════════════════════════════════
+function listenUsers() {
+  fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+    const users = snap.val() || {};
+    const listEl = document.getElementById('user-list');
+    listEl.innerHTML = '';
+
+    Object.keys(userMarkers).forEach(uid => {
+      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; }
+    });
+
+    Object.entries(users).forEach(([uid, data]) => {
+      const isMine = uid === userId;
+      const color  = userColor(uid);
+
+      if (!userMarkers[uid]) {
+        const el = document.createElement('div');
+        Object.assign(el.style, {
+          width: '34px', height: '34px', borderRadius: '50%',
+          background: color, border: `3px solid ${isMine ? '#f0a500' : '#fff'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '11px', fontWeight: '700', color: '#0d1117',
+          boxShadow: '0 2px 10px rgba(0,0,0,.5)', cursor: 'pointer',
+          fontFamily: 'system-ui, sans-serif', userSelect: 'none'
+        });
+        el.textContent = initials(data.name);
+
+        const popup = new mapboxgl.Popup({ offset: 16, closeButton: false })
+          .setHTML(`
+            <div class="pop-cat">${isMine ? 'YOU' : 'TEAMMATE'}</div>
+            <div class="pop-label">${data.name}</div>
+            <div class="pop-meta">±${data.accuracy ?? '?'}m · ${formatTime(data.ts)}</div>
+          `);
+
+        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([data.lng, data.lat])
+          .setPopup(popup)
+          .addTo(map);
+      } else {
+        userMarkers[uid].setLngLat([data.lng, data.lat]);
+      }
+
+      const row = document.createElement('div');
+      row.className = 'user-item';
+      row.innerHTML = `
+        <div class="user-avatar" style="background:${color};color:#0d1117">${initials(data.name)}</div>
+        <div>
+          <div class="uname">${data.name}${isMine ? ' (you)' : ''}</div>
+          <div class="ustatus">Live · ${formatTime(data.ts)}</div>
+        </div>
+      `;
+      row.addEventListener('click', () => {
+        map.flyTo({ center: [data.lng, data.lat], zoom: 17 });
+        document.getElementById('user-drawer').classList.remove('open');
+      });
+      listEl.appendChild(row);
+    });
+  });
+}
+
+// ══ PINS ═════════════════════════════════════════════════════════
+function listenPins() {
+  fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
+    const pins = snap.val() || {};
+    Object.keys(pinMarkers).forEach(pid => {
+      if (!pins[pid]) { pinMarkers[pid].remove(); delete pinMarkers[pid]; }
+    });
+    Object.entries(pins).forEach(([pid, pin]) => {
+      if (pinMarkers[pid]) return;
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        fontSize: '26px', cursor: 'pointer', lineHeight: '1',
+        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.65))',
+        transition: 'transform .15s', userSelect: 'none'
+      });
+      el.textContent = pin.cat ? pin.cat.split(' ')[0] : '📍';
+
+      const canDel = pin.droppedBy === userId;
+      const popup = new mapboxgl.Popup({ offset: 20, closeButton: false })
+        .setHTML(`
+          <div class="pop-cat">${pin.cat || '📍 Pin'}</div>
+          <div class="pop-label">${pin.label || '(no description)'}</div>
+          <div class="pop-meta">By ${pin.name} · ${formatTime(pin.ts)}</div>
+          ${canDel ? `<button class="pop-del" onclick="deletePin('${pid}')">Remove pin</button>` : ''}
+        `);
+
+      pinMarkers[pid] = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([pin.lng, pin.lat])
+        .setPopup(popup)
+        .addTo(map);
+    });
+  });
+}
+
+window.deletePin = pid => {
+  fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
+  toast('Pin removed');
+};
+
+// ══ CHAT ═════════════════════════════════════════════════════════
+function listenChat() {
+  fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
+    const msgs = snap.val() || {};
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    Object.values(msgs).sort((a, b) => a.ts - b.ts).forEach(m => {
+      const isMine = m.uid === userId;
+      const div = document.createElement('div');
+      div.className = `msg ${isMine ? 'mine' : 'theirs'}${m.isPin ? ' pin-msg' : ''}`;
+      div.innerHTML = (isMine ? '' : `<div class="sender">${m.name}</div>`) + m.text;
+      container.appendChild(div);
+    });
+    container.scrollTop = container.scrollHeight;
+    if (!chatOpen) {
+      unreadCount++;
+      const badge = document.getElementById('chat-badge');
+      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      badge.style.display = 'flex';
+    }
+  });
+}
+
+function sendChat(text, isPin = false) {
+  if (!text.trim()) return;
+  const r = fbPush(fbRef(db, `gl/${groupName}/chat`));
+  fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
+}
+
+document.getElementById('chat-send').addEventListener('click', () => {
+  const inp = document.getElementById('chat-input');
+  sendChat(inp.value); inp.value = '';
+});
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const inp = document.getElementById('chat-input');
+    sendChat(inp.value); inp.value = '';
+  }
+});
+
+// ══ PIN FLOW ═════════════════════════════════════════════════════
+function enablePinMode() {
+  pinMode = true;
+  document.getElementById('pin-mode-bar').classList.add('active');
+  map.getCanvas().style.cursor = 'crosshair';
+}
+function disablePinMode() {
+  pinMode = false;
+  document.getElementById('pin-mode-bar').classList.remove('active');
+  map.getCanvas().style.cursor = '';
+}
+
+document.getElementById('pin-toggle-btn').addEventListener('click', () => {
+  pinMode ? disablePinMode() : enablePinMode();
+});
+document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
+
+document.getElementById('pin-cats').addEventListener('click', e => {
+  if (!e.target.classList.contains('cat-btn')) return;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  selectedCat = e.target.dataset.cat;
+});
+
+document.getElementById('pin-cancel').addEventListener('click', () => {
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  pendingCoords = null;
+});
+
+document.getElementById('pin-confirm').addEventListener('click', () => {
+  if (!pendingCoords) return;
+  const label = document.getElementById('pin-label-input').value.trim();
+  const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
+  fbSet(pinRef, {
+    lat: pendingCoords.lat, lng: pendingCoords.lng,
+    cat: selectedCat, label, name: userName,
+    droppedBy: userId, ts: Date.now()
+  });
+  const chatMsg = `${selectedCat} at ${pendingCoords.lat.toFixed(5)}, ${pendingCoords.lng.toFixed(5)}${label ? ' — ' + label : ''}`;
+  sendChat(chatMsg, true);
+  map.flyTo({ center: [pendingCoords.lng, pendingCoords.lat], zoom: 16 });
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  pendingCoords = null;
+  toast('Pin dropped & sent to chat ✓');
+});
+
+document.getElementById('pin-label-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('pin-confirm').click();
+});
+
+// ══ UI TOGGLES ═══════════════════════════════════════════════════
+document.getElementById('chat-toggle-btn').addEventListener('click', () => {
+  chatOpen = !chatOpen;
+  document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+  if (chatOpen) {
+    unreadCount = 0;
+    document.getElementById('chat-badge').style.display = 'none';
+    setTimeout(() => {
+      document.getElementById('chat-messages').scrollTop = 99999;
+      document.getElementById('chat-input').focus();
+    }, 280);
+  }
+});
+document.getElementById('close-chat').addEventListener('click', () => {
+  chatOpen = false;
+  document.getElementById('chat-panel').classList.remove('open');
+});
+document.getElementById('users-toggle-btn').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.toggle('open');
+});
+document.getElementById('map').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.remove('open');
+});
+
+// ══ LOCATE ME ════════════════════════════════════════════════════
+document.getElementById('locate-me').addEventListener('click', () => {
+  const m = userMarkers[userId];
+  if (m) { const ll = m.getLngLat(); map.flyTo({ center: [ll.lng, ll.lat], zoom: 17 }); }
+  else toast('Waiting for GPS fix…');
+});
+</script>
+</body>
+</html>
