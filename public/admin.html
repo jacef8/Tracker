@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0d1117" />
+<title>GroundLink Admin</title>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue, remove }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // Using your existing config
+  const firebaseConfig = {
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
+    messagingSenderId: "371034128407",
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  window._fb = { db: getDatabase(app), ref, onValue, remove };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { 
+    background: #0d1117; color: #e6edf3; 
+    font-family: 'SF Pro Text', system-ui, sans-serif; 
+    padding: env(safe-area-inset-top, 20px) 20px 40px; 
+  }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
+  .title { font-size: 20px; font-weight: bold; color: #f0a500; }
+  .btn-back { background: #161b22; border: 1px solid #30363d; color: #e6edf3; padding: 8px 14px; border-radius: 8px; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold; }
+  
+  .group-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .group-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .group-name { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
+  .group-stats { font-size: 12px; color: #8b949e; line-height: 1.5; }
+  
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid #30363d; }
+  .btn { padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; border: none; }
+  .btn-danger { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; color: #f85149; }
+  .btn-warn { background: #21262d; border: 1px solid #8b949e; color: #e6edf3; }
+  .empty-state { text-align: center; color: #8b949e; padding: 40px 20px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="title">GroundLink Admin</div>
+  <a href="/" class="btn-back">← Back to App</a>
+</div>
+
+<div id="admin-list"><div class="empty-state">Loading database...</div></div>
+
+<script>
+function timeAgo(ts) {
+  if (!ts) return 'Never';
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(diff / 3600000);
+  const d = Math.floor(diff / 86400000);
+  if (m < 1)  return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${d}d ago`;
+}
+
+function loadAdmin() {
+  const t = setInterval(() => {
+    if (window._fb) {
+      clearInterval(t);
+      const fb = window._fb;
+      
+      fb.onValue(fb.ref(fb.db, 'gl'), snap => {
+        const all = snap.val() || {};
+        const container = document.getElementById('admin-list');
+        const entries = Object.entries(all);
+        
+        if (entries.length === 0) {
+          container.innerHTML = '<div class="empty-state">Database is completely empty.</div>';
+          return;
+        }
+
+        container.innerHTML = '';
+        entries.forEach(([key, group]) => {
+          const userCount = group.users ? Object.keys(group.users).length : 0;
+          const pinCount = group.pins ? Object.keys(group.pins).length : 0;
+          const trailCount = group.trails ? Object.keys(group.trails).length : 0;
+          
+          let lastActive = 0;
+          if (group.users) {
+            Object.values(group.users).forEach(u => { if (u.ts > lastActive) lastActive = u.ts; });
+          }
+
+          const card = document.createElement('div');
+          card.className = 'group-card';
+          card.innerHTML = `
+            <div class="group-header">
+              <div>
+                <div class="group-name">${key}</div>
+                <div class="group-stats">
+                  Users: ${userCount} <br>
+                  Pins: ${pinCount} <br>
+                  Trails active: ${trailCount} <br>
+                  Last active: ${timeAgo(lastActive)}
+                </div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-danger" onclick="deleteNode('gl/${key}', 'Entire Room: ${key}')">Nuke Room</button>
+              <button class="btn btn-warn" onclick="deleteNode('gl/${key}/pins', 'All Pins in ${key}')">Clear Pins</button>
+              <button class="btn btn-warn" onclick="deleteNode('gl/${key}/trails', 'All Trails in ${key}')">Clear Trails</button>
+            </div>
+          `;
+          container.appendChild(card);
+        });
+      });
+    }
+  }, 50);
+}
+
+window.deleteNode = function(path, name) {
+  if (confirm(`Are you sure you want to delete [ ${name} ]?\nThis cannot be undone.`)) {
+    window._fb.remove(window._fb.ref(window._fb.db, path));
+  }
+};
+
+loadAdmin();
+</script>
+</body>
+</html>
