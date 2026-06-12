@@ -1452,6 +1452,10 @@ document.getElementById('breadcrumb-btn').addEventListener('click', toggleBreadc
 // ══ USERS ════════════════════════════════════════════════════════
 const STALE_MS = 90 * 1000; // 90 seconds — if no update, consider gone
 
+// Track known users to detect joins/leaves
+var knownUsers = {};
+var usersInitialLoad = true;
+
 function listenUsers() {
   fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
     const allUsers = snap.val() || {};
@@ -1463,6 +1467,26 @@ function listenUsers() {
         (now - (d.ts || 0)) < STALE_MS && !d.claiming && (d.lat !== 0 || d.lng !== 0)
       )
     );
+
+    // Detect new joins
+    if (!usersInitialLoad) {
+      Object.entries(users).forEach(([uid, data]) => {
+        if (!knownUsers[uid] && uid !== userId) {
+          showJoinAlert(data.name);
+        }
+      });
+      // Detect departures
+      Object.keys(knownUsers).forEach(uid => {
+        if (!users[uid] && uid !== userId) {
+          toast(knownUsers[uid] + ' left the map', 2500);
+        }
+      });
+    }
+
+    // Update known users snapshot
+    knownUsers = {};
+    Object.entries(users).forEach(([uid, data]) => { knownUsers[uid] = data.name; });
+    usersInitialLoad = false;
 
     // Remove stale entries from Firebase so they don't pile up
     Object.entries(allUsers).forEach(([uid, d]) => {
@@ -1554,6 +1578,19 @@ function getBearing(lat1, lng1, lat2, lng2) {
   const x = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dLng);
   const b = Math.atan2(y,x)*180/Math.PI;
   return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((b+360)%360)/45)%8];
+}
+
+// ══ JOIN / LEAVE ALERTS ══════════════════════════════════
+function showJoinAlert(name) {
+  if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
+  toast('🟢 ' + name + ' joined the map', 3000);
+  // Flash the users button green
+  var btn = document.getElementById('users-toggle-btn');
+  if (btn) {
+    btn.style.borderColor = '#00e676';
+    btn.style.color = '#00e676';
+    setTimeout(function() { btn.style.borderColor = ''; btn.style.color = ''; }, 2500);
+  }
 }
 
 // ══ NEW PIN ALERT ════════════════════════════════════════════════
