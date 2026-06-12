@@ -3,6 +3,11 @@ const path    = require('path');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
 
+// Admin route — must be BEFORE the static middleware and catch-all
+app.get('/777', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     if (filePath.endsWith('sw.js')) {
@@ -12,13 +17,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('manifest.json')) {
       res.setHeader('Content-Type', 'application/manifest+json');
     }
-    // Never cache index.html — always serve fresh
     if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+    if (filePath.endsWith('admin.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
   }
 }));
 
+// SPA fallback — everything else goes to index.html
 app.get('*', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
