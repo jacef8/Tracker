@@ -916,7 +916,6 @@ function initMap() {
     document.getElementById('pin-coords-label').textContent =
       e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
     document.getElementById('pin-modal').classList.add('show');
-    setTimeout(function() { document.getElementById('pin-label-input').focus(); }, 120);
     disablePinMode();
   });
 
@@ -933,7 +932,6 @@ function initMap() {
       document.getElementById('pin-coords-label').textContent =
         lngLat.lat.toFixed(5) + ', ' + lngLat.lng.toFixed(5);
       document.getElementById('pin-modal').classList.add('show');
-      setTimeout(function() { document.getElementById('pin-label-input').focus(); }, 120);
       disablePinMode();
     }, 600);
   }, { passive: true });
@@ -1498,6 +1496,7 @@ function listenTrails() {
 
 // ══ CHAT ═════════════════════════════════════════════════════════
 function listenChat() {
+  let initialChatLoad = true;
   fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
     const msgs = snap.val() || {};
     const container = document.getElementById('chat-messages');
@@ -1510,12 +1509,14 @@ function listenChat() {
       container.appendChild(div);
     });
     container.scrollTop = container.scrollHeight;
-    if (!chatOpen) {
+    
+    if (!initialChatLoad && !chatOpen) {
       unreadCount++;
       const badge = document.getElementById('chat-badge');
       badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
       badge.style.display = 'flex';
     }
+    initialChatLoad = false;
   });
 }
 
@@ -1595,7 +1596,6 @@ document.getElementById('chat-toggle-btn').addEventListener('click', () => {
     document.getElementById('chat-badge').style.display = 'none';
     setTimeout(() => {
       document.getElementById('chat-messages').scrollTop = 99999;
-      document.getElementById('chat-input').focus();
     }, 280);
   }
 });
