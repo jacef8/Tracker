@@ -1710,10 +1710,17 @@ function listenUsers() {
           .setPopup(popup)
           .addTo(map);
         userMarkers[uid]._el = el;
-        // Tap marker → fly to user then open popup
+        // Tap marker → fly to user, open popup, start following
         el.addEventListener('click', function() {
+          if (isMine) {
+            window._followUser(userId, 'you');
+            return;
+          }
           map.flyTo({ center: [data.lng, data.lat], zoom: Math.max(map.getZoom(), 16), duration: 800 });
-          setTimeout(function() { userMarkers[uid] && userMarkers[uid].togglePopup(); }, 850);
+          setTimeout(function() {
+            if (userMarkers[uid]) userMarkers[uid].togglePopup();
+            if (isLive) window._followUser(uid, data.name);
+          }, 850);
         });
       } else {
         // Update position only if live — keep last known position if not
@@ -1742,11 +1749,16 @@ function listenUsers() {
       const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
       const timeLabel   = isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
 
+      var _safeName = data.name.replace(/'/g, '');
+      var _followBtn = !isMine
+        ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
+        : '';
       userMarkers[uid].getPopup().setHTML(
         '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
         '<div class="pop-label">' + data.name + '</div>' +
         _distHTML +
-        '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>'
+        '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
+        _followBtn
       );
 
       const row = document.createElement('div');
@@ -1760,9 +1772,14 @@ function listenUsers() {
             (isLive ? 'Live &middot; ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
           '</div>' +
         '</div>';
-      row.addEventListener('click', () => {
-        map.flyTo({ center: [data.lng, data.lat], zoom: 17 });
+      row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
+        if (isMine) {
+          window._followUser(userId, 'you');
+        } else {
+          map.flyTo({ center: [data.lng, data.lat], zoom: 17, duration: 1000 });
+          setTimeout(function() { window._followUser(uid, data.name); }, 1100);
+        }
       });
       listEl.appendChild(row);
     });
@@ -2478,7 +2495,13 @@ map.on('dragstart', function() { if (followUid) { stopFollowing(); toast('Follow
 document.getElementById('locate-me').addEventListener('click', function() {
   if (followUid) { stopFollowing(); toast('Follow stopped', 1500); return; }
   if (window._lastGPS) {
+    // GPS ready — follow self
     window._followUser(userId, 'you');
+  } else if (userMarkers[userId]) {
+    // No GPS yet but we have a marker position — fly there
+    var ll = userMarkers[userId].getLngLat();
+    map.flyTo({ center: [ll.lng, ll.lat], zoom: 17, duration: 1000 });
+    toast('Flying to your last known position');
   } else {
     toast('Waiting for GPS fix...');
   }
