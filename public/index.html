@@ -1,112 +1,23 @@
-<!-- index-16.html — Replace with this full content -->
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="GroundLink" />
-<meta name="theme-color" content="#0d1117" />
-<title>GroundLink</title>
-<link rel="manifest" href="/manifest.json" />
-<link rel="apple-touch-icon" href="/icons/icon-192.png" />
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
-
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove }
-    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
-    authDomain:        "tracker-58b87.firebaseapp.com",
-    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
-    projectId:         "tracker-58b87",
-    storageBucket:     "tracker-58b87.firebasestorage.app",
-    messagingSenderId: "371034128407",
-    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
-    measurementId:     "G-EH3FZ2CZWJ"
-  };
-  window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
-
-  const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
-</script>
-
-<style>
-  /* (Keep your existing CSS here) */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --accent: #f0a500; --accent2: #e05a2b; --text: #e6edf3; --muted: #8b949e; --danger: #f85149; --radius: 10px; --chat-h: 230px; --topbar-h: 116px; font-family: system-ui, sans-serif; font-size: 14px; color: var(--text); }
-  html, body { height: 100%; overflow: hidden; background: var(--bg); }
-  #join-screen { position: fixed; inset: 0; z-index: 900; background: var(--bg); display: flex; align-items: center; justify-content: center; }
-  .join-card { width: min(420px, 92vw); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
-  .join-input { width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 16px; outline: none; }
-  .btn-primary { width: 100%; padding: 14px; background: var(--accent); border: none; border-radius: 8px; color: #000; font-weight: 700; cursor: pointer; }
-  #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba(13,17,23,.97); padding: 10px; display: none; flex-direction: column; }
-  #map { position: fixed; inset: 0; }
-</style>
-</head>
-<body>
-  <div id="join-screen">
-    <div class="join-card">
-      <h2 style="color:var(--accent)">GroundLink</h2>
-      <input class="join-input" id="inp-name" placeholder="Name" maxlength="24" />
-      <input class="join-input" id="inp-group" placeholder="Group Name" maxlength="40" />
-      <button class="btn-primary" id="join-btn">Open Map →</button>
-    </div>
-  </div>
-  
-  <div id="topbar">
-    <div style="display:flex;justify-content:space-between">
-      <span id="group-name-label" style="font-weight:700;color:var(--accent)"></span>
-      <button onclick="location.reload()">EXIT</button>
-    </div>
-  </div>
-  <div id="map"></div>
+<!-- index-16_2.html -->
+<!-- ... (Keep all original CSS/HTML/JS structure) ... -->
 
 <script>
-  // Simplified join logic for passcode integration
-  document.getElementById('join-btn').onclick = async () => {
-    const name = document.getElementById('inp-name').value.trim();
-    const group = document.getElementById('inp-group').value.trim();
-    if (!name || !group) return toast('Name and Group required');
-    if (group === '777') { window.location.href = '/777'; return; }
-    
-    // Passcode check
-    const uid = genUid();
-    checkGroupPasscode(name, group, uid);
-  };
+// Replace your existing handleJoin function with this logic:
+function handleJoin() {
+  const name  = document.getElementById('inp-name').value.trim();
+  const group = document.getElementById('inp-group').value.trim();
+  if (!name)  { toast('Enter your name'); return; }
+  if (!group) { toast('Enter a group name'); return; }
+  // Admin shortcut
+  if (group === '777') { window.location.href = '/777'; return; }
+  
+  const existing = getSavedSession();
+  const uid = existing.uid || genUid();
+  
+  // Now calls the passcode check instead of directly entering the map
+  checkGroupPasscode(name, group, uid);
+}
 
-  async function checkGroupPasscode(name, group, uid) {
-    const { db, ref, onValue } = window._fb;
-    onValue(ref(db, 'gl/' + group + '/config/pin'), (snap) => {
-      const storedHash = snap.val();
-      if (!storedHash) {
-        enterMap(name, group, uid);
-      } else {
-        // Here you would trigger your passcode modal from your original file
-        const pin = prompt("Enter 4-digit passcode:");
-        crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin)).then(buf => {
-          const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-          if (hash === storedHash) enterMap(name, group, uid);
-          else toast('Incorrect passcode');
-        });
-      }
-    }, { onlyOnce: true });
-  }
-
-  function enterMap(name, group, uid) {
-    userName = name; groupName = group; userId = uid;
-    document.getElementById('join-screen').style.display = 'none';
-    document.getElementById('topbar').style.display = 'flex';
-    document.getElementById('group-name-label').textContent = group;
-    // ... initialize Map, Listeners, etc ...
-  }
-  function genUid() { return Date.now().toString(36) + Math.random().toString(36).substring(2, 7); }
-  function toast(m) { alert(m); }
+// Ensure checkGroupPasscode is present (from your original file) 
+// and correctly calls enterMap(name, group, uid) upon success.
 </script>
-</body>
-</html>
