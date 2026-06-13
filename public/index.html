@@ -1011,6 +1011,15 @@ function saveSession(name, group, uid) {
   try { _cookieSet('gl_uid', uid); _cookieSet('gl_name', name); _cookieSet('gl_group', group); } catch(_) {}
 }
 
+// ══ DEBUG LOGGING ════════════════════════════════════════════════
+function writeDebugLog(groupName, msg) {
+  if (!db || !groupName) return;
+  try {
+    const logRef = fbPush(fbRef(db, 'gl/' + groupName + '/debug'));
+    fbSet(logRef, { msg: msg, ts: Date.now() });
+  } catch(e) {}
+}
+
 function enterMap(name, group, uid) {
   userName  = name;
   groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
@@ -1046,48 +1055,50 @@ function enterMap(name, group, uid) {
 }
 
 // ══ INSTALL TIP ══════════════════════════════════════════════════
-(function showInstallTip() {
-  // Don't show if already running as installed PWA
-  var isInstalled = window.matchMedia('(display-mode: standalone)').matches
-                 || window.navigator.standalone === true;
-  if (isInstalled) return;
+// Install tip — runs after DOM ready, always visible on join screen
+function initInstallTip() {
+  var isIOS      = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isSafari   = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
+  var isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                   || window.navigator.standalone === true;
 
-  var isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  var isAndroid = /android/i.test(navigator.userAgent);
-  var isSafari  = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
-
-  var tip       = document.getElementById('install-tip');
-  var iosTip    = document.getElementById('install-tip-ios');
-  var androidTip= document.getElementById('install-tip-android');
+  var tip        = document.getElementById('install-tip');
+  var iosTip     = document.getElementById('install-tip-ios');
+  var androidTip = document.getElementById('install-tip-android');
   if (!tip) return;
 
-  // Show appropriate instructions for the device
-  if (isIOS && isSafari) {
-    iosTip.style.display = 'block';
-  } else if (isIOS && !isSafari) {
-    // iOS but not Safari — show Safari requirement message
-    iosTip.style.display = 'block';
+  if (isStandalone) {
+    // Already installed — show a minimal "share with others" version
+    tip.innerHTML =
+      '<div style="font-weight:700;color:var(--accent);margin-bottom:6px">&#128242; Share GroundLink</div>' +
+      '<div style="color:var(--muted);font-size:12px">Others can install this app too.<br>' +
+      (isIOS
+        ? 'iPhone: Safari &#8594; Share &#11014; &#8594; Add to Home Screen'
+        : 'Android: Chrome &#8942; &#8594; Add to Home screen') +
+      '</div>' +
+      '<button id="dismiss-install-tip" style="margin-top:8px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline">Close</button>';
   } else {
-    // Android or desktop
-    androidTip.style.display = 'block';
+    // Not installed — show full install instructions
+    if (isIOS) {
+      iosTip.style.display = 'block';
+    } else {
+      androidTip.style.display = 'block';
+    }
   }
 
-  // Always show — only hide for this session when dismissed
   tip.style.display = 'block';
 
   document.getElementById('dismiss-install-tip').addEventListener('click', function() {
     tip.style.display = 'none';
-    // Only hide for this page session — will reappear next time until installed
   });
-})();
-
-// Clear stale install-tip-dismissed flag so tip always shows until actually installed
-try { localStorage.removeItem('install-tip-dismissed'); } catch(e) {}
+}
 
 // ══ AUTO-RESUME ═══════════════════════════════════════════════════
 // If we have a saved session, skip the join screen entirely
 function showJoinScreen() {
   document.getElementById('join-screen').style.display = 'flex';
+  // Run install tip after join screen is visible
+  setTimeout(initInstallTip, 50);
 
   // iOS install hint
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -1436,6 +1447,11 @@ function startLocationSharing() {
       lat, lng, name: userName, accuracy: Math.round(accuracy * 3.28084), ts: now,
       trail: breadcrumbsOn
     });
+    // Log GPS update every 2 minutes to debug log
+    if (!window._lastDebugLog || now - window._lastDebugLog > 120000) {
+      window._lastDebugLog = now;
+      writeDebugLog(groupName, userName + ' GPS ok — acc:' + Math.round(accuracy * 3.28084) + 'ft');
+    }
 
     // Write breadcrumb if enabled and moved enough
     if (breadcrumbsOn) {
@@ -1526,6 +1542,20 @@ function listenUsers() {
       )
     );
 
+      // Detect when a user goes stale — log it
+      if (!usersInitialLoad) {
+        Object.entries(users).forEach(([uid, data]) => {
+          if (uid === userId) return;
+          const wasLive = knownUsers[uid + '_live'];
+          const nowLive = (now - (data.ts||0)) < LIVE_MS;
+          if (wasLive === true && !nowLive) {
+            const gap = Math.round((now - (data.ts||0)) / 1000);
+            writeDebugLog(groupName, data.name + ' GPS stopped — ' + gap + 's since last update');
+          }
+          knownUsers[uid + '_live'] = nowLive;
+        });
+      }
+
     // Auto-remove only true 8-hour ghosts from Firebase
     Object.entries(allUsers).forEach(([uid, d]) => {
       if ((now - (d.ts || 0)) >= STALE_MS || (d.claiming && (now - (d.ts||0)) > 30000)) {
@@ -1539,6 +1569,7 @@ function listenUsers() {
         const isLive = (now - (data.ts || 0)) < LIVE_MS;
         if (!knownUsers[uid] && uid !== userId && isLive) {
           showJoinAlert(data.name);
+          writeDebugLog(groupName, data.name + ' joined');
         }
       });
     }
