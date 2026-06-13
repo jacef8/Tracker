@@ -514,6 +514,15 @@
   #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
 
+  /* ── Panel splash background ── */
+  .splash-bg {
+    background-color: rgba(22,27,34,0.97);
+    background-image: url('/icons/splash.png');
+    background-size: cover;
+    background-position: center;
+    background-blend-mode: overlay;
+  }
+
   /* ── Unified panel/drawer header ── */
   .panel-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -765,7 +774,7 @@
 <div id="wakelock-indicator"><span class="wl-dot"></span></div>
 
 <!-- ══ CHAT PANEL ════════════════════════════════════════════════════ -->
-<div id="chat-panel">
+<div id="chat-panel" class="splash-bg">
   <div class="panel-header">
     <span class="panel-title" id="chat-panel-title">&#128172; Group Chat</span>
     <button class="panel-close" id="close-chat">&#10005;</button>
@@ -778,7 +787,7 @@
 </div>
 
 <!-- ══ PIN LIST DRAWER ══════════════════════════════════════════════ -->
-<div id="pin-list-drawer">
+<div id="pin-list-drawer" class="splash-bg">
   <div class="panel-header">
     <span class="panel-title">&#128203; Manage Pins <span id="pin-list-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></span>
     <button class="panel-close" id="close-pin-list">&#10005;</button>
@@ -820,7 +829,7 @@
 </div>
 
 <!-- ══ SAVED PINS DRAWER ══════════════════════════════════ -->
-<div id="saved-pins-drawer">
+<div id="saved-pins-drawer" class="splash-bg">
   <div class="panel-header">
     <span class="panel-title">&#9733; My Saved Pins</span>
     <button class="panel-close" id="close-saved-pins">&#10005;</button>
@@ -836,7 +845,7 @@
   <!-- Backdrop -->
   <div id="pin-hub-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.5)" onclick="closePinHub()"></div>
   <!-- Sheet -->
-  <div style="position:absolute;bottom:0;left:0;right:0;background:var(--surface);border-radius:20px 20px 0 0;border-top:1px solid var(--border);padding:0 0 calc(var(--safe-bot) + 8px)">
+  <div class="splash-bg" style="position:absolute;bottom:0;left:0;right:0;border-radius:20px 20px 0 0;border-top:1px solid var(--border);padding:0 0 calc(var(--safe-bot) + 8px)">
     <div class="panel-header">
       <span class="panel-title">&#128205; Pins</span>
       <button class="panel-close" onclick="closePinHub()">&#10005;</button>
@@ -867,7 +876,7 @@
 </div>
 
 <!-- ══ PIN FEED PANEL ═════════════════════════════════════════════════════ -->
-<div id="pin-feed-panel">
+<div id="pin-feed-panel" class="splash-bg">
   <div class="panel-header">
     <span class="panel-title">&#128205; Pin Feed <span id="pin-feed-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></span>
     <button class="panel-close" id="close-pin-feed">&#10005;</button>
@@ -876,7 +885,7 @@
 </div>
 
 <!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
-<div id="user-drawer">
+<div id="user-drawer" class="splash-bg">
   <div class="panel-header">
     <span class="panel-title">&#128101; On the Map</span>
     <button class="panel-close" id="close-user-drawer">&#10005;</button>
@@ -2697,7 +2706,8 @@ document.getElementById('pin-hub-btn').addEventListener('click', openPinHub);
 // Global function called directly from onclick — bypasses addEventListener issues
 window._locateMeTapped = function() {
   if (typeof followUid === 'undefined') { toast('Map not ready yet'); return; }
-  if (followUid) { stopFollowing(); toast('Follow stopped', 1500); return; }
+  // Always start fresh — drag already silently cancelled follow
+  // so button always means "start following me"
 
   var pos = null;
   if (window._lastGPS) {
@@ -2731,7 +2741,7 @@ let followUid = null;
 let followInterval = null;
 
 window._followUser = function(uid, name) {
-  if (followUid === uid) { stopFollowing(); toast('Follow stopped', 1500); return; }
+  // Always start/restart follow — don't toggle off on tap
   followUid = uid;
   clearInterval(followInterval);
   var isSelf = uid === userId;
@@ -2768,7 +2778,22 @@ function stopFollowing() {
   btn.style.boxShadow   = '';
 }
 
-map.on('dragstart', function() { if (followUid) { stopFollowing(); toast('Follow stopped', 1000); } });
+map.on('dragstart', function() {
+  if (followUid) {
+    // Silently cancel follow — no toast, no confirmation needed
+    // Next tap on locate-me starts fresh immediately
+    followUid = null;
+    clearInterval(followInterval);
+    followInterval = null;
+    var btn = document.getElementById('locate-me');
+    if (btn) {
+      btn.style.background  = 'var(--surface)';
+      btn.style.color       = '';
+      btn.style.borderColor = '';
+      btn.style.boxShadow   = '';
+    }
+  }
+});
 
 document.getElementById('locate-me').addEventListener('click', function() {
   if (followUid) { stopFollowing(); toast('Follow stopped', 1500); return; }
