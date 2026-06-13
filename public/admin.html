@@ -153,9 +153,20 @@
 
     <div class="debug-section">
       <div class="debug-title">
-        Event Log
-        <button class="copy-btn" onclick="copyLog()">Copy Log</button>
+        Firebase Debug Log (Persistent)
+        <button class="copy-btn" onclick="copyFirebaseLog()">Copy</button>
       </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Stored in Firebase — survives page refresh. Last 24hrs per group.</div>
+      <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap" id="debug-group-btns"></div>
+      <div id="firebase-log"><div style="color:var(--muted);font-size:12px">Select a group above to view its log.</div></div>
+    </div>
+
+    <div class="debug-section">
+      <div class="debug-title">
+        Live Session Log
+        <button class="copy-btn" onclick="copyLog()">Copy</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Only captures events since this admin page was opened.</div>
       <div id="event-log"></div>
     </div>
 
@@ -333,6 +344,56 @@ function detectChanges(all, now) {
   });
 }
 
+var firebaseLogUnsub = null;
+
+function loadFirebaseLog(groupKey) {
+  // Unsubscribe previous listener
+  if (firebaseLogUnsub) { firebaseLogUnsub(); firebaseLogUnsub = null; }
+
+  var logEl = document.getElementById('firebase-log');
+  logEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  var fb = window._fb;
+  var cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+  firebaseLogUnsub = fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/debug'), function(snap) {
+    var entries = snap.val() || {};
+    var sorted = Object.values(entries)
+      .filter(function(e) { return e.ts > cutoff; })
+      .sort(function(a,b) { return b.ts - a.ts });
+
+    if (!sorted.length) {
+      logEl.innerHTML = '<div style="color:var(--muted);font-size:12px">No debug entries yet for this group.</div>';
+      return;
+    }
+
+    logEl.innerHTML = sorted.slice(0, 100).map(function(e) {
+      var d = new Date(e.ts);
+      var t = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      var cls = e.msg.includes('GPS stopped') ? 'log-dead'
+              : e.msg.includes('joined') ? 'log-ok'
+              : 'log-info';
+      return '<div class="log-entry ' + cls + '"><span class="log-time">' + t + '</span><span class="log-msg">' + e.msg + '</span></div>';
+    }).join('');
+
+    // Auto-purge entries older than 24h
+    Object.entries(entries).forEach(function(kv) {
+      if (kv[1].ts < cutoff) fb.remove(fb.ref(fb.db, 'gl/' + groupKey + '/debug/' + kv[0]));
+    });
+  });
+}
+
+function copyFirebaseLog() {
+  var el = document.getElementById('firebase-log');
+  var text = Array.from(el.querySelectorAll('.log-entry')).map(function(e) {
+    return '[' + e.querySelector('.log-time').textContent + '] ' + e.querySelector('.log-msg').textContent;
+  }).join('\n');
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
 function loadAdmin() {
   var t = setInterval(function() {
     if (!window._fb) return;
@@ -433,6 +494,21 @@ function loadAdmin() {
       });
 
       document.getElementById('stat-groups').textContent = totalGroups;
+
+      // Update debug group buttons
+      var btnContainer = document.getElementById('debug-group-btns');
+      if (btnContainer) {
+        btnContainer.innerHTML = '';
+        entries.forEach(function(entry) {
+          var btn = document.createElement('button');
+          btn.className = 'btn btn-warn';
+          btn.style.fontSize = '11px';
+          btn.style.padding = '5px 10px';
+          btn.textContent = entry[0].replace(/_/g,' ');
+          btn.onclick = function() { loadFirebaseLog(entry[0]); };
+          btnContainer.appendChild(btn);
+        });
+      }
       document.getElementById('stat-users').textContent  = totalLive;
       document.getElementById('stat-pins').textContent   = totalPins;
       document.getElementById('stat-chats').textContent  = totalChats;
