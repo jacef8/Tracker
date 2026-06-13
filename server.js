@@ -3,6 +3,13 @@ const path    = require('path');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
 
+// Version endpoint — clients poll this to detect updates
+const CURRENT_VERSION = '1.5'; // bump this with APP_VERSION in index.html on every deploy
+app.get('/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(CURRENT_VERSION);
+});
+
 // Admin route — must be BEFORE the static middleware and catch-all
 app.get('/777', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
