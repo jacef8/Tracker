@@ -1,32 +1,46 @@
-<!-- admin.html — Replace with this full content -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>GroundLink Admin</title>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  const app = initializeApp({/* same config */});
-  window._fb = { db: getDatabase(app), ref, onValue };
-</script>
-<style>
-  body { background: #0d1117; color: #fff; font-family: sans-serif; padding: 20px; }
-  pre { background: #161b22; padding: 15px; overflow-x: auto; font-size: 11px; }
-</style>
+<!-- ... (Keep your original code from admin_3.html here) ... -->
 </head>
 <body>
-  <h1>Global Data Inspector</h1>
-  <button onclick="loadGlobalData()">Refresh All Data</button>
-  <pre id="output">Data will appear here...</pre>
 
-  <script>
-    function loadGlobalData() {
-      const { db, ref, onValue } = window._fb;
-      onValue(ref(db, 'gl'), (snap) => {
-        document.getElementById('output').textContent = JSON.stringify(snap.val(), null, 2);
-      }, { onlyOnce: true });
-    }
-  </script>
+<!-- ... (Keep all existing admin design elements) ... -->
+
+<!-- ADD THIS TAB AND PANEL TO THE HTML BODY -->
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('groups')">Groups</button>
+  <button class="tab-btn" onclick="switchTab('debug')">Debug</button>
+  <button class="tab-btn" onclick="switchTab('data')">Data Inspector</button>
+</div>
+
+<div class="tab-panel" id="tab-data">
+  <div class="debug-section">
+    <div class="debug-title">Global Database State</div>
+    <button onclick="loadGlobalData()">Refresh Data</button>
+    <pre id="global-data-output" style="font-size:10px; color:var(--text); background:var(--bg); padding:10px; overflow-x:auto; max-height: 500px;"></pre>
+  </div>
+</div>
+
+<script>
+// ADD THIS TO YOUR ADMIN SCRIPT
+function loadGlobalData() {
+  window._fb.onValue(window._fb.ref(window._fb.db, 'gl'), (snap) => {
+    document.getElementById('global-data-output').textContent = JSON.stringify(snap.val(), null, 2);
+  }, { onlyOnce: true });
+}
+
+// Update switchTab function to include 'data'
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase().includes(name));
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'tab-' + name);
+  });
+  if (name === 'data') loadGlobalData();
+}
+// ... (Rest of your original admin script remains as it was in admin_3.html) ...
+</script>
 </body>
 </html>
