@@ -705,11 +705,11 @@
   <!-- Row 1: App name + group + exit -->
   <div class="topbar-row1">
     <div class="app-name">GroundLink</div>
-    <div class="group-chip" onclick="window._openSetPasscode()" style="cursor:pointer" title="Tap to set group passcode">
+    <div class="group-chip">
       <span class="online-dot"></span>
       <span id="group-name-label"></span>
-      <span id="group-lock-icon" style="font-size:12px;opacity:0.6;margin-left:2px">&#128275;</span>
     </div>
+    <span id="group-lock-icon" style="display:none"></span>
     <div id="switch-group-btn" title="Leave group" style="
       background:var(--surface);border:1px solid var(--border);
       border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;
@@ -893,6 +893,17 @@
   <div class="panel-header">
     <span class="panel-title">&#128101; On the Map</span>
     <button class="panel-close" id="close-user-drawer">&#10005;</button>
+  </div>
+  <!-- Group settings section -->
+  <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Group Settings</div>
+    <button onclick="window._openSetPasscode()" id="group-lock-btn" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;cursor:pointer;width:100%;text-align:left;-webkit-tap-highlight-color:transparent">
+      <span id="group-lock-icon" style="font-size:16px">&#128275;</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">Group Passcode</div>
+        <div style="font-size:11px;color:var(--muted)" id="group-lock-status">Tap to set or change</div>
+      </div>
+    </button>
   </div>
   <div id="user-list"></div>
 </div>
@@ -1246,7 +1257,10 @@ function enterMap(name, group, uid) {
     waitForFirebase(function(fb) {
       fb.onValue(fb.ref(fb.db, 'gl/' + group + '/config/pin'), function(snap) {
         var lockIcon = document.getElementById('group-lock-icon');
-        if (lockIcon) lockIcon.textContent = snap.val() ? '\uD83D\uDD12' : '\uD83D\uDD13';
+        var lockStatus = document.getElementById('group-lock-status');
+        var hasPin = !!snap.val();
+        if (lockIcon) lockIcon.textContent = hasPin ? '\uD83D\uDD12' : '\uD83D\uDD13';
+        if (lockStatus) lockStatus.textContent = hasPin ? 'Protected — tap to change' : 'Open — tap to add passcode';
       });
     });
     document.getElementById('chat-panel-title').textContent = 'Group Chat';
