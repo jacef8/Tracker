@@ -1455,18 +1455,10 @@ function showJoinScreen() {
 
 (function tryResume() {
   const s = getSavedSession();
-  // Need all three AND group must not have been cleared by switch
-  if (s.uid && s.name && s.group && s.group.trim()) {
-    // Check if saved group is admin password
-    if (s.group === '777') { window.location.href = '/777'; return; }
-    enterMap(s.name, s.group, s.uid);
-    return;
-  }
-  // Pre-fill whatever we do have
+  // TEST ENV: always show join screen — never auto-resume into the map
   showJoinScreen();
   try {
     if (s.name)  document.getElementById('inp-name').value  = s.name;
-    if (s.group) document.getElementById('inp-group').value = s.group;
   } catch(_) {}
 })();
 
@@ -2874,25 +2866,34 @@ function addParcelLayer() {
       .setHTML('<div style="color:#8b949e;font-size:12px">Looking up parcel...</div>')
       .addTo(map);
 
-    // Query Regrid parcel API
-    fetch('https://app.regrid.com/api/v2/parcels/point?lat=' + lat + '&lon=' + lng + '&radius=10&limit=1&return_geometry=false&token=' + REGRID_TOKEN)
+    // Query Regrid parcel API v1 (simpler response format)
+    fetch('https://app.regrid.com/api/v1/parcel.json?lat=' + lat + '&lon=' + lng + '&radius=50&limit=1&token=' + REGRID_TOKEN)
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        // Debug: log full response
-        console.log('Regrid response:', JSON.stringify(data).substring(0,500));
-        if (!data || !data.parcels || !data.parcels.features || !data.parcels.features.length) {
-          var msg = data && data.error ? data.error : 'No parcel found at this location';
+        console.log('Regrid response:', JSON.stringify(data).substring(0,800));
+        // v1 uses data.results array
+        var feature = null;
+        if (data && data.results && data.results.length) {
+          feature = data.results[0];
+        } else if (data && data.parcels && data.parcels.features && data.parcels.features.length) {
+          feature = data.parcels.features[0];
+        }
+        if (!feature) {
+          var msg = data && data.error ? data.error : 'No parcel found here';
           popup.setHTML('<div style="color:#8b949e;font-size:12px">' + msg + '</div>');
           return;
         }
-        var props = data.parcels.features[0].properties;
-        var owner    = props.owner || props.ownname || props.ownname1 || '';
-        var address  = props.address || props.siteaddr || (props.saddno ? props.saddno + ' ' + (props.saddstr||'') : '') || '';
-        var acres    = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac'
-                     : props.gisacre   ? parseFloat(props.gisacre).toFixed(2) + ' ac' : '';
-        var parcelId = props.parcelnumb || props.parcel_id || props.apn || props.pin || '';
-        var zoning   = props.zoning || props.zoning_description || '';
-        var landuse  = props.usedesc || props.landuse || props.lbcs_activity_desc || '';
+        // v1 props are directly in properties; v2 are in properties.fields
+        var p = feature.properties || {};
+        var fields = p.fields || p;
+        var owner    = fields.owner || fields.ownname || fields.ownname1 || p.owner || '';
+        var address  = fields.address || fields.siteaddr || p.address || '';
+        var acres    = fields.ll_gisacre ? parseFloat(fields.ll_gisacre).toFixed(2) + ' ac'
+                     : fields.gisacre   ? parseFloat(fields.gisacre).toFixed(2) + ' ac'
+                     : p.ll_gisacre     ? parseFloat(p.ll_gisacre).toFixed(2) + ' ac' : '';
+        var parcelId = fields.parcelnumb || fields.parcel_id || fields.apn || p.parcelnumb || '';
+        var zoning   = fields.zoning || fields.zoning_description || p.zoning || '';
+        var landuse  = fields.usedesc || fields.landuse || p.usedesc || '';
 
         popup.setHTML(
           '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
@@ -2918,12 +2919,15 @@ function toggleParcels(on) {
       map.flyTo({ zoom: 13, duration: 1200 });
       toast('Zooming in to show property lines...', 2000);
     } else {
-      toast('Tap a parcel to see owner info', 2000);
+      toast('Tap for owner info · zoom in for labels', 2000);
     }
     addParcelLayer();
+    setTimeout(loadParcelLabels, 500);
   } else {
     if (map.getLayer('parcels-layer')) map.removeLayer('parcels-layer');
     if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
+    if (map.getLayer('parcel-labels-layer')) map.removeLayer('parcel-labels-layer');
+    if (map.getSource('parcel-labels')) map.removeSource('parcel-labels');
   }
 }
 
@@ -2952,6 +2956,77 @@ function toggleUSDA(on) {
 }
 
 document.getElementById('layer-btn').addEventListener('click', openLayerSheet);
+
+// Load owner labels when parcels are on and zoom is high enough
+var _labelDebounce = null;
+function loadParcelLabels() {
+  if (!parcelsOn || map.getZoom() < 14) {
+    if (map.getSource('parcel-labels')) {
+      map.getSource('parcel-labels').setData({ type: 'FeatureCollection', features: [] });
+    }
+    return;
+  }
+  clearTimeout(_labelDebounce);
+  _labelDebounce = setTimeout(function() {
+    var center = map.getCenter();
+    var bounds = map.getBounds();
+    var lat = center.lat.toFixed(6);
+    var lon = center.lng.toFixed(6);
+    // Use a radius based on zoom — smaller at higher zoom
+    var zoom = Math.round(map.getZoom());
+    var radius = zoom >= 16 ? 200 : zoom >= 15 ? 400 : 800;
+
+    fetch('https://app.regrid.com/api/v1/parcel.json?lat=' + lat + '&lon=' + lon + '&radius=' + radius + '&limit=50&token=' + REGRID_TOKEN)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data || !data.results) return;
+        var features = data.results.map(function(f) {
+          var p = f.properties || {};
+          var fields = p.fields || p;
+          var owner = fields.owner || fields.ownname || '';
+          var acres = fields.ll_gisacre ? parseFloat(fields.ll_gisacre).toFixed(1) + ' ac' : '';
+          var label = owner ? (owner.length > 20 ? owner.substring(0,18)+'…' : owner) : '';
+          if (acres) label += (label ? '
+' : '') + acres;
+          // Use centroid if available
+          var coords = f.geometry && f.geometry.coordinates ? f.geometry.coordinates : [center.lng, center.lat];
+          // For polygon, use first coordinate as approximation
+          if (f.geometry && f.geometry.type === 'MultiPolygon') coords = f.geometry.coordinates[0][0][0];
+          else if (f.geometry && f.geometry.type === 'Polygon') coords = f.geometry.coordinates[0][0];
+          return { type: 'Feature', geometry: { type: 'Point', coordinates: coords }, properties: { label: label } };
+        }).filter(function(f) { return f.properties.label; });
+
+        if (!map.getSource('parcel-labels')) {
+          map.addSource('parcel-labels', { type: 'geojson', data: { type: 'FeatureCollection', features: features } });
+          map.addLayer({
+            id: 'parcel-labels-layer',
+            type: 'symbol',
+            source: 'parcel-labels',
+            layout: {
+              'text-field': ['get', 'label'],
+              'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+              'text-size': 11,
+              'text-anchor': 'center',
+              'text-allow-overlap': false,
+              'text-optional': true,
+            },
+            paint: {
+              'text-color': '#ffffff',
+              'text-halo-color': 'rgba(0,0,0,0.9)',
+              'text-halo-width': 2,
+            }
+          });
+        } else {
+          map.getSource('parcel-labels').setData({ type: 'FeatureCollection', features: features });
+        }
+      })
+      .catch(function(e) { console.warn('Label load failed:', e); });
+  }, 600);
+}
+
+// Hook into map move/zoom events for labels
+map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
+map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
 
 // == SAVED PINS ===================================================
 function getSavedPins() {
