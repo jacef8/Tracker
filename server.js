@@ -29,6 +29,7 @@ app.get('/api/parcel', function(req, res) {
   params.append('returnGeometry', 'false');
   params.append('f', 'json');
   var postBody = params.toString();
+  console.log('POST body:', postBody);
 
   var https = require('https');
   var options = {
