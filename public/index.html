@@ -2797,44 +2797,7 @@ map.on('dragstart', function() {
   }
 });
 
-document.getElementById('locate-me').addEventListener('click', function() {
-  if (followUid) { stopFollowing(); toast('Follow stopped', 1500); return; }
-
-  // Try to get position from multiple sources
-  var pos = null;
-  if (window._lastGPS) {
-    pos = { lng: window._lastGPS.lng, lat: window._lastGPS.lat };
-  } else if (userMarkers[userId]) {
-    var ll = userMarkers[userId].getLngLat();
-    pos = { lng: ll.lng, lat: ll.lat };
-  }
-
-  if (pos) {
-    // Immediately fly there
-    map.flyTo({ center: [pos.lng, pos.lat], zoom: 17, duration: 1000 });
-    // Start follow interval
-    followUid = userId;
-    clearInterval(followInterval);
-    var btn = document.getElementById('locate-me');
-    btn.style.background  = 'var(--accent)';
-    btn.style.color       = '#000';
-    btn.style.borderColor = 'var(--accent)';
-    btn.style.boxShadow   = '0 0 15px rgba(240,165,0,0.5)';
-    followInterval = setInterval(function() {
-      var cur = null;
-      if (window._lastGPS) {
-        cur = { lng: window._lastGPS.lng, lat: window._lastGPS.lat };
-      } else if (userMarkers[userId]) {
-        var ml = userMarkers[userId].getLngLat();
-        cur = { lng: ml.lng, lat: ml.lat };
-      }
-      if (cur) map.easeTo({ center: [cur.lng, cur.lat], zoom: Math.max(map.getZoom(), 15), duration: 800 });
-    }, 3000);
-    toast('Following you', 1500);
-  } else {
-    toast('Waiting for GPS fix...');
-  }
-});
+// locate-me handled by onclick="window._locateMeTapped()" on the element
 
 
 // == PASSCODE SYSTEM ==============================================
@@ -2879,11 +2842,8 @@ async function checkGroupPasscode(name, group, uid) {
 
 // Lock icon on join screen — set passcode for a group
 window._openSetPasscode = function() {
-  // Use current group name from active session
-  var group = (typeof groupName !== 'undefined' && groupName) 
-    ? groupName 
-    : (document.getElementById('inp-group') ? document.getElementById('inp-group').value.trim() : '');
-  if (!group) { toast('Enter a group name first'); return; }
+  var group = (typeof groupName !== 'undefined' && groupName) ? groupName : '';
+  if (!group) { toast('Join a group first'); return; }
   document.getElementById('set-passcode-group').textContent = group;
   document.getElementById('set-passcode-input').value = '';
   document.getElementById('set-passcode-modal').style.display = 'flex';
@@ -2893,18 +2853,18 @@ window._openSetPasscode = function() {
     if (pin && (pin.length !== 4 || !/^\d{4}$/.test(pin))) {
       toast('Enter exactly 4 digits'); return;
     }
-    waitForFirebase(function(fb) {
-      if (!pin) {
-        fb.remove(fb.ref(fb.db, 'gl/' + group + '/config/pin'));
-        toast('Passcode removed from ' + group);
-      } else {
-        hashPin(pin).then(function(hash) {
-          fb.set(fb.ref(fb.db, 'gl/' + group + '/config'), { pin: hash });
-          toast('Passcode set for ' + group);
-        });
-      }
-      document.getElementById('set-passcode-modal').style.display = 'none';
-    });
+    // Use the global fbSet/fbRef/fbRemove assigned when we entered the map
+    if (!fbSet || !fbRef || !db) { toast('Not connected'); return; }
+    if (!pin) {
+      fbRemove(fbRef(db, 'gl/' + group + '/config/pin'));
+      toast('Passcode removed');
+    } else {
+      hashPin(pin).then(function(hash) {
+        fbSet(fbRef(db, 'gl/' + group + '/config'), { pin: hash });
+        toast('Passcode set for ' + group);
+      });
+    }
+    document.getElementById('set-passcode-modal').style.display = 'none';
   };
 };
 
