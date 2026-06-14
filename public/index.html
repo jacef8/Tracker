@@ -1204,7 +1204,7 @@ function loadRoomList() {
 }
 loadRoomList();
 
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.7';
 
 // ══ DEBUG LOGGING ════════════════════════════════════════════════
 function writeDebugLog(grp, msg) {
@@ -1399,7 +1399,13 @@ function showJoinScreen() {
   if (s.uid && s.name && s.group && s.group.trim()) {
     // Check if saved group is admin password
     if (s.group === '777') { window.location.href = '/777'; return; }
-    if (s.group === 'test') { window.location.href = '/test?pw=gltest'; return; }
+    // 'test' group clears saved session and shows join screen instead of auto-resuming
+    if (s.group === 'test') {
+      try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); } catch(_) {}
+      showJoinScreen();
+      try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
+      return;
+    }
     enterMap(s.name, s.group, s.uid);
     return;
   }
