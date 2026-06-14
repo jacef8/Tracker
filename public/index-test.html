@@ -1348,8 +1348,13 @@ function enterMap(name, group, uid) {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
     });
 
-    document.getElementById('join-screen').style.display = 'none';
-    document.getElementById('topbar').style.display = 'flex';
+    // Smooth transition — no black flash
+    document.getElementById('join-screen').style.opacity = '0';
+    setTimeout(function() {
+      document.getElementById('join-screen').style.display = 'none';
+      document.getElementById('join-screen').style.opacity = '1';
+      document.getElementById('topbar').style.display = 'flex';
+    }, 150);
     document.getElementById('locate-me').style.display = 'flex';
     document.getElementById('group-name-label').textContent = group;
     // Check if group has passcode set and update lock icon
@@ -1578,6 +1583,14 @@ function initMap() {
   // Parcel label refresh on pan/zoom
   map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
   map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
+
+  // Layer sheet and north-up — registered here so DOM elements exist
+  var layerBtn = document.getElementById('layer-btn');
+  var northBtn = document.getElementById('north-up-btn');
+  if (layerBtn) layerBtn.addEventListener('click', openLayerSheet);
+  if (northBtn) northBtn.addEventListener('click', function() {
+    map.easeTo({ bearing: 0, pitch: 0, duration: 400 });
+  });
 
   // Parcel click — only acts when parcels are on, registered once here
   map.on('click', function(e) {
@@ -2981,12 +2994,7 @@ function toggleParcels(on) {
 
 
 
-document.getElementById('layer-btn').addEventListener('click', openLayerSheet);
-
-  // North up — reset bearing and pitch to 0
-  document.getElementById('north-up-btn').addEventListener('click', function() {
-    map.easeTo({ bearing: 0, pitch: 0, duration: 400 });
-  });
+// layer-btn and north-up-btn listeners moved inside initMap()
 
 // Load owner labels when parcels are on and zoom is high enough
 var _labelDebounce = null;
