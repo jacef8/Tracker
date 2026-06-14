@@ -18,19 +18,17 @@ app.get('/api/parcel', function(req, res) {
   var lng = parseFloat(req.query.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
 
-  // POST request avoids all URL encoding ambiguity with ArcGIS
-  var postBody = [
-    'where=1%3D1',
-    'geometry=' + encodeURIComponent(JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}})),
-    'geometryType=esriGeometryPoint',
-    'inSR=4326',
-    'outSR=4326',
-    'spatialRel=esriSpatialRelIntersects',
-    'outFields=' + encodeURIComponent('OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,DOR_UC,LND_VAL'),
-    'returnGeometry=false',
-    'resultRecordCount=1',
-    'f=json'
-  ].join('&');
+  // URLSearchParams for bulletproof encoding, simple x,y geometry, no where or resultRecordCount
+  var params = new URLSearchParams();
+  params.append('geometry', lng + ',' + lat);
+  params.append('geometryType', 'esriGeometryPoint');
+  params.append('inSR', '4326');
+  params.append('outSR', '4326');
+  params.append('spatialRel', 'esriSpatialRelIntersects');
+  params.append('outFields', 'OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,DOR_UC,LND_VAL');
+  params.append('returnGeometry', 'false');
+  params.append('f', 'json');
+  var postBody = params.toString();
 
   var https = require('https');
   var options = {
@@ -48,17 +46,18 @@ app.get('/api/parcel', function(req, res) {
     apiRes.on('end', function() {
       try {
         var data = JSON.parse(body);
-        console.log('Parcel', lat, lng, '-> features:', (data.features||[]).length, data.error ? JSON.stringify(data.error) : 'OK');
+        if (data.error) {
+          console.error('ArcGIS Error:', JSON.stringify(data.error));
+        } else {
+          console.log('Parcel lookup:', lat, lng, '-> Features:', (data.features||[]).length);
+        }
         res.json(data);
       } catch(e) {
         res.status(500).json({ error: 'Parse error', raw: body.substring(0, 300) });
       }
     });
   });
-  apiReq.on('error', function(e) {
-    console.error('Parcel proxy error:', e.message);
-    res.status(500).json({ error: e.message });
-  });
+  apiReq.on('error', function(e) { res.status(500).json({ error: e.message }); });
   apiReq.write(postBody);
   apiReq.end();
 });
