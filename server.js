@@ -4,7 +4,7 @@ const app     = express();
 const PORT    = process.env.PORT || 3000;
 
 // Version endpoint — clients poll this to detect updates
-const CURRENT_VERSION = '1.5'; // bump this with APP_VERSION in index.html on every deploy
+const CURRENT_VERSION = '1.6'; // bump this with APP_VERSION in index.html on every deploy
 app.get('/version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.send(CURRENT_VERSION);
