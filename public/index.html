@@ -129,8 +129,42 @@
 
   /* ── Map ── */
   #map { position: fixed; inset: 0; }
-  /* Mapbox nav control pushed down past topbar */
-  .mapboxgl-ctrl-top-left { top: calc(var(--topbar-h) + var(--safe-top) + 4px) !important; left: 10px !important; }
+
+  /* ── Floating map control buttons — bottom of screen ── */
+  #map-controls {
+    position: fixed;
+    bottom: calc(var(--safe-bot) + 70px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 150;
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    align-items: center;
+  }
+  #map-controls button {
+    width: 44px;
+    height: 44px;
+    background: rgba(13,17,23,0.82);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  #map-controls button:hover  { background: rgba(30,40,54,0.92); }
+  #map-controls button:active { background: rgba(240,165,0,0.25); border-color: var(--accent); }
+  /* Hide zoom buttons on mobile */
+  @media (max-width: 768px) {
+    #zoom-in-btn, #zoom-out-btn { display: none !important; }
+  }
 
   /* ── Top bar ── */
   #topbar {
@@ -152,6 +186,10 @@
     scrollbar-width: none;
   }
   .topbar-row2::-webkit-scrollbar { display: none; }
+  /* On desktop show all buttons without scrolling */
+  @media (min-width: 600px) {
+    .topbar-row2 { overflow-x: visible; flex-wrap: wrap; justify-content: flex-start; }
+  }
   /* Lock to portrait — hide landscape oddities */
   @media (orientation: landscape) {
     #topbar { flex-direction: row; align-items: center; padding: 6px 12px; }
@@ -392,9 +430,10 @@
     padding: 20px 18px;
     padding-bottom: calc(24px + var(--safe-bot));
     display: flex; flex-direction: column; gap: 14px;
+    margin-top: 28px;
   }
   .pin-sheet-title { font-size: 15px; font-weight: 700; }
-  .pin-coords { font-size: 12px; color: var(--muted); font-family: monospace; margin-top: -8px; }
+  .pin-coords { font-size: 11px; color: var(--muted); font-family: monospace; margin-top: 2px; display: block; }
   .pin-cats { display: flex; gap: 7px; flex-wrap: wrap; }
   .cat-btn {
     padding: 6px 10px; border-radius: 20px;
@@ -430,19 +469,16 @@
   }
 
   /* ── Locate me ── */
+  /* locate-me now lives inside #map-controls — inherits button styles */
   #locate-me {
-    position: fixed;
-    bottom: calc(80px + var(--safe-bot));
-    right: 14px; z-index: 500;
-    width: 54px; height: 54px;
-    background: var(--surface); border: 2px solid var(--border);
-    border-radius: 50%; display: none; align-items: center; justify-content: center;
-    font-size: 22px; cursor: pointer;
-    box-shadow: 0 2px 14px rgba(0,0,0,.5);
-    -webkit-tap-highlight-color: transparent;
+    display: none; /* shown/hidden by setLocateMeVisible */
     touch-action: manipulation;
+    font-size: 16px;
   }
-  #locate-me:active { border-color: var(--accent); }
+  #locate-me.active-follow {
+    background: var(--accent) !important;
+    color: #000 !important;
+  }
 
   /* ── Unread pin bubble ── */
   #unread-pin-bubble {
@@ -622,6 +658,11 @@
 <!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
 <div id="join-screen" style="display:none">
   <div class="join-card">
+    <!-- Test environment exit banner -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(224,90,43,0.12);border:1px solid rgba(224,90,43,0.4);border-radius:10px;padding:8px 12px">
+      <span style="font-size:12px;font-weight:700;color:#e05a2b">⚗ Test Environment</span>
+    </div>
+
     <div style="display:flex;align-items:center;gap:14px">
       <img src="/icons/icon-192.png" alt="GroundLink" style="width:56px;height:56px;border-radius:14px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.4)" />
       <div>
@@ -712,6 +753,7 @@
       <span id="group-name-label"></span>
     </div>
     <span id="group-lock-icon" style="display:none"></span>
+    <a href="/" style="background:rgba(224,90,43,0.15);border:1px solid rgba(224,90,43,0.5);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;color:#e05a2b;white-space:nowrap;flex-shrink:0;text-decoration:none;-webkit-tap-highlight-color:transparent">⚗ PROD</a>
     <div id="switch-group-btn" title="Leave group" style="
       background:rgba(248,81,73,0.15);border:1px solid rgba(248,81,73,0.5);
       border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;
@@ -743,6 +785,32 @@
 <!-- ══ MAP ════════════════════════════════════════════════════════════ -->
 <div id="map"></div>
 
+<!-- ── Unified map controls — all buttons same size/style ─────── -->
+<div id="map-controls">
+  <!-- Zoom In — desktop only -->
+  <button id="zoom-in-btn" title="Zoom in" type="button" style="font-size:22px;font-weight:300;color:#e6edf3;line-height:1">+</button>
+  <!-- Zoom Out — desktop only -->
+  <button id="zoom-out-btn" title="Zoom out" type="button" style="font-size:22px;font-weight:300;color:#e6edf3;line-height:1">&#8722;</button>
+  <!-- Layers -->
+  <button id="layer-btn" title="Map layers" type="button">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+      <polyline points="2 12 12 17 22 12"/>
+      <polyline points="2 17 12 22 22 17"/>
+    </svg>
+  </button>
+  <!-- North arrow — bigger -->
+  <button id="north-up-btn" title="Reset north" type="button">
+    <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
+      <polygon points="12,2 15,11 12,9 9,11" fill="#e63946"/>
+      <polygon points="12,22 15,13 12,15 9,13" fill="#8b949e"/>
+      <circle cx="12" cy="12" r="2" fill="#e6edf3"/>
+    </svg>
+  </button>
+  <!-- Locate / Follow me -->
+  <button id="locate-me" title="Zoom to me / Follow" type="button" onclick="window._locateMeTapped()" style="font-size:20px">🎯</button>
+</div>
+
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
 <div id="pin-mode-bar">
   📍 Tap the map to place a pin
@@ -768,7 +836,7 @@
 </div>
 
 <!-- ══ LOCATE ME ════════════════════════════════════════════════════ -->
-<div id="locate-me" onclick="window._locateMeTapped()">🎯</div>
+
 
 <!-- ══ UNREAD PIN BUBBLE ═════════════════════════════════════════════ -->
 <div id="unread-pin-bubble" title="New pins">
@@ -847,6 +915,59 @@
   <div id="saved-pins-list"></div>
 </div>
 
+<!-- ══ LAYER PICKER SHEET ════════════════════════════════════════════ -->
+<div id="layer-sheet" style="display:none;position:fixed;inset:0;z-index:400">
+  <div id="layer-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.5)" onclick="closeLayerSheet()"></div>
+  <div style="position:absolute;bottom:0;left:0;right:0;border-radius:20px 20px 0 0;border-top:1px solid var(--border);padding:0 0 calc(var(--safe-bot) + 8px);background:rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;background-blend-mode:overlay;backdrop-filter:blur(8px)">
+    <div class="panel-header">
+      <span class="panel-title">&#127759; Map Layers</span>
+      <button class="panel-close" onclick="closeLayerSheet()">&#10005;</button>
+    </div>
+    <div style="padding:8px 16px 4px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Base Map</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+        <button class="layer-base-btn active" data-style="mapbox://styles/mapbox/satellite-streets-v12" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--accent);background:rgba(240,165,0,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <span style="font-size:20px">&#128752;</span>Satellite
+        </button>
+        <button class="layer-base-btn" data-style="usgs-topo" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <span style="font-size:20px">&#9968;</span>Topo
+        </button>
+        <button class="layer-base-btn" data-style="mapbox://styles/mapbox/streets-v12" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <span style="font-size:20px">&#128506;</span>Streets
+        </button>
+      </div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Overlays</div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
+        <!-- Liberty County parcels -->
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:700">Liberty County Parcels</div>
+            <div style="font-size:11px;color:var(--muted)">Tap any parcel for owner, acreage & value</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-parcels" onchange="toggleParcels(this.checked)" style="opacity:0;width:0;height:0">
+            <span id="parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
+        <!-- Florida statewide parcels — activate when shapefile is uploaded -->
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;opacity:0.5">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:700">Florida Statewide Parcels</div>
+            <div style="font-size:11px;color:var(--muted)">Statewide data — coming soon</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0" disabled>
+            <span id="fl-parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══ PIN HUB SHEET ════════════════════════════════════════════════════ -->
 <div id="pin-hub-sheet" style="display:none;position:fixed;inset:0;z-index:400">
   <!-- Backdrop -->
@@ -916,7 +1037,7 @@
   <div class="pin-sheet">
     <div>
       <div class="pin-sheet-title">Drop a Pin</div>
-      <div class="pin-coords" id="pin-coords-label"></div>
+      <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
     </div>
     <div class="pin-cats" id="pin-cats">
       <button class="cat-btn active" data-cat="Waypoint" style="border-color:#f0a50020"><span class="pin-preview" style="background:#f0a500">WP</span>Waypoint</button>
@@ -1095,7 +1216,7 @@ function loadRoomList() {
       Object.entries(all).forEach(function(entry) {
         var key   = entry[0];
         var group = entry[1];
-        // Hide test_ groups from production room list
+        // Production: exclude test_ groups
         if (key.startsWith('test_')) return;
         var users = group.users ? Object.values(group.users) : [];
         var pins  = group.pins  ? Object.keys(group.pins).length : 0;
@@ -1125,7 +1246,8 @@ function loadRoomList() {
         var liveNames  = liveUsers.map(function(u) { return u.name; });
 
         // Fix title case: "liberty_hunt" -> "Liberty Hunt"
-        var displayName = key.replace(/_/g, ' ')
+        // Strip test_ prefix for display
+        var displayName = key.replace(/^test_/, '').replace(/_/g, ' ')
           .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 
         // Human-readable last active time
@@ -1204,7 +1326,7 @@ function loadRoomList() {
 }
 loadRoomList();
 
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.7-test';
 
 // ══ DEBUG LOGGING ════════════════════════════════════════════════
 function writeDebugLog(grp, msg) {
@@ -1266,8 +1388,13 @@ function enterMap(name, group, uid) {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
     });
 
-    document.getElementById('join-screen').style.display = 'none';
-    document.getElementById('topbar').style.display = 'flex';
+    // Smooth transition — no black flash
+    document.getElementById('join-screen').style.opacity = '0';
+    setTimeout(function() {
+      document.getElementById('join-screen').style.display = 'none';
+      document.getElementById('join-screen').style.opacity = '1';
+      document.getElementById('topbar').style.display = 'flex';
+    }, 150);
     document.getElementById('locate-me').style.display = 'flex';
     document.getElementById('group-name-label').textContent = group;
     // Check if group has passcode set and update lock icon
@@ -1384,9 +1511,6 @@ function showJoinScreen() {
     this.style.borderColor = '';
     var grpErr = document.getElementById('group-required-msg');
     if (grpErr) grpErr.style.display = 'none';
-    // Instant redirect for special keywords — no need to tap Open Map
-    if (this.value === '88888') { window.location.href = '/test?pw=gltest'; }
-    if (this.value === '777')   { window.location.href = '/777'; }
   });
   document.getElementById('inp-name').addEventListener('input', function() {
     this.style.borderColor = '';
@@ -1397,37 +1521,22 @@ function showJoinScreen() {
 }
 
 (function tryResume() {
-  // If ?fresh param in URL, clear session and show join screen
-  if (window.location.search.indexOf('fresh') !== -1) {
-    try {
-      localStorage.removeItem('gl_group');
-      sessionStorage.removeItem('gl_group');
-    } catch(_) {}
-    history.replaceState({}, '', '/');
+  const s = getSavedSession();
+  // Check for ?fresh=1 param — always show join screen
+  if (new URLSearchParams(window.location.search).get('fresh')) {
     showJoinScreen();
+    try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
     return;
   }
-  const s = getSavedSession();
-  // Need all three AND group must not have been cleared by switch
-  if (s.uid && s.name && s.group && s.group.trim()) {
-    // Check if saved group is admin password
-    if (s.group === '777') { window.location.href = '/777'; return; }
-    // 'test' group clears saved session and shows join screen instead of auto-resuming
-    if (s.group === '88888') {
-      try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); } catch(_) {}
-      showJoinScreen();
-      try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
-      return;
-    }
+  // Check for keyword shortcuts before resuming
+  if (s.group === '777') { window.location.replace('/777'); return; }
+  // Auto-resume if saved session exists
+  if (s.uid && s.name && s.group) {
     enterMap(s.name, s.group, s.uid);
     return;
   }
-  // Pre-fill whatever we do have
   showJoinScreen();
-  try {
-    if (s.name)  document.getElementById('inp-name').value  = s.name;
-    if (s.group) document.getElementById('inp-group').value = s.group;
-  } catch(_) {}
+  try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
 })();
 
 function handleJoin() {
@@ -1445,8 +1554,6 @@ function handleJoin() {
   }
   // Admin shortcut
   if (group === '777') { window.location.href = '/777'; return; }
-  // Test environment shortcut
-  if (group === '88888') { window.location.href = '/test?pw=gltest'; return; }
   if (!name)  { toast('Enter your name'); return; }
   // Reuse existing uid if one exists
   const existing = getSavedSession();
@@ -1504,21 +1611,106 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
-    center: [-98.5, 39.5], zoom: 3,
+    center: [-84.9167, 30.2333], zoom: 11,
     attributionControl: false
   });
-  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
+  // NavigationControl replaced by custom buttons below
 
-  // Catch map style/token errors
+  // Catch map errors
   map.on('error', function(e) {
     console.error('Map error:', e);
-    if (e.error && e.error.status === 401) {
-      toast('Map token error — contact admin', 5000);
-    } else if (e.error && e.error.status === 403) {
-      toast('Map access denied — check token restrictions', 5000);
-    } else {
-      toast('Map error: ' + (e.error ? e.error.message : 'unknown'), 4000);
+    if (e.sourceId === 'regrid-parcels' || e.sourceId === 'usda-clu') return;
+    if (e.error && (e.error.status === 401 || e.error.status === 403)) {
+      toast('Map error ' + e.error.status + ' — check Mapbox token', 5000);
     }
+  });
+
+  // Confirm map loaded
+  map.on('load', function() {
+    console.log('Test map loaded OK');
+  });
+
+  // Parcel label refresh on pan/zoom
+  map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
+  map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
+
+  // All map control buttons registered here after map exists
+  var layerBtn   = document.getElementById('layer-btn');
+  var northBtn   = document.getElementById('north-up-btn');
+  var zoomInBtn  = document.getElementById('zoom-in-btn');
+  var zoomOutBtn = document.getElementById('zoom-out-btn');
+  if (layerBtn)   layerBtn.addEventListener('click', openLayerSheet);
+  if (northBtn)   northBtn.addEventListener('click', function() { map.easeTo({ bearing: 0, pitch: 0, duration: 400 }); });
+  if (zoomInBtn)  zoomInBtn.addEventListener('click', function() { map.zoomIn(); });
+  if (zoomOutBtn) zoomOutBtn.addEventListener('click', function() { map.zoomOut(); });
+
+  // Single active parcel popup — only one at a time
+  var _activeParcelPopup = null;
+
+  // FL Statewide parcel click handler
+  var _flParcelSuppressNext = false;
+  map.on('click', function(e) {
+    if (!flParcelsOn) return;
+    if (measureMode || pinMode) return;
+    if (map.getZoom() < 12) return;
+    if (_flParcelSuppressNext) { _flParcelSuppressNext = false; return; }
+    var features = map.queryRenderedFeatures(e.point, { layers: ['fl-parcels-fill'] });
+    if (!features.length) return;
+    var p = features[0].properties;
+    var owner   = p.o || 'Unknown owner';
+    var address = p.a ? p.a + (p.c ? ', ' + p.c : '') : (p.c || '');
+    var acres   = p.ac ? p.ac + ' ac' : '';
+    var val     = p.v ? '$' + parseInt(p.v).toLocaleString() : '';
+    map.setFilter('fl-parcels-hover', ['==', ['id'], features[0].id]);
+    if (_activeParcelPopup) { _activeParcelPopup.remove(); _activeParcelPopup = null; }
+    _activeParcelPopup = new mapboxgl.Popup({ closeButton: true, closeOnClick: false, maxWidth: '300px' })
+      .setLngLat(e.lngLat)
+      .setHTML(
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2980b9;margin-bottom:6px">&#127968; FL Property Info</div>' +
+        '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
+        (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
+        (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
+        (val     ? '<div style="font-size:11px;color:#8b949e">Assessed: ' + val + '</div>' : '')
+      ).addTo(map);
+    _activeParcelPopup.on('close', function() {
+      map.setFilter('fl-parcels-hover', ['==', ['id'], -1]);
+      _activeParcelPopup = null;
+      _flParcelSuppressNext = true;
+      setTimeout(function() { _flParcelSuppressNext = false; }, 400);
+    });
+  });
+
+  // Liberty County parcel click handler
+  var _parcelSuppressNext = false;
+  map.on('click', function(e) {
+    if (!parcelsOn) return;
+    if (measureMode || pinMode) return;
+    if (map.getZoom() < 12) return;
+    if (_parcelSuppressNext) { _parcelSuppressNext = false; return; }
+    var features = map.queryRenderedFeatures(e.point, { layers: ['parcels-fill'] });
+    if (!features.length) return;
+    var p = features[0].properties;
+    var owner   = p.o || 'Unknown owner';
+    var address = p.a ? p.a + (p.c ? ', ' + p.c : '') : (p.c || '');
+    var acres   = p.ac ? p.ac + ' ac' : '';
+    var val     = p.v ? '$' + parseInt(p.v).toLocaleString() : '';
+    map.setFilter('parcels-hover', ['==', ['id'], features[0].id]);
+    if (_activeParcelPopup) { _activeParcelPopup.remove(); _activeParcelPopup = null; }
+    _activeParcelPopup = new mapboxgl.Popup({ closeButton: true, closeOnClick: false, maxWidth: '300px' })
+      .setLngLat(e.lngLat)
+      .setHTML(
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
+        '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
+        (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
+        (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
+        (val     ? '<div style="font-size:11px;color:#8b949e">Assessed: ' + val + '</div>' : '')
+      ).addTo(map);
+    _activeParcelPopup.on('close', function() {
+      map.setFilter('parcels-hover', ['==', ['id'], -1]);
+      _activeParcelPopup = null;
+      _parcelSuppressNext = true;
+      setTimeout(function() { _parcelSuppressNext = false; }, 400);
+    });
   });
 
   // Wire dragstart here where map exists
@@ -2673,8 +2865,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
     sessionStorage.removeItem('gl_group');
     _cookieSet('gl_group', '');
   } catch(_) {}
-  // Small delay then reload so join screen shows with clean state
-  setTimeout(function() { location.reload(); }, 100);
+  location.reload();
 });
 
 
@@ -2720,6 +2911,312 @@ function initInstallTip() {
     tip.style.display = 'none';
   });
 }
+
+// == LAYER PICKER =================================================
+var parcelsOn = false;
+
+function openLayerSheet() {
+  document.getElementById('layer-sheet').style.display = 'block';
+  setLocateMeVisible(false);
+}
+function closeLayerSheet() {
+  document.getElementById('layer-sheet').style.display = 'none';
+  setLocateMeVisible(true);
+}
+
+function setBaseLayer(btn) {
+  document.querySelectorAll('.layer-base-btn').forEach(function(b) {
+    b.style.borderColor = 'var(--border)';
+    b.style.background = 'var(--bg)';
+    b.style.color = 'var(--text)';
+  });
+  btn.style.borderColor = 'var(--accent)';
+  btn.style.background = 'rgba(240,165,0,.1)';
+  btn.style.color = 'var(--accent)';
+  var style = btn.dataset.style;
+  // USGS Topo uses raster tiles, not a Mapbox style URL
+  if (style === 'usgs-topo') {
+    map.setStyle({
+      version: 8,
+      sources: {
+        'usgs-topo': {
+          type: 'raster',
+          tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          attribution: 'USGS National Map'
+        }
+      },
+      layers: [{ id: 'usgs-topo-layer', type: 'raster', source: 'usgs-topo' }]
+    });
+  } else {
+    map.setStyle(style);
+  }
+  map.once('style.load', function() {
+    for (var cat in PIN_DEFS) {
+      var def = PIN_DEFS[cat];
+      if (!map.hasImage('pin-mine-' + cat)) {
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.label), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.label), { pixelRatio: 2 });
+      }
+    }
+    if (!map.getSource('pins')) {
+      map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'pins-layer', type: 'symbol', source: 'pins',
+        layout: {
+          'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
+          'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          'text-field': ['get', 'shortLabel'],
+          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 0.2], 'text-optional': true,
+        },
+        paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
+      });
+    }
+    if (parcelsOn) addParcelLayer();
+    if (window._queuedPins || lastPins) updatePinSource(window._queuedPins || lastPins);
+    window._mapReady = true;
+  });
+}
+
+function updateToggleUI(trackId, thumbId, on) {
+  var track = document.getElementById(trackId);
+  var thumb = document.getElementById(thumbId);
+  if (!track || !thumb) return;
+  track.style.background = on ? 'var(--accent)' : 'var(--border)';
+  thumb.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
+}
+
+// Regrid API token for parcel lookups on tap
+// Florida DOR 2025 Cadastral FeatureServer — public, no token required
+
+function addParcelLayer() {
+  if (!map.isStyleLoaded()) { setTimeout(addParcelLayer, 200); return; }
+  if (map.getLayer('parcels-fill')) return;
+
+
+  // Load Liberty County parcel GeoJSON
+  if (!map.getSource('liberty-parcels')) {
+    map.addSource('liberty-parcels', {
+      type: 'geojson',
+      data: '/liberty_parcels.geojson',
+      generateId: true  // needed for feature-state hover
+    });
+  }
+
+  // Insert before pins-layer if it exists, otherwise on top
+  var beforeLayer = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+
+  map.addLayer({
+    id: 'parcels-fill',
+    type: 'fill',
+    source: 'liberty-parcels',
+    paint: {
+      'fill-color': 'rgba(240,165,0,0.06)',
+      'fill-outline-color': 'rgba(240,165,0,0.9)'
+    }
+  }, beforeLayer);
+
+  map.addLayer({
+    id: 'parcels-line',
+    type: 'line',
+    source: 'liberty-parcels',
+    paint: {
+      'line-color': '#f0a500',
+      'line-width': 1
+    }
+  }, beforeLayer);
+
+  map.addLayer({
+    id: 'parcels-labels',
+    type: 'symbol',
+    source: 'liberty-parcels',
+    minzoom: 14,
+    layout: {
+      'text-field': ['get', 'o'],
+      'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+      'text-size': 10,
+      'text-anchor': 'center',
+      'text-allow-overlap': false,
+      'text-optional': true,
+      'text-max-width': 8
+    },
+    paint: {
+      'text-color': '#ffffff',
+      'text-halo-color': 'rgba(0,0,0,0.85)',
+      'text-halo-width': 1.5
+    }
+  });
+
+  map.addLayer({
+    id: 'parcels-hover',
+    type: 'fill',
+    source: 'liberty-parcels',
+    paint: {
+      'fill-color': 'rgba(240,165,0,0.25)',
+      'fill-outline-color': '#f0a500'
+    },
+    filter: ['==', ['id'], -1]
+  }, beforeLayer);
+
+}
+
+// ── Florida Statewide Parcel Layer ───────────────────────────────
+// Placeholder — activate by uploading fl_parcels.geojson to public/
+var flParcelsOn = false;
+var FL_PARCELS_FILE = '/fl_parcels.geojson'; // drop file here when ready
+
+function toggleFLParcels(on) {
+  flParcelsOn = on;
+  updateToggleUI('fl-parcels-toggle-track', 'fl-parcels-toggle-thumb', on);
+  if (on) {
+    addFLParcelLayer();
+    toast('Loading FL statewide parcels...', 2000);
+  } else {
+    ['fl-parcels-fill','fl-parcels-line','fl-parcels-labels','fl-parcels-hover'].forEach(function(id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    if (map.getSource('fl-parcels')) map.removeSource('fl-parcels');
+  }
+}
+
+function addFLParcelLayer() {
+  if (!map.isStyleLoaded()) { setTimeout(addFLParcelLayer, 200); return; }
+  if (map.getLayer('fl-parcels-fill')) return;
+  if (!map.getSource('fl-parcels')) {
+    map.addSource('fl-parcels', {
+      type: 'geojson',
+      data: FL_PARCELS_FILE,
+      generateId: true
+    });
+  }
+  var beforeLayer = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+  map.addLayer({
+    id: 'fl-parcels-fill',
+    type: 'fill',
+    source: 'fl-parcels',
+    paint: { 'fill-color': 'rgba(41,128,185,0.06)', 'fill-outline-color': 'rgba(41,128,185,0.9)' }
+  }, beforeLayer);
+  map.addLayer({
+    id: 'fl-parcels-line',
+    type: 'line',
+    source: 'fl-parcels',
+    paint: { 'line-color': '#2980b9', 'line-width': 1 }
+  }, beforeLayer);
+  map.addLayer({
+    id: 'fl-parcels-labels',
+    type: 'symbol',
+    source: 'fl-parcels',
+    minzoom: 14,
+    layout: {
+      'text-field': ['get', 'o'],
+      'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+      'text-size': 10, 'text-anchor': 'center',
+      'text-allow-overlap': false, 'text-optional': true, 'text-max-width': 8
+    },
+    paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.5 }
+  });
+  map.addLayer({
+    id: 'fl-parcels-hover',
+    type: 'fill',
+    source: 'fl-parcels',
+    paint: { 'fill-color': 'rgba(41,128,185,0.25)', 'fill-outline-color': '#2980b9' },
+    filter: ['==', ['id'], -1]
+  }, beforeLayer);
+}
+
+function toggleParcels(on) {
+  parcelsOn = on;
+  updateToggleUI('parcels-toggle-track', 'parcels-toggle-thumb', on);
+  if (on) {
+    if (map.getZoom() < 10) {
+      map.flyTo({ zoom: 13, duration: 1200 });
+      toast('Zooming in to show property lines...', 2000);
+    } else {
+      toast('Tap for owner info · zoom in for labels', 2000);
+    }
+    addParcelLayer();
+    setTimeout(loadParcelLabels, 500);
+  } else {
+    ['parcels-fill','parcels-line','parcels-labels','parcels-hover'].forEach(function(id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    if (map.getSource('liberty-parcels')) map.removeSource('liberty-parcels');
+  }
+}
+
+
+
+
+
+// layer-btn and north-up-btn listeners moved inside initMap()
+
+// Load owner labels when parcels are on and zoom is high enough
+var _labelDebounce = null;
+function loadParcelLabels() {
+  if (!parcelsOn || map.getZoom() < 14) {
+    if (map.getSource('parcel-labels')) {
+      map.getSource('parcel-labels').setData({ type: 'FeatureCollection', features: [] });
+    }
+    return;
+  }
+  clearTimeout(_labelDebounce);
+  _labelDebounce = setTimeout(function() {
+    var center = map.getCenter();
+    var bounds = map.getBounds();
+    var lat = center.lat.toFixed(6);
+    var lon = center.lng.toFixed(6);
+    // Use a radius based on zoom — smaller at higher zoom
+    var zoom = Math.round(map.getZoom());
+    var radius = zoom >= 16 ? 200 : zoom >= 15 ? 400 : 800;
+
+    // Label loading disabled — requires paid API
+    if (false) fetch('').then(function(r) { return r.json(); }).then(function(data) {
+        if (!data || !data.results) return;
+        var features = data.results.map(function(f) {
+          var p = f.properties || {};
+          var fields = p.fields || p;
+          var owner = fields.owner || fields.ownname || '';
+          var acres = fields.ll_gisacre ? parseFloat(fields.ll_gisacre).toFixed(1) + ' ac' : '';
+          var label = owner ? (owner.length > 20 ? owner.substring(0,18)+'…' : owner) : '';
+          if (acres) label += (label ? ' · ' : '') + acres;
+          // Use centroid if available
+          var coords = f.geometry && f.geometry.coordinates ? f.geometry.coordinates : [center.lng, center.lat];
+          // For polygon, use first coordinate as approximation
+          if (f.geometry && f.geometry.type === 'MultiPolygon') coords = f.geometry.coordinates[0][0][0];
+          else if (f.geometry && f.geometry.type === 'Polygon') coords = f.geometry.coordinates[0][0];
+          return { type: 'Feature', geometry: { type: 'Point', coordinates: coords }, properties: { label: label } };
+        }).filter(function(f) { return f.properties.label; });
+
+        if (!map.getSource('parcel-labels')) {
+          map.addSource('parcel-labels', { type: 'geojson', data: { type: 'FeatureCollection', features: features } });
+          map.addLayer({
+            id: 'parcel-labels-layer',
+            type: 'symbol',
+            source: 'parcel-labels',
+            layout: {
+              'text-field': ['get', 'label'],
+              'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+              'text-size': 11,
+              'text-anchor': 'center',
+              'text-allow-overlap': false,
+              'text-optional': true,
+            },
+            paint: {
+              'text-color': '#ffffff',
+              'text-halo-color': 'rgba(0,0,0,0.9)',
+              'text-halo-width': 2,
+            }
+          });
+        } else {
+          map.getSource('parcel-labels').setData({ type: 'FeatureCollection', features: features });
+        }
+      })
+      .catch(function(e) { console.warn('Label load failed:', e); });
+  }, 600);
+}
+
+// NOTE: moveend/zoomend hooks added inside initMap() below
 
 // == SAVED PINS ===================================================
 function getSavedPins() {
@@ -2907,8 +3404,9 @@ function stopFollowing() {
   clearInterval(followInterval);
   followInterval = null;
   var btn = document.getElementById('locate-me');
-  btn.innerHTML = '&#127919;';
-  btn.style.background  = 'var(--surface)';
+  btn.innerHTML = '🎯';
+  btn.classList.remove('active-follow');
+  btn.style.background  = '';
   btn.style.color       = '';
   btn.style.borderColor = '';
   btn.style.boxShadow   = '';
