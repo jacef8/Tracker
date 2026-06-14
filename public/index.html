@@ -1369,8 +1369,11 @@ function showJoinScreen() {
   const s = getSavedSession();
   // Need all three AND group must not have been cleared by switch
   if (s.uid && s.name && s.group && s.group.trim()) {
-    // Resume directly — user already authenticated to this group previously
-    // Skip passcode re-check on resume (they already passed it)
+    // Check if saved group is admin password
+    if (s.group === '8888') {
+      window.location.href = '/admin?pw=8888';
+      return;
+    }
     enterMap(s.name, s.group, s.uid);
     return;
   }
@@ -1386,11 +1389,11 @@ function handleJoin() {
   const name  = document.getElementById('inp-name').value.trim();
   const group = document.getElementById('inp-group').value.trim();
   if (!group) { toast('Enter a group name'); return; }
-  // Admin shortcut — password protected
-  if (group === '8888' || group === '777') {
+  // Admin shortcut — 8888 only
+  if (group === '8888') {
     toast('Opening admin...', 1000);
     setTimeout(function() {
-      window.location.href = '/admin?pw=' + group;
+      window.location.href = '/admin?pw=8888';
     }, 300);
     return;
   }
@@ -1451,10 +1454,22 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
-    center: [-98.5, 39.5], zoom: 3, // zoomed out — GPS will fly to real location
+    center: [-98.5, 39.5], zoom: 3,
     attributionControl: false
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
+
+  // Catch map style/token errors
+  map.on('error', function(e) {
+    console.error('Map error:', e);
+    if (e.error && e.error.status === 401) {
+      toast('Map token error — contact admin', 5000);
+    } else if (e.error && e.error.status === 403) {
+      toast('Map access denied — check token restrictions', 5000);
+    } else {
+      toast('Map error: ' + (e.error ? e.error.message : 'unknown'), 4000);
+    }
+  });
 
   // Wire dragstart here where map exists
   map.on('dragstart', function() {
