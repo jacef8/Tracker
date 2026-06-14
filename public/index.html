@@ -22,39 +22,48 @@
     measurementId: "G-EH3FZ2CZWJ"
   };
   window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
-  const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
+  window._fb = { db: getDatabase(initializeApp(firebaseConfig)), ref, set, push, onValue, remove };
 </script>
 <style>
-  /* [Keep your existing CSS here to ensure UI consistency] */
-  #locate-me { display: flex !important; touch-action: manipulation; }
+  html, body { height: 100%; overflow: hidden; background: #0d1117; font-family: system-ui; color: #e6edf3; }
+  #join-screen { position: fixed; inset: 0; z-index: 999; display: flex; align-items: center; justify-content: center; background: #0d1117; }
+  #map { position: fixed; inset: 0; z-index: 1; }
+  #locate-me { position: fixed; bottom: 100px; right: 20px; z-index: 100; width: 60px; height: 60px; background: #161b22; border: 2px solid #30363d; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
 </style>
 </head>
 <body>
-<!-- [Keep your existing HTML structure here] -->
+
+<div id="join-screen">
+  <button onclick="window._handleJoinClick()" style="padding: 20px; background: #f0a500; border: none; border-radius: 10px; font-weight: bold;">JOIN MAP</button>
+</div>
+
+<div id="map"></div>
 <div id="locate-me" onclick="window._locateMeTapped()">🎯</div>
 
 <script>
-  // 1. Locate Me Fix
+  // Debug Crash Handler
+  window.onerror = function(msg, url, line) {
+    alert("CRASH: " + msg + " at line " + line);
+  };
+
+  // Locate Me Fix
   window._locateMeTapped = function() {
-    var pos = window._lastGPS ? [window._lastGPS.lng, window._lastGPS.lat] : null;
-    if (pos) {
-      map.flyTo({ center: pos, zoom: 17, duration: 800 });
-      window._followUser(userId, 'you');
+    alert("Locate tapped!");
+    if (window._lastGPS) {
+      map.flyTo({ center: [window._lastGPS.lng, window._lastGPS.lat], zoom: 17 });
     } else {
-      toast('Waiting for GPS fix...');
+      alert("GPS not ready yet");
     }
   };
 
-  // 2. Passcode System Fix
-  window._openSetPasscode = function() {
-    var group = (typeof groupName !== 'undefined' && groupName) ? groupName : '';
-    if (!group) { toast('Join a group first'); return; }
-    document.getElementById('set-passcode-group').textContent = group;
-    document.getElementById('set-passcode-modal').style.display = 'flex';
+  // Join Click Fix
+  window._handleJoinClick = function() {
+    alert("Join clicked!");
+    document.getElementById('join-screen').style.display = 'none';
+    // Initialize map logic here
   };
 
-  // [Include all other original logic here]
+  console.log("App loaded successfully");
 </script>
 </body>
 </html>
