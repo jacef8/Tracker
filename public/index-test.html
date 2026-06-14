@@ -712,6 +712,7 @@
       <span id="group-name-label"></span>
     </div>
     <span id="group-lock-icon" style="display:none"></span>
+    <a href="/" style="background:rgba(224,90,43,0.15);border:1px solid rgba(224,90,43,0.5);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;color:#e05a2b;white-space:nowrap;flex-shrink:0;text-decoration:none;-webkit-tap-highlight-color:transparent">⚗ PROD</a>
     <div id="switch-group-btn" title="Leave group" style="
       background:rgba(248,81,73,0.15);border:1px solid rgba(248,81,73,0.5);
       border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;
@@ -2829,91 +2830,74 @@ function updateToggleUI(trackId, thumbId, on) {
   thumb.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
 }
 
-function addParcelLayer() {
-  if (map.getLayer('parcels-fill')) return;
+// Regrid API token for parcel lookups on tap
+var REGRID_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJpc3N1ZXIiLCJhdWQiOiJyZWdyaWQiLCJzdWIiOiJqYWNlZm9yZEBsaWJlcnR5Y291bnR5ZmwuZ292IiwianRpIjoiMTc4MTQ1MjgzNSIsImlhdCI6MTc4MTQ1MjgzNX0.tBHN3E-OvnWdmNqiDQOwuMRE3Y7tTZPrKwn1pNH_oL8';
 
-  // Regrid vector tile source — interactive with owner info on tap
+function addParcelLayer() {
+  if (map.getLayer('parcels-layer')) return;
+
+  // Display: free ArcGIS raster tiles for visual boundaries
   if (!map.getSource('regrid-parcels')) {
     map.addSource('regrid-parcels', {
-      type: 'vector',
-      tiles: ['https://tiles.regrid.com/api/v1/parcels/{z}/{x}/{y}.mvt?token=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJpc3N1ZXIiLCJhdWQiOiJyZWdyaWQiLCJzdWIiOiJqYWNlZm9yZEBsaWJlcnR5Y291bnR5ZmwuZ292IiwianRpIjoiMTc4MTQ1MjgzNSIsImlhdCI6MTc4MTQ1MjgzNX0.tBHN3E-OvnWdmNqiDQOwuMRE3Y7tTZPrKwn1pNH_oL8'],
-      minzoom: 12,
-      maxzoom: 19
+      type: 'raster',
+      tiles: ['https://tiles.arcgis.com/tiles/KzeiCaQsMoeCfoCq/arcgis/rest/services/Regrid_Nationwide_Parcel_Boundaries_v1/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      minzoom: 12
     });
   }
-
-  // Fill layer — transparent so you see the map through it, highlights on hover
   map.addLayer({
-    id: 'parcels-fill',
-    type: 'fill',
+    id: 'parcels-layer',
+    type: 'raster',
     source: 'regrid-parcels',
-    'source-layer': 'parcels',
     minzoom: 12,
-    paint: {
-      'fill-color': 'rgba(240,165,0,0.04)',
-      'fill-outline-color': 'rgba(240,165,0,0.8)'
-    }
+    paint: { 'raster-opacity': 0.8 }
   }, 'pins-layer');
 
-  // Highlight on hover
-  map.addLayer({
-    id: 'parcels-hover',
-    type: 'fill',
-    source: 'regrid-parcels',
-    'source-layer': 'parcels',
-    minzoom: 12,
-    paint: {
-      'fill-color': 'rgba(240,165,0,0.15)',
-      'fill-outline-color': 'rgba(240,165,0,1)'
-    },
-    filter: ['==', ['get', 'll_uuid'], '']
-  }, 'pins-layer');
-
-  // Outline layer for cleaner borders
-  map.addLayer({
-    id: 'parcels-line',
-    type: 'line',
-    source: 'regrid-parcels',
-    'source-layer': 'parcels',
-    minzoom: 12,
-    paint: {
-      'line-color': 'rgba(240,165,0,0.7)',
-      'line-width': 1
-    }
-  }, 'pins-layer');
-
-  // Click to show parcel info popup
-  map.on('click', 'parcels-fill', function(e) {
+  // Interactivity: tap the map → query Regrid API for parcel at that point
+  map.on('click', function(e) {
     if (!parcelsOn) return;
-    var props = e.features[0].properties;
-    var owner = props.owner || props.ll_bldg_count || 'Unknown owner';
-    var address = props.address || props.saddno + ' ' + (props.saddstr || '') || '';
-    var acres = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac' : (props.gisacre ? parseFloat(props.gisacre).toFixed(2) + ' ac' : '');
-    var parcelId = props.parcelnumb || props.parcel_id || props.apn || '';
-    var zoning = props.zoning || props.zoning_description || '';
-    var landuse = props.usedesc || props.landuse || '';
+    if (measureMode || pinMode) return;
+    // Only query at zoom 12+
+    if (map.getZoom() < 12) return;
 
-    // Highlight this parcel
-    map.setFilter('parcels-hover', ['==', ['get', 'll_uuid'], props.ll_uuid || '']);
+    var lat = e.lngLat.lat.toFixed(6);
+    var lng = e.lngLat.lng.toFixed(6);
 
-    new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
+    // Show loading popup immediately
+    var popup = new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
       .setLngLat(e.lngLat)
-      .setHTML(
-        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:4px">Property Info</div>' +
-        (owner    ? '<div style="font-size:13px;font-weight:700;margin-bottom:4px">' + owner + '</div>' : '') +
-        (address  ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
-        (parcelId ? '<div style="font-size:11px;color:#8b949e;margin-bottom:3px">Parcel: ' + parcelId + '</div>' : '') +
-        (acres    ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
-        (zoning   ? '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Zoning: ' + zoning + '</div>' : '') +
-        (landuse  ? '<div style="font-size:11px;color:#8b949e">Use: ' + landuse + '</div>' : '')
-      )
+      .setHTML('<div style="color:#8b949e;font-size:12px">Looking up parcel...</div>')
       .addTo(map);
-  });
 
-  map.on('mouseenter', 'parcels-fill', function() { map.getCanvas().style.cursor = 'pointer'; });
-  map.on('mouseleave', 'parcels-fill', function() {
-    map.getCanvas().style.cursor = '';
-    map.setFilter('parcels-hover', ['==', ['get', 'll_uuid'], '']);
+    // Query Regrid parcel API
+    fetch('https://app.regrid.com/api/v2/parcels/point?lat=' + lat + '&lng=' + lng + '&token=' + REGRID_TOKEN + '&limit=1')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.parcels || !data.parcels.features || !data.parcels.features.length) {
+          popup.setHTML('<div style="color:#8b949e;font-size:12px">No parcel found at this location</div>');
+          return;
+        }
+        var props = data.parcels.features[0].properties;
+        var owner    = props.owner || '';
+        var address  = props.address || '';
+        var acres    = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac' : '';
+        var parcelId = props.parcelnumb || '';
+        var zoning   = props.zoning || '';
+        var landuse  = props.usedesc || '';
+
+        popup.setHTML(
+          '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
+          (owner    ? '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' : '') +
+          (address  ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
+          (parcelId ? '<div style="font-size:11px;color:#8b949e;margin-bottom:3px">Parcel ID: ' + parcelId + '</div>' : '') +
+          (acres    ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
+          (zoning   ? '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Zoning: ' + zoning + '</div>' : '') +
+          (landuse  ? '<div style="font-size:11px;color:#8b949e">Use: ' + landuse + '</div>' : '')
+        );
+      })
+      .catch(function() {
+        popup.setHTML('<div style="color:#8b949e;font-size:12px">Could not load parcel data</div>');
+      });
   });
 }
 
