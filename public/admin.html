@@ -54,6 +54,8 @@
   /* Group cards */
   #admin-list { display: flex; flex-direction: column; gap: 12px; }
   .group-card { background: rgba(13,17,23,0.88); border: 2px solid rgba(48,54,61,0.9); border-top: 2px solid rgba(240,165,0,0.5); border-radius: 12px; padding: 16px; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 6px 32px rgba(0,0,0,0.6); margin-bottom: 16px; }
+  .group-card.is-test { border: 2px solid rgba(224,90,43,0.6); border-top: 2px solid rgba(224,90,43,1); box-shadow: 0 6px 32px rgba(224,90,43,0.2); }
+  .test-tag { display:inline-block; background:rgba(224,90,43,0.2); border:1px solid rgba(224,90,43,0.6); color:#e05a2b; font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; padding:2px 6px; border-radius:4px; margin-left:6px; vertical-align:middle; }
   .group-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
   .group-name { font-size: 15px; font-weight: 700; }
   .group-key { font-size: 10px; color: var(--muted); font-family: monospace; margin-top: 2px; }
@@ -655,10 +657,13 @@ function loadAdmin() {
         }
 
         var card = document.createElement('div');
-        card.className = 'group-card';
+        var isTest = key.startsWith('test_');
+        card.className = 'group-card' + (isTest ? ' is-test' : '');
+        // Strip test_ prefix from display name for test groups
+        var displayName2 = isTest ? displayName.replace(/^Test /i, '') : displayName;
         card.innerHTML =
           '<div class="group-header">' +
-            '<div><div class="group-name">' + displayName + '</div><div class="group-key">' + key + '</div></div>' +
+            '<div><div class="group-name">' + displayName2 + (isTest ? '<span class="test-tag">⚗ test</span>' : '') + '</div><div class="group-key">' + key + '</div></div>' +
             '<span class="' + (liveUsers.length ? 'live-badge' : 'dead-badge') + '">' +
               (liveUsers.length ? liveUsers.length + ' LIVE' : 'Empty') + '</span>' +
           '</div>' +
