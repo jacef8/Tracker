@@ -885,8 +885,8 @@
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
           <div>
-            <div style="font-size:14px;font-weight:700">USDA Field Boundaries</div>
-            <div style="font-size:11px;color:var(--muted)">Agricultural field outlines — nationwide</div>
+            <div style="font-size:14px;font-weight:700">USDA Cropland Layer</div>
+            <div style="font-size:11px;color:var(--muted)">Crop and land use data — nationwide</div>
           </div>
           <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
             <input type="checkbox" id="toggle-usda" onchange="toggleUSDA(this.checked)" style="opacity:0;width:0;height:0">
@@ -1544,7 +1544,7 @@ function initMap() {
   map.on('error', function(e) {
     console.error('Map error:', e);
     // Ignore tile loading errors from overlay WMS layers
-    if (e.sourceId && (e.sourceId === 'fl-parcels' || e.sourceId === 'usda-clu')) return;
+    if (e.sourceId && (e.sourceId === 'fl-parcels' || e.sourceId === 'usda-clu' || e.sourceId === 'regrid-parcels')) return;
     if (e.error && e.error.status === 401) {
       toast('Map token error — contact admin', 5000);
     } else if (e.error && e.error.status === 403) {
@@ -2831,14 +2831,14 @@ function updateToggleUI(trackId, thumbId, on) {
 
 function addParcelLayer() {
   if (map.getLayer('parcels-layer')) return;
-  if (!map.getSource('fl-parcels')) {
-    map.addSource('fl-parcels', {
+  if (!map.getSource('regrid-parcels')) {
+    map.addSource('regrid-parcels', {
       type: 'raster',
-      tiles: ['https://tiles.arcgis.com/tiles/CY1LXxl9zlJeBuiP/arcgis/rest/services/Florida_Statewide_Parcels/MapServer/tile/{z}/{y}/{x}'],
+      tiles: ['https://tiles.arcgis.com/tiles/KzeiCaQsMoeCfoCq/arcgis/rest/services/Regrid_Nationwide_Parcel_Boundaries_v1/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256
     });
   }
-  map.addLayer({ id: 'parcels-layer', type: 'raster', source: 'fl-parcels', paint: { 'raster-opacity': 0.7 } }, 'pins-layer');
+  map.addLayer({ id: 'parcels-layer', type: 'raster', source: 'regrid-parcels', paint: { 'raster-opacity': 0.7 } }, 'pins-layer');
 }
 
 function toggleParcels(on) {
@@ -2849,7 +2849,7 @@ function toggleParcels(on) {
     toast('Property lines loading...', 2000);
   } else {
     if (map.getLayer('parcels-layer')) map.removeLayer('parcels-layer');
-    if (map.getSource('fl-parcels')) map.removeSource('fl-parcels');
+    if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
   }
 }
 
@@ -2858,7 +2858,7 @@ function addUSDALayer() {
   if (!map.getSource('usda-clu')) {
     map.addSource('usda-clu', {
       type: 'raster',
-      tiles: ['https://gis.sc.egov.usda.gov/arcgis/rest/services/Spatial/USDA_FSA_CLU/MapServer/tile/{z}/{y}/{x}'],
+      tiles: ['https://gis.sc.egov.usda.gov/arcgis/rest/services/Spatial/USDA_NASS_CDL/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256
     });
   }
