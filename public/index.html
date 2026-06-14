@@ -640,6 +640,7 @@
     <div>
       <div class="field-label">Your name</div>
       <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+      <div id="name-required-msg" style="display:none;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600">⚠ Name is required to join a room</div>
     </div>
 
     <!-- Active rooms list -->
@@ -1175,13 +1176,22 @@ function loadRoomList() {
           document.getElementById('inp-group').value = room.displayName;
           var name = document.getElementById('inp-name').value.trim();
           if (name) {
+            // Clear any error state
+            document.getElementById('inp-name').style.borderColor = '';
+            var nameErr = document.getElementById('name-required-msg');
+            if (nameErr) nameErr.style.display = 'none';
             var existing = getSavedSession();
             var uid = existing.uid || genUid();
             checkGroupPasscode(name, room.key, uid);
           } else {
-            document.getElementById('inp-group').style.borderColor = 'var(--accent)';
-            setTimeout(function() { document.getElementById('inp-group').style.borderColor = ''; }, 1500);
-            toast('Enter your name first');
+            // Highlight name field with error
+            document.getElementById('inp-name').style.borderColor = 'var(--danger)';
+            document.getElementById('inp-name').focus();
+            var nameErr = document.getElementById('name-required-msg');
+            if (nameErr) nameErr.style.display = 'block';
+            setTimeout(function() {
+              document.getElementById('inp-name').style.borderColor = '';
+            }, 3000);
           }
         });
         listEl.appendChild(item);
@@ -2348,6 +2358,7 @@ function renderPinList(pins) {
 document.getElementById('close-pin-feed').addEventListener('click', () => {
   pinFeedOpen = false;
   document.getElementById('pin-feed-panel').classList.remove('open');
+  setLocateMeVisible(true);
 });
 
 document.getElementById('unread-pin-bubble').addEventListener('click', function() {
@@ -2360,6 +2371,7 @@ document.getElementById('unread-pin-bubble').addEventListener('click', function(
 });
 document.getElementById('close-pin-list').addEventListener('click', () => {
   document.getElementById('pin-list-drawer').classList.remove('open');
+  setLocateMeVisible(true);
 });
 document.getElementById('map').addEventListener('click', () => {
   document.getElementById('pin-list-drawer').classList.remove('open');
@@ -2567,6 +2579,7 @@ document.getElementById('pin-label-input').addEventListener('keydown', e => {
 document.getElementById('chat-toggle-btn').addEventListener('click', () => {
   chatOpen = !chatOpen;
   document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+  setLocateMeVisible(!chatOpen);
   if (chatOpen) {
     unreadCount = 0;
     document.getElementById('chat-badge').style.display = 'none';
@@ -2579,16 +2592,19 @@ document.getElementById('chat-toggle-btn').addEventListener('click', () => {
 document.getElementById('close-chat').addEventListener('click', () => {
   chatOpen = false;
   document.getElementById('chat-panel').classList.remove('open');
+  setLocateMeVisible(true);
 });
 document.getElementById('close-user-drawer').addEventListener('click', function() {
   document.getElementById('user-drawer').classList.remove('open');
+  setLocateMeVisible(true);
 });
 document.getElementById('group-lock-btn').addEventListener('click', function(e) {
   e.stopPropagation();
   window._openSetPasscode();
 });
 document.getElementById('users-toggle-btn').addEventListener('click', () => {
-  document.getElementById('user-drawer').classList.toggle('open');
+  var isOpen = document.getElementById('user-drawer').classList.toggle('open');
+  setLocateMeVisible(!isOpen);
 });
 document.getElementById('map').addEventListener('click', () => {
   document.getElementById('user-drawer').classList.remove('open');
@@ -2727,12 +2743,14 @@ function renderSavedPins() {
 // saved-pins-btn removed from toolbar (now in pin hub sheet)
 document.getElementById('close-saved-pins').addEventListener('click', function() {
   document.getElementById('saved-pins-drawer').classList.remove('open');
+  setLocateMeVisible(true);
 });
 
 // == PIN HUB ========================================================
 function openPinHub() {
   var sheet = document.getElementById('pin-hub-sheet');
   sheet.style.display = 'block';
+  setLocateMeVisible(false);
   // Update pin count
   var count = Object.keys(lastPins || {}).length;
   var countEl = document.getElementById('pin-hub-count');
@@ -2740,16 +2758,19 @@ function openPinHub() {
 }
 function closePinHub() {
   document.getElementById('pin-hub-sheet').style.display = 'none';
+  setLocateMeVisible(true);
 }
 // enablePinMode defined above in pin flow section
 function openPinFeed() {
   pinFeedOpen = true;
   document.getElementById('pin-feed-panel').classList.add('open');
+  setLocateMeVisible(false);
   renderPinFeed(lastPins);
   clearUnreadPins();
 }
 function openSavedPins() {
   document.getElementById('saved-pins-drawer').classList.add('open');
+  setLocateMeVisible(false);
   renderSavedPins();
 }
 
@@ -2815,6 +2836,12 @@ window._followUser = function(uid, name) {
   followInterval = setInterval(doFollow, 3000);
 };
 
+
+// Hide/show locate-me button when panels open/close
+function setLocateMeVisible(visible) {
+  var btn = document.getElementById('locate-me');
+  if (btn) btn.style.display = visible ? 'flex' : 'none';
+}
 function stopFollowing() {
   followUid = null;
   clearInterval(followInterval);
