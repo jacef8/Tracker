@@ -862,7 +862,7 @@
         <button class="layer-base-btn active" data-style="mapbox://styles/mapbox/satellite-streets-v12" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--accent);background:rgba(240,165,0,.1);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
           <span style="font-size:20px">&#128752;</span>Satellite
         </button>
-        <button class="layer-base-btn" data-style="mapbox://styles/mapbox/outdoors-v12" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
+        <button class="layer-base-btn" data-style="usgs-topo" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
           <span style="font-size:20px">&#9968;</span>Topo
         </button>
         <button class="layer-base-btn" data-style="mapbox://styles/mapbox/streets-v12" onclick="setBaseLayer(this)" style="padding:10px 6px;border-radius:10px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px">
@@ -1146,6 +1146,8 @@ function loadRoomList() {
       Object.entries(all).forEach(function(entry) {
         var key   = entry[0];
         var group = entry[1];
+        // Test env: only show test_ groups in room list
+        if (!key.startsWith('test_')) return;
         var users = group.users ? Object.values(group.users) : [];
         var pins  = group.pins  ? Object.keys(group.pins).length : 0;
 
@@ -1174,7 +1176,8 @@ function loadRoomList() {
         var liveNames  = liveUsers.map(function(u) { return u.name; });
 
         // Fix title case: "liberty_hunt" -> "Liberty Hunt"
-        var displayName = key.replace(/_/g, ' ')
+        // Strip test_ prefix for display
+        var displayName = key.replace(/^test_/, '').replace(/_/g, ' ')
           .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 
         // Human-readable last active time
@@ -1517,16 +1520,17 @@ function initMap() {
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
 
-  // Catch map style/token errors
+  // Catch map errors — suppress tile 404s from overlays
   map.on('error', function(e) {
     console.error('Map error:', e);
+    // Ignore tile loading errors from overlay WMS layers
+    if (e.sourceId && (e.sourceId === 'fl-parcels' || e.sourceId === 'usda-clu')) return;
     if (e.error && e.error.status === 401) {
       toast('Map token error — contact admin', 5000);
     } else if (e.error && e.error.status === 403) {
       toast('Map access denied — check token restrictions', 5000);
-    } else {
-      toast('Map error: ' + (e.error ? e.error.message : 'unknown'), 4000);
     }
+    // Silently ignore other tile errors
   });
 
   // Wire dragstart here where map exists
@@ -2751,7 +2755,23 @@ function setBaseLayer(btn) {
   btn.style.background = 'rgba(240,165,0,.1)';
   btn.style.color = 'var(--accent)';
   var style = btn.dataset.style;
-  map.setStyle(style);
+  // USGS Topo uses raster tiles, not a Mapbox style URL
+  if (style === 'usgs-topo') {
+    map.setStyle({
+      version: 8,
+      sources: {
+        'usgs-topo': {
+          type: 'raster',
+          tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          attribution: 'USGS National Map'
+        }
+      },
+      layers: [{ id: 'usgs-topo-layer', type: 'raster', source: 'usgs-topo' }]
+    });
+  } else {
+    map.setStyle(style);
+  }
   map.once('style.load', function() {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
@@ -2794,7 +2814,7 @@ function addParcelLayer() {
   if (!map.getSource('fl-parcels')) {
     map.addSource('fl-parcels', {
       type: 'raster',
-      tiles: ['https://ca.dep.state.fl.us/arcgis/services/OpenData/FDEP_PARCELS/MapServer/WMSServer?bbox={bbox-epsg-3857}&format=image/png&service=WMS&version=1.1.1&request=GetMap&srs=EPSG:3857&transparent=true&width=256&height=256&layers=0'],
+      tiles: ['https://tiles.arcgis.com/tiles/CY1LXxl9zlJeBuiP/arcgis/rest/services/Florida_Statewide_Parcels/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256
     });
   }
@@ -2818,7 +2838,7 @@ function addUSDALayer() {
   if (!map.getSource('usda-clu')) {
     map.addSource('usda-clu', {
       type: 'raster',
-      tiles: ['https://gis.sc.egov.usda.gov/arcgis/services/APFO/USDA_APFO_Imagery/MapServer/WmsServer?bbox={bbox-epsg-3857}&format=image/png&service=WMS&version=1.1.1&request=GetMap&srs=EPSG:3857&transparent=true&width=256&height=256&layers=0'],
+      tiles: ['https://gis.sc.egov.usda.gov/arcgis/rest/services/Spatial/USDA_FSA_CLU/MapServer/tile/{z}/{y}/{x}'],
       tileSize: 256
     });
   }
@@ -3135,6 +3155,6 @@ document.addEventListener('click', function(e) {
 });
 
 </script>
-<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#e05a2b;color:#fff;padding:5px;text-align:center;font-size:11px;font-weight:700;letter-spacing:.08em;pointer-events:none">⚗ TEST ENVIRONMENT — data isolated from production</div>
+<div id="test-banner" style="position:fixed;top:calc(var(--topbar-h) + var(--safe-top));left:0;right:0;z-index:99;background:rgba(224,90,43,0.9);color:#fff;padding:3px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.08em;pointer-events:none">⚗ TEST</div>
 </body>
 </html>
