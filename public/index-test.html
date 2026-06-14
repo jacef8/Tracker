@@ -468,19 +468,16 @@
   }
 
   /* ── Locate me ── */
+  /* locate-me now lives inside #map-controls — inherits button styles */
   #locate-me {
-    position: fixed;
-    bottom: calc(80px + var(--safe-bot));
-    right: 14px; z-index: 500;
-    width: 54px; height: 54px;
-    background: var(--surface); border: 2px solid var(--border);
-    border-radius: 50%; display: none; align-items: center; justify-content: center;
-    font-size: 22px; cursor: pointer;
-    box-shadow: 0 2px 14px rgba(0,0,0,.5);
-    -webkit-tap-highlight-color: transparent;
+    display: none; /* shown/hidden by setLocateMeVisible */
     touch-action: manipulation;
+    font-size: 16px;
   }
-  #locate-me:active { border-color: var(--accent); }
+  #locate-me.active-follow {
+    background: var(--accent) !important;
+    color: #000 !important;
+  }
 
   /* ── Unread pin bubble ── */
   #unread-pin-bubble {
@@ -790,27 +787,15 @@
 
 <!-- ── Unified map controls — all buttons same size/style ─────── -->
 <div id="map-controls">
-  <!-- Zoom In (desktop only via CSS) -->
-  <button id="zoom-in-btn" title="Zoom in" type="button">
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#333">
-      <path d="M7 1v6H1v2h6v6h2V9h6V7H9V1z"/>
-    </svg>
-  </button>
-  <!-- Zoom Out (desktop only via CSS) -->
-  <button id="zoom-out-btn" title="Zoom out" type="button">
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#333">
-      <path d="M1 7h14v2H1z"/>
-    </svg>
-  </button>
-  <!-- Layer picker -->
-  <button id="layer-btn" title="Map layers" type="button">
+  <button id="zoom-in-btn"  title="Zoom in"     type="button" style="font-size:20px;font-weight:300;color:#333;line-height:1">+</button>
+  <button id="zoom-out-btn" title="Zoom out"    type="button" style="font-size:20px;font-weight:300;color:#333;line-height:1">&#8722;</button>
+  <button id="layer-btn"    title="Map layers"  type="button">
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <polygon points="12 2 2 7 12 12 22 7 12 2"/>
       <polyline points="2 12 12 17 22 12"/>
       <polyline points="2 17 12 22 22 17"/>
     </svg>
   </button>
-  <!-- North up -->
   <button id="north-up-btn" title="Reset north" type="button">
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24">
       <polygon points="12,3 16,11 12,9 8,11" fill="#c00"/>
@@ -818,6 +803,7 @@
       <circle cx="12" cy="12" r="1.5" fill="#333"/>
     </svg>
   </button>
+  <button id="locate-me" title="Zoom to me / Follow" type="button" onclick="window._locateMeTapped()">🎯</button>
 </div>
 
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
@@ -845,7 +831,7 @@
 </div>
 
 <!-- ══ LOCATE ME ════════════════════════════════════════════════════ -->
-<div id="locate-me" onclick="window._locateMeTapped()">🎯</div>
+
 
 <!-- ══ UNREAD PIN BUBBLE ═════════════════════════════════════════════ -->
 <div id="unread-pin-bubble" title="New pins">
@@ -3396,8 +3382,9 @@ function stopFollowing() {
   clearInterval(followInterval);
   followInterval = null;
   var btn = document.getElementById('locate-me');
-  btn.innerHTML = '&#127919;';
-  btn.style.background  = 'var(--surface)';
+  btn.innerHTML = '🎯';
+  btn.classList.remove('active-follow');
+  btn.style.background  = '';
   btn.style.color       = '';
   btn.style.borderColor = '';
   btn.style.boxShadow   = '';
