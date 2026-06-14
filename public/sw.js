@@ -3,7 +3,7 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v2';
+const CACHE = 'groundlink-v3';
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 const CACHE_FOREVER = [
