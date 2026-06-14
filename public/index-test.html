@@ -1539,17 +1539,18 @@ function initMap() {
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
 
-  // Catch map errors — suppress tile 404s from overlays
+  // Catch map errors
   map.on('error', function(e) {
     console.error('Map error:', e);
-    // Ignore tile loading errors from overlay WMS layers
     if (e.sourceId === 'regrid-parcels' || e.sourceId === 'usda-clu') return;
-    if (e.error && e.error.status === 401) {
-      toast('Map token error — contact admin', 5000);
-    } else if (e.error && e.error.status === 403) {
-      toast('Map access denied — check token restrictions', 5000);
+    if (e.error && (e.error.status === 401 || e.error.status === 403)) {
+      toast('Map error ' + e.error.status + ' — check Mapbox token', 5000);
     }
-    // Silently ignore other tile errors
+  });
+
+  // Confirm map loaded
+  map.on('load', function() {
+    console.log('Test map loaded OK');
   });
 
   // Wire dragstart here where map exists
@@ -2986,8 +2987,7 @@ function loadParcelLabels() {
           var owner = fields.owner || fields.ownname || '';
           var acres = fields.ll_gisacre ? parseFloat(fields.ll_gisacre).toFixed(1) + ' ac' : '';
           var label = owner ? (owner.length > 20 ? owner.substring(0,18)+'…' : owner) : '';
-          if (acres) label += (label ? '
-' : '') + acres;
+          if (acres) label += (label ? ' · ' : '') + acres;
           // Use centroid if available
           var coords = f.geometry && f.geometry.coordinates ? f.geometry.coordinates : [center.lng, center.lat];
           // For polygon, use first coordinate as approximation
