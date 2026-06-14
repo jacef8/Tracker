@@ -654,7 +654,8 @@
     <div>
       <div class="field-label">Group name</div>
       <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
-      <div class="join-hint">Type any name — everyone who matches joins the same map.</div>
+      <div class="join-hint">Anyone who types the same group name will appear on your map together.</div>
+      <div id="group-required-msg" style="display:none;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600">⚠ Enter a group name or select one above</div>
     </div>
 
     <button class="btn-primary" id="join-btn">Open Map →</button>
@@ -1379,6 +1380,16 @@ function showJoinScreen() {
 
   document.getElementById('join-btn').addEventListener('click', handleJoin);
   document.getElementById('inp-group').addEventListener('keydown', e => { if (e.key === 'Enter') handleJoin(); });
+  document.getElementById('inp-group').addEventListener('input', function() {
+    this.style.borderColor = '';
+    var grpErr = document.getElementById('group-required-msg');
+    if (grpErr) grpErr.style.display = 'none';
+  });
+  document.getElementById('inp-name').addEventListener('input', function() {
+    this.style.borderColor = '';
+    var nameErr = document.getElementById('name-required-msg');
+    if (nameErr) nameErr.style.display = 'none';
+  });
   document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
 }
 
@@ -1403,7 +1414,16 @@ function showJoinScreen() {
 function handleJoin() {
   const name  = document.getElementById('inp-name').value.trim();
   const group = document.getElementById('inp-group').value.trim();
-  if (!group) { toast('Enter a group name'); return; }
+  if (!group) {
+    document.getElementById('inp-group').style.borderColor = 'var(--danger)';
+    document.getElementById('inp-group').focus();
+    var grpErr = document.getElementById('group-required-msg');
+    if (grpErr) grpErr.style.display = 'block';
+    setTimeout(function() {
+      document.getElementById('inp-group').style.borderColor = '';
+    }, 3000);
+    return;
+  }
   // Admin shortcut
   if (group === '777') { window.location.href = '/777'; return; }
   // Test environment shortcut
