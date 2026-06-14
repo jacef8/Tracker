@@ -1447,6 +1447,22 @@ function initMap() {
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
 
+  // Wire dragstart here where map exists
+  map.on('dragstart', function() {
+    if (followUid) {
+      followUid = null;
+      clearInterval(followInterval);
+      followInterval = null;
+      var btn = document.getElementById('locate-me');
+      if (btn) {
+        btn.style.background  = 'var(--surface)';
+        btn.style.color       = '';
+        btn.style.borderColor = '';
+        btn.style.boxShadow   = '';
+      }
+    }
+  });
+
   map.on('load', function() {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
@@ -2793,24 +2809,7 @@ function stopFollowing() {
   btn.style.boxShadow   = '';
 }
 
-map.on('dragstart', function() {
-  if (followUid) {
-    // Silently cancel follow — no toast, no confirmation needed
-    // Next tap on locate-me starts fresh immediately
-    followUid = null;
-    clearInterval(followInterval);
-    followInterval = null;
-    var btn = document.getElementById('locate-me');
-    if (btn) {
-      btn.style.background  = 'var(--surface)';
-      btn.style.color       = '';
-      btn.style.borderColor = '';
-      btn.style.boxShadow   = '';
-    }
-  }
-});
-
-// locate-me handled by onclick="window._locateMeTapped()" on the element
+// dragstart wired inside initMap() below
 
 
 // == PASSCODE SYSTEM ==============================================
