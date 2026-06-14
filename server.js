@@ -3,13 +3,17 @@ const path    = require('path');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
 
-// Admin route — must be BEFORE the static middleware and catch-all
-app.get('/777', (req, res) => {
+app.get('/version', function(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.send('1.6');
+});
+
+app.get('/777', function(req, res) {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders(res, filePath) {
+  setHeaders: function(res, filePath) {
     if (filePath.endsWith('sw.js')) {
       res.setHeader('Service-Worker-Allowed', '/');
       res.setHeader('Cache-Control', 'no-cache');
@@ -26,9 +30,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
-app.get('*', (req, res) => {
+app.get('*', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => console.log(`GroundLink running on port ${PORT}`));
+app.listen(PORT, function() {
+  console.log('GroundLink on port ' + PORT);
+});
