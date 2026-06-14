@@ -2875,20 +2875,24 @@ function addParcelLayer() {
       .addTo(map);
 
     // Query Regrid parcel API
-    fetch('https://app.regrid.com/api/v2/parcels/point?lat=' + lat + '&lng=' + lng + '&token=' + REGRID_TOKEN + '&limit=1')
+    fetch('https://app.regrid.com/api/v2/parcels/point?lat=' + lat + '&lon=' + lng + '&radius=10&limit=1&return_geometry=false&token=' + REGRID_TOKEN)
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (!data.parcels || !data.parcels.features || !data.parcels.features.length) {
-          popup.setHTML('<div style="color:#8b949e;font-size:12px">No parcel found at this location</div>');
+        // Debug: log full response
+        console.log('Regrid response:', JSON.stringify(data).substring(0,500));
+        if (!data || !data.parcels || !data.parcels.features || !data.parcels.features.length) {
+          var msg = data && data.error ? data.error : 'No parcel found at this location';
+          popup.setHTML('<div style="color:#8b949e;font-size:12px">' + msg + '</div>');
           return;
         }
         var props = data.parcels.features[0].properties;
-        var owner    = props.owner || '';
-        var address  = props.address || '';
-        var acres    = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac' : '';
-        var parcelId = props.parcelnumb || '';
-        var zoning   = props.zoning || '';
-        var landuse  = props.usedesc || '';
+        var owner    = props.owner || props.ownname || props.ownname1 || '';
+        var address  = props.address || props.siteaddr || (props.saddno ? props.saddno + ' ' + (props.saddstr||'') : '') || '';
+        var acres    = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac'
+                     : props.gisacre   ? parseFloat(props.gisacre).toFixed(2) + ' ac' : '';
+        var parcelId = props.parcelnumb || props.parcel_id || props.apn || props.pin || '';
+        var zoning   = props.zoning || props.zoning_description || '';
+        var landuse  = props.usedesc || props.landuse || props.lbcs_activity_desc || '';
 
         popup.setHTML(
           '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
