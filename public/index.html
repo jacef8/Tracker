@@ -1397,6 +1397,16 @@ function showJoinScreen() {
 }
 
 (function tryResume() {
+  // If ?fresh param in URL, clear session and show join screen
+  if (window.location.search.indexOf('fresh') !== -1) {
+    try {
+      localStorage.removeItem('gl_group');
+      sessionStorage.removeItem('gl_group');
+    } catch(_) {}
+    history.replaceState({}, '', '/');
+    showJoinScreen();
+    return;
+  }
   const s = getSavedSession();
   // Need all three AND group must not have been cleared by switch
   if (s.uid && s.name && s.group && s.group.trim()) {
