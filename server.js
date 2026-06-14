@@ -18,37 +18,49 @@ app.get('/api/parcel', function(req, res) {
   var lng = parseFloat(req.query.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
 
-  // Build URL manually — ArcGIS requires where=1=1 NOT encoded as 1%3D1
-  var geom = encodeURIComponent(JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}}));
-  var url = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query' +
-    '?where=1%3D1' +
-    '&geometry=' + geom +
-    '&geometryType=esriGeometryPoint' +
-    '&inSR=4326&outSR=4326' +
-    '&spatialRel=esriSpatialRelIntersects' +
-    '&outFields=OWN_NAME%2CPHY_ADDR1%2CPHY_CITY%2CACREAGE%2CPARCEL_ID%2CDO_UC%2CLND_VAL' +
-    '&returnGeometry=false' +
-    '&resultRecordCount=1' +
-    '&f=json';
+  // POST request avoids all URL encoding ambiguity with ArcGIS
+  var postBody = [
+    'where=1%3D1',
+    'geometry=' + encodeURIComponent(JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}})),
+    'geometryType=esriGeometryPoint',
+    'inSR=4326',
+    'outSR=4326',
+    'spatialRel=esriSpatialRelIntersects',
+    'outFields=' + encodeURIComponent('OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,DOR_UC,LND_VAL'),
+    'returnGeometry=false',
+    'resultRecordCount=1',
+    'f=json'
+  ].join('&');
 
   var https = require('https');
-  https.get(url, function(apiRes) {
+  var options = {
+    hostname: 'services9.arcgis.com',
+    path: '/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': Buffer.byteLength(postBody)
+    }
+  };
+  var apiReq = https.request(options, function(apiRes) {
     var body = '';
     apiRes.on('data', function(chunk) { body += chunk; });
     apiRes.on('end', function() {
       try {
         var data = JSON.parse(body);
-        // Log for debugging
-        console.log('Parcel query for', lat, lng, '-> features:', (data.features || []).length, data.error ? 'ERROR:'+JSON.stringify(data.error) : '');
+        console.log('Parcel', lat, lng, '-> features:', (data.features||[]).length, data.error ? JSON.stringify(data.error) : 'OK');
         res.json(data);
       } catch(e) {
-        res.status(500).json({ error: 'Parse error', raw: body.substring(0, 200) });
+        res.status(500).json({ error: 'Parse error', raw: body.substring(0, 300) });
       }
     });
-  }).on('error', function(e) {
+  });
+  apiReq.on('error', function(e) {
     console.error('Parcel proxy error:', e.message);
     res.status(500).json({ error: e.message });
   });
+  apiReq.write(postBody);
+  apiReq.end();
 });
 
 app.get('/join', function(req, res) {
