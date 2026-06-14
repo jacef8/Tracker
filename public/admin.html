@@ -154,9 +154,9 @@
 <!-- ALL DATA TAB -->
 <div class="tab-panel" id="tab-alldata">
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-    <button class="btn btn-warn" onclick="filterAllData('pins')" id="filter-pins-btn">&#128205; Pins Only</button>
-    <button class="btn btn-warn" onclick="filterAllData('chat')" id="filter-chat-btn">&#128172; Messages Only</button>
-    <button class="btn btn-warn" onclick="filterAllData('all')" id="filter-all-btn">Show All</button>
+    <button class="btn btn-warn filter-btn" data-filter="pins" onclick="filterAllData('pins')" id="filter-pins-btn">&#128205; Pins Only</button>
+    <button class="btn btn-warn filter-btn" data-filter="chat" onclick="filterAllData('chat')" id="filter-chat-btn">&#128172; Messages Only</button>
+    <button class="btn btn-warn filter-btn" data-filter="all" onclick="filterAllData('all')" id="filter-all-btn">Show All</button>
     <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups?')) clearAllPins()">Clear All Pins</button>
   </div>
   <div id="alldata-list"><div class="loading">Loading…</div></div>
@@ -217,6 +217,14 @@ function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(function(p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
+  // Render alldata when switching to that tab
+  if (name === 'alldata' && Object.keys(_allDataSnapshot).length > 0) {
+    renderAllData(_allDataSnapshot, 'all');
+    // Reset filter buttons
+    document.querySelectorAll('.filter-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.filter === 'all');
+    });
+  }
 }
 
 function timeAgo(ts) {
@@ -549,6 +557,7 @@ function loadAdmin() {
       detectChanges(all, now);
       renderDeviceMonitor(all, now);
       _allDataSnapshot = all;
+      // Always update alldata — render if tab is active, cache if not
       if (document.getElementById('tab-alldata').classList.contains('active')) {
         renderAllData(all, 'all');
       }
