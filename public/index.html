@@ -2818,36 +2818,52 @@ async function hashPin(pin) {
 }
 
 // Check if group has a passcode before joining
-async function checkGroupPasscode(name, group, uid) {
-  waitForFirebase(async fb => {
-    fb.onValue(fb.ref(fb.db, 'gl/' + group + '/config/pin'), async snap => {
-      const storedHash = snap.val();
+function checkGroupPasscode(name, group, uid) {
+  // Poll for Firebase ready — it loads async via ES module
+  var attempts = 0;
+  var timer = setInterval(function() {
+    attempts++;
+    if (!window._fb && attempts < 50) return; // wait up to 4 seconds
+    clearInterval(timer);
+
+    if (!window._fb) {
+      // Firebase never loaded — just enter without passcode check
+      enterMap(name, group, uid);
+      return;
+    }
+
+    var fb = window._fb;
+    fb.onValue(fb.ref(fb.db, 'gl/' + group + '/config/pin'), function(snap) {
+      var storedHash = snap.val();
       if (!storedHash) {
-        // No passcode — join directly
         enterMap(name, group, uid);
         return;
       }
       // Show passcode prompt
-      const modal = document.getElementById('passcode-modal');
+      var modal = document.getElementById('passcode-modal');
       document.getElementById('passcode-subtitle').textContent = 'Enter the passcode to join ' + group + '.';
       document.getElementById('passcode-error').style.display = 'none';
       document.getElementById('passcode-input').value = '';
       modal.style.display = 'flex';
 
-      document.getElementById('passcode-submit').onclick = async function() {
-        const pin = document.getElementById('passcode-input').value.trim();
-        if (pin.length !== 4) { document.getElementById('passcode-error').style.display = 'block'; return; }
-        const hash = await hashPin(pin);
-        if (hash === storedHash) {
-          modal.style.display = 'none';
-          enterMap(name, group, uid);
-        } else {
+      document.getElementById('passcode-submit').onclick = function() {
+        var pin = document.getElementById('passcode-input').value.trim();
+        if (pin.length !== 4) {
           document.getElementById('passcode-error').style.display = 'block';
-          document.getElementById('passcode-input').value = '';
+          return;
         }
+        hashPin(pin).then(function(hash) {
+          if (hash === storedHash) {
+            modal.style.display = 'none';
+            enterMap(name, group, uid);
+          } else {
+            document.getElementById('passcode-error').style.display = 'block';
+            document.getElementById('passcode-input').value = '';
+          }
+        });
       };
     }, { onlyOnce: true });
-  });
+  }, 80);
 }
 
 // Lock icon on join screen — set passcode for a group
