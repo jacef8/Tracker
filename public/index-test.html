@@ -131,6 +131,11 @@
   #map { position: fixed; inset: 0; }
   /* Mapbox nav control pushed down past topbar */
   .mapboxgl-ctrl-top-left { top: calc(var(--topbar-h) + var(--safe-top) + 4px) !important; left: 10px !important; }
+  /* Hide Mapbox zoom +/- on mobile, show only on desktop */
+  @media (max-width: 768px) {
+    .mapboxgl-ctrl-top-left .mapboxgl-ctrl-zoom-in,
+    .mapboxgl-ctrl-top-left .mapboxgl-ctrl-zoom-out { display: none !important; }
+  }
 
   /* ── Top bar ── */
   #topbar {
@@ -755,16 +760,17 @@
 <!-- ══ MAP ════════════════════════════════════════════════════════════ -->
 <div id="map"></div>
 
-<!-- ── Map controls — match Mapbox zoom button style exactly ──────── -->
-<div class="mapboxgl-ctrl mapboxgl-ctrl-group" style="
-  position:fixed;
-  top: calc(var(--topbar-h) + var(--safe-top) + 80px);
+<!-- ── Custom map controls — sit below Mapbox zoom group ──────── -->
+<!-- On desktop: below zoom buttons (~72px tall). On mobile: just below topbar -->
+<div class="mapboxgl-ctrl mapboxgl-ctrl-group" id="custom-map-controls" style="
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--safe-top) + 4px);
   left: 10px;
   z-index: 150;
+  margin-top: 72px;
 ">
-  <!-- Layer picker — same style as Mapbox zoom +/- buttons -->
-  <button id="layer-btn" title="Map layers" type="button" style="display:flex;align-items:center;justify-content:center;">
-    <span class="mapboxgl-ctrl-icon" style="display:flex;align-items:center;justify-content:center;">
+  <button id="layer-btn" title="Map layers" type="button">
+    <span class="mapboxgl-ctrl-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="12 2 2 7 12 12 22 7 12 2"/>
         <polyline points="2 12 12 17 22 12"/>
@@ -772,9 +778,8 @@
       </svg>
     </span>
   </button>
-  <!-- North up — same style -->
-  <button id="north-up-btn" title="Reset north" type="button" style="display:flex;align-items:center;justify-content:center;">
-    <span class="mapboxgl-ctrl-icon" style="display:flex;align-items:center;justify-content:center;">
+  <button id="north-up-btn" title="Reset north" type="button">
+    <span class="mapboxgl-ctrl-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24">
         <polygon points="12,3 16,11 12,9 8,11" fill="#c00"/>
         <polygon points="12,21 16,13 12,15 8,13" fill="#888"/>
@@ -783,6 +788,12 @@
     </span>
   </button>
 </div>
+<!-- On mobile, zoom is hidden so shift our controls up to just below topbar -->
+<style>
+  @media (max-width: 768px) {
+    #custom-map-controls { margin-top: 4px; }
+  }
+</style>
 
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
 <div id="pin-mode-bar">
@@ -1613,10 +1624,9 @@ function initMap() {
         '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
         '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
         (address  ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
-        (parcelId ? '<div style="font-size:11px;color:#8b949e;margin-bottom:3px;font-family:monospace">' + parcelId + '</div>' : '') +
+
         (acres    ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
-        (val      ? '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Assessed: ' + val + '</div>' : '') +
-        (use      ? '<div style="font-size:11px;color:#8b949e">DOR Use: ' + use + '</div>' : '')
+        (val      ? '<div style="font-size:11px;color:#8b949e">Assessed: ' + val + '</div>' : '')
       )
       .addTo(map);
     popup.on('close', function() { map.setFilter('parcels-hover', ['==', ['id'], -1]); });
