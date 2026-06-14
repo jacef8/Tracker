@@ -18,15 +18,20 @@ app.get('/api/parcel', function(req, res) {
   var lng = parseFloat(req.query.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
 
-  var geom = encodeURIComponent(JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}}));
-  var fields = encodeURIComponent('OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,CO_NO,DOR_UC,LND_VAL');
-  var url = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query' +
-    '?geometry=' + geom +
-    '&geometryType=esriGeometryPoint' +
-    '&inSR=4326&outSR=4326' +
-    '&spatialRel=esriSpatialRelIntersects' +
-    '&outFields=' + fields +
-    '&returnGeometry=false&resultRecordCount=1&f=json';
+  // Use URLSearchParams to correctly encode all parameters
+  var qs = new URLSearchParams({
+    where: '1=1',
+    geometry: JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}}),
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    outSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: 'OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,CO_NO,DOR_UC,LND_VAL',
+    returnGeometry: 'false',
+    resultRecordCount: '1',
+    f: 'json'
+  });
+  var url = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query?' + qs.toString();
 
   var https = require('https');
   https.get(url, function(apiRes) {
