@@ -73,7 +73,9 @@
   .btn { padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; transition: opacity .15s; }
   .btn:active { opacity: .7; }
   .btn-danger { background: rgba(248,81,73,.12); border: 1px solid var(--danger); color: var(--danger); }
-  .btn-warn { background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+  .btn-danger:hover { background: rgba(248,81,73,.2); }
+  .btn-warn { background: var(--bg); border: 1px solid rgba(240,165,0,0.4); color: var(--accent); }
+  .btn-warn:hover { border-color: var(--accent); background: rgba(240,165,0,0.08); }
   .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
   .loading { text-align: center; padding: 40px 20px; color: var(--muted); }
 
@@ -151,15 +153,61 @@
   <div id="admin-list"><div class="loading">Connecting to Firebase…</div></div>
 </div>
 
-<!-- ALL DATA TAB -->
+<!-- ALL DATA TAB — replaced with useful summary + export -->
 <div class="tab-panel" id="tab-alldata">
-  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-    <button class="btn btn-warn filter-btn" data-filter="pins" onclick="filterAllData('pins')" id="filter-pins-btn">&#128205; Pins Only</button>
-    <button class="btn btn-warn filter-btn" data-filter="chat" onclick="filterAllData('chat')" id="filter-chat-btn">&#128172; Messages Only</button>
-    <button class="btn btn-warn filter-btn" data-filter="all" onclick="filterAllData('all')" id="filter-all-btn">Show All</button>
-    <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups?')) clearAllPins()">Clear All Pins</button>
+
+  <!-- Summary cards -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+    <div class="stat-card">
+      <div class="stat-val" id="summary-total-groups">—</div>
+      <div class="stat-label">Total Groups</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="summary-total-users">—</div>
+      <div class="stat-label">Total Users Ever</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="summary-total-pins">—</div>
+      <div class="stat-label">Total Pins</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="summary-total-msgs">—</div>
+      <div class="stat-label">Total Messages</div>
+    </div>
   </div>
-  <div id="alldata-list"><div class="loading">Loading…</div></div>
+
+  <!-- Export -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">&#128196; Export Data</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Download all pins or messages as a CSV file</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-warn" onclick="exportCSV('pins')">&#11015; Export All Pins</button>
+      <button class="btn btn-warn" onclick="exportCSV('chat')">&#11015; Export All Messages</button>
+    </div>
+  </div>
+
+  <!-- Most active groups -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128200; Most Active Groups</div>
+    <div id="most-active-list"></div>
+  </div>
+
+  <!-- Global pin type breakdown -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128205; Pin Types Across All Groups</div>
+    <div id="pin-type-breakdown"></div>
+  </div>
+
+  <!-- Danger zone -->
+  <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.3);border-radius:12px;padding:14px 16px">
+    <div style="font-size:13px;font-weight:700;color:var(--danger);margin-bottom:4px">&#9888; Danger Zone</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">These actions affect ALL groups and cannot be undone</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups? Cannot be undone.')) clearAllPins()">&#128205; Clear All Pins Everywhere</button>
+      <button class="btn btn-danger" onclick="if(confirm('Delete ALL data for ALL groups? This nukes everything.')) nukeEverything()">&#128165; Nuke Everything</button>
+    </div>
+  </div>
+
 </div>
 
 <!-- DEBUG TAB -->
@@ -415,6 +463,43 @@ window.filterAllData = function(type) {
   renderAllData(_allDataSnapshot, type);
 };
 
+window.exportCSV = function(type) {
+  var fb = window._fb;
+  var rows = [];
+  if (type === 'pins') {
+    rows.push(['Group','Category','Description','Dropped By','Lat','Lng','Time']);
+    Object.entries(_allDataSnapshot).forEach(function(entry) {
+      var key = entry[0], group = entry[1];
+      if (!group.pins) return;
+      Object.values(group.pins).forEach(function(p) {
+        rows.push([key, p.cat||'', p.label||'', p.name||'', p.lat||'', p.lng||'', p.ts ? new Date(p.ts).toLocaleString() : '']);
+      });
+    });
+  } else {
+    rows.push(['Group','From','Message','Time']);
+    Object.entries(_allDataSnapshot).forEach(function(entry) {
+      var key = entry[0], group = entry[1];
+      if (!group.chat) return;
+      Object.values(group.chat).forEach(function(m) {
+        rows.push([key, m.name||'', (m.text||'').replace(/,/g,' '), m.ts ? new Date(m.ts).toLocaleString() : '']);
+      });
+    });
+  }
+  var csv = rows.map(function(r){ return r.join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'groundlink-' + type + '-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  toast('Downloaded ' + rows.length + ' rows');
+};
+
+window.nukeEverything = function() {
+  var fb = window._fb;
+  fb.remove(fb.ref(fb.db, 'gl'));
+  addLog('NUKED: entire gl/ tree deleted', 'warn');
+};
+
 window.clearAllPins = function() {
   var fb = window._fb;
   Object.keys(_allDataSnapshot).forEach(function(key) {
@@ -424,7 +509,89 @@ window.clearAllPins = function() {
   });
 };
 
-function renderAllData(all, filter) {
+function renderAllData(all) {
+  // Now renders the summary tab
+  renderSummary(all);
+}
+
+function renderSummary(all) {
+  if (!all || !Object.keys(all).length) return;
+  var entries = Object.entries(all);
+  var totalGroups = entries.length;
+  var totalUsers = 0, totalPins = 0, totalMsgs = 0;
+  var pinTypes = {};
+  var groupActivity = [];
+
+  entries.forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    var users = group.users ? Object.keys(group.users).length : 0;
+    var pins  = group.pins  ? Object.keys(group.pins).length  : 0;
+    var msgs  = group.chat  ? Object.keys(group.chat).length  : 0;
+    totalUsers += users;
+    totalPins  += pins;
+    totalMsgs  += msgs;
+
+    // Count pin types
+    if (group.pins) {
+      Object.values(group.pins).forEach(function(p) {
+        var cat = p.cat || 'Unknown';
+        pinTypes[cat] = (pinTypes[cat] || 0) + 1;
+      });
+    }
+
+    var displayName = key.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+    var isTest = key.startsWith('test_');
+    groupActivity.push({ key, displayName, isTest, pins, msgs, users, total: pins + msgs + users });
+  });
+
+  // Update summary cards
+  document.getElementById('summary-total-groups').textContent = totalGroups;
+  document.getElementById('summary-total-users').textContent  = totalUsers;
+  document.getElementById('summary-total-pins').textContent   = totalPins;
+  document.getElementById('summary-total-msgs').textContent   = totalMsgs;
+
+  // Most active groups
+  groupActivity.sort(function(a,b){ return b.total - a.total; });
+  var activeEl = document.getElementById('most-active-list');
+  if (activeEl) {
+    activeEl.innerHTML = groupActivity.slice(0,10).map(function(g) {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="font-size:13px;font-weight:600">' + g.displayName + (g.isTest ? ' <span style="font-size:9px;color:var(--accent2);background:rgba(224,90,43,0.15);border-radius:3px;padding:1px 5px">TEST</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">&#128205; ' + g.pins + ' &nbsp;&#128172; ' + g.msgs + ' &nbsp;&#128101; ' + g.users + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Pin type breakdown
+  var breakdownEl = document.getElementById('pin-type-breakdown');
+  if (breakdownEl) {
+    var sorted = Object.entries(pinTypes).sort(function(a,b){ return b[1]-a[1]; });
+    if (!sorted.length) {
+      breakdownEl.innerHTML = '<div style="color:var(--muted);font-size:12px">No pins dropped yet</div>';
+    } else {
+      var max = sorted[0][1];
+      breakdownEl.innerHTML = sorted.map(function(entry) {
+        var cat = entry[0], count = entry[1];
+        var color = PIN_COLORS[cat] || '#f0a500';
+        var pct = Math.round((count/max)*100);
+        return '<div style="margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
+            '<span style="font-size:12px;font-weight:600;color:' + color + '">' + cat + '</span>' +
+            '<span style="font-size:12px;color:var(--muted)">' + count + '</span>' +
+          '</div>' +
+          '<div style="background:var(--border);border-radius:4px;height:6px">' +
+            '<div style="background:' + color + ';width:' + pct + '%;height:6px;border-radius:4px"></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+
+// Stub for old filter function — no longer needed
+window.filterAllData = function() { renderSummary(_allDataSnapshot); };
+
+function _renderAllDataOLD(all, filter) {
   filter = filter || 'all';
   var container = document.getElementById('alldata-list');
   if (!container) return;
