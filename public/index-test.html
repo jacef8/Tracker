@@ -875,7 +875,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
           <div style="flex:1">
             <div style="font-size:14px;font-weight:700">Property Lines</div>
-            <div style="font-size:11px;color:var(--muted)">Parcel boundaries — display only, no tap info</div>
+            <div style="font-size:11px;color:var(--muted)">Tap any parcel for owner, acreage & ID</div>
           </div>
           <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
             <input type="checkbox" id="toggle-parcels" onchange="toggleParcels(this.checked)" style="opacity:0;width:0;height:0">
@@ -1544,7 +1544,7 @@ function initMap() {
   map.on('error', function(e) {
     console.error('Map error:', e);
     // Ignore tile loading errors from overlay WMS layers
-    if (e.sourceId && (e.sourceId === 'fl-parcels' || e.sourceId === 'usda-clu' || e.sourceId === 'regrid-parcels')) return;
+    if (e.sourceId === 'regrid-parcels' || e.sourceId === 'usda-clu') return;
     if (e.error && e.error.status === 401) {
       toast('Map token error — contact admin', 5000);
     } else if (e.error && e.error.status === 403) {
@@ -2830,25 +2830,108 @@ function updateToggleUI(trackId, thumbId, on) {
 }
 
 function addParcelLayer() {
-  if (map.getLayer('parcels-layer')) return;
+  if (map.getLayer('parcels-fill')) return;
+
+  // Regrid vector tile source — interactive with owner info on tap
   if (!map.getSource('regrid-parcels')) {
     map.addSource('regrid-parcels', {
-      type: 'raster',
-      tiles: ['https://tiles.arcgis.com/tiles/KzeiCaQsMoeCfoCq/arcgis/rest/services/Regrid_Nationwide_Parcel_Boundaries_v1/MapServer/tile/{z}/{y}/{x}'],
-      tileSize: 256
+      type: 'vector',
+      tiles: ['https://tiles.regrid.com/api/v1/parcels/{z}/{x}/{y}.mvt?token=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJpc3N1ZXIiLCJhdWQiOiJyZWdyaWQiLCJzdWIiOiJqYWNlZm9yZEBsaWJlcnR5Y291bnR5ZmwuZ292IiwianRpIjoiMTc4MTQ1MjgzNSIsImlhdCI6MTc4MTQ1MjgzNX0.tBHN3E-OvnWdmNqiDQOwuMRE3Y7tTZPrKwn1pNH_oL8'],
+      minzoom: 12,
+      maxzoom: 19
     });
   }
-  map.addLayer({ id: 'parcels-layer', type: 'raster', source: 'regrid-parcels', paint: { 'raster-opacity': 0.7 } }, 'pins-layer');
+
+  // Fill layer — transparent so you see the map through it, highlights on hover
+  map.addLayer({
+    id: 'parcels-fill',
+    type: 'fill',
+    source: 'regrid-parcels',
+    'source-layer': 'parcels',
+    minzoom: 12,
+    paint: {
+      'fill-color': 'rgba(240,165,0,0.04)',
+      'fill-outline-color': 'rgba(240,165,0,0.8)'
+    }
+  }, 'pins-layer');
+
+  // Highlight on hover
+  map.addLayer({
+    id: 'parcels-hover',
+    type: 'fill',
+    source: 'regrid-parcels',
+    'source-layer': 'parcels',
+    minzoom: 12,
+    paint: {
+      'fill-color': 'rgba(240,165,0,0.15)',
+      'fill-outline-color': 'rgba(240,165,0,1)'
+    },
+    filter: ['==', ['get', 'll_uuid'], '']
+  }, 'pins-layer');
+
+  // Outline layer for cleaner borders
+  map.addLayer({
+    id: 'parcels-line',
+    type: 'line',
+    source: 'regrid-parcels',
+    'source-layer': 'parcels',
+    minzoom: 12,
+    paint: {
+      'line-color': 'rgba(240,165,0,0.7)',
+      'line-width': 1
+    }
+  }, 'pins-layer');
+
+  // Click to show parcel info popup
+  map.on('click', 'parcels-fill', function(e) {
+    if (!parcelsOn) return;
+    var props = e.features[0].properties;
+    var owner = props.owner || props.ll_bldg_count || 'Unknown owner';
+    var address = props.address || props.saddno + ' ' + (props.saddstr || '') || '';
+    var acres = props.ll_gisacre ? parseFloat(props.ll_gisacre).toFixed(2) + ' ac' : (props.gisacre ? parseFloat(props.gisacre).toFixed(2) + ' ac' : '');
+    var parcelId = props.parcelnumb || props.parcel_id || props.apn || '';
+    var zoning = props.zoning || props.zoning_description || '';
+    var landuse = props.usedesc || props.landuse || '';
+
+    // Highlight this parcel
+    map.setFilter('parcels-hover', ['==', ['get', 'll_uuid'], props.ll_uuid || '']);
+
+    new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
+      .setLngLat(e.lngLat)
+      .setHTML(
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:4px">Property Info</div>' +
+        (owner    ? '<div style="font-size:13px;font-weight:700;margin-bottom:4px">' + owner + '</div>' : '') +
+        (address  ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
+        (parcelId ? '<div style="font-size:11px;color:#8b949e;margin-bottom:3px">Parcel: ' + parcelId + '</div>' : '') +
+        (acres    ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
+        (zoning   ? '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Zoning: ' + zoning + '</div>' : '') +
+        (landuse  ? '<div style="font-size:11px;color:#8b949e">Use: ' + landuse + '</div>' : '')
+      )
+      .addTo(map);
+  });
+
+  map.on('mouseenter', 'parcels-fill', function() { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'parcels-fill', function() {
+    map.getCanvas().style.cursor = '';
+    map.setFilter('parcels-hover', ['==', ['get', 'll_uuid'], '']);
+  });
 }
 
 function toggleParcels(on) {
   parcelsOn = on;
   updateToggleUI('parcels-toggle-track', 'parcels-toggle-thumb', on);
   if (on) {
+    if (map.getZoom() < 12) {
+      map.flyTo({ zoom: 13, duration: 1200 });
+      toast('Zooming in to show property lines...', 2000);
+    } else {
+      toast('Tap a parcel to see owner info', 2000);
+    }
     addParcelLayer();
-    toast('Property lines loading...', 2000);
   } else {
-    if (map.getLayer('parcels-layer')) map.removeLayer('parcels-layer');
+    ['parcels-fill','parcels-hover','parcels-line'].forEach(function(id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
     if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
   }
 }
