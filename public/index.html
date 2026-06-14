@@ -1326,8 +1326,10 @@ function enterMap(name, group, uid) {
   fetch('/version?v=' + Date.now())
     .then(function(r) { return r.text(); })
     .then(function(serverVersion) {
-      serverVersion = serverVersion.trim();
-      if (serverVersion && serverVersion !== APP_VERSION) {
+      serverVersion = (serverVersion || '').trim();
+      // Only show banner if server returns a real version number (not HTML or empty)
+      var looksLikeVersion = /^[d.]+$/.test(serverVersion);
+      if (looksLikeVersion && serverVersion !== APP_VERSION) {
         var banner = document.getElementById('update-banner');
         if (banner) {
           banner.style.display = 'block';
