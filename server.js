@@ -13,26 +13,39 @@ app.get('/version', function(req, res) {
 
 // /join — always shows join screen regardless of saved session
 // Parcel lookup proxy — avoids CORS block on ArcGIS from browser
-app.get('/api/parcel', async function(req, res) {
-  var lat = req.query.lat;
-  var lng = req.query.lng;
+app.get('/api/parcel', function(req, res) {
+  var lat = parseFloat(req.query.lat);
+  var lng = parseFloat(req.query.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
-  var url = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query?' +
-    'geometry=%7B%22x%22%3A' + lng + '%2C%22y%22%3A' + lat + '%2C%22spatialReference%22%3A%7B%22wkid%22%3A4326%7D%7D' +
+
+  var geom = encodeURIComponent(JSON.stringify({"x": lng, "y": lat, "spatialReference": {"wkid": 4326}}));
+  var fields = encodeURIComponent('OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,CO_NO,DOR_UC,LND_VAL');
+  var url = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query' +
+    '?geometry=' + geom +
     '&geometryType=esriGeometryPoint' +
-    '&inSR=4326' +
-    '&outSR=4326' +
+    '&inSR=4326&outSR=4326' +
     '&spatialRel=esriSpatialRelIntersects' +
-    '&outFields=OWN_NAME%2CPHY_ADDR1%2CPHY_CITY%2CACREAGE%2CPARCEL_ID%2CDO_NO%2CDO_UC%2CLND_VAL' +
-    '&returnGeometry=false' +
-    '&f=json';
-  try {
-    var response = await fetch(url);
-    var data = await response.json();
-    res.json(data);
-  } catch(e) {
-    res.status(500).json({ error: 'Proxy error: ' + e.message });
-  }
+    '&outFields=' + fields +
+    '&returnGeometry=false&resultRecordCount=1&f=json';
+
+  var https = require('https');
+  https.get(url, function(apiRes) {
+    var body = '';
+    apiRes.on('data', function(chunk) { body += chunk; });
+    apiRes.on('end', function() {
+      try {
+        var data = JSON.parse(body);
+        // Log for debugging
+        console.log('Parcel query for', lat, lng, '-> features:', (data.features || []).length, data.error ? 'ERROR:'+JSON.stringify(data.error) : '');
+        res.json(data);
+      } catch(e) {
+        res.status(500).json({ error: 'Parse error', raw: body.substring(0, 200) });
+      }
+    });
+  }).on('error', function(e) {
+    console.error('Parcel proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  });
 });
 
 app.get('/join', function(req, res) {
