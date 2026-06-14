@@ -3,67 +3,2921 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="GroundLink" />
+<meta name="theme-color" content="#0d1117" />
 <title>GroundLink</title>
+<!-- APP_VERSION: 3 — bump this + sw.js APP_VERSION on every deploy -->
+
+<!-- PWA manifest -->
 <link rel="manifest" href="/manifest.json" />
+<!-- Apple touch icon (iOS home screen) -->
 <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+<!-- Mapbox -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+
+<!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getDatabase, ref, set, push, onValue, remove }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
   const firebaseConfig = {
-    apiKey: "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
-    authDomain: "tracker-58b87.firebaseapp.com",
-    databaseURL: "https://tracker-58b87-default-rtdb.firebaseio.com",
-    projectId: "tracker-58b87",
-    storageBucket: "tracker-58b87.firebasestorage.app",
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
     messagingSenderId: "371034128407",
-    appId: "1:371034128407:web:31259f67dc2d36d91cdc52",
-    measurementId: "G-EH3FZ2CZWJ"
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
   };
+  // ─── CONFIGURE YOUR MAPBOX TOKEN HERE ──────────────────────────────
   window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
-  window._fb = { db: getDatabase(initializeApp(firebaseConfig)), ref, set, push, onValue, remove };
+  // ───────────────────────────────────────────────────────────────────
+
+  const app = initializeApp(firebaseConfig);
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
 </script>
+
 <style>
-  html, body { height: 100%; overflow: hidden; background: #0d1117; font-family: system-ui; color: #e6edf3; }
-  #join-screen { position: fixed; inset: 0; z-index: 999; display: flex; align-items: center; justify-content: center; background: #0d1117; }
-  #map { position: fixed; inset: 0; z-index: 1; }
-  #locate-me { position: fixed; bottom: 100px; right: 20px; z-index: 100; width: 60px; height: 60px; background: #161b22; border: 2px solid #30363d; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0d1117;
+    --surface: #161b22;
+    --border:  #30363d;
+    --accent:  #f0a500;
+    --accent2: #e05a2b;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --danger:  #f85149;
+    --radius:  10px;
+    --chat-h:  230px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bot: env(safe-area-inset-bottom, 0px);
+    --topbar-h: 116px;  /* update if topbar height changes */
+    font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px; color: var(--text);
+  }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+  /* ── Join screen ── */
+  #join-screen {
+    position: fixed; inset: 0; z-index: 900;
+    background: var(--bg) url('/icons/splash.png') center/cover no-repeat;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: calc(var(--safe-top) + 20px) 0 calc(var(--safe-bot) + 20px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  .join-card {
+    width: min(420px, 92vw);
+    background: rgba(22,27,34,0.92); border: 1px solid rgba(255,255,255,.08);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-radius: 16px; padding: 22px 20px 20px;
+    display: flex; flex-direction: column; gap: 12px;
+    margin: auto;
+  }
+  .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
+  .join-title { font-size: 24px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+  .join-sub { font-size: 13px; color: var(--muted); }
+  .field-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .join-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 15px;
+    outline: none; transition: border-color .15s; -webkit-appearance: none;
+  }
+  .join-input:focus { border-color: var(--accent); }
+  .join-hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .btn-primary {
+    width: 100%; padding: 12px;
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: #0d1117; font-size: 15px; font-weight: 700;
+    cursor: pointer; transition: opacity .15s; -webkit-appearance: none;
+  }
+  .btn-primary:active { opacity: .82; }
+  #share-app-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #share-app-btn:active { border-color: var(--accent); color: var(--accent); opacity: .8; }
+
+  /* ── Install banner (shown before install) ── */
+  #install-banner {
+    display: none;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 12px; padding: 12px 16px; margin-top: -8px;
+    font-size: 13px; align-items: center; gap: 10px;
+  }
+  #install-banner.show { display: flex; }
+  #install-btn {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+
+  /* ── Wake lock indicator — tiny dot only ── */
+  #wakelock-indicator {
+    position: fixed; bottom: calc(8px + var(--safe-bot)); left: 8px; z-index: 150;
+    display: none; align-items: center; gap: 4px;
+    opacity: 0.45; pointer-events: none;
+  }
+  #wakelock-indicator.active { display: flex; }
+  .wl-dot { width: 5px; height: 5px; border-radius: 50%; background: #3fb950; }
+
+  /* ── Map ── */
+  #map { position: fixed; inset: 0; }
+  /* Mapbox nav control pushed down past topbar */
+  .mapboxgl-ctrl-top-left { top: calc(var(--topbar-h) + var(--safe-top) + 4px) !important; left: 10px !important; }
+
+  /* ── Top bar ── */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    padding-top: calc(var(--safe-top) + 8px);
+    padding-left: max(10px, env(safe-area-inset-left, 10px));
+    padding-right: max(10px, env(safe-area-inset-right, 10px));
+    padding-bottom: 8px; gap: 6px;
+    background: rgba(13,17,23,.97);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: stretch;
+  }
+  .topbar-row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .topbar-row2 {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 4px; padding-top: 4px; border-top: 1px solid var(--border);
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar-row2::-webkit-scrollbar { display: none; }
+  /* Lock to portrait — hide landscape oddities */
+  @media (orientation: landscape) {
+    #topbar { flex-direction: row; align-items: center; padding: 6px 12px; }
+    .topbar-row1 { flex: 0 0 auto; border-bottom: none; padding-right: 8px; border-right: 1px solid var(--border); }
+    .topbar-row2 { flex: 1; border-top: none; padding-top: 0; padding-left: 8px; }
+  }
+  .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .app-name { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; flex-shrink: 0; }
+  .group-chip {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 11px;
+    font-size: 12px; color: var(--text); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 150px; display: flex; align-items: center; gap: 6px;
+  }
+  .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .icon-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; width: 42px; height: 42px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 18px; position: relative; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active { border-color: var(--accent); }
+  .badge {
+    position: absolute; top: -5px; right: -5px;
+    background: var(--danger); border-radius: 10px;
+    min-width: 17px; height: 17px; padding: 0 4px;
+    font-size: 10px; font-weight: 700; color: #fff;
+    display: none; align-items: center; justify-content: center;
+  }
+
+  /* ── Pin mode bar ── */
+  #pin-mode-bar {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%; transform: translateX(-50%);
+    z-index: 400;
+    background: var(--accent2); border-radius: 20px;
+    padding: 8px 18px; font-size: 13px; font-weight: 700; color: #fff;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(224,90,43,.45); white-space: nowrap;
+  }
+  #pin-mode-bar.active { display: flex; }
+  .cancel-mode {
+    background: rgba(0,0,0,.2); border: none; border-radius: 12px;
+    padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
+  }
+  #measure-bar {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%; transform: translateX(-50%);
+    z-index: 400;
+    background: #2980b9; border-radius: 20px;
+    padding: 8px 16px; font-size: 13px; font-weight: 700; color: #fff;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(41,128,185,.5); white-space: nowrap;
+  }
+  #measure-bar.active { display: flex; flex-wrap: wrap; gap: 6px; }
+  #measure-mode-picker.active { display: flex !important; }
+  #measure-result { font-weight: 400; font-size: 12px; opacity: .9; }
+
+  /* ── Chat panel ── */
+  #chat-panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+    height: calc(var(--chat-h) + var(--safe-bot));
+    background: rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;
+    background-blend-mode: overlay;
+    backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transform: translateY(100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+  }
+  #chat-panel.open { transform: translateY(0); }
+
+  /* ── Pin feed panel ── */
+  #pin-feed-panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 201;
+    height: calc(280px + var(--safe-bot));
+    background: rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;
+    background-blend-mode: overlay;
+    backdrop-filter: blur(8px);
+    border-top: 2px solid var(--accent2);
+    display: flex; flex-direction: column;
+    transform: translateY(100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+  }
+  #pin-feed-panel.open { transform: translateY(0); }
+  #pin-feed-items {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .pin-feed-card {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 12px;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: border-color .15s;
+  }
+  .pin-feed-card:active { border-color: var(--accent); }
+  .pin-feed-card.is-new { border-color: var(--accent2); }
+  .pin-feed-dot {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #fff;
+    flex-shrink: 0; letter-spacing: -.5px;
+  }
+  .pin-feed-body { flex: 1; min-width: 0; }
+  .pin-feed-cat { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; margin-bottom: 2px; }
+  .pin-feed-label { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .pin-feed-meta { font-size: 11px; color: var(--muted); }
+  .pin-feed-dist { font-size: 12px; font-weight: 700; color: var(--accent); }
+  .pin-feed-arrow { font-size: 20px; color: var(--muted); flex-shrink: 0; }
+  .pin-feed-empty { padding: 30px 20px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .chat-header {
+    padding: 10px 14px 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .chat-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .close-chat { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 0 2px; }
+  #chat-messages {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 8px 12px; display: flex; flex-direction: column; gap: 5px;
+    scroll-behavior: smooth;
+  }
+  .msg {
+    max-width: 82%; padding: 7px 11px;
+    border-radius: 12px; font-size: 13px; line-height: 1.45; word-break: break-word;
+  }
+  .msg.mine { align-self: flex-end; background: var(--accent); color: #0d1117; border-bottom-right-radius: 3px; }
+  .msg.theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg .sender { font-size: 10px; font-weight: 700; margin-bottom: 2px; opacity: .65; }
+  .msg.pin-msg { border-left: 3px solid var(--accent2); }
+  .chat-input-row {
+    padding: 7px 10px;
+    padding-bottom: calc(10px + var(--safe-bot));
+    display: flex; gap: 8px; flex-shrink: 0;
+  }
+  #chat-input {
+    flex: 1; padding: 10px 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  #chat-input:focus { border-color: var(--accent); }
+  #chat-send {
+    background: var(--accent); border: none; border-radius: 20px;
+    padding: 10px 16px; color: #0d1117; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
+  /* ── Pin list drawer ── */
+  #pin-list-drawer {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); left: 0; bottom: 0; z-index: 300;
+    width: min(320px, 92vw);
+    background: rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;
+    background-blend-mode: overlay;
+    backdrop-filter: blur(8px);
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #pin-list-drawer.open { transform: translateX(0); }
+  .drawer-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .drawer-header .drawer-title { font-size: 13px; font-weight: 700; flex: 1; }
+  .close-drawer { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+  #pin-list-items { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .pin-list-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background .1s;
+  }
+  .pin-list-item:active { background: rgba(255,255,255,.04); }
+  .pin-list-dot {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; border: 2px solid rgba(255,255,255,.2);
+    margin-top: 1px;
+  }
+  .pin-list-body { flex: 1; min-width: 0; }
+  .pin-list-cat { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; opacity: .7; margin-bottom: 2px; }
+  .pin-list-desc { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+  .pin-list-meta { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .pin-list-dist { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+  .pin-list-mine { font-size: 10px; color: var(--accent); font-weight: 700; }
+  .pin-list-del {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--danger); font-size: 11px; cursor: pointer;
+    padding: 3px 8px; flex-shrink: 0; align-self: center;
+  }
+  .pin-list-empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* ── User drawer ── */
+  #user-drawer {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); right: 0; bottom: 0; z-index: 300;
+    width: 210px;
+    background: rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;
+    background-blend-mode: overlay;
+    backdrop-filter: blur(8px);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    padding: 14px 12px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  #user-drawer.open { transform: translateX(0); }
+  .drawer-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); flex-shrink: 0; }
+  .user-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .user-item:active { border-color: var(--accent); }
+  .user-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+  }
+  .uname { font-size: 13px; font-weight: 600; }
+  .ustatus { font-size: 11px; color: var(--muted); }
+
+  /* ── Pin modal ── */
+  #pin-modal {
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,.6);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  #pin-modal.show { display: flex; }
+  .pin-sheet {
+    width: min(480px, 100%);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 18px;
+    padding-bottom: calc(24px + var(--safe-bot));
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .pin-sheet-title { font-size: 15px; font-weight: 700; }
+  .pin-coords { font-size: 12px; color: var(--muted); font-family: monospace; margin-top: -8px; }
+  .pin-cats { display: flex; gap: 7px; flex-wrap: wrap; }
+  .cat-btn {
+    padding: 6px 10px; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg); color: var(--text);
+    font-size: 12px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .cat-btn.active { border-color: var(--accent) !important; background: rgba(240,165,0,.1); color: var(--accent); }
+  .pin-preview {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 800; color: #fff;
+    flex-shrink: 0; letter-spacing: -.5px;
+  }
+  .pin-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 14px;
+    outline: none; -webkit-appearance: none;
+  }
+  .pin-input:focus { border-color: var(--accent2); }
+  .pin-actions { display: flex; gap: 10px; }
+  .btn-drop {
+    flex: 1; padding: 13px;
+    background: var(--accent2); border: none; border-radius: var(--radius);
+    color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .btn-cancel {
+    padding: 13px 16px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--muted); font-size: 14px; cursor: pointer;
+  }
+
+  /* ── Locate me ── */
+  #locate-me {
+    position: fixed;
+    bottom: calc(80px + var(--safe-bot));
+    right: 14px; z-index: 500;
+    width: 54px; height: 54px;
+    background: var(--surface); border: 2px solid var(--border);
+    border-radius: 50%; display: none; align-items: center; justify-content: center;
+    font-size: 22px; cursor: pointer;
+    box-shadow: 0 2px 14px rgba(0,0,0,.5);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  #locate-me:active { border-color: var(--accent); }
+
+  /* ── Unread pin bubble ── */
+  #unread-pin-bubble {
+    position: fixed;
+    bottom: calc(74px + var(--safe-bot));
+    right: 14px; z-index: 151;
+    width: 46px; height: 52px;
+    background: var(--accent2);
+    border-radius: 14px;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1px;
+    cursor: pointer;
+    box-shadow: 0 3px 16px rgba(224,90,43,.6);
+    -webkit-tap-highlight-color: transparent;
+    animation: pin-pulse 1.5s ease-in-out infinite;
+  }
+  #unread-pin-bubble.visible { display: flex; }
+  #unread-pin-icon { font-size: 18px; line-height: 1; }
+  #unread-pin-count {
+    font-size: 12px; font-weight: 800; color: #fff;
+    background: rgba(0,0,0,.3); border-radius: 8px;
+    padding: 1px 6px; min-width: 18px; text-align: center;
+  }
+  @keyframes pin-pulse {
+    0%,100% { transform: scale(1); box-shadow: 0 3px 16px rgba(224,90,43,.6); }
+    50%      { transform: scale(1.08); box-shadow: 0 4px 22px rgba(224,90,43,.9); }
+  }
+
+  /* ── Toast ── */
+  /* ── New pin alert banner ── */
+  #pin-alert {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%;
+    transform: translateX(-50%);
+    z-index: 601; transition: opacity .25s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
+    width: min(380px, 92vw);
+    display: none; opacity: 0; pointer-events: none;
+  }
+  #pin-alert.show {
+    display: block; opacity: 1; pointer-events: auto;
+    transform: translateX(-50%);
+  }
+  #pin-alert-inner {
+    background: var(--surface); border: 1px solid var(--accent2);
+    border-radius: 14px; padding: 10px 12px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  #pin-alert-icon { font-size: 22px; flex-shrink: 0; }
+  #pin-alert-text { flex: 1; min-width: 0; }
+  #pin-alert-who { font-size: 11px; font-weight: 700; color: var(--accent2); text-transform: uppercase; letter-spacing: .06em; }
+  #pin-alert-label { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pin-alert-fly {
+    background: var(--accent2); border: none; border-radius: 8px;
+    padding: 6px 12px; color: #fff; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  #pin-alert-close {
+    background: none; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; flex-shrink: 0; line-height: 1;
+  }
+
+  #toast {
+    position: fixed;
+    bottom: calc(var(--safe-bot) + 90px);
+    left: 50%; transform: translateX(-50%) translateY(60px);
+    background: rgba(30,36,44,.97); border: 1px solid var(--border);
+    border-radius: 20px; padding: 8px 18px;
+    font-size: 13px; color: var(--text); white-space: nowrap;
+    transition: transform .25s ease, opacity .25s ease;
+    opacity: 0; z-index: 600; pointer-events: none;
+    max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+
+  /* ── Panel splash background ── */
+  .splash-bg {
+    background-color: rgba(22,27,34,0.97);
+    background-image: url('/icons/splash.png');
+    background-size: cover;
+    background-position: center;
+    background-blend-mode: overlay;
+  }
+
+  /* ── Unified panel/drawer header ── */
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .panel-title {
+    font-size: 15px; font-weight: 700; color: var(--text);
+  }
+  .panel-close {
+    width: 30px; height: 30px; border-radius: 50%; border: none;
+    background: var(--bg); color: var(--muted); font-size: 16px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+  }
+  .panel-close:active { background: var(--border); }
+  /* Bottom sheet handle */
+  .sheet-handle {
+    width: 40px; height: 4px; background: var(--border);
+    border-radius: 2px; margin: 10px auto 12px;
+  }
+  /* ── Saved pins drawer ── */
+  #saved-pins-drawer {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); right: 0; bottom: 0; z-index: 302;
+    width: min(320px, 92vw);
+    background: rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat; background-blend-mode: overlay; backdrop-filter: blur(16px);
+    border-left: 1px solid var(--accent);
+    transform: translateX(100%); transition: transform .22s ease;
+    display: flex; flex-direction: column;
+  }
+  #saved-pins-drawer.open { transform: translateX(0); }
+  #saved-pins-list { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
+  .sv-card { background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:border-color .15s; }
+  .sv-card:active { border-color:var(--accent); }
+  .sv-dot { width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0; }
+  .sv-body { flex:1;min-width:0; }
+  .sv-cat { font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px; }
+  .sv-label { font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .sv-meta { font-size:11px;color:var(--muted); }
+  .sv-btns { display:flex;flex-direction:column;gap:4px;flex-shrink:0; }
+  .sv-share { background:var(--accent);border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:#000;cursor:pointer; }
+  .sv-del { background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--muted);cursor:pointer; }
+
+  /* ── Mapbox popup overrides ── */
+  .mapboxgl-popup-content {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 10px 14px !important;
+    color: var(--text) !important;
+    font-family: inherit !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
+    min-width: 150px;
+  }
+  .mapboxgl-popup-tip { display: none; }
+  .pop-cat { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+  .pop-label { font-size: 15px; font-weight: 700; margin-bottom: 6px; line-height: 1.3; }
+  .pop-dist { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
+  .pop-coords { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 4px; }
+  .pop-meta { font-size: 12px; color: var(--muted); }
+  .pop-del { background: none; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 12px; cursor: pointer; margin-top: 10px; display: block; width: 100%; padding: 6px; }
+  .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none; }
+
+  /* ── Room list ── */
+  #room-list-section { display: flex; flex-direction: column; gap: 8px; }
+  .room-list-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+  .room-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-radius: var(--radius);
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer; transition: border-color .15s; gap: 10px;
+  }
+  .room-item:active { border-color: var(--accent); }
+  .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .room-name { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .room-meta { font-size: 11px; color: var(--muted); }
+  .room-join-btn {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  .room-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px 0; }
+  .room-loading { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; }
+  .divider-or {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em;
+  }
+  .divider-or::before, .divider-or::after { content:''; flex:1; height:1px; background: var(--border); }
 </style>
 </head>
 <body>
 
-<div id="join-screen">
-  <button onclick="window._handleJoinClick()" style="padding: 20px; background: #f0a500; border: none; border-radius: 10px; font-weight: bold;">JOIN MAP</button>
+<!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
+<div id="join-screen" style="display:none">
+  <div class="join-card">
+    <div style="display:flex;align-items:center;gap:14px">
+      <img src="/icons/icon-192.png" alt="GroundLink" style="width:56px;height:56px;border-radius:14px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.4)" />
+      <div>
+        <div class="join-logo">GroundLink</div>
+        <div class="join-title">Live Field Map</div>
+        <div class="join-sub" style="margin-top:2px">Satellite · Live positions · Shared pins</div>
+      </div>
+    </div>
+
+    <!-- Install prompt (Android Chrome) -->
+    <div id="install-banner">
+      <span>📲 Install for best experience</span>
+      <button id="install-btn">Add to Home Screen</button>
+    </div>
+
+    <div>
+      <div class="field-label">Your name</div>
+      <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+    </div>
+
+    <!-- Active rooms list -->
+    <div id="room-list-section">
+      <div class="room-list-label">Active Groups</div>
+      <div id="room-list"><div class="room-loading">Loading groups…</div></div>
+    </div>
+
+    <div class="divider-or">or create / join by name</div>
+
+    <div>
+      <div class="field-label">Group name</div>
+      <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
+      <div class="join-hint">Type any name — everyone who matches joins the same map.</div>
+    </div>
+
+    <button class="btn-primary" id="join-btn">Open Map →</button>
+
+    <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+      Share GroundLink
+    </button>
+
+    <!-- iOS install hint -->
+    <!-- Install tip card — shown if not already installed as PWA -->
+    <!-- Install tip — collapsed by default, expands on tap -->
+    <div id="install-tip" style="display:none">
+      <!-- Collapsed banner -->
+      <div id="install-tip-banner" style="display:flex;align-items:center;justify-content:space-between;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.3);border-radius:10px;padding:8px 12px;cursor:pointer" onclick="document.getElementById('install-tip-expanded').style.display=document.getElementById('install-tip-expanded').style.display==='none'?'block':'none'">
+        <span style="font-size:13px;font-weight:700;color:var(--accent)">&#128242; Install GroundLink as an App</span>
+        <span id="install-tip-chevron" style="color:var(--accent);font-size:12px">&#9660;</span>
+      </div>
+      <!-- Expanded detail -->
+      <div id="install-tip-expanded" style="display:none;background:rgba(240,165,0,.06);border:1px solid rgba(240,165,0,.2);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;font-size:12px;line-height:1.6">
+        <div id="install-tip-android" style="display:none">
+          <button id="install-tip-btn" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:8px;font-size:13px;font-weight:700;color:#000;cursor:pointer;margin-bottom:6px">&#11015; Install App</button>
+          <div id="install-tip-android-manual" style="display:none;color:var(--text)">
+            Chrome: tap <strong style="color:var(--accent)">&#8942;</strong> &rarr; <strong style="color:var(--accent)">Add to Home screen</strong> &rarr; <strong style="color:var(--accent)">Install</strong>
+          </div>
+        </div>
+        <div id="install-tip-ios" style="display:none;color:var(--text)">
+          Open in <strong style="color:var(--accent)">Safari</strong> &rarr; tap <strong style="color:var(--accent)">Share &#11014;</strong> &rarr; <strong style="color:var(--accent)">Add to Home Screen</strong><br>
+          <span style="color:var(--muted)">Must use Safari — Chrome on iOS cannot install</span>
+        </div>
+        <div id="install-tip-installed" style="display:none;color:var(--muted)">
+          Share GroundLink with your group so they can install it too.
+        </div>
+        <button id="dismiss-install-tip" style="margin-top:8px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0;text-decoration:underline">Close</button>
+      </div>
+    </div>
+    <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
+      📱 On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
+    </div>
+  </div>
 </div>
 
+<!-- ══ TOP BAR ════════════════════════════════════════════════════════ -->
+<div id="update-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--accent);color:#000;padding:10px 16px;text-align:center;font-size:13px;font-weight:700;cursor:pointer">
+  &#8593; New version available — tap to update
+</div>
+
+<div id="topbar" style="display:none">
+  <!-- Row 1: App name + group + exit -->
+  <div class="topbar-row1">
+    <div class="app-name">GroundLink</div>
+    <div class="group-chip">
+      <span class="online-dot"></span>
+      <span id="group-name-label"></span>
+    </div>
+    <span id="group-lock-icon" style="display:none"></span>
+    <div id="switch-group-btn" title="Leave group" style="
+      background:var(--surface);border:1px solid var(--border);
+      border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;
+      color:var(--muted);cursor:pointer;white-space:nowrap;flex-shrink:0;
+      -webkit-tap-highlight-color:transparent;">EXIT</div>
+  </div>
+  <!-- Row 2: 7 action buttons -->
+  <div class="topbar-row2">
+    <!-- PIN HUB — opens bottom sheet with all pin options -->
+    <div class="icon-btn" id="pin-hub-btn" title="Pins">
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#f0a500"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+      <span class="badge" id="pin-badge" style="display:none">0</span>
+    </div>
+    <!-- CHAT -->
+    <div class="icon-btn" id="chat-toggle-btn" title="Group chat">&#128172;<span class="badge" id="chat-badge" style="display:none">0</span></div>
+    <!-- MEMBERS -->
+    <div class="icon-btn" id="users-toggle-btn" title="Who&#39;s online">
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#ffffff"><circle cx="9" cy="7" r="3.5"/><path d="M9 12c-3.87 0-7 1.79-7 4v1h14v-1c0-2.21-3.13-4-7-4z"/><circle cx="17" cy="8" r="2.5" opacity="0.8"/><path d="M17 13c-1.07 0-2.07.2-2.97.54C15.19 14.26 16 15.27 16 16.5V17h6v-1c0-1.93-2.24-3-5-3z" opacity="0.8"/></svg>
+      <span id="users-badge" style="display:none;position:absolute;bottom:2px;right:2px;background:#3fb950;color:#000;font-size:9px;font-weight:800;border-radius:10px;padding:1px 4px;min-width:14px;text-align:center;line-height:14px">0</span>
+    </div>
+    <!-- BREADCRUMBS -->
+    <div class="icon-btn" id="breadcrumb-btn" title="Toggle breadcrumbs"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#FFD700"><ellipse cx="12" cy="17" rx="5" ry="4"/><ellipse cx="6.5" cy="12" rx="2.2" ry="2.8"/><ellipse cx="17.5" cy="12" rx="2.2" ry="2.8"/><ellipse cx="9" cy="8.5" rx="2" ry="2.5"/><ellipse cx="15" cy="8.5" rx="2" ry="2.5"/></svg><span id="breadcrumb-dot" style="position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></div>
+    <!-- MEASURE -->
+    <div class="icon-btn" id="measure-btn" title="Measure">&#128207;</div>
+    <!-- Hidden elements kept for JS compatibility -->
+    <span id="pin-feed-badge" style="display:none">0</span>
+  </div>
+</div>
+<!-- ══ MAP ════════════════════════════════════════════════════════════ -->
 <div id="map"></div>
+
+<!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
+<div id="pin-mode-bar">
+  📍 Tap the map to place a pin
+  <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
+</div>
+
+<!-- ══ MEASURE BAR ══════════════════════════════════════════════════ -->
+<!-- Measure mode selector -->
+<div id="measure-mode-picker" style="display:none;position:fixed;top:calc(var(--topbar-h) + var(--safe-top) + 4px);left:50%;transform:translateX(-50%);z-index:400;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;display:none;gap:8px;align-items:center;box-shadow:0 4px 20px rgba(0,0,0,.4)">
+  <span style="font-size:12px;font-weight:700;color:var(--muted);margin-right:4px">MEASURE</span>
+  <button id="measure-dist-btn" onclick="startMeasure('distance')" style="padding:7px 14px;background:var(--accent);border:none;border-radius:8px;font-size:13px;font-weight:700;color:#000;cursor:pointer">&#128207; Distance</button>
+  <button id="measure-area-btn" onclick="startMeasure('area')" style="padding:7px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer">&#9653; Area</button>
+  <button onclick="disableMeasure()" style="padding:7px 10px;background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer">&#10005;</button>
+</div>
+
+<!-- Active measure bar -->
+<div id="measure-bar">
+  <span id="measure-label">&#128207;</span>
+  <span id="measure-result"></span>
+  <button id="measure-undo-btn" onclick="measureUndo()" style="background:rgba(255,255,255,.15);border:none;border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;cursor:pointer;display:none">&#8592; Undo</button>
+  <button id="measure-finish-btn" onclick="measureFinish()" style="background:rgba(255,255,255,.2);border:none;border-radius:6px;color:#fff;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;display:none">Close Shape</button>
+  <button class="cancel-mode" id="cancel-measure" onclick="disableMeasure()">Clear</button>
+</div>
+
+<!-- ══ LOCATE ME ════════════════════════════════════════════════════ -->
 <div id="locate-me" onclick="window._locateMeTapped()">🎯</div>
 
+<!-- ══ UNREAD PIN BUBBLE ═════════════════════════════════════════════ -->
+<div id="unread-pin-bubble" title="New pins">
+  <div id="unread-pin-icon">📍</div>
+  <div id="unread-pin-count">0</div>
+</div>
+
+<!-- ══ WAKE LOCK INDICATOR ══════════════════════════════════════════ -->
+<div id="wakelock-indicator"><span class="wl-dot"></span></div>
+
+<!-- ══ CHAT PANEL ════════════════════════════════════════════════════ -->
+<div id="chat-panel">
+  <div class="panel-header">
+    <span class="panel-title" id="chat-panel-title">&#128172; Group Chat</span>
+    <button class="panel-close" id="close-chat">&#10005;</button>
+  </div>
+  <div id="chat-messages"></div>
+  <div class="chat-input-row">
+    <input id="chat-input" placeholder="Message the group…" maxlength="300" autocomplete="off" />
+    <button id="chat-send">Send</button>
+  </div>
+</div>
+
+<!-- ══ PIN LIST DRAWER ══════════════════════════════════════════════ -->
+<div id="pin-list-drawer">
+  <div class="panel-header">
+    <span class="panel-title">&#128203; Manage Pins <span id="pin-list-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></span>
+    <button class="panel-close" id="close-pin-list">&#10005;</button>
+  </div>
+  <div style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button id="clear-my-pins-btn" style="flex:1;padding:7px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer">Clear My Pins</button>
+    <button id="clear-all-pins-btn" style="flex:1;padding:7px;background:var(--bg);border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-size:12px;cursor:pointer">Clear All Pins</button>
+  </div>
+  <div id="pin-list-items"></div>
+</div>
+
+<!-- ══ PASSCODE MODAL ═══════════════════════════════════════════════════ -->
+<div id="passcode-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.92);align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:320px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px" id="passcode-title">Group Passcode</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px" id="passcode-subtitle">Enter the 4-digit passcode to join this group.</div>
+    <input id="passcode-input" type="number" maxlength="4" placeholder="0000"
+      style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:24px;text-align:center;letter-spacing:8px;outline:none;-webkit-appearance:none;margin-bottom:12px" />
+    <div id="passcode-error" style="color:var(--danger);font-size:12px;margin-bottom:10px;display:none">Incorrect passcode. Try again.</div>
+    <div style="display:flex;gap:8px">
+      <button onclick="document.getElementById('passcode-modal').style.display='none'" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px">Cancel</button>
+      <button id="passcode-submit" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px">Join</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SET PASSCODE MODAL ══════════════════════════════════════════════════ -->
+<div id="set-passcode-modal" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:320px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">Set Group Passcode</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Set a 4-digit PIN for <span id="set-passcode-group" style="color:var(--accent);font-weight:700"></span>. Leave blank to remove passcode.</div>
+    <input id="set-passcode-input" type="number" maxlength="4" placeholder="0000"
+      style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:24px;text-align:center;letter-spacing:8px;outline:none;-webkit-appearance:none;margin-bottom:8px" />
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:8px">Leave blank to remove passcode</div>
+    <div style="display:flex;gap:8px">
+      <button onclick="document.getElementById('set-passcode-modal').style.display='none'" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px">Cancel</button>
+      <button id="set-passcode-submit" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SAVED PINS DRAWER ══════════════════════════════════ -->
+<div id="saved-pins-drawer">
+  <div class="panel-header">
+    <span class="panel-title">&#9733; My Saved Pins</span>
+    <button class="panel-close" id="close-saved-pins">&#10005;</button>
+  </div>
+  <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">
+    Saved here across all groups and sessions. Tap to fly there.
+  </div>
+  <div id="saved-pins-list"></div>
+</div>
+
+<!-- ══ PIN HUB SHEET ════════════════════════════════════════════════════ -->
+<div id="pin-hub-sheet" style="display:none;position:fixed;inset:0;z-index:400">
+  <!-- Backdrop -->
+  <div id="pin-hub-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.5)" onclick="closePinHub()"></div>
+  <!-- Sheet -->
+  <div style="position:absolute;bottom:0;left:0;right:0;border-radius:20px 20px 0 0;border-top:1px solid var(--border);padding:0 0 calc(var(--safe-bot) + 8px);background:rgba(13,17,23,.88) url('/icons/splash.png') center/cover no-repeat;background-blend-mode:overlay;backdrop-filter:blur(8px)">
+    <div class="panel-header">
+      <span class="panel-title">&#128205; Pins</span>
+      <button class="panel-close" onclick="closePinHub()">&#10005;</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;padding:8px 16px">
+      <!-- Drop a pin -->
+      <button onclick="closePinHub();enablePinMode();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <span style="font-size:24px">&#43;</span>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">Drop a Pin</div><div style="font-size:12px;color:var(--muted)">Tap the map to place a pin</div></div>
+      </button>
+      <!-- Pin feed -->
+      <button onclick="closePinHub();openPinFeed();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <span style="font-size:24px">&#128205;</span>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">Pin Feed <span id="pin-hub-count" style="color:var(--muted);font-weight:400;font-size:12px"></span></div><div style="font-size:12px;color:var(--muted)">View all dropped pins, tap to fly there</div></div>
+      </button>
+      <!-- Saved pins -->
+      <button onclick="closePinHub();openSavedPins();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <span style="font-size:24px;color:#FFD700">&#9733;</span>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">My Saved Pins</div><div style="font-size:12px;color:var(--muted)">Your personal pin library</div></div>
+      </button>
+      <!-- Clear pins -->
+      <button onclick="closePinHub();document.getElementById('pin-list-drawer').classList.add('open');renderPinList(lastPins);" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <span style="font-size:24px">&#128203;</span>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">Manage Pins</div><div style="font-size:12px;color:var(--muted)">Clear my pins or all group pins</div></div>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PIN FEED PANEL ═════════════════════════════════════════════════════ -->
+<div id="pin-feed-panel">
+  <div class="panel-header">
+    <span class="panel-title">&#128205; Pin Feed <span id="pin-feed-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></span>
+    <button class="panel-close" id="close-pin-feed">&#10005;</button>
+  </div>
+  <div id="pin-feed-items"></div>
+</div>
+
+<!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
+<div id="user-drawer">
+  <div class="panel-header">
+    <span class="panel-title">&#128101; On the Map</span>
+    <button class="panel-close" id="close-user-drawer">&#10005;</button>
+  </div>
+  <!-- Group settings section -->
+  <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Group Settings</div>
+    <button id="group-lock-btn" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;cursor:pointer;width:100%;text-align:left;-webkit-tap-highlight-color:transparent">
+      <span id="group-lock-icon" style="font-size:16px">&#128275;</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">Group Passcode</div>
+        <div style="font-size:11px;color:var(--muted)" id="group-lock-status">Tap to set or change</div>
+      </div>
+    </button>
+  </div>
+  <div id="user-list"></div>
+</div>
+
+<!-- ══ PIN MODAL ═════════════════════════════════════════════════════ -->
+<div id="pin-modal">
+  <div class="pin-sheet">
+    <div>
+      <div class="pin-sheet-title">Drop a Pin</div>
+      <div class="pin-coords" id="pin-coords-label"></div>
+    </div>
+    <div class="pin-cats" id="pin-cats">
+      <button class="cat-btn active" data-cat="Waypoint" style="border-color:#f0a50020"><span class="pin-preview" style="background:#f0a500">WP</span>Waypoint</button>
+      <button class="cat-btn" data-cat="Deer Stand" style="border-color:#8B5E3C20"><span class="pin-preview" style="background:#8B5E3C">DS</span>Deer Stand</button>
+      <button class="cat-btn" data-cat="Game Trail" style="border-color:#5a8a3c20"><span class="pin-preview" style="background:#5a8a3c">GT</span>Game Trail</button>
+      <button class="cat-btn" data-cat="Harvest" style="border-color:#c0392b20"><span class="pin-preview" style="background:#c0392b">HV</span>Harvest</button>
+      <button class="cat-btn" data-cat="Gobbler" style="border-color:#8e44ad20"><span class="pin-preview" style="background:#8e44ad">GB</span>Gobbler</button>
+      <button class="cat-btn" data-cat="Feeder" style="border-color:#27ae6020"><span class="pin-preview" style="background:#27ae60">FD</span>Feeder</button>
+      <button class="cat-btn" data-cat="Water" style="border-color:#2980b920"><span class="pin-preview" style="background:#2980b9">WA</span>Water</button>
+      <button class="cat-btn" data-cat="Hog" style="border-color:#7f600020"><span class="pin-preview" style="background:#7f6000">HG</span>Hog</button>
+      <button class="cat-btn" data-cat="Bear" style="border-color:#4a235a20"><span class="pin-preview" style="background:#4a235a">BR</span>Bear</button>
+      <button class="cat-btn" data-cat="Camp" style="border-color:#e67e2220"><span class="pin-preview" style="background:#e67e22">CP</span>Camp</button>
+      <button class="cat-btn" data-cat="Vehicle" style="border-color:#56657320"><span class="pin-preview" style="background:#566573">VH</span>Vehicle</button>
+      <button class="cat-btn" data-cat="Boundary" style="border-color:#922b2120"><span class="pin-preview" style="background:#922b21">BN</span>Boundary</button>
+      <button class="cat-btn" data-cat="Hazard" style="border-color:#e74c3c20"><span class="pin-preview" style="background:#e74c3c">HZ</span>Hazard</button>
+      <button class="cat-btn" data-cat="Urgent" style="border-color:#ff000020"><span class="pin-preview" style="background:#ff0000">!!</span>Urgent</button>
+      <button class="cat-btn" data-cat="Custom" style="border-color:#00bcd420"><span class="pin-preview" style="background:#00bcd4">CT</span>Custom</button>
+    </div>
+    <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
+    <div id="custom-cat-row" style="display:none;margin-top:6px">
+      <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
+    </div>
+    <div class="pin-actions">
+      <button class="btn-cancel" id="pin-cancel">Cancel</button>
+      <button class="btn-drop" id="pin-confirm">Drop Pin → Chat</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ NEW PIN ALERT ════════════════════════════════════════════════ -->
+<div id="pin-alert">
+  <div id="pin-alert-inner">
+    <span id="pin-alert-icon">📍</span>
+    <div id="pin-alert-text">
+      <div id="pin-alert-who"></div>
+      <div id="pin-alert-label"></div>
+    </div>
+    <button id="pin-alert-fly">Go →</button>
+    <button id="pin-alert-close">✕</button>
+  </div>
+</div>
+
+<!-- ══ TOAST ═════════════════════════════════════════════════════════ -->
+<div id="toast"></div>
+
 <script>
-  // Debug Crash Handler
-  window.onerror = function(msg, url, line) {
-    alert("CRASH: " + msg + " at line " + line);
-  };
+// ══ STATE ════════════════════════════════════════════════════════
+let map, db, fbRef, fbSet, fbPush, fbOnValue, fbRemove;
+let groupName = '', userId = '', userName = '';
+let pinMode = false, pendingCoords = null;
+let userMarkers = {}, pinMarkers = {};
+let chatOpen = false, unreadCount = 0;
+let selectedCat = 'Waypoint';
+let wakeLock = null;
+let deferredInstallPrompt = null;
 
-  // Locate Me Fix
-  window._locateMeTapped = function() {
-    alert("Locate tapped!");
-    if (window._lastGPS) {
-      map.flyTo({ center: [window._lastGPS.lng, window._lastGPS.lat], zoom: 17 });
+const COLORS = ['#f0a500','#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff'];
+
+// ══ SERVICE WORKER ════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(console.warn);
+}
+
+// ══ PWA INSTALL PROMPT (Android Chrome) ══════════════════════════
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  document.getElementById('install-banner').classList.add('show');
+});
+
+// Share button — uses native share sheet, falls back to clipboard
+document.getElementById('share-app-btn').addEventListener('click', async () => {
+  const shareData = {
+    title: 'GroundLink',
+    text: 'Live satellite map for tracking your group in the field. Drop pins, share locations, chat — no account needed.',
+    url: 'https://tracker-production-56df.up.railway.app'
+  };
+  try {
+    if (navigator.share) {
+      await navigator.share(shareData);
     } else {
-      alert("GPS not ready yet");
+      // Fallback — copy URL to clipboard
+      await navigator.clipboard.writeText(shareData.url);
+      // Show temp feedback on the button
+      const btn = document.getElementById('share-app-btn');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '&#10003; Link copied!';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.borderColor = ''; btn.style.color = ''; }, 2000);
     }
-  };
+  } catch(e) {
+    // User cancelled share — that's fine
+  }
+});
 
-  // Join Click Fix
-  window._handleJoinClick = function() {
-    alert("Join clicked!");
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  const { outcome } = await deferredInstallPrompt.userChoice;
+  if (outcome === 'accepted') {
+    document.getElementById('install-banner').classList.remove('show');
+    toast('GroundLink installed ✓');
+  }
+  deferredInstallPrompt = null;
+});
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('install-banner').classList.remove('show');
+});
+
+// ══ UTILS ════════════════════════════════════════════════════════
+function toast(msg, ms = 1800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
+}
+function userColor(uid) {
+  let h = 0;
+  for (const c of uid) h = (h << 5) - h + c.charCodeAt(0);
+  return COLORS[Math.abs(h) % COLORS.length];
+}
+function initials(name) {
+  return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+function genUid() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+}
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ══ WAKE LOCK ════════════════════════════════════════════════════
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    document.getElementById('wakelock-indicator').classList.add('active');
+    wakeLock.addEventListener('release', () => {
+      document.getElementById('wakelock-indicator').classList.remove('active');
+    });
+  } catch (e) {
+    console.warn('Wake lock failed:', e.message);
+  }
+}
+
+// Re-acquire wake lock when page becomes visible again
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && wakeLock === null) {
+    await acquireWakeLock();
+  }
+});
+
+// ══ WAIT FOR FIREBASE ════════════════════════════════════════════
+function waitForFirebase(cb) {
+  if (window._fb) { cb(window._fb); return; }
+  const t = setInterval(() => { if (window._fb) { clearInterval(t); cb(window._fb); } }, 80);
+}
+
+// ══ ROOM LIST ════════════════════════════════════════════════════
+// Reads all groups active in the last 24 hours and shows them as tappable cards
+function loadRoomList() {
+  waitForFirebase(fb => {
+    fb.onValue(fb.ref(fb.db, 'gl'), snap => {
+      const all = snap.val() || {};
+      const listEl = document.getElementById('room-list');
+      const now = Date.now();
+      const LIVE_MS  = 90 * 1000;          // active right now (< 90 sec)
+      const STALE_MS = 24 * 60 * 60 * 1000; // used in last 24 hours
+
+      const rooms = [];
+      Object.entries(all).forEach(function(entry) {
+        var key   = entry[0];
+        var group = entry[1];
+        var users = group.users ? Object.values(group.users) : [];
+        var pins  = group.pins  ? Object.keys(group.pins).length : 0;
+
+        // Find the most recent activity across all users
+        var lastActive = 0;
+        users.forEach(function(u) { if ((u.ts || 0) > lastActive) lastActive = u.ts || 0; });
+
+        // Also check most recent pin drop
+        if (group.pins) {
+          Object.values(group.pins).forEach(function(p) {
+            if ((p.ts || 0) > lastActive) lastActive = p.ts || 0;
+          });
+        }
+
+        // Skip groups with zero activity ever
+        if (!lastActive) return;
+
+        // Auto-delete groups older than 24 hours — no paid Firebase needed
+        if (now - lastActive > STALE_MS) {
+          fb.remove(fb.ref(fb.db, 'gl/' + key));
+          return;
+        }
+
+        var liveUsers  = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
+        var liveCount  = liveUsers.length;
+        var liveNames  = liveUsers.map(function(u) { return u.name; });
+
+        // Fix title case: "liberty_hunt" -> "Liberty Hunt"
+        var displayName = key.replace(/_/g, ' ')
+          .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+
+        // Human-readable last active time
+        var diffMin = Math.floor((now - lastActive) / 60000);
+        var diffHr  = Math.floor(diffMin / 60);
+        var lastStr = diffMin < 1   ? 'just now'
+                    : diffMin < 60  ? diffMin + 'm ago'
+                    : diffHr  < 24  ? diffHr  + 'h ago'
+                    : 'over a day ago';
+
+        var config = group.config || {};
+        rooms.push({ key, displayName, liveCount, liveNames, pins, lastActive, lastStr, config });
+      });
+
+      if (rooms.length === 0) {
+        listEl.innerHTML = '<div class="room-empty">No recent groups — create one below.</div>';
+        return;
+      }
+
+      // Sort: live groups first, then by most recent activity
+      rooms.sort(function(a, b) {
+        if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
+        return b.lastActive - a.lastActive;
+      });
+
+      listEl.innerHTML = '';
+      rooms.forEach(function(room) {
+        var item = document.createElement('div');
+        item.className = 'room-item';
+
+        var isLocked = room.config && room.config.pin;
+        var lockIcon = isLocked ? ' &#128274;' : '';
+        var statusHTML = room.liveCount > 0
+          ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
+            + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0,3).join(', ')
+              + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
+          : '<span style="color:var(--muted)">Last active ' + room.lastStr + '</span>';
+
+        var pinText = room.pins > 0
+          ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '')
+          : '';
+
+        item.innerHTML =
+          '<div class="room-item-left">' +
+            '<div class="room-name">' + room.displayName + lockIcon + '</div>' +
+            '<div class="room-meta">' + statusHTML + pinText + '</div>' +
+          '</div>' +
+          '<button class="room-join-btn">Join</button>';
+
+        item.querySelector('.room-join-btn').addEventListener('click', function() {
+          document.getElementById('inp-group').value = room.displayName;
+          var name = document.getElementById('inp-name').value.trim();
+          if (name) {
+            var existing = getSavedSession();
+            var uid = existing.uid || genUid();
+            checkGroupPasscode(name, room.key, uid);
+          } else {
+            document.getElementById('inp-group').style.borderColor = 'var(--accent)';
+            setTimeout(function() { document.getElementById('inp-group').style.borderColor = ''; }, 1500);
+            toast('Enter your name first');
+          }
+        });
+        listEl.appendChild(item);
+      });
+    });
+  });
+}
+loadRoomList();
+
+const APP_VERSION = '1.6';
+
+// ══ DEBUG LOGGING ════════════════════════════════════════════════
+function writeDebugLog(grp, msg) {
+  if (typeof db === 'undefined' || !db || !grp) return;
+  try {
+    var ref = fbPush(fbRef(db, 'gl/' + grp + '/debug'));
+    fbSet(ref, { msg: msg, ts: Date.now() });
+  } catch(e) {}
+}
+
+// ══ SESSION PERSISTENCE ══════════════════════════════════════════
+// userId is stored permanently — same device = same dot on the map
+// ══ DEVICE ID — stored in 3 places for redundancy ══════════════
+// localStorage (primary), sessionStorage (tab fallback),
+// and a cookie (survives browser data clears on Android).
+// A device gets a new ID only if ALL THREE are missing.
+
+function _cookieGet(key) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + key + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+function _cookieSet(key, val) {
+  // Expires 1 year from now
+  const exp = new Date(Date.now() + 365*24*60*60*1000).toUTCString();
+  document.cookie = key + '=' + encodeURIComponent(val) + '; expires=' + exp + '; path=/; SameSite=Lax';
+}
+
+function getSavedSession() {
+  try {
+    const uid   = localStorage.getItem('gl_uid')   || sessionStorage.getItem('gl_uid')   || _cookieGet('gl_uid');
+    const name  = localStorage.getItem('gl_name')  || sessionStorage.getItem('gl_name')  || _cookieGet('gl_name');
+    const group = localStorage.getItem('gl_group') || sessionStorage.getItem('gl_group') || _cookieGet('gl_group');
+    return { uid, name, group };
+  } catch(_) { return {}; }
+}
+
+function saveSession(name, group, uid) {
+  // Write to all three so at least one survives
+  try { localStorage.setItem('gl_uid', uid);   localStorage.setItem('gl_name', name);  localStorage.setItem('gl_group', group); } catch(_) {}
+  try { sessionStorage.setItem('gl_uid', uid); sessionStorage.setItem('gl_name', name); sessionStorage.setItem('gl_group', group); } catch(_) {}
+  try { _cookieSet('gl_uid', uid); _cookieSet('gl_name', name); _cookieSet('gl_group', group); } catch(_) {}
+}
+
+function enterMap(name, group, uid) {
+  userName  = name;
+  groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+  userId    = uid;
+
+  saveSession(name, group, uid);
+
+  waitForFirebase(fb => {
+    db = fb.db; fbRef = fb.ref; fbSet = fb.set;
+    fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
+
+    // Immediately claim our userId slot in Firebase.
+    // This overwrites any stale ghost entry from a previous session
+    // under the same userId, ensuring only one entry exists per device.
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
+    });
+
     document.getElementById('join-screen').style.display = 'none';
-    // Initialize map logic here
-  };
+    document.getElementById('topbar').style.display = 'flex';
+    document.getElementById('locate-me').style.display = 'flex';
+    document.getElementById('group-name-label').textContent = group;
+    // Check if group has passcode set and update lock icon
+    waitForFirebase(function(fb) {
+      fb.onValue(fb.ref(fb.db, 'gl/' + group + '/config/pin'), function(snap) {
+        var lockIcon = document.getElementById('group-lock-icon');
+        var lockStatus = document.getElementById('group-lock-status');
+        var hasPin = !!snap.val();
+        if (lockIcon) lockIcon.textContent = hasPin ? '\uD83D\uDD12' : '\uD83D\uDD13';
+        if (lockStatus) lockStatus.textContent = hasPin ? 'Protected — tap to change' : 'Open — tap to add passcode';
+      });
+    });
+    document.getElementById('chat-panel-title').textContent = 'Group Chat';
 
-  console.log("App loaded successfully");
+    acquireWakeLock();
+    // Restore breadcrumb setting from last session
+    try {
+      var savedCrumbs = localStorage.getItem('gl_breadcrumbs');
+      if (savedCrumbs === '1') {
+        breadcrumbsOn = true;
+        // Apply visual state after a short delay so DOM is ready
+        setTimeout(applyBreadcrumbState, 200);
+      }
+    } catch(e) {}
+    initMap();
+    startLocationSharing();
+    listenUsers();
+    listenPins();
+    listenChat();
+    listenTrails();
+  });
+}
+
+// ══ INSTALL TIP ══════════════════════════════════════════════════
+(function showInstallTip() {
+  // Don't show if already installed as PWA
+  var isInstalled = window.matchMedia('(display-mode: standalone)').matches
+                 || window.navigator.standalone === true;
+  if (isInstalled) return;
+
+  // Don't show if user already dismissed it
+  try { if (localStorage.getItem('install-tip-dismissed')) return; } catch(e) {}
+
+  var isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isAndroid = /android/i.test(navigator.userAgent);
+  var isChrome  = /chrome/i.test(navigator.userAgent) && !/edg/i.test(navigator.userAgent);
+  var isSafari  = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
+
+  var tip = document.getElementById('install-tip');
+  if (!tip) return;
+
+  if (isIOS && isSafari) {
+    document.getElementById('install-tip-ios').style.display = 'block';
+    tip.style.display = 'block';
+  } else if (isAndroid && isChrome) {
+    document.getElementById('install-tip-android').style.display = 'block';
+    tip.style.display = 'block';
+  } else if (!isIOS && !isAndroid) {
+    // Desktop — show Android instructions as generic guide
+    document.getElementById('install-tip-android').style.display = 'block';
+    tip.style.display = 'block';
+  }
+
+  document.getElementById('dismiss-install-tip').addEventListener('click', function() {
+    tip.style.display = 'none';
+    try { localStorage.setItem('install-tip-dismissed', '1'); } catch(e) {}
+  });
+})();
+
+// ══ VERSION CHECK ════════════════════════════════════════════════
+(function checkVersion() {
+  fetch('/version?v=' + Date.now())
+    .then(function(r) { return r.text(); })
+    .then(function(serverVersion) {
+      serverVersion = serverVersion.trim();
+      if (serverVersion && serverVersion !== APP_VERSION) {
+        var banner = document.getElementById('update-banner');
+        if (banner) {
+          banner.style.display = 'block';
+          banner.addEventListener('click', function() {
+            // Force hard reload bypassing service worker cache
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(reg) { reg.unregister(); });
+                window.location.reload(true);
+              });
+            } else {
+              window.location.reload(true);
+            }
+          });
+        }
+      }
+    })
+    .catch(function() {}); // Silently ignore if offline
+})();
+
+// ══ AUTO-RESUME ═══════════════════════════════════════════════════
+// If we have a saved session, skip the join screen entirely
+function showJoinScreen() {
+  document.getElementById('join-screen').style.display = 'flex';
+  setTimeout(initInstallTip, 50);
+
+  // iOS install hint
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+    document.getElementById('ios-hint').style.display = 'block';
+  }
+
+  document.getElementById('join-btn').addEventListener('click', handleJoin);
+  document.getElementById('inp-group').addEventListener('keydown', e => { if (e.key === 'Enter') handleJoin(); });
+  document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
+}
+
+(function tryResume() {
+  const s = getSavedSession();
+  // Need all three AND group must not have been cleared by switch
+  if (s.uid && s.name && s.group && s.group.trim()) {
+    // Resume directly — user already authenticated to this group previously
+    // Skip passcode re-check on resume (they already passed it)
+    enterMap(s.name, s.group, s.uid);
+    return;
+  }
+  // Pre-fill whatever we do have
+  showJoinScreen();
+  try {
+    if (s.name)  document.getElementById('inp-name').value  = s.name;
+    if (s.group) document.getElementById('inp-group').value = s.group;
+  } catch(_) {}
+})();
+
+function handleJoin() {
+  const name  = document.getElementById('inp-name').value.trim();
+  const group = document.getElementById('inp-group').value.trim();
+  if (!group) { toast('Enter a group name'); return; }
+  // Admin shortcut — password protected
+  if (group === '8888' || group === '777') {
+    toast('Opening admin...', 1000);
+    setTimeout(function() {
+      window.location.href = '/admin?pw=' + group;
+    }, 300);
+    return;
+  }
+  if (!name)  { toast('Enter your name'); return; }
+  // Reuse existing uid if one exists
+  const existing = getSavedSession();
+  const uid = existing.uid || genUid();
+  // Check passcode before entering
+  checkGroupPasscode(name, group, uid);
+}
+
+// ══ MAP ══════════════════════════════════════════════════════════
+let measurePoints = [], measureMarkers = [], longPressTimer = null;
+let measureMode = false;
+
+const PIN_DEFS = {
+  'Waypoint':   { color: '#f0a500', label: 'WP' },
+  'Deer Stand': { color: '#8B5E3C', label: 'DS' },
+  'Game Trail': { color: '#5a8a3c', label: 'GT' },
+  'Harvest':    { color: '#c0392b', label: 'HV' },
+  'Gobbler':    { color: '#8e44ad', label: 'GB' },
+  'Feeder':     { color: '#27ae60', label: 'FD' },
+  'Water':      { color: '#2980b9', label: 'WA' },
+  'Hog':        { color: '#7f6000', label: 'HG' },
+  'Bear':       { color: '#4a235a', label: 'BR' },
+  'Camp':       { color: '#e67e22', label: 'CP' },
+  'Vehicle':    { color: '#566573', label: 'VH' },
+  'Boundary':   { color: '#922b21', label: 'BN' },
+  'Hazard':     { color: '#e74c3c', label: 'HZ' },
+  'Urgent':     { color: '#ff0000', label: '!!' },
+  'Custom':     { color: '#00bcd4', label: 'CT' },
+};
+
+function makePinImage(catColor, ringColor, labelText) {
+  var SIZE = 64;
+  var cv = document.createElement('canvas');
+  cv.width = SIZE; cv.height = SIZE;
+  var ctx = cv.getContext('2d');
+  var cx = SIZE / 2, cy = SIZE * 0.40, R = SIZE * 0.32;
+  ctx.beginPath(); ctx.arc(cx, cy, R + 6, 0, Math.PI * 2);
+  ctx.fillStyle = ringColor; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = catColor; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cx - R*0.4, cy + R*0.7);
+  ctx.lineTo(cx, cy + R*1.6);
+  ctx.lineTo(cx + R*0.4, cy + R*0.7);
+  ctx.fillStyle = catColor; ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold ' + Math.round(R*0.85) + 'px system-ui,sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(labelText, cx, cy);
+  return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0,0,SIZE,SIZE).data.buffer) };
+}
+
+function initMap() {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    center: [-98.5, 39.5], zoom: 3, // zoomed out — GPS will fly to real location
+    attributionControl: false
+  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
+
+  // Wire dragstart here where map exists
+  map.on('dragstart', function() {
+    if (followUid) {
+      followUid = null;
+      clearInterval(followInterval);
+      followInterval = null;
+      var btn = document.getElementById('locate-me');
+      if (btn) {
+        btn.style.background  = 'var(--surface)';
+        btn.style.color       = '';
+        btn.style.borderColor = '';
+        btn.style.boxShadow   = '';
+      }
+    }
+  });
+
+  map.on('load', function() {
+    for (var cat in PIN_DEFS) {
+      var def = PIN_DEFS[cat];
+      map.addImage('pin-mine-'  + cat, makePinImage(def.color, '#f0a500', def.label), { pixelRatio: 2 });
+      map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.label), { pixelRatio: 2 });
+    }
+
+    map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+    map.addLayer({
+      id: 'pins-layer', type: 'symbol', source: 'pins',
+      layout: {
+        'icon-image':            ['get', 'imageId'],
+        'icon-size':             1.0,  // SIZE=64 @ pixelRatio=2 = 32px rendered
+        'icon-anchor':           'bottom',
+        'icon-allow-overlap':    true,
+        'icon-ignore-placement': true,
+        'text-field':            ['get', 'shortLabel'],
+        'text-font':             ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+        'text-size':             11,
+        'text-anchor':           'top',
+        'text-offset':           [0, 0.2],
+        'text-optional':         true,
+      },
+      paint: {
+        'text-color':      '#ffffff',
+        'text-halo-color': 'rgba(0,0,0,0.8)',
+        'text-halo-width': 1.5,
+      }
+    });
+
+    map.on('click', 'pins-layer', function(e) {
+      e.preventDefault();
+      var props  = e.features[0].properties;
+      var coords = e.features[0].geometry.coordinates;
+      var pinLng = coords[0], pinLat = coords[1];
+      var def    = PIN_DEFS[props.cat] || PIN_DEFS['Waypoint'];
+      var distHTML = '';
+      var gps = window._lastGPS;
+      if (gps) {
+        var dist = distanceMiles(gps.lat, gps.lng, pinLat, pinLng);
+        var bear = getBearing(gps.lat, gps.lng, pinLat, pinLng);
+        distHTML = '<div class="pop-dist">&#x1F4CD; ' + dist + ' from you &middot; ' + bear + '</div>';
+      }
+      var canDel = props.droppedBy === userId;
+      new mapboxgl.Popup({ offset: 4, closeButton: false, maxWidth: '270px' })
+        .setLngLat([pinLng, pinLat])
+        .setHTML(
+          '<div class="pop-cat" style="color:' + def.color + '">' + props.cat + '</div>' +
+          '<div class="pop-label">' + (props.label || '(no description)') + '</div>' +
+          distHTML +
+          '<div class="pop-coords">' + pinLat.toFixed(5) + ', ' + pinLng.toFixed(5) + '</div>' +
+          '<div class="pop-meta">By ' + props.name + ' &middot; ' + formatTime(props.ts) + '</div>' +
+          (canDel ? '<button class="pop-del" onclick="deletePin(\'' + props.pid + '\')">Remove pin</button>' : '') +
+        '<button style="margin-top:4px;width:100%;padding:6px;background:none;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;cursor:pointer" onclick="window.savePin(\'' + props.pid + '\')">&#9733; Save Pin</button>'
+        ).addTo(map);
+    });
+
+    map.on('mouseenter', 'pins-layer', function() { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'pins-layer', function() { map.getCanvas().style.cursor = ''; });
+
+    window._mapReady = true;
+    if (window._queuedPins) updatePinSource(window._queuedPins);
+  });
+
+  map.on('click', function(e) {
+    if (measureMode) { handleMeasureClick(e.lngLat); return; }
+    if (!pinMode) return;
+    pendingCoords = e.lngLat;
+    document.getElementById('pin-coords-label').textContent =
+      e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
+    document.getElementById('pin-modal').classList.add('show');
+    setTimeout(function() { document.getElementById('pin-label-input').focus(); }, 120);
+    disablePinMode();
+  });
+
+  var canvas = map.getCanvas();
+  canvas.addEventListener('touchstart', function(e) {
+    if (e.touches.length !== 1) return;
+    var touch = e.touches[0];
+    longPressTimer = setTimeout(function() {
+      longPressTimer = null;
+      if (navigator.vibrate) navigator.vibrate(40);
+      var rect = canvas.getBoundingClientRect();
+      var lngLat = map.unproject(new mapboxgl.Point(touch.clientX - rect.left, touch.clientY - rect.top));
+      pendingCoords = lngLat;
+      document.getElementById('pin-coords-label').textContent =
+        lngLat.lat.toFixed(5) + ', ' + lngLat.lng.toFixed(5);
+      document.getElementById('pin-modal').classList.add('show');
+      setTimeout(function() { document.getElementById('pin-label-input').focus(); }, 120);
+      disablePinMode();
+    }, 600);
+  }, { passive: true });
+  canvas.addEventListener('touchend',    function() { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
+  canvas.addEventListener('touchmove',   function() { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
+  canvas.addEventListener('touchcancel', function() { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
+}
+
+
+const PIN_COLORS = {
+  'Waypoint':    '#f0a500',
+  'Deer Stand':  '#8B5E3C',
+  'Game Trail':  '#5a8a3c',
+  'Harvest':     '#c0392b',
+  'Gobbler':     '#8e44ad',
+  'Feeder':      '#27ae60',
+  'Water':       '#2980b9',
+  'Hog':         '#7f6000',
+  'Bear':        '#4a235a',
+  'Camp':        '#e67e22',
+  'Vehicle':     '#566573',
+  'Boundary':    '#922b21',
+  'Hazard':      '#e74c3c',
+  'Urgent':      '#ff0000',
+};
+
+function updatePinSource(pins) {
+  if (!window._mapReady || !map.getSource('pins')) {
+    window._queuedPins = pins; // will be applied once map is ready
+    return;
+  }
+  const features = Object.entries(pins).map(([pid, pin]) => {
+    const isMine   = pin.droppedBy === userId;
+    const cat      = pin.cat || 'Waypoint';
+    const safeCat  = cat; // allow custom categories
+    const imageId  = isMine ? `pin-mine-${safeCat}` : `pin-other-${safeCat}`;
+    // Short label under pin — category name truncated
+    const shortLabel = pin.label ? (pin.label.length > 14 ? pin.label.slice(0,12)+'…' : pin.label) : '';
+    return {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [pin.lng, pin.lat] },
+      properties: {
+        pid, cat, shortLabel,
+        name:      pin.name,
+        ts:        pin.ts,
+        droppedBy: pin.droppedBy,
+        isMine,
+        imageId,
+        // Keep color for popup styling
+        color:     PIN_COLORS[cat] || '#f0a500',
+      }
+    };
+  });
+  map.getSource('pins').setData({ type: 'FeatureCollection', features });
+}
+
+// ── Measure mode ──────────────────────────────────────────────
+var measureSubMode = 'distance'; // 'distance' or 'area'
+
+function enableMeasure() {
+  // Show mode picker first
+  var picker = document.getElementById('measure-mode-picker');
+  if (picker.classList.contains('active')) {
+    disableMeasure(); return;
+  }
+  picker.classList.add('active');
+}
+
+function startMeasure(mode) {
+  measureSubMode = mode;
+  measureMode    = true;
+  measurePoints  = [];
+  measureMarkers.forEach(function(m) { m.remove(); });
+  measureMarkers = [];
+  clearMeasureLayers();
+
+  document.getElementById('measure-mode-picker').classList.remove('active');
+  document.getElementById('measure-bar').classList.add('active');
+  document.getElementById('measure-label').textContent = mode === 'area' ? '△ Area' : '📏 Distance';
+  document.getElementById('measure-result').textContent = mode === 'area' ? '— tap 3+ points, then Close Shape' : '— tap first point';
+  document.getElementById('measure-undo-btn').style.display  = 'none';
+  document.getElementById('measure-finish-btn').style.display = mode === 'area' ? 'inline-block' : 'none';
+  map.getCanvas().style.cursor = 'crosshair';
+}
+
+function disableMeasure() {
+  measureMode    = false;
+  measurePoints  = [];
+  measureMarkers.forEach(function(m) { m.remove(); });
+  measureMarkers = [];
+  clearMeasureLayers();
+  document.getElementById('measure-bar').classList.remove('active');
+  document.getElementById('measure-mode-picker').classList.remove('active');
+  document.getElementById('measure-result').textContent = '';
+  document.getElementById('measure-undo-btn').style.display   = 'none';
+  document.getElementById('measure-finish-btn').style.display = 'none';
+  map.getCanvas().style.cursor = '';
+}
+
+function clearMeasureLayers() {
+  ['measure-line','measure-fill','measure-outline'].forEach(function(id) {
+    if (map.getLayer(id)) map.removeLayer(id);
+    if (map.getSource(id)) map.removeSource(id);
+  });
+}
+
+function measureUndo() {
+  if (!measurePoints.length) return;
+  measurePoints.pop();
+  var last = measureMarkers.pop();
+  if (last) last.remove();
+  if (measurePoints.length === 0) {
+    document.getElementById('measure-result').textContent = measureSubMode === 'area' ? '— tap 3+ points, then Close Shape' : '— tap first point';
+    document.getElementById('measure-undo-btn').style.display = 'none';
+  }
+  updateMeasureDisplay();
+}
+
+function measureFinish() {
+  if (measurePoints.length < 3) { toast('Tap at least 3 points to measure area', 2000); return; }
+  var acres = calcAreaAcres(measurePoints);
+  var sqft  = Math.round(acres * 43560);
+  document.getElementById('measure-result').textContent =
+    acres < 1
+      ? sqft.toLocaleString() + ' sq ft (' + acres.toFixed(3) + ' ac)'
+      : acres.toFixed(2) + ' acres (' + sqft.toLocaleString() + ' sq ft)';
+  // Draw closed polygon
+  drawMeasurePolygon();
+  measureMode = false;
+  map.getCanvas().style.cursor = '';
+}
+
+function calcAreaAcres(pts) {
+  // Shoelace formula in meters squared then convert to acres
+  var n = pts.length;
+  var area = 0;
+  for (var i = 0; i < n; i++) {
+    var j = (i + 1) % n;
+    // Convert to approximate meters using lat/lng
+    var xi = pts[i].lng * Math.cos(pts[i].lat * Math.PI / 180) * 111320;
+    var yi = pts[i].lat * 110540;
+    var xj = pts[j].lng * Math.cos(pts[j].lat * Math.PI / 180) * 111320;
+    var yj = pts[j].lat * 110540;
+    area += xi * yj;
+    area -= xj * yi;
+  }
+  var sqMeters = Math.abs(area) / 2;
+  return sqMeters * 0.000247105; // sq meters to acres
+}
+
+function drawMeasurePolygon() {
+  clearMeasureLayers();
+  var coords = measurePoints.map(function(p) { return [p.lng, p.lat]; });
+  coords.push(coords[0]); // close ring
+  var geojson = { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } };
+  map.addSource('measure-fill', { type: 'geojson', data: geojson });
+  map.addLayer({ id: 'measure-fill', type: 'fill', source: 'measure-fill',
+    paint: { 'fill-color': '#2980b9', 'fill-opacity': 0.15 } });
+  map.addLayer({ id: 'measure-outline', type: 'line', source: 'measure-fill',
+    paint: { 'line-color': '#2980b9', 'line-width': 2, 'line-dasharray': [3,2] } });
+}
+
+function drawMeasureLine() {
+  clearMeasureLayers();
+  if (measurePoints.length < 2) return;
+  var coords = measurePoints.map(function(p) { return [p.lng, p.lat]; });
+  map.addSource('measure-line', { type: 'geojson', data: {
+    type: 'Feature', geometry: { type: 'LineString', coordinates: coords }
+  }});
+  map.addLayer({ id: 'measure-line', type: 'line', source: 'measure-line',
+    paint: { 'line-color': '#2980b9', 'line-width': 2, 'line-dasharray': [4,3] } });
+}
+
+function updateMeasureDisplay() {
+  var n = measurePoints.length;
+  if (n === 0) return;
+
+  if (measureSubMode === 'distance') {
+    if (n === 1) {
+      document.getElementById('measure-result').textContent = '— tap second point';
+    } else {
+      // Show total cumulative distance
+      var total = 0;
+      for (var i = 0; i < n - 1; i++) {
+        total += parseFloat(distanceMiles(
+          measurePoints[i].lat, measurePoints[i].lng,
+          measurePoints[i+1].lat, measurePoints[i+1].lng
+        ));
+      }
+      var bear = getBearing(measurePoints[n-2].lat, measurePoints[n-2].lng, measurePoints[n-1].lat, measurePoints[n-1].lng);
+      document.getElementById('measure-result').textContent = total.toFixed(2) + ' mi · ' + bear;
+      drawMeasureLine();
+    }
+  } else {
+    // Area mode — show running point count
+    document.getElementById('measure-result').textContent = n + ' point' + (n!==1?'s':'') + ' — tap more or Close Shape';
+    // Draw outline so far
+    if (n >= 2) drawMeasureLine();
+  }
+}
+
+function handleMeasureClick(lngLat) {
+  measurePoints.push(lngLat);
+
+  // Drop a numbered dot marker
+  var el = document.createElement('div');
+  el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#2980b9;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff';
+  el.textContent = measurePoints.length;
+  measureMarkers.push(new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(map));
+
+  document.getElementById('measure-undo-btn').style.display = 'inline-block';
+  updateMeasureDisplay();
+
+  // Distance mode auto-finishes after 2 points but keeps going for multi-segment
+}
+
+document.getElementById('measure-btn').addEventListener('click', function() {
+  enableMeasure();
+});
+
+// ══ LOCATION ═════════════════════════════════════════════════════
+let breadcrumbsOn = false;
+let unreadPinCount = 0;
+
+function updateUnreadBubble() {
+  const bubble = document.getElementById('unread-pin-bubble');
+  const countEl = document.getElementById('unread-pin-count');
+  if (!bubble) return;
+  if (unreadPinCount > 0) {
+    countEl.textContent = unreadPinCount > 99 ? '99+' : unreadPinCount;
+    bubble.classList.add('visible');
+  } else {
+    bubble.classList.remove('visible');
+  }
+}
+
+function clearUnreadPins() {
+  unreadPinCount = 0;
+  updateUnreadBubble();
+}
+const TRAIL_MAX_MS = 2 * 60 * 60 * 1000; // 2 hours of breadcrumb history
+const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
+let lastBreadcrumbPos = null;
+
+function metersApart(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function startLocationSharing() {
+  if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
+
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    const now = Date.now();
+    window._lastGPS = { lat, lng };
+
+    // Write real GPS position — clears the claiming placeholder
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      lat, lng, name: userName, accuracy: Math.round(accuracy * 3.28084), ts: now,
+      trail: breadcrumbsOn
+    });
+
+    // Write breadcrumb if enabled and moved enough
+    if (breadcrumbsOn) {
+      const moved = !lastBreadcrumbPos ||
+        metersApart(lastBreadcrumbPos.lat, lastBreadcrumbPos.lng, lat, lng) > TRAIL_MIN_DIST_M;
+
+      if (moved) {
+        lastBreadcrumbPos = { lat, lng };
+        const crumbRef = fbPush(fbRef(db, `gl/${groupName}/trails/${userId}`));
+        fbSet(crumbRef, { lat, lng, ts: now });
+
+        // Prune points older than 10 min from Firebase
+        fbOnValue(fbRef(db, `gl/${groupName}/trails/${userId}`), snap => {
+          const trail = snap.val() || {};
+          Object.entries(trail).forEach(([key, pt]) => {
+            if (now - pt.ts > TRAIL_MAX_MS) {
+              fbRemove(fbRef(db, `gl/${groupName}/trails/${userId}/${key}`));
+            }
+          });
+        }, { onlyOnce: true });
+      }
+    }
+
+    if (!window._firstFix) {
+      map.flyTo({ center: [lng, lat], zoom: 15 });
+      window._firstFix = true;
+    }
+  }, err => {
+    console.warn('GPS:', err.message);
+    toast('GPS unavailable — check location permissions');
+  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
+
+  // Do NOT remove on close — user may just be pocketing their phone.
+  // The 90-second stale filter handles cleanup naturally.
+  // When the app comes back to foreground, re-stamp timestamp immediately
+  // so we don't get pruned while the screen was off.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && db && window._lastGPS) {
+      try {
+        fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now());
+      } catch(_) {}
+    }
+  });
+}
+
+function applyBreadcrumbState() {
+  var dot = document.getElementById('breadcrumb-dot');
+  var btn = document.getElementById('breadcrumb-btn');
+  if (breadcrumbsOn) {
+    dot.style.display = 'block';
+    btn.style.borderColor = '#3fb950';
+  } else {
+    dot.style.display = 'none';
+    btn.style.borderColor = '';
+  }
+}
+
+function toggleBreadcrumbs() {
+  breadcrumbsOn = !breadcrumbsOn;
+  // Persist setting so it survives app close/reopen
+  try { localStorage.setItem('gl_breadcrumbs', breadcrumbsOn ? '1' : '0'); } catch(e) {}
+  lastBreadcrumbPos = null;
+  applyBreadcrumbState();
+  if (breadcrumbsOn) {
+    toast('Breadcrumbs ON — recording your trail', 2500);
+  } else {
+    toast('Breadcrumbs OFF — trail fading', 2000);
+  }
+}
+
+document.getElementById('breadcrumb-btn').addEventListener('click', toggleBreadcrumbs);
+
+// ══ USERS ════════════════════════════════════════════════════════
+const LIVE_MS  = 90 * 1000;       // actively broadcasting GPS
+const STALE_MS = 8 * 60 * 60 * 1000; // 8 hours — only auto-remove true ghosts
+
+// Track known users to detect joins/leaves
+var knownUsers = {};
+var usersInitialLoad = true;
+
+function listenUsers() {
+  fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+    const allUsers = snap.val() || {};
+    const now = Date.now();
+
+    // Keep all valid users (have real GPS, not a claiming placeholder)
+    // Filter only true ghosts older than 8 hours
+    const users = Object.fromEntries(
+      Object.entries(allUsers).filter(([, d]) =>
+        !d.claiming &&
+        (d.lat !== 0 || d.lng !== 0) &&
+        (now - (d.ts || 0)) < STALE_MS
+      )
+    );
+
+    // Auto-remove only true 8-hour ghosts from Firebase
+    Object.entries(allUsers).forEach(([uid, d]) => {
+      if ((now - (d.ts || 0)) >= STALE_MS || (d.claiming && (now - (d.ts||0)) > 30000)) {
+        fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
+      }
+    });
+
+    // Detect new joins (someone who wasn't here before and is LIVE)
+    if (!usersInitialLoad) {
+      Object.entries(users).forEach(([uid, data]) => {
+        const isLive = (now - (data.ts || 0)) < LIVE_MS;
+        if (!knownUsers[uid] && uid !== userId && isLive) {
+          showJoinAlert(data.name);
+        }
+      });
+    }
+
+    // Update known users
+    knownUsers = {};
+    Object.entries(users).forEach(([uid, data]) => { knownUsers[uid] = data.name; });
+    usersInitialLoad = false;
+
+    const listEl = document.getElementById('user-list');
+    listEl.innerHTML = '';
+
+    // Update member count badge on users button
+    var totalUsers = Object.keys(users).length;
+    var badge = document.getElementById('users-badge');
+    if (badge) {
+      if (totalUsers > 0) {
+        badge.textContent = totalUsers > 99 ? '99+' : totalUsers;
+        badge.style.display = 'block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // Remove markers for users fully gone from Firebase
+    Object.keys(userMarkers).forEach(uid => {
+      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; }
+    });
+
+    Object.entries(users).forEach(([uid, data]) => {
+      const isMine   = uid === userId;
+      const isLive   = (now - (data.ts || 0)) < LIVE_MS;
+      const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
+
+      // Color scheme: gold=me, green=live teammate, gray=last known
+      const fillColor   = isMine ? '#f0a500' : isLive ? '#00e676' : '#555e6b';
+      const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff'  : '#888ea0';
+      const opacity     = isLive || isMine ? '1' : '0.65';
+      const textColor   = isMine ? '#000000' : isLive ? '#000000' : '#ffffff';
+
+      if (!userMarkers[uid]) {
+        const el = document.createElement('div');
+        Object.assign(el.style, {
+          width: '44px', height: '44px', borderRadius: '50%',
+          background: fillColor,
+          border: isMine ? '4px solid #f0a500' : `3px solid ${borderColor}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '14px', fontWeight: '800', color: textColor,
+          boxShadow: '0 2px 14px rgba(0,0,0,.7), 0 0 0 2px rgba(0,0,0,.4)',
+          cursor: 'pointer', opacity: opacity,
+          fontFamily: 'system-ui, sans-serif', userSelect: 'none',
+        });
+        el.textContent = initials(data.name);
+
+        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false });
+        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([data.lng, data.lat])
+          .setPopup(popup)
+          .addTo(map);
+        userMarkers[uid]._el = el;
+        // Tap marker → fly to user, open popup, start following
+        el.addEventListener('click', function() {
+          if (isMine) {
+            window._followUser(userId, 'you');
+            return;
+          }
+          map.flyTo({ center: [data.lng, data.lat], zoom: Math.max(map.getZoom(), 16), duration: 800 });
+          setTimeout(function() {
+            if (userMarkers[uid]) userMarkers[uid].togglePopup();
+            if (isLive) window._followUser(uid, data.name);
+          }, 850);
+        });
+      } else {
+        // Update position only if live — keep last known position if not
+        if (isLive || isMine) {
+          userMarkers[uid].setLngLat([data.lng, data.lat]);
+        }
+        // Update appearance
+        const el = userMarkers[uid]._el || userMarkers[uid].getElement();
+        if (el) {
+          el.style.background   = fillColor;
+          el.style.borderColor  = borderColor;
+          el.style.opacity      = opacity;
+          el.style.color        = textColor;
+        }
+      }
+
+      // Popup content
+      const _gps = window._lastGPS;
+      let _distHTML = '';
+      if (!isMine && _gps) {
+        const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
+        const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
+        _distHTML = `<div class="pop-dist">&#x1F4CD; ${_d} from you &middot; ${_b}</div>`;
+      }
+      const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
+      const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
+      const timeLabel   = isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
+
+      var _safeName = data.name.replace(/'/g, '');
+      var _followBtn = !isMine
+        ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
+        : '';
+      userMarkers[uid].getPopup().setHTML(
+        '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
+        '<div class="pop-label">' + data.name + '</div>' +
+        _distHTML +
+        '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
+        _followBtn
+      );
+
+      const row = document.createElement('div');
+      row.className = 'user-item';
+      row.style.opacity = opacity;
+      row.innerHTML =
+        '<div class="user-avatar" style="background:' + fillColor + ';color:' + textColor + ';font-weight:800">' + initials(data.name) + '</div>' +
+        '<div>' +
+          '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
+          '<div class="ustatus" style="color:' + statusColor + '">' +
+            (isLive ? 'Live &middot; ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
+          '</div>' +
+        '</div>';
+      row.addEventListener('click', function() {
+        document.getElementById('user-drawer').classList.remove('open');
+        if (isMine) {
+          window._followUser(userId, 'you');
+        } else {
+          map.flyTo({ center: [data.lng, data.lat], zoom: 17, duration: 1000 });
+          setTimeout(function() { window._followUser(uid, data.name); }, 1100);
+        }
+      });
+      listEl.appendChild(row);
+    });
+  });
+}
+
+function distanceMiles(lat1, lng1, lat2, lng2) {
+  const R = 3958.8;
+  const dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return d < 0.1 ? Math.round(d*5280)+' ft' : d.toFixed(2)+' mi';
+}
+
+function getBearing(lat1, lng1, lat2, lng2) {
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const y = Math.sin(dLng)*Math.cos(lat2*Math.PI/180);
+  const x = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dLng);
+  const b = Math.atan2(y,x)*180/Math.PI;
+  return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((b+360)%360)/45)%8];
+}
+
+// ══ JOIN / LEAVE ALERTS ══════════════════════════════════
+function showJoinAlert(name) {
+  if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
+  toast('🟢 ' + name + ' joined the map', 3000);
+  // Flash the users button green
+  var btn = document.getElementById('users-toggle-btn');
+  if (btn) {
+    btn.style.borderColor = '#00e676';
+    btn.style.color = '#00e676';
+    setTimeout(function() { btn.style.borderColor = ''; btn.style.color = ''; }, 2500);
+  }
+}
+
+// ══ NEW PIN ALERT ════════════════════════════════════════════════
+let _pinAlertCoords = null;
+let _pinAlertTimer  = null;
+
+function showPinAlert(pin) {
+  const def = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
+  _pinAlertCoords = { lng: pin.lng, lat: pin.lat };
+  const iconEl = document.getElementById('pin-alert-icon');
+  iconEl.textContent = def.label;
+  iconEl.style.cssText = 'width:28px;height:28px;border-radius:50%;background:' + def.color + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0;letter-spacing:-.5px';
+  document.getElementById('pin-alert-who').textContent   = pin.name + ' dropped a pin';
+  document.getElementById('pin-alert-label').textContent = pin.cat + (pin.label ? ' — ' + pin.label : '');
+  const alertEl = document.getElementById('pin-alert');
+  alertEl.classList.add('show');
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  clearTimeout(_pinAlertTimer);
+  _pinAlertTimer = setTimeout(() => alertEl.classList.remove('show'), 8000);
+}
+
+document.getElementById('pin-alert-fly').addEventListener('click', () => {
+  if (_pinAlertCoords) map.flyTo({ center: [_pinAlertCoords.lng, _pinAlertCoords.lat], zoom: 16, duration: 1400 });
+  document.getElementById('pin-alert').classList.remove('show');
+  clearTimeout(_pinAlertTimer);
+});
+document.getElementById('pin-alert-close').addEventListener('click', () => {
+  document.getElementById('pin-alert').classList.remove('show');
+  clearTimeout(_pinAlertTimer);
+});
+
+// ══ PINS ═════════════════════════════════════════════════════════════
+// Native Mapbox symbol layer — zero drift during pan/zoom
+let lastPins = {};
+
+function listenPins() {
+  fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
+    const pins = snap.val() || {};
+
+    // Notify on new pins from others (not my own)
+    Object.entries(pins).forEach(([pid, pin]) => {
+      if (!lastPins[pid] && pin.droppedBy !== userId && (Date.now() - pin.ts) < 8000) {
+        showPinAlert(pin);
+      }
+    });
+    // Count new pins from others since last view
+    Object.entries(pins).forEach(([pid, pin]) => {
+      if (!lastPins[pid] && pin.droppedBy !== userId && (Date.now() - pin.ts) < 30000) {
+        unreadPinCount++;
+      }
+    });
+
+    lastPins = pins;
+    updateUnreadBubble();
+
+    // Refresh pin list if open
+    if (document.getElementById('pin-list-drawer').classList.contains('open')) {
+      renderPinList(pins);
+    }
+    // Refresh pin feed if open
+    if (pinFeedOpen) { renderPinFeed(pins); }
+
+    // Update pin count badge
+    const pinCount = Object.keys(pins).length;
+    const pinBadge = document.getElementById('pin-badge');
+    if (pinCount > 0) {
+      pinBadge.textContent = pinCount > 99 ? '99+' : pinCount;
+      pinBadge.style.display = 'flex';
+    } else {
+      pinBadge.style.display = 'none';
+    }
+
+    if (map.isStyleLoaded()) updatePinSource(pins);
+    else map.once('load', () => updatePinSource(pins));
+  });
+}
+
+window.deletePin = pid => {
+  fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
+  const pins = Object.fromEntries(Object.entries(lastPins).filter(([k]) => k !== pid));
+  updatePinSource(pins);
+  lastPins = pins;
+  renderPinList(pins);
+  toast('Pin removed');
+};
+
+// Clear pins buttons
+document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
+  const mine = Object.entries(lastPins).filter(([, p]) => p.droppedBy === userId);
+  if (!mine.length) { toast('You have no pins to clear'); return; }
+  if (!confirm(`Remove your ${mine.length} pin${mine.length > 1 ? 's' : ''}?`)) return;
+  mine.forEach(([pid]) => fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`)));
+  toast(`Cleared ${mine.length} pin${mine.length > 1 ? 's' : ''}`);
+});
+
+document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
+  const count = Object.keys(lastPins).length;
+  if (!count) { toast('No pins to clear'); return; }
+  if (!confirm(`Delete ALL ${count} pins for everyone in this group? This cannot be undone.`)) return;
+  if (!confirm('Are you sure? This clears the map for everyone.')) return;
+  fbRemove(fbRef(db, `gl/${groupName}/pins`));
+  toast('All pins cleared');
+});
+
+// ══ PIN FEED ══════════════════════════════════════════════════════
+let pinFeedOpen = false;
+
+function renderPinFeed(pins) {
+  const container = document.getElementById('pin-feed-items');
+  const countEl   = document.getElementById('pin-feed-count');
+  const entries   = Object.entries(pins || {});
+  countEl.textContent = entries.length ? entries.length + ' pin' + (entries.length > 1 ? 's' : '') : '';
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="pin-feed-empty">No pins yet.<br>Long press the map to drop one.</div>';
+    return;
+  }
+
+  entries.sort(function(a,b){ return b[1].ts - a[1].ts; });
+  var gps = window._lastGPS;
+  var now = Date.now();
+
+  container.innerHTML = '';
+  entries.forEach(function(entry) {
+    var pid = entry[0], pin = entry[1];
+    var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
+    var isMine = pin.droppedBy === userId;
+    var isNew  = (now - pin.ts) < 300000;
+    var distStr = '', bearStr = '';
+    if (gps) {
+      distStr = distanceMiles(gps.lat, gps.lng, pin.lat, pin.lng);
+      bearStr = getBearing(gps.lat, gps.lng, pin.lat, pin.lng);
+    }
+
+    var card = document.createElement('div');
+    card.className = 'pin-feed-card' + (isNew && !isMine ? ' is-new' : '');
+
+    var distHTML = distStr
+      ? '<div class="pin-feed-dist">&#128205; ' + distStr + ' &middot; ' + bearStr + '</div>'
+      : '';
+    var mineTag = isMine ? ' &nbsp;&#9679; MINE' : '';
+    var ring = isMine ? '#f0a500' : 'rgba(255,255,255,.3)';
+
+    card.innerHTML =
+      '<div class="pin-feed-dot" style="background:' + def.color + ';border:3px solid ' + ring + '">' +
+        def.label +
+      '</div>' +
+      '<div class="pin-feed-body">' +
+        '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + mineTag + '</div>' +
+        '<div class="pin-feed-label">' + (pin.label || '(no description)') + '</div>' +
+        distHTML +
+        '<div class="pin-feed-meta">' + pin.name + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+      '</div>' +
+      '<div class="pin-feed-arrow">\u203a</div>';
+
+    card.addEventListener('click', function() {
+      map.flyTo({ center: [pin.lng, pin.lat], zoom: 17, duration: 1200 });
+      document.getElementById('pin-feed-panel').classList.remove('open');
+      pinFeedOpen = false;
+    });
+
+    container.appendChild(card);
+  });
+}
+
+// ══ PIN LIST ═════════════════════════════════════════════════════════
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(diff / 3600000);
+  const d = Math.floor(diff / 86400000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${d}d ago`;
+}
+
+function renderPinList(pins) {
+  const container = document.getElementById('pin-list-items');
+  const countEl   = document.getElementById('pin-list-count');
+  const entries   = Object.entries(pins || {});
+
+  countEl.textContent = entries.length ? `${entries.length} pin${entries.length > 1 ? 's' : ''}` : '';
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="pin-list-empty">No pins dropped yet.<br>Long press the map to drop one.</div>';
+    return;
+  }
+
+  // Sort by most recent first
+  entries.sort(([,a],[,b]) => b.ts - a.ts);
+
+  const gps = window._lastGPS;
+
+  container.innerHTML = '';
+  entries.forEach(([pid, pin]) => {
+    const isMine  = pin.droppedBy === userId;
+    const def     = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
+    const color   = (PIN_DEFS[pin.cat] && PIN_DEFS[pin.cat].color) || '#00bcd4';
+
+    let distStr = '', bearStr = '';
+    if (gps) {
+      distStr = distanceMiles(gps.lat, gps.lng, pin.lat, pin.lng);
+      bearStr = getBearing(gps.lat, gps.lng, pin.lat, pin.lng);
+    }
+
+    const row = document.createElement('div');
+    row.className = 'pin-list-item';
+    row.innerHTML = `
+      <div class="pin-list-dot" style="background:${color};border-color:${isMine ? '#f0a500' : 'rgba(255,255,255,.25)'}">
+        <span style="font-size:14px;line-height:1">${def.label}</span>
+      </div>
+      <div class="pin-list-body">
+        <div class="pin-list-cat" style="color:${color}">${pin.cat}${isMine ? ' <span class="pin-list-mine">· MINE</span>' : ''}</div>
+        <div class="pin-list-desc">${pin.label || '(no description)'}</div>
+        ${distStr ? `<div class="pin-list-dist">📍 ${distStr} · ${bearStr}</div>` : ''}
+        <div class="pin-list-meta">By ${pin.name} · ${timeAgo(pin.ts)} · ${new Date(pin.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="pin-list-meta" style="font-family:monospace;font-size:10px">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</div>
+      </div>
+      ${isMine ? `<button class="pin-list-del" onclick="deletePin('${pid}');event.stopPropagation()">Remove</button>` : ''}
+    `;
+
+    // Tap row — fly to pin and close drawer
+    row.addEventListener('click', () => {
+      map.flyTo({ center: [pin.lng, pin.lat], zoom: 17, duration: 1200 });
+      document.getElementById('pin-list-drawer').classList.remove('open');
+    });
+
+    container.appendChild(row);
+  });
+}
+
+// pin-list-btn removed from toolbar (now in pin hub sheet)
+
+// pin-feed-btn removed from toolbar (now in pin hub sheet)
+
+document.getElementById('close-pin-feed').addEventListener('click', () => {
+  pinFeedOpen = false;
+  document.getElementById('pin-feed-panel').classList.remove('open');
+});
+
+document.getElementById('unread-pin-bubble').addEventListener('click', function() {
+  pinFeedOpen = true;
+  document.getElementById('pin-feed-panel').classList.add('open');
+  renderPinFeed(lastPins);
+  clearUnreadPins();
+  document.getElementById('user-drawer').classList.remove('open');
+  document.getElementById('chat-panel').classList.remove('open');
+});
+document.getElementById('close-pin-list').addEventListener('click', () => {
+  document.getElementById('pin-list-drawer').classList.remove('open');
+});
+document.getElementById('map').addEventListener('click', () => {
+  document.getElementById('pin-list-drawer').classList.remove('open');
+});
+
+
+// ══ TRAILS ═══════════════════════════════════════════════════════
+const trailSources = {}; // uid -> layer added
+
+function clearTrailLayer(uid) {
+  const lid = `trail-${uid}`;
+  if (map.getLayer(lid))        map.removeLayer(lid);
+  if (map.getLayer(lid+'-dots'))map.removeLayer(lid+'-dots');
+  if (map.getSource(lid))       map.removeSource(lid);
+  delete trailSources[uid];
+}
+
+function listenTrails() {
+  fbOnValue(fbRef(db, `gl/${groupName}/trails`), snap => {
+    const allTrails = snap.val() || {};
+    const now = Date.now();
+
+    // Remove layers only for trails fully deleted from Firebase
+    Object.keys(trailSources).forEach(uid => {
+      if (!allTrails[uid]) clearTrailLayer(uid);
+    });
+
+    Object.entries(allTrails).forEach(([uid, pts]) => {
+      const lid = `trail-${uid}`;
+
+      // Get all points within 2 hour window, sorted oldest first
+      const allPts = Object.values(pts)
+        .filter(p => now - p.ts < TRAIL_MAX_MS)
+        .sort((a, b) => a.ts - b.ts);
+
+      if (allPts.length < 2) { clearTrailLayer(uid); return; }
+
+      // Find most recent point to determine if trail is live or stale
+      const latestTs   = allPts[allPts.length - 1].ts;
+      const isLive     = (now - latestTs) < LIVE_MS;
+      const isMineUid  = uid === userId;
+
+      // Color: gold for mine, green if live, gray if stale
+      const color      = isMineUid ? '#f0a500' : isLive ? '#00e676' : '#778090';
+      const lineOpacity = isLive || isMineUid ? 0.75 : 0.35;
+      const dotOpacity  = isLive || isMineUid ? 0.60 : 0.25;
+      const lineWidth   = isLive || isMineUid ? 2.5  : 1.5;
+
+      const coords = allPts.map(p => [p.lng, p.lat]);
+      const geojson = { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } };
+
+      if (!map.isStyleLoaded()) return;
+
+      if (map.getSource(lid)) {
+        map.getSource(lid).setData(geojson);
+        // Update paint for live/stale state changes
+        if (map.getLayer(lid)) {
+          map.setPaintProperty(lid, 'line-color', color);
+          map.setPaintProperty(lid, 'line-opacity', lineOpacity);
+          map.setPaintProperty(lid, 'line-width', lineWidth);
+        }
+        if (map.getLayer(lid+'-dots')) {
+          map.setPaintProperty(lid+'-dots', 'circle-color', color);
+          map.setPaintProperty(lid+'-dots', 'circle-opacity', dotOpacity);
+        }
+      } else {
+        map.addSource(lid, { type: 'geojson', data: geojson });
+
+        map.addLayer({
+          id: lid, type: 'line', source: lid,
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': color,
+            'line-width': lineWidth,
+            'line-opacity': lineOpacity,
+            'line-dasharray': [2, 3]
+          }
+        }, 'pins-layer');
+
+        map.addLayer({
+          id: lid+'-dots', type: 'circle', source: lid,
+          paint: {
+            'circle-radius': 3,
+            'circle-color': color,
+            'circle-opacity': dotOpacity,
+            'circle-stroke-width': 1,
+            'circle-stroke-color': '#fff'
+          }
+        }, 'pins-layer');
+
+        trailSources[uid] = true;
+      }
+    });
+  });
+}
+
+// ══ CHAT ═════════════════════════════════════════════════════════
+function listenChat() {
+  const joinedAt = Date.now(); // only count messages after this moment
+  let initialLoad = true;
+
+  fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
+    const msgs = snap.val() || {};
+    const container = document.getElementById('chat-messages');
+    const sorted = Object.values(msgs).sort((a, b) => a.ts - b.ts);
+
+    container.innerHTML = '';
+    sorted.forEach(m => {
+      const isMine = m.uid === userId;
+      const div = document.createElement('div');
+      div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
+      div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text;
+      container.appendChild(div);
+    });
+    container.scrollTop = container.scrollHeight;
+
+    // Only badge for NEW messages (after we joined) and not our own
+    if (!chatOpen && !initialLoad) {
+      const newMsgs = sorted.filter(m => m.ts > joinedAt && m.uid !== userId);
+      if (newMsgs.length > 0) {
+        unreadCount++;
+        const badge = document.getElementById('chat-badge');
+        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        badge.style.display = 'flex';
+      }
+    }
+    initialLoad = false;
+  });
+}
+
+function sendChat(text, isPin = false) {
+  if (!text.trim()) return;
+  const r = fbPush(fbRef(db, `gl/${groupName}/chat`));
+  fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
+}
+
+document.getElementById('chat-send').addEventListener('click', () => {
+  const inp = document.getElementById('chat-input');
+  sendChat(inp.value); inp.value = '';
+});
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const inp = document.getElementById('chat-input');
+    sendChat(inp.value); inp.value = '';
+  }
+});
+
+// ══ PIN FLOW ═════════════════════════════════════════════════════
+function enablePinMode() {
+  pinMode = true;
+  document.getElementById('pin-mode-bar').classList.add('active');
+  map.getCanvas().style.cursor = 'crosshair';
+}
+function disablePinMode() {
+  pinMode = false;
+  document.getElementById('pin-mode-bar').classList.remove('active');
+  map.getCanvas().style.cursor = '';
+}
+
+// pin-hub-btn handled by openPinHub() wired below
+document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
+
+document.getElementById('pin-cats').addEventListener('click', e => {
+  if (!e.target.classList.contains('cat-btn')) return;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  selectedCat = e.target.dataset.cat;
+});
+
+document.getElementById('pin-cancel').addEventListener('click', () => {
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
+  if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
+  pendingCoords = null;
+});
+
+document.getElementById('pin-confirm').addEventListener('click', () => {
+  if (!pendingCoords) return;
+  const label = document.getElementById('pin-label-input').value.trim();
+  const customCatEl = document.getElementById('pin-custom-cat-input');
+  const finalCat = (selectedCat === 'Custom' && customCatEl && customCatEl.value.trim())
+                   ? customCatEl.value.trim().substring(0, 20)
+                   : selectedCat;
+  const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
+  fbSet(pinRef, {
+    lat: pendingCoords.lat, lng: pendingCoords.lng,
+    cat: finalCat, label, name: userName,
+    droppedBy: userId, ts: Date.now()
+  });
+  map.flyTo({ center: [pendingCoords.lng, pendingCoords.lat], zoom: 16 });
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
+  if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
+  pendingCoords = null;
+  toast('Pin dropped ✓');
+});
+
+document.getElementById('pin-label-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('pin-confirm').click();
+});
+
+// ══ UI TOGGLES ═══════════════════════════════════════════════════
+document.getElementById('chat-toggle-btn').addEventListener('click', () => {
+  chatOpen = !chatOpen;
+  document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+  if (chatOpen) {
+    unreadCount = 0;
+    document.getElementById('chat-badge').style.display = 'none';
+    setTimeout(() => {
+      document.getElementById('chat-messages').scrollTop = 99999;
+      document.getElementById('chat-input').focus();
+    }, 280);
+  }
+});
+document.getElementById('close-chat').addEventListener('click', () => {
+  chatOpen = false;
+  document.getElementById('chat-panel').classList.remove('open');
+});
+document.getElementById('close-user-drawer').addEventListener('click', function() {
+  document.getElementById('user-drawer').classList.remove('open');
+});
+document.getElementById('group-lock-btn').addEventListener('click', function(e) {
+  e.stopPropagation();
+  window._openSetPasscode();
+});
+document.getElementById('users-toggle-btn').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.toggle('open');
+});
+document.getElementById('map').addEventListener('click', () => {
+  document.getElementById('user-drawer').classList.remove('open');
+});
+
+// ══ SWITCH GROUP ═════════════════════════════════════════════════
+document.getElementById('switch-group-btn').addEventListener('click', () => {
+  if (!confirm('Leave this group and return to the join screen?')) return;
+  // Remove our presence from Firebase immediately so we vanish from the map
+  // and from the active groups list on the join screen
+  try {
+    if (db && groupName && userId) {
+      fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`));
+      // Keep trails — they persist as last known path for 2 hours
+    }
+  } catch(_) {}
+  // Clear saved group — keep uid and name so rejoin is easy
+  try {
+    localStorage.removeItem('gl_group');
+    sessionStorage.removeItem('gl_group');
+    _cookieSet('gl_group', '');
+  } catch(_) {}
+  location.reload();
+});
+
+
+// == INSTALL TIP ==================================================
+function initInstallTip() {
+  // If already installed as PWA — hide tip entirely, nothing to show
+  var isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                   || window.navigator.standalone === true;
+  if (isStandalone) return;
+
+  var isIOS    = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isSafari = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
+  var tip      = document.getElementById('install-tip');
+  if (!tip) return;
+
+  if (isIOS) {
+    // iOS — always manual steps (Safari only)
+    document.getElementById('install-tip-ios').style.display = 'block';
+  } else {
+    // Android / desktop
+    var androidDiv = document.getElementById('install-tip-android');
+    androidDiv.style.display = 'block';
+    var installBtn = document.getElementById('install-tip-btn');
+    if (typeof deferredInstallPrompt !== 'undefined' && deferredInstallPrompt) {
+      // Native install prompt available — wire button to it
+      installBtn.addEventListener('click', async function() {
+        deferredInstallPrompt.prompt();
+        var result = await deferredInstallPrompt.userChoice;
+        if (result.outcome === 'accepted') {
+          tip.style.display = 'none';
+          deferredInstallPrompt = null;
+        }
+      });
+    } else {
+      // No prompt yet — show manual instructions
+      installBtn.style.display = 'none';
+      document.getElementById('install-tip-android-manual').style.display = 'block';
+    }
+  }
+
+  tip.style.display = 'block';
+  document.getElementById('dismiss-install-tip').addEventListener('click', function() {
+    tip.style.display = 'none';
+  });
+}
+
+// == SAVED PINS ===================================================
+function getSavedPins() {
+  try { return JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch(e) { return []; }
+}
+function setSavedPins(arr) {
+  try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
+}
+window.savePin = function(pid) {
+  var pin = lastPins[pid];
+  if (!pin) { toast('Pin not found'); return; }
+  var saved = getSavedPins();
+  if (saved.find(function(p) { return p.pid === pid; })) { toast('Already saved'); return; }
+  saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name,
+    lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() });
+  setSavedPins(saved);
+  toast('Saved to My Pins');
+  renderSavedPins();
+};
+window.removeSavedPin = function(idx) {
+  var pins = getSavedPins(); pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
+};
+window.shareSavedPin = function(idx) {
+  var pin = getSavedPins()[idx];
+  if (!pin) return;
+  if (!groupName || !db) { toast('Join a group first'); return; }
+  var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
+  fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || 'Shared pin',
+    name:userName, droppedBy:userId, ts:Date.now() });
+  toast('Pin shared into ' + groupName);
+  document.getElementById('saved-pins-drawer').classList.remove('open');
+};
+function renderSavedPins() {
+  var list = document.getElementById('saved-pins-list');
+  var pins = getSavedPins();
+  if (!list) return;
+  if (!pins.length) {
+    list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No saved pins yet.<br>Tap a pin on the map and choose Save Pin.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  var gps = window._lastGPS;
+  pins.forEach(function(pin, idx) {
+    var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
+    var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
+    var card = document.createElement('div');
+    card.className = 'sv-card';
+    card.innerHTML =
+      '<div class="sv-dot" style="background:' + def.color + '">' + def.label + '</div>' +
+      '<div class="sv-body">' +
+        '<div class="sv-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
+        '<div class="sv-label">' + (pin.label || '(no description)') + '</div>' +
+        (dist ? '<div class="sv-meta">&#128205; ' + dist + '</div>' : '') +
+        '<div class="sv-meta">Saved ' + (typeof timeAgo === 'function' ? timeAgo(pin.savedAt) : '') + '</div>' +
+      '</div>' +
+      '<div class="sv-btns">' +
+        '<button class="sv-share" onclick="window.shareSavedPin(' + idx + ')">Share</button>' +
+        '<button class="sv-del" onclick="window.removeSavedPin(' + idx + ')">&#10005;</button>' +
+      '</div>';
+    card.addEventListener('click', function(e) {
+      if (e.target.tagName === 'BUTTON') return;
+      if (typeof map !== 'undefined') map.flyTo({ center:[pin.lng,pin.lat], zoom:17, duration:1200 });
+      document.getElementById('saved-pins-drawer').classList.remove('open');
+    });
+    list.appendChild(card);
+  });
+}
+// saved-pins-btn removed from toolbar (now in pin hub sheet)
+document.getElementById('close-saved-pins').addEventListener('click', function() {
+  document.getElementById('saved-pins-drawer').classList.remove('open');
+});
+
+// == PIN HUB ========================================================
+function openPinHub() {
+  var sheet = document.getElementById('pin-hub-sheet');
+  sheet.style.display = 'block';
+  // Update pin count
+  var count = Object.keys(lastPins || {}).length;
+  var countEl = document.getElementById('pin-hub-count');
+  if (countEl) countEl.textContent = count ? '(' + count + ')' : '';
+}
+function closePinHub() {
+  document.getElementById('pin-hub-sheet').style.display = 'none';
+}
+// enablePinMode defined above in pin flow section
+function openPinFeed() {
+  pinFeedOpen = true;
+  document.getElementById('pin-feed-panel').classList.add('open');
+  renderPinFeed(lastPins);
+  clearUnreadPins();
+}
+function openSavedPins() {
+  document.getElementById('saved-pins-drawer').classList.add('open');
+  renderSavedPins();
+}
+
+document.getElementById('pin-hub-btn').addEventListener('click', openPinHub);
+
+// == LOCATE ME ====================================================
+// Global function called directly from onclick — bypasses addEventListener issues
+window._locateMeTapped = function() {
+  var pos = null;
+  if (window._lastGPS) {
+    pos = [window._lastGPS.lng, window._lastGPS.lat];
+  } else if (typeof userMarkers !== 'undefined' && userMarkers[userId]) {
+    var ll = userMarkers[userId].getLngLat();
+    pos = [ll.lng, ll.lat];
+  }
+
+  if (pos) {
+    map.flyTo({ center: pos, zoom: 17, duration: 800 });
+    followUid = userId;
+    clearInterval(followInterval);
+    var btn = document.getElementById('locate-me');
+    btn.style.background  = 'var(--accent)';
+    btn.style.color       = '#000';
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.boxShadow   = '0 0 18px rgba(240,165,0,0.6)';
+    followInterval = setInterval(function() {
+      var cur = null;
+      if (window._lastGPS) cur = [window._lastGPS.lng, window._lastGPS.lat];
+      else if (userMarkers[userId]) { var ml = userMarkers[userId].getLngLat(); cur = [ml.lng, ml.lat]; }
+      if (cur) map.easeTo({ center: cur, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+    }, 3000);
+    toast('Following you — drag to stop', 2000);
+  } else {
+    toast('Waiting for GPS fix...');
+  }
+};
+var followUid = null;
+var followInterval = null;
+
+window._followUser = function(uid, name) {
+  // Always start/restart follow — don't toggle off on tap
+  followUid = uid;
+  clearInterval(followInterval);
+  var isSelf = uid === userId;
+  var btn = document.getElementById('locate-me');
+  btn.style.background  = isSelf ? 'var(--accent)' : '#00e676';
+  btn.style.color       = '#000';
+  btn.style.borderColor = isSelf ? 'var(--accent)' : '#39ff8a';
+  btn.style.boxShadow   = isSelf ? '0 0 15px rgba(240,165,0,0.5)' : '0 0 15px rgba(57,255,138,0.4)';
+  if (!isSelf) toast('Following ' + name + ' — tap to stop', 2500);
+  function doFollow() {
+    var target = null;
+    if (isSelf) {
+      if (window._lastGPS) target = [window._lastGPS.lng, window._lastGPS.lat];
+      else if (userMarkers[userId]) { var sl = userMarkers[userId].getLngLat(); target = [sl.lng, sl.lat]; }
+    } else {
+      var m = userMarkers[uid];
+      if (m) { var ol = m.getLngLat(); target = [ol.lng, ol.lat]; }
+    }
+    if (target) map.easeTo({ center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+  }
+  doFollow();
+  followInterval = setInterval(doFollow, 3000);
+};
+
+function stopFollowing() {
+  followUid = null;
+  clearInterval(followInterval);
+  followInterval = null;
+  var btn = document.getElementById('locate-me');
+  btn.innerHTML = '&#127919;';
+  btn.style.background  = 'var(--surface)';
+  btn.style.color       = '';
+  btn.style.borderColor = '';
+  btn.style.boxShadow   = '';
+}
+
+// dragstart wired inside initMap() below
+
+
+// == PASSCODE SYSTEM ==============================================
+// Simple SHA-256 hash so PIN is never stored plaintext in Firebase
+async function hashPin(pin) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// Check if group has a passcode before joining
+function checkGroupPasscode(name, group, uid) {
+  // Normalize group key same way enterMap does
+  var groupKey = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+  // Poll for Firebase ready — it loads async via ES module
+  var attempts = 0;
+  var timer = setInterval(function() {
+    attempts++;
+    if (!window._fb && attempts < 50) return; // wait up to 4 seconds
+    clearInterval(timer);
+
+    if (!window._fb) {
+      // Firebase never loaded — just enter without passcode check
+      enterMap(name, group, uid);
+      return;
+    }
+
+    var fb = window._fb;
+    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/pin'), function(snap) {
+      var storedHash = snap.val();
+      if (!storedHash) {
+        enterMap(name, group, uid);
+        return;
+      }
+      // Has passcode — show modal
+      var modal = document.getElementById('passcode-modal');
+      document.getElementById('passcode-subtitle').textContent = 'Enter the passcode to join ' + group + '.';
+      document.getElementById('passcode-error').style.display = 'none';
+      document.getElementById('passcode-input').value = '';
+      modal.style.display = 'flex';
+
+      document.getElementById('passcode-submit').onclick = function() {
+        var pin = document.getElementById('passcode-input').value.trim();
+        if (pin.length !== 4) {
+          document.getElementById('passcode-error').style.display = 'block';
+          return;
+        }
+        hashPin(pin).then(function(hash) {
+          if (hash === storedHash) {
+            modal.style.display = 'none';
+            enterMap(name, group, uid);
+          } else {
+            document.getElementById('passcode-error').style.display = 'block';
+            document.getElementById('passcode-input').value = '';
+          }
+        });
+      };
+    }, { onlyOnce: true });
+  }, 80);
+}
+
+// Lock icon on join screen — set passcode for a group
+window._openSetPasscode = function() {
+  var group = (typeof groupName !== 'undefined' && groupName) ? groupName : '';
+  if (!group) { toast('Join a group first'); return; }
+  document.getElementById('set-passcode-group').textContent = group;
+  document.getElementById('set-passcode-input').value = '';
+  document.getElementById('set-passcode-modal').style.display = 'flex';
+
+  document.getElementById('set-passcode-submit').onclick = function() {
+    var pin = document.getElementById('set-passcode-input').value.trim();
+    if (pin && (pin.length !== 4 || !/^\d{4}$/.test(pin))) {
+      toast('Enter exactly 4 digits'); return;
+    }
+    // Use the global fbSet/fbRef/fbRemove assigned when we entered the map
+    if (!fbSet || !fbRef || !db) { toast('Not connected'); return; }
+    if (!pin) {
+      fbRemove(fbRef(db, 'gl/' + group + '/config/pin'));
+      toast('Passcode removed');
+    } else {
+      hashPin(pin).then(function(hash) {
+        fbSet(fbRef(db, 'gl/' + group + '/config'), { pin: hash });
+        toast('Passcode set for ' + group);
+      });
+    }
+    document.getElementById('set-passcode-modal').style.display = 'none';
+  };
+};
+
+// == CUSTOM CATEGORY ==============================================
+// Show/hide custom name field when Custom category selected
+document.addEventListener('click', function(e) {
+  if (e.target.closest && e.target.closest('.cat-btn')) {
+    var btn = e.target.closest('.cat-btn');
+    var cat = btn.dataset.cat;
+    var customRow = document.getElementById('custom-cat-row');
+    var customInput = document.getElementById('pin-custom-cat-input');
+    if (customRow) customRow.style.display = cat === 'Custom' ? 'block' : 'none';
+    if (customInput && cat !== 'Custom') customInput.value = '';
+  }
+});
+
 </script>
 </body>
 </html>
