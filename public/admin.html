@@ -145,6 +145,7 @@
 <div class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('groups')">Groups</button>
   <button class="tab-btn" onclick="switchTab('alldata')">&#128269; All Data</button>
+  <button class="tab-btn" onclick="switchTab('messages')">&#128172; Messages</button>
   <button class="tab-btn" onclick="switchTab('debug')">&#128203; Debug</button>
 </div>
 
@@ -191,6 +192,10 @@
 </div>
 
 <!-- DEBUG TAB -->
+<div class="tab-panel" id="tab-messages">
+  <div id="messages-list"><div class="loading">Loading messages...</div></div>
+</div>
+
 <div class="tab-panel" id="tab-debug">
   <div id="debug-panel">
 
@@ -240,11 +245,13 @@ var prevSnapshot = {};
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b,i) {
-    b.classList.toggle('active', ['groups','alldata','debug'][i] === name);
+    b.classList.toggle('active', ['groups','alldata','messages','debug'][i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
+  // Render messages tab when switching to it
+  if (name === 'messages' && window._allDataSnapshot) renderMessages(window._allDataSnapshot);
   // Render alldata when switching to that tab
   if (name === 'alldata' && Object.keys(_allDataSnapshot).length > 0) {
     renderAllData(_allDataSnapshot, 'all');
@@ -562,6 +569,71 @@ function renderSummary(all) {
       }).join('');
     }
   }
+}
+
+function renderMessages(all) {
+  var el = document.getElementById('messages-list');
+  if (!el) return;
+
+  // Collect all messages across all groups with group context
+  var allMsgs = [];
+  Object.entries(all).forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    if (!group.chat) return;
+    var displayName = key.replace(/^test_/,'').replace(/_/g,' ').replace(/w/g,function(c){return c.toUpperCase();});
+    var isTest = key.startsWith('test_');
+    Object.entries(group.chat).forEach(function(me) {
+      var m = me[1];
+      allMsgs.push({ groupKey: key, groupName: displayName, isTest: isTest, name: m.name||'?', text: m.text||'', ts: m.ts||0 });
+    });
+  });
+
+  if (!allMsgs.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px">No messages yet</div>';
+    return;
+  }
+
+  // Sort newest first
+  allMsgs.sort(function(a,b){ return b.ts - a.ts; });
+
+  // Group by group name
+  var byGroup = {};
+  allMsgs.forEach(function(m) {
+    if (!byGroup[m.groupKey]) byGroup[m.groupKey] = { name: m.groupName, isTest: m.isTest, msgs: [] };
+    byGroup[m.groupKey].msgs.push(m);
+  });
+
+  var html = '';
+  Object.entries(byGroup).forEach(function(entry) {
+    var gk = entry[0], g = entry[1];
+    html += '<div style="margin-bottom:20px">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">' +
+        '&#128172; ' + g.name +
+        (g.isTest ? ' <span style="font-size:9px;color:var(--accent2);background:rgba(224,90,43,0.15);border-radius:3px;padding:1px 5px;margin-left:4px">TEST</span>' : '') +
+        ' <span style="font-size:11px;color:var(--muted);font-weight:400">(' + g.msgs.length + ' message' + (g.msgs.length!==1?'s':'') + ')</span>' +
+      '</div>';
+    g.msgs.forEach(function(m) {
+      var d = m.ts ? new Date(m.ts) : null;
+      var timeStr = d ? d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
+        d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+      html +=
+        '<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;gap:10px;align-items:flex-start">' +
+          '<div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;background:rgba(240,165,0,0.15);border:1px solid rgba(240,165,0,0.3);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent)">' +
+            m.name.charAt(0).toUpperCase() +
+          '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">' +
+              '<span style="font-size:12px;font-weight:700;color:var(--accent)">' + m.name + '</span>' +
+              '<span style="font-size:10px;color:var(--muted)">' + timeStr + '</span>' +
+            '</div>' +
+            '<div style="font-size:13px;color:var(--text);word-break:break-word">' + m.text + '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  });
+
+  el.innerHTML = html;
 }
 
 // Stub for old filter function — no longer needed
