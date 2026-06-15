@@ -1784,7 +1784,8 @@ function updatePinSource(pins) {
   const features = Object.entries(pins).map(([pid, pin]) => {
     const isMine   = pin.droppedBy === userId;
     const cat      = pin.cat || 'Waypoint';
-    const safeCat  = cat; // allow custom categories
+    // Use known category image or fall back to Custom
+    const safeCat  = (cat in PIN_DEFS) ? cat : 'Custom';
     const imageId  = isMine ? `pin-mine-${safeCat}` : `pin-other-${safeCat}`;
     // Short label under pin — category name truncated
     const shortLabel = pin.label ? (pin.label.length > 14 ? pin.label.slice(0,12)+'…' : pin.label) : '';
@@ -1802,6 +1803,14 @@ function updatePinSource(pins) {
         color:     PIN_COLORS[cat] || '#f0a500',
       }
     };
+  });
+  // Ensure all needed images exist (handles custom cats added after init)
+  features.forEach(function(f) {
+    var id = f.properties.imageId;
+    if (!map.hasImage(id)) {
+      var def = PIN_DEFS['Custom'];
+      map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', 'CT'), { pixelRatio: 2 });
+    }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
 }
