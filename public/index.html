@@ -1623,9 +1623,39 @@ function initMap() {
     }
   });
 
-  // Confirm map loaded
+  // Initial map load — set up pins, images, _mapReady
   map.on('load', function() {
-    console.log('Test map loaded OK');
+    // Add pin images
+    for (var cat in PIN_DEFS) {
+      var def = PIN_DEFS[cat];
+      if (!map.hasImage('pin-mine-' + cat)) {
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.label), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.label), { pixelRatio: 2 });
+      }
+    }
+    // Add pin source and layer
+    if (!map.getSource('pins')) {
+      map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'pins-layer', type: 'symbol', source: 'pins',
+        layout: {
+          'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
+          'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          'text-field': ['get', 'shortLabel'],
+          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 0.2], 'text-optional': true,
+        },
+        paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
+      });
+    }
+    // Signal ready and flush queued pins
+    window._mapReady = true;
+    if (window._queuedPins) {
+      updatePinSource(window._queuedPins);
+      window._queuedPins = null;
+    } else if (lastPins && Object.keys(lastPins).length) {
+      updatePinSource(lastPins);
+    }
   });
 
   // Parcel label refresh on pan/zoom
@@ -1643,10 +1673,8 @@ function initMap() {
   if (zoomOutBtn) zoomOutBtn.addEventListener('click', function() { map.zoomOut(); });
 
   // Single active parcel popup — exposed on window so inline onclick works
-  window.window._activeParcelPopup = null;
+  window._activeParcelPopup = null;
 
-  // FL Statewide parcel click handler
-  var _flParcelSuppressNext = false;
   // Parcel suppress flags
   var _parcelSuppressNext   = false;
   var _flParcelSuppressNext = false;
