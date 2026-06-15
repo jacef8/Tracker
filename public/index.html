@@ -2730,7 +2730,6 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     cat: finalCat, label, name: userName,
     droppedBy: userId, ts: Date.now()
   });
-  map.flyTo({ center: [pendingCoords.lng, pendingCoords.lat], zoom: 16 });
   document.getElementById('pin-modal').classList.remove('show');
   document.getElementById('pin-label-input').value = '';
   if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
@@ -3255,6 +3254,12 @@ document.getElementById('pin-hub-btn').addEventListener('click', openPinHub);
 // == LOCATE ME ====================================================
 // Global function called directly from onclick — bypasses addEventListener issues
 window._locateMeTapped = function() {
+  // If already following self — tap again to stop
+  if (followUid === userId) {
+    stopFollowing();
+    toast('Follow stopped', 1500);
+    return;
+  }
   var pos = null;
   if (window._lastGPS) {
     pos = [window._lastGPS.lng, window._lastGPS.lat];
@@ -3262,7 +3267,6 @@ window._locateMeTapped = function() {
     var ll = userMarkers[userId].getLngLat();
     pos = [ll.lng, ll.lat];
   }
-
   if (pos) {
     map.flyTo({ center: pos, zoom: 17, duration: 800 });
     followUid = userId;
@@ -3278,7 +3282,7 @@ window._locateMeTapped = function() {
       else if (userMarkers[userId]) { var ml = userMarkers[userId].getLngLat(); cur = [ml.lng, ml.lat]; }
       if (cur) map.easeTo({ center: cur, zoom: Math.max(map.getZoom(), 15), duration: 800 });
     }, 3000);
-    toast('Following you — drag to stop', 2000);
+    toast('Following your position — tap 🎯 again to stop', 2000);
   } else {
     toast('Waiting for GPS fix...');
   }
