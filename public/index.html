@@ -1715,12 +1715,13 @@ function initMap() {
             '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
             (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
             (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
-            (val     ? '<div style="font-size:11px;color:#8b949e">Assessed: ' + val + '</div>' : '') +
+            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + val + '</div>' : '') +
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
         window._activeParcelPopup.on('close', function() {
           map.setFilter('fl-parcels-hover', ['==', ['id'], -1]);
+          if (map.getLayer('fl-parcels-hover-line')) map.setFilter('fl-parcels-hover-line', ['==', ['id'], -1]);
           window._activeParcelPopup = null;
           _flParcelSuppressNext = true;
           setTimeout(function() { _flParcelSuppressNext = false; }, 400);
@@ -1749,12 +1750,13 @@ function initMap() {
             '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
             (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
             (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">&#9744; ' + acres + '</div>' : '') +
-            (val     ? '<div style="font-size:11px;color:#8b949e">Assessed: ' + val + '</div>' : '') +
+            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + val + '</div>' : '') +
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
         window._activeParcelPopup.on('close', function() {
           map.setFilter('parcels-hover', ['==', ['id'], -1]);
+          if (map.getLayer('parcels-hover-line')) map.setFilter('parcels-hover-line', ['==', ['id'], -1]);
           window._activeParcelPopup = null;
           _parcelSuppressNext = true;
           setTimeout(function() { _parcelSuppressNext = false; }, 400);
@@ -2691,7 +2693,8 @@ function listenChat() {
       div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text;
       container.appendChild(div);
     });
-    container.scrollTop = container.scrollHeight;
+    // Always scroll to bottom — use requestAnimationFrame so DOM is painted first
+    requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
 
     // Only badge for NEW messages (after we joined) and not our own
     if (!chatOpen && !initialLoad) {
@@ -2787,10 +2790,12 @@ document.getElementById('chat-toggle-btn').addEventListener('click', () => {
   if (chatOpen) {
     unreadCount = 0;
     document.getElementById('chat-badge').style.display = 'none';
+    // Scroll after panel transition finishes (transition is ~300ms)
     setTimeout(() => {
-      document.getElementById('chat-messages').scrollTop = 99999;
+      var el = document.getElementById('chat-messages');
+      el.scrollTop = el.scrollHeight;
       document.getElementById('chat-input').focus();
-    }, 280);
+    }, 320);
   }
 });
 document.getElementById('close-chat').addEventListener('click', () => {
@@ -3019,10 +3024,14 @@ function addParcelLayer() {
     id: 'parcels-hover',
     type: 'fill',
     source: 'liberty-parcels',
-    paint: {
-      'fill-color': 'rgba(240,165,0,0.25)',
-      'fill-outline-color': '#f0a500'
-    },
+    paint: { 'fill-color': 'rgba(240,165,0,0.2)' },
+    filter: ['==', ['id'], -1]
+  }, beforeLayer);
+  map.addLayer({
+    id: 'parcels-hover-line',
+    type: 'line',
+    source: 'liberty-parcels',
+    paint: { 'line-color': '#f0a500', 'line-width': 3 },
     filter: ['==', ['id'], -1]
   }, beforeLayer);
 
@@ -3087,7 +3096,14 @@ function addFLParcelLayer() {
     id: 'fl-parcels-hover',
     type: 'fill',
     source: 'fl-parcels',
-    paint: { 'fill-color': 'rgba(41,128,185,0.25)', 'fill-outline-color': '#2980b9' },
+    paint: { 'fill-color': 'rgba(41,128,185,0.2)' },
+    filter: ['==', ['id'], -1]
+  }, beforeLayer);
+  map.addLayer({
+    id: 'fl-parcels-hover-line',
+    type: 'line',
+    source: 'fl-parcels',
+    paint: { 'line-color': '#2980b9', 'line-width': 3 },
     filter: ['==', ['id'], -1]
   }, beforeLayer);
 }
@@ -3106,7 +3122,7 @@ function toggleParcels(on) {
     setTimeout(loadParcelLabels, 500);
   } else {
     if (window._activeParcelPopup) { window._activeParcelPopup.remove(); window._activeParcelPopup = null; }
-    ['parcels-fill','parcels-line','parcels-labels','parcels-hover'].forEach(function(id) {
+    ['parcels-fill','parcels-line','parcels-labels','parcels-hover','parcels-hover-line'].forEach(function(id) {
       if (map.getLayer(id)) map.removeLayer(id);
     });
     if (map.getSource('liberty-parcels')) map.removeSource('liberty-parcels');
