@@ -513,6 +513,37 @@
 
   /* ── Toast ── */
   /* ── New pin alert banner ── */
+  #chat-alert {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    z-index: 601; transition: opacity .25s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
+    width: min(380px, 92vw);
+    display: none; opacity: 0; pointer-events: none;
+  }
+  #chat-alert.show {
+    display: block; opacity: 1; pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+  #chat-alert-inner {
+    background: var(--surface); border: 1px solid #58a6ff;
+    border-radius: 14px; padding: 10px 12px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  #chat-alert-icon { font-size: 22px; flex-shrink: 0; }
+  #chat-alert-text { flex: 1; min-width: 0; }
+  #chat-alert-who { font-size: 11px; font-weight: 700; color: #58a6ff; text-transform: uppercase; letter-spacing: .06em; }
+  #chat-alert-msg { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #chat-alert-open {
+    background: #58a6ff; border: none; border-radius: 8px;
+    padding: 6px 12px; color: #000; font-size: 12px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  #chat-alert-close {
+    background: none; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; flex-shrink: 0; line-height: 1;
+  }
+
   #pin-alert {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%;
     transform: translateX(-50%);
@@ -1079,6 +1110,18 @@
 </div>
 
 <!-- ══ TOAST ═════════════════════════════════════════════════════════ -->
+<!-- Chat message alert banner -->
+<div id="chat-alert">
+  <div id="chat-alert-inner">
+    <span id="chat-alert-icon">&#128172;</span>
+    <div id="chat-alert-text">
+      <div id="chat-alert-who"></div>
+      <div id="chat-alert-msg"></div>
+    </div>
+    <button id="chat-alert-open">Open &#8594;</button>
+    <button id="chat-alert-close">&#10005;</button>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -2370,6 +2413,18 @@ function showJoinAlert(name) {
 let _pinAlertCoords = null;
 let _pinAlertTimer  = null;
 
+var _chatAlertTimer = null;
+
+function showChatAlert(name, text) {
+  document.getElementById('chat-alert-who').textContent = name + ' says';
+  document.getElementById('chat-alert-msg').textContent = text.length > 60 ? text.slice(0, 58) + '…' : text;
+  const alertEl = document.getElementById('chat-alert');
+  alertEl.classList.add('show');
+  if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+  clearTimeout(_chatAlertTimer);
+  _chatAlertTimer = setTimeout(() => alertEl.classList.remove('show'), 6000);
+}
+
 function showPinAlert(pin) {
   const def = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
   _pinAlertCoords = { lng: pin.lng, lat: pin.lat };
@@ -2384,6 +2439,17 @@ function showPinAlert(pin) {
   clearTimeout(_pinAlertTimer);
   _pinAlertTimer = setTimeout(() => alertEl.classList.remove('show'), 8000);
 }
+
+document.getElementById('chat-alert-open').addEventListener('click', () => {
+  document.getElementById('chat-alert').classList.remove('show');
+  clearTimeout(_chatAlertTimer);
+  // Open chat panel
+  if (!chatOpen) document.getElementById('chat-toggle-btn').click();
+});
+document.getElementById('chat-alert-close').addEventListener('click', () => {
+  document.getElementById('chat-alert').classList.remove('show');
+  clearTimeout(_chatAlertTimer);
+});
 
 document.getElementById('pin-alert-fly').addEventListener('click', () => {
   if (_pinAlertCoords) map.flyTo({ center: [_pinAlertCoords.lng, _pinAlertCoords.lat], zoom: 16, duration: 1400 });
@@ -2737,16 +2803,19 @@ function listenChat() {
     // Always scroll to bottom — use requestAnimationFrame so DOM is painted first
     requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
 
-    // Only badge for NEW messages (after we joined) and not our own
+    // Only notify for NEW messages (after we joined) and not our own
     if (!chatOpen && !initialLoad) {
       const newMsgs = sorted.filter(m => m.ts > joinedAt && m.uid !== userId);
       if (newMsgs.length > 0) {
-        unreadCount++;
+        // Show alert banner for the latest new message
+        const latest = newMsgs[newMsgs.length - 1];
+        showChatAlert(latest.name, latest.text);
+        unreadCount += newMsgs.length;
         const badge = document.getElementById('chat-badge');
         badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
         badge.style.display = 'flex';
         badge.classList.remove('pulse');
-        void badge.offsetWidth; // force reflow
+        void badge.offsetWidth;
         badge.classList.add('pulse');
       }
     }
