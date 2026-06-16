@@ -1057,6 +1057,20 @@
         <div style="font-size:11px;color:var(--muted)" id="group-lock-status">Tap to set or change</div>
       </div>
     </button>
+    <button id="alerts-btn" onclick="toggleAlerts(!alertsOn)" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;cursor:pointer;width:100%;text-align:left;-webkit-tap-highlight-color:transparent">
+      <span style="font-size:16px">&#128276;</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">Notifications</div>
+        <div style="font-size:11px;color:var(--muted)" id="alerts-status">Tap to enable alerts</div>
+      </div>
+    </button>
+    <button id="sos-btn" onclick="sendSOS()" style="display:flex;align-items:center;gap:10px;background:#3a0d0d;border:1px solid #c0392b;border-radius:8px;padding:9px 12px;cursor:pointer;width:100%;text-align:left;-webkit-tap-highlight-color:transparent">
+      <span style="font-size:16px">&#128680;</span>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#ff6b6b">Send SOS</div>
+        <div style="font-size:11px;color:var(--muted)">Alert your group that you need help</div>
+      </div>
+    </button>
   </div>
   <div id="user-list"></div>
 </div>
@@ -1223,6 +1237,7 @@ async function acquireWakeLock() {
     document.getElementById('wakelock-indicator').classList.add('active');
     wakeLock.addEventListener('release', () => {
       document.getElementById('wakelock-indicator').classList.remove('active');
+      wakeLock = null; // allow re-acquire when the app returns to foreground
     });
   } catch (e) {
     console.warn('Wake lock failed:', e.message);
@@ -1235,6 +1250,88 @@ document.addEventListener('visibilitychange', async () => {
     await acquireWakeLock();
   }
 });
+
+// ══ PUSH NOTIFICATIONS + SOS ═════════════════════════════════════
+const VAPID_PUBLIC = 'BKD0IUw8jGauYPSqzi-B0MEO_o4qjNu5yzWaIPcdWn1bB5chP6mV_t94aFj2j6-vW9afnQLwegHRvsjKYvTxgNc';
+let alertsOn = false;
+
+function _urlB64ToUint8(base64) {
+  const padding = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function _syncAlertsUI() {
+  const st = document.getElementById('alerts-status');
+  if (st) st.textContent = alertsOn ? 'Alerts on — tap to turn off' : 'Tap to enable alerts';
+}
+
+async function enableAlerts() {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      toast('Alerts not supported here'); return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Notifications blocked'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlB64ToUint8(VAPID_PUBLIC)
+      });
+    }
+    if (db && groupName && userId) {
+      fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
+            { sub: JSON.stringify(sub), name: userName, ts: Date.now() });
+    }
+    alertsOn = true; _syncAlertsUI(); toast('Alerts on ✓');
+  } catch (e) { console.warn('enableAlerts', e); toast('Could not enable alerts'); }
+}
+
+async function disableAlerts() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    if (db && groupName && userId) fbRemove(fbRef(db, `gl/${groupName}/pushSubs/${userId}`));
+  } catch (e) { console.warn('disableAlerts', e); }
+  alertsOn = false; _syncAlertsUI(); toast('Alerts off');
+}
+
+function toggleAlerts(on) { on ? enableAlerts() : disableAlerts(); }
+
+// Fire-and-forget: ask the server to push everyone else in the group
+function pushNotify(type, title, body) {
+  try {
+    if (!groupName || !userId) return;
+    fetch('/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: groupName, senderId: userId, type, title, body, url: '/' })
+    }).catch(function(){});
+  } catch (e) {}
+}
+
+function sendSOS() {
+  if (!groupName || !userId) { toast('Join a group first'); return; }
+  if (!confirm('Send an SOS alert to everyone in your group?')) return;
+  const loc = window._lastGPS;
+  if (loc && db) {
+    const r = fbPush(fbRef(db, `gl/${groupName}/pins`));
+    fbSet(r, { lat: loc.lat, lng: loc.lng, cat: 'Urgent', label: userName + ' needs help — SOS',
+               name: userName, droppedBy: userId, ts: Date.now(), sos: true });
+  }
+  if (db) {
+    const c = fbPush(fbRef(db, `gl/${groupName}/chat`));
+    fbSet(c, { uid: userId, name: userName, text: '🆘 SOS — ' + userName + ' needs help' + (loc ? '' : ' (no GPS fix)'), ts: Date.now(), isPin: false, sos: true });
+  }
+  pushNotify('sos', '🆘 SOS', userName + ' needs help');
+  toast('SOS sent to group');
+}
 
 // ══ WAIT FOR FIREBASE ════════════════════════════════════════════
 function waitForFirebase(cb) {
@@ -1507,6 +1604,7 @@ function enterMap(name, group, uid) {
     listenPins();
     listenChat();
     listenTrails();
+    pushNotify('join', groupName, userName + ' joined the group');
   });
 }
 
@@ -2141,16 +2239,18 @@ function updateMeasureDisplay() {
     if (n === 1) {
       document.getElementById('measure-result').textContent = '— tap second point';
     } else {
-      // Show total cumulative distance
+      // Show total cumulative distance (sum numerically, format once)
       var total = 0;
       for (var i = 0; i < n - 1; i++) {
-        total += parseFloat(distanceMiles(
+        total += distanceMilesNum(
           measurePoints[i].lat, measurePoints[i].lng,
           measurePoints[i+1].lat, measurePoints[i+1].lng
-        ));
+        );
       }
       var bear = getBearing(measurePoints[n-2].lat, measurePoints[n-2].lng, measurePoints[n-1].lat, measurePoints[n-1].lng);
-      document.getElementById('measure-result').textContent = total.toFixed(2) + ' mi · ' + bear;
+      var feet = total * 5280;
+      var distLabel = feet < 1000 ? Math.round(feet) + ' ft' : total.toFixed(2) + ' mi';
+      document.getElementById('measure-result').textContent = distLabel + ' · ' + bear;
       drawMeasureLine();
     }
   } else {
@@ -2496,11 +2596,15 @@ function listenUsers() {
   });
 }
 
-function distanceMiles(lat1, lng1, lat2, lng2) {
+function distanceMilesNum(lat1, lng1, lat2, lng2) {
   const R = 3958.8;
   const dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
   const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function distanceMiles(lat1, lng1, lat2, lng2) {
+  const d = distanceMilesNum(lat1, lng1, lat2, lng2);
   return d < 0.1 ? Math.round(d*5280)+' ft' : d.toFixed(2)+' mi';
 }
 
@@ -2943,6 +3047,7 @@ function sendChat(text, isPin = false) {
   if (!text.trim()) return;
   const r = fbPush(fbRef(db, `gl/${groupName}/chat`));
   fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
+  if (!isPin) pushNotify('chat', groupName + ' — new message', userName + ': ' + text.trim());
 }
 
 document.getElementById('chat-send').addEventListener('click', () => {
@@ -3005,6 +3110,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
   pendingCoords = null;
   toast('Pin dropped ✓');
+  pushNotify('pin', groupName + ' — new pin', userName + ' dropped a ' + finalCat + ' pin');
 });
 
 document.getElementById('pin-label-input').addEventListener('keydown', e => {
