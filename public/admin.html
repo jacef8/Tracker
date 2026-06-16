@@ -204,8 +204,12 @@
 
 </div>
 
-<!-- DEBUG TAB -->
+<!-- ACTIVITY TAB -->
 <div class="tab-panel" id="tab-activity">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
+    <span style="font-size:12px;color:var(--muted)">Live feed — all groups</span>
+    <button class="btn btn-danger" onclick="if(confirm('Clear the entire activity feed? This erases all logged joins/leaves. Cannot be undone.')) clearActivity()" style="font-size:11px;padding:5px 12px">&#128465; Clear Feed</button>
+  </div>
   <div id="activity-feed" style="display:flex;flex-direction:column;gap:0">
     <div class="loading" style="padding:20px 0;text-align:center">Watching for activity...</div>
   </div>
@@ -330,6 +334,14 @@ function initActivityFeed() {
     });
     renderActivity();
   });
+}
+
+function clearActivity() {
+  var fb = window._fb;
+  if (!fb || !fb.remove) { activityLog = []; renderActivity(); return; }
+  try { fb.remove(fb.ref(fb.db, '_activity')); } catch (e) { console.warn('clear activity', e); }
+  activityLog = [];
+  renderActivity();
 }
 
 function renderActivity() {
