@@ -1423,9 +1423,30 @@ function enterMap(name, group, uid) {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
     fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
 
-    // Remove any previous entry for this device before joining
-    // This handles name changes and re-joins cleanly
+    // Remove our own entry first (handles reload/rejoin cleanly)
     try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch(_) {}
+
+    // Also scan for and remove any other ghost entries with same name + noGps
+    // (handles duplicate tabs/windows on same device)
+    waitForFirebase(function(fb) {
+      fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/users'), function(snap) {
+        var all = snap.val() || {};
+        Object.entries(all).forEach(function(entry) {
+          var uid = entry[0], d = entry[1];
+          // Remove ghosts: same name, no GPS, claiming, OR older than 15 min with no GPS
+          if (uid !== userId) {
+            var age = Date.now() - (d.ts || 0);
+            if ((d.claiming && age > 10000) ||
+                (d.noGps && d.name === userName && age > 60000)) {
+              fb.remove(fb.ref(fb.db, 'gl/' + groupName + '/users/' + uid));
+            }
+          }
+        });
+      }, { onlyOnce: true });
+    });
+
+    // Log join event
+    writeDebugLog(groupName, userName + ' joined');
     // Claim our slot
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
@@ -2189,12 +2210,14 @@ function startLocationSharing() {
     }
 
     if (!window._firstFix) {
-      map.flyTo({ center: [lng, lat], zoom: 15 });
       window._firstFix = true;
+      map.flyTo({ center: [lng, lat], zoom: 15 });
+      writeDebugLog(groupName, userName + ' GPS active');
     }
   }, err => {
     console.warn('GPS:', err.message);
     toast('No GPS — showing in member list without location');
+    writeDebugLog(groupName, userName + ' joined (no GPS)');
     // Still appear in member list even without GPS (PC/desktop users)
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0,
@@ -2203,9 +2226,16 @@ function startLocationSharing() {
   }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
 
   // Do NOT remove on close — user may just be pocketing their phone.
-  // The 90-second stale filter handles cleanup naturally.
+  // Heartbeat for no-GPS users (PC/desktop) — keeps them alive in member list
+  // GPS users get their timestamp updated by watchPosition naturally
+  var _noGpsHeartbeat = setInterval(function() {
+    if (window._lastGPS) { clearInterval(_noGpsHeartbeat); return; } // stop if GPS kicks in
+    if (db && groupName && userId) {
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/ts'), Date.now()); } catch(_) {}
+    }
+  }, 30000);
+
   // When the app comes back to foreground, re-stamp timestamp immediately
-  // so we don't get pruned while the screen was off.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && db) {
       try {
@@ -2257,17 +2287,23 @@ function listenUsers() {
     const now = Date.now();
 
     // Keep all valid users — including no-GPS users (PC/desktop)
-    // Only filter out: claiming placeholders and 8-hour ghosts
+    // GPS users: keep for 8 hours (STALE_MS)
+    // No-GPS users: keep for 3 minutes (if heartbeat stops, they're gone)
+    const NO_GPS_MS = 3 * 60 * 1000;
     const users = Object.fromEntries(
       Object.entries(allUsers).filter(([, d]) =>
         !d.claiming &&
-        (now - (d.ts || 0)) < STALE_MS
+        (d.noGps
+          ? (now - (d.ts || 0)) < NO_GPS_MS
+          : (now - (d.ts || 0)) < STALE_MS)
       )
     );
 
-    // Auto-remove only true 8-hour ghosts from Firebase
+    // Auto-remove ghosts: 8hr for GPS users, 3min for no-GPS users
+    const NO_GPS_STALE = 3 * 60 * 1000;
     Object.entries(allUsers).forEach(([uid, d]) => {
-      if ((now - (d.ts || 0)) >= STALE_MS || (d.claiming && (now - (d.ts||0)) > 30000)) {
+      const staleLimit = d.noGps ? NO_GPS_STALE : STALE_MS;
+      if ((now - (d.ts || 0)) >= staleLimit || (d.claiming && (now - (d.ts||0)) > 30000)) {
         fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
       }
     });
@@ -2974,6 +3010,8 @@ document.getElementById('map').addEventListener('click', () => {
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
 document.getElementById('switch-group-btn').addEventListener('click', () => {
   // Immediate exit — no confirm dialog needed
+  if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
+  writeDebugLog(groupName, userName + ' exited');
   // Remove our presence from Firebase immediately so we vanish from the map
   // and from the active groups list on the join screen
   try {
