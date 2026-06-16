@@ -985,7 +985,7 @@
         <div onclick="var cb=document.getElementById('toggle-radar');cb.checked=!cb.checked;toggleRadar(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
             <div style="font-size:14px;font-weight:700">&#127783; Weather Radar</div>
-            <div style="font-size:11px;color:var(--muted)">Live precipitation &middot; last 2 hours, animated</div>
+            <div style="font-size:11px;color:var(--muted)">NWS NEXRAD &middot; last 2 hours, animated</div>
           </div>
           <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
             <input type="checkbox" id="toggle-radar" onchange="toggleRadar(this.checked)" style="opacity:0;width:0;height:0">
@@ -3445,20 +3445,21 @@ function setBaseLayer(btn) {
   });
 }
 
-// ── Weather radar (RainViewer — free, no API key) · animated 2-hr loop ──
+// ── Weather radar (NWS NEXRAD via Iowa Environmental Mesonet) · animated 2-hr loop ──
 var radarOn = false;
-var _radarHost = '', _radarFrames = [], _radarIdx = 0;
+var _radarFrames = [], _radarIdx = 0;
 var _radarPlaying = false, _radarAnimTimer = null, _radarRefresh = null;
+// US composite base reflectivity (N0Q), latest = -0; timestamped frames = ridge::USCOMP-N0Q-YYYYMMDDHHMM (UTC)
+var _RADAR_BASE = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-';
 
 function toggleRadar(on) {
   radarOn = !!on;
   _setRadarToggleUI(radarOn);
   if (radarOn) {
     showRadarControls();
-    toast('Loading weather radar\u2026');
-    _fetchRadar(true);
+    _loadRadarFrames(true);
     if (_radarRefresh) clearInterval(_radarRefresh);
-    _radarRefresh = setInterval(function(){ _fetchRadar(false); }, 5 * 60 * 1000);
+    _radarRefresh = setInterval(function(){ _loadRadarFrames(false); }, 5 * 60 * 1000);
   } else {
     _radarPause();
     if (_radarRefresh) { clearInterval(_radarRefresh); _radarRefresh = null; }
@@ -3468,22 +3469,28 @@ function toggleRadar(on) {
   }
 }
 
-function _fetchRadar(announce) {
-  fetch('https://api.rainviewer.com/public/weather-maps.json')
-    .then(function(r){ return r.json(); })
-    .then(function(j){
-      if (!radarOn) return;
-      var past = (j.radar && j.radar.past) || [];
-      if (!past.length) { toast('No radar data right now'); return; }
-      _radarHost = j.host || 'https://tilecache.rainviewer.com';
-      _radarFrames = past.slice(-13).map(function(f){ return { time: f.time, path: f.path }; }); // ~2 hrs
-      var wasPlaying = _radarPlaying;
-      _radarIdx = _radarFrames.length - 1;   // start on most recent
-      _buildRadarFrames();
-      if (announce) { toast('Weather radar on'); _radarPlay(); }
-      else if (wasPlaying) { _radarPlay(); }
-    })
-    .catch(function(){ if (announce) toast('Radar failed to load'); });
+// UTC timestamp string YYYYMMDDHHMM for an IEM service name
+function _iemStamp(ms) {
+  var d = new Date(ms), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return '' + d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + p(d.getUTCHours()) + p(d.getUTCMinutes());
+}
+
+// Generate the last ~2 hours of frames at 10-min steps (NEXRAD composite updates every 5 min).
+// No network call needed for the list — timestamps are computed directly.
+function _loadRadarFrames(announce) {
+  if (!radarOn) return;
+  var stepMs = 10 * 60 * 1000, fiveMs = 5 * 60 * 1000;
+  var newest = Math.floor(Date.now() / fiveMs) * fiveMs - fiveMs; // last completed 5-min mosaic (~5-10 min old)
+  var wasPlaying = _radarPlaying;
+  _radarFrames = [];
+  for (var i = 12; i >= 0; i--) {
+    var ms = newest - i * stepMs;
+    _radarFrames.push({ time: ms, stamp: _iemStamp(ms) });
+  }
+  _radarIdx = _radarFrames.length - 1; // most recent
+  _buildRadarFrames();
+  if (announce) { toast('Weather radar on'); _radarPlay(); }
+  else if (wasPlaying) { _radarPlay(); }
 }
 
 // Build one preloaded raster layer per frame (opacity 0 = hidden but cached)
@@ -3492,12 +3499,11 @@ function _buildRadarFrames() {
   if (!_radarFrames.length) return;
   _clearRadarFrames();
   var beforeId = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
-  var TILE_SIZE = (window.devicePixelRatio >= 2) ? 512 : 256;  // sharper tiles on phones
   for (var i = 0; i < _radarFrames.length; i++) {
     var sid = 'radar-' + i, lid = 'radar-layer-' + i;
-    // RainViewer free API: scheme 2 = Universal Blue (only supported scheme); tiles exist only to zoom 7
-    var url = _radarHost + _radarFrames[i].path + '/' + TILE_SIZE + '/{z}/{x}/{y}/2/1_1.png';
-    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, maxzoom:7, attribution:'RainViewer' });
+    var url = _RADAR_BASE + _radarFrames[i].stamp + '/{z}/{x}/{y}.png';
+    // maxzoom 9: tiles requested up to z9, stretched (overzoomed) beyond — keeps load light on IEM's free server
+    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, maxzoom:9, attribution:'NWS / Iowa Environmental Mesonet' });
     map.addLayer({ id:lid, type:'raster', source:sid,
       paint:{ 'raster-opacity':0, 'raster-opacity-transition':{duration:0}, 'raster-fade-duration':0 } }, beforeId);
   }
@@ -3566,7 +3572,7 @@ function _updateRadarLabel() {
   var t = document.getElementById('radar-time');
   var fr = _radarFrames[_radarIdx];
   if (t && fr) {
-    var d = new Date(fr.time * 1000);
+    var d = new Date(fr.time);
     t.textContent = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
   }
 }
