@@ -3492,11 +3492,12 @@ function _buildRadarFrames() {
   if (!_radarFrames.length) return;
   _clearRadarFrames();
   var beforeId = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+  var TILE_SIZE = (window.devicePixelRatio >= 2) ? 512 : 256;  // sharper tiles on phones
   for (var i = 0; i < _radarFrames.length; i++) {
     var sid = 'radar-' + i, lid = 'radar-layer-' + i;
-    // color scheme 4 = Weather-Channel palette (green->yellow->red), transparent where dry
-    var url = _radarHost + _radarFrames[i].path + '/256/{z}/{x}/{y}/4/1_1.png';
-    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, attribution:'RainViewer' });
+    // RainViewer free API: scheme 2 = Universal Blue (only supported scheme); tiles exist only to zoom 7
+    var url = _radarHost + _radarFrames[i].path + '/' + TILE_SIZE + '/{z}/{x}/{y}/2/1_1.png';
+    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, maxzoom:7, attribution:'RainViewer' });
     map.addLayer({ id:lid, type:'raster', source:sid,
       paint:{ 'raster-opacity':0, 'raster-opacity-transition':{duration:0}, 'raster-fade-duration':0 } }, beforeId);
   }
