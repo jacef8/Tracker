@@ -2184,7 +2184,12 @@ function startLocationSharing() {
     }
   }, err => {
     console.warn('GPS:', err.message);
-    toast('GPS unavailable — check location permissions');
+    toast('No GPS — showing in member list without location');
+    // Still appear in member list even without GPS (PC/desktop users)
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      lat: 0, lng: 0, name: userName, accuracy: 0,
+      ts: Date.now(), claiming: false, noGps: true
+    });
   }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
 
   // Do NOT remove on close — user may just be pocketing their phone.
@@ -2192,8 +2197,9 @@ function startLocationSharing() {
   // When the app comes back to foreground, re-stamp timestamp immediately
   // so we don't get pruned while the screen was off.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && db && window._lastGPS) {
+    if (document.visibilityState === 'visible' && db) {
       try {
+        // Heartbeat for GPS users AND no-GPS PC users
         fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now());
       } catch(_) {}
     }
@@ -2240,12 +2246,11 @@ function listenUsers() {
     const allUsers = snap.val() || {};
     const now = Date.now();
 
-    // Keep all valid users (have real GPS, not a claiming placeholder)
-    // Filter only true ghosts older than 8 hours
+    // Keep all valid users — including no-GPS users (PC/desktop)
+    // Only filter out: claiming placeholders and 8-hour ghosts
     const users = Object.fromEntries(
       Object.entries(allUsers).filter(([, d]) =>
         !d.claiming &&
-        (d.lat !== 0 || d.lng !== 0) &&
         (now - (d.ts || 0)) < STALE_MS
       )
     );
@@ -2296,6 +2301,7 @@ function listenUsers() {
       const isMine   = uid === userId;
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
       const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
+      const hasGps   = !data.noGps && (data.lat !== 0 || data.lng !== 0);
 
       // Color scheme: gold=me, green=live teammate, gray=last known
       const fillColor   = isMine ? '#f0a500' : userColor(uid);
@@ -2303,7 +2309,7 @@ function listenUsers() {
       const opacity     = isLive || isMine ? '1' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
-      if (!userMarkers[uid]) {
+      if (hasGps && !userMarkers[uid]) {
         const el = document.createElement('div');
         Object.assign(el.style, {
           width: '44px', height: '44px', borderRadius: '50%',
@@ -2360,7 +2366,7 @@ function listenUsers() {
       }
       const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
       const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
-      const timeLabel   = isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
+      const timeLabel   = data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
 
       var _safeName = data.name.replace(/'/g, '');
       var _followBtn = !isMine
@@ -2382,7 +2388,7 @@ function listenUsers() {
         '<div>' +
           '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
-            (isLive ? 'Live &middot; ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
+            (data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
           '</div>' +
         '</div>';
       row.addEventListener('click', function() {
