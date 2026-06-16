@@ -1539,9 +1539,12 @@ function enterMap(name, group, uid) {
 // ══ AUTO-RESUME ═══════════════════════════════════════════════════
 // If we have a saved session, skip the join screen entirely
 function showJoinScreen() {
-  // Remove presence from Firebase when returning to join screen
+  // Only remove presence if we're currently IN the map (topbar visible)
+  // Don't fire on initial page load before enterMap is called
   try {
-    if (typeof db !== 'undefined' && db && typeof groupName !== 'undefined' && groupName && typeof userId !== 'undefined' && userId) {
+    var topbar = document.getElementById('topbar');
+    var inMap = topbar && topbar.style.display === 'flex';
+    if (inMap && typeof db !== 'undefined' && db && typeof groupName !== 'undefined' && groupName && typeof userId !== 'undefined' && userId) {
       fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
     }
   } catch(_) {}
