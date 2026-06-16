@@ -2312,6 +2312,7 @@ function listenUsers() {
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
       const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
       const hasGps   = !data.noGps && (data.lat !== 0 || data.lng !== 0);
+      const timeLabel = data.noGps ? 'No GPS' : isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
 
       // Color scheme: gold=me, green=live teammate, gray=last known
       const fillColor   = isMine ? '#f0a500' : userColor(uid);
@@ -2351,7 +2352,7 @@ function listenUsers() {
             if (isLive) window._followUser(uid, data.name);
           }, 850);
         });
-      } else {
+      } else if (hasGps && userMarkers[uid]) {
         // Update position only if live — keep last known position if not
         if (isLive || isMine) {
           userMarkers[uid].setLngLat([data.lng, data.lat]);
