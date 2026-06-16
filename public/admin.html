@@ -100,10 +100,11 @@
   #debug-panel { display: flex; flex-direction: column; gap: 12px; }
   .debug-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
   .debug-title { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
-  .debug-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); align-items: start; font-size: 12px; }
+  .debug-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  @media (min-width: 480px) { .debug-row { flex-direction: row; align-items: flex-start; gap: 8px; } .debug-label { min-width: 120px; flex-shrink: 0; } }
   .debug-row:last-child { border-bottom: none; }
   .debug-label { color: var(--muted); font-weight: 600; }
-  .debug-val { color: var(--text); font-family: monospace; word-break: break-all; }
+  .debug-val { color: var(--text); font-family: monospace; word-break: break-word; flex: 1; }
   .debug-status { font-size: 10px; font-weight: 700; white-space: nowrap; }
   .status-ok { color: var(--green); }
   .status-warn { color: var(--yellow); }
@@ -145,6 +146,7 @@
 <div class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('groups')">Groups</button>
   <button class="tab-btn" onclick="switchTab('alldata')">&#128269; All Data</button>
+  <button class="tab-btn" onclick="switchTab('activity')">&#128336; Activity</button>
   <button class="tab-btn" onclick="switchTab('messages')">&#128172; Messages</button>
   <button class="tab-btn" onclick="switchTab('debug')">&#128203; Debug</button>
 </div>
@@ -192,6 +194,12 @@
 </div>
 
 <!-- DEBUG TAB -->
+<div class="tab-panel" id="tab-activity">
+  <div id="activity-feed" style="display:flex;flex-direction:column;gap:0">
+    <div class="loading" style="padding:20px 0;text-align:center">Watching for activity...</div>
+  </div>
+</div>
+
 <div class="tab-panel" id="tab-messages">
   <div id="messages-list"><div class="loading">Loading messages...</div></div>
 </div>
@@ -199,6 +207,7 @@
 <div class="tab-panel" id="tab-debug">
   <div id="debug-panel">
 
+    <!-- Live Device Monitor -->
     <div class="debug-section">
       <div class="debug-title">
         Live Device Monitor
@@ -207,31 +216,20 @@
       <div id="device-monitor"><div class="loading" style="padding:20px 0">Waiting for data…</div></div>
     </div>
 
+    <!-- Activity Log — persists in Firebase, shows all groups -->
     <div class="debug-section">
       <div class="debug-title">
-        Stale Threshold Analysis
-        <span style="font-size:11px;color:var(--muted);font-weight:400">App drops users after 90s</span>
+        Activity Log
+        <span style="font-size:11px;color:var(--muted);font-weight:400">Last 24hrs — all groups</span>
       </div>
-      <div id="stale-analysis"><div style="color:var(--muted);font-size:12px">Waiting for data…</div></div>
-    </div>
-
-    <div class="debug-section">
-      <div class="debug-title">
-        Firebase Debug Log (Persistent)
-        <button class="copy-btn" onclick="copyFirebaseLog()">Copy</button>
+      <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted)">Filter:</span>
+        <button class="btn btn-warn" id="debug-filter-all" onclick="setDebugFilter('all')" style="font-size:11px;padding:4px 10px">All Groups</button>
+        <div id="debug-group-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Stored in Firebase — survives page refresh. Last 24hrs per group.</div>
-      <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap" id="debug-group-btns"></div>
-      <div id="firebase-log"><div style="color:var(--muted);font-size:12px">Select a group above to view its log.</div></div>
-    </div>
-
-    <div class="debug-section">
-      <div class="debug-title">
-        Live Session Log
-        <button class="copy-btn" onclick="copyLog()">Copy</button>
+      <div id="firebase-log">
+        <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Loading activity log…</div>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Only captures events since this admin page was opened.</div>
-      <div id="event-log"></div>
     </div>
 
   </div>
@@ -245,12 +243,14 @@ var prevSnapshot = {};
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b,i) {
-    b.classList.toggle('active', ['groups','alldata','messages','debug'][i] === name);
+    b.classList.toggle('active', ['groups','alldata','activity','messages','debug'][i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
-  // Render messages tab when switching to it
+  // Render activity/messages tabs when switching
+  if (name === 'activity') renderActivity();
+  if (name === 'debug') renderDebugLog();
   if (name === 'messages' && window._allDataSnapshot) renderMessages(window._allDataSnapshot);
   // Render alldata when switching to that tab
   if (name === 'alldata' && Object.keys(_allDataSnapshot).length > 0) {
@@ -276,6 +276,43 @@ function tsStr(ts) {
   if (!ts) return '—';
   var d = new Date(ts);
   return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+// ── Activity feed — persists while admin page is open ────────────
+var activityLog = [];
+
+function addActivity(msg, type, group) {
+  var now = new Date();
+  var timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  var dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  activityLog.unshift({ msg: msg, type: type, group: group || '', time: timeStr, date: dateStr, ts: Date.now() });
+  if (activityLog.length > 200) activityLog.pop(); // keep last 200
+  renderActivity();
+}
+
+function renderActivity() {
+  var el = document.getElementById('activity-feed');
+  if (!el) return;
+  if (!activityLog.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px">No activity yet — watching live...</div>';
+    return;
+  }
+  var icons = { ok: '&#128994;', warn: '&#128992;', dead: '&#128308;', info: '&#128997;' };
+  el.innerHTML = activityLog.map(function(e) {
+    var icon = e.type === 'ok' ? '&#128994;' : e.type === 'warn' ? '&#128992;' : e.type === 'dead' ? '&#128308;' : 'ℹ️';
+    var borderColor = e.type === 'ok' ? 'var(--green)' : e.type === 'warn' ? 'var(--yellow)' : e.type === 'dead' ? 'var(--danger)' : 'var(--blue)';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+      '<span style="font-size:16px;flex-shrink:0;line-height:1.4">' + icon + '</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;color:var(--text);font-weight:600">' + e.msg + '</div>' +
+        (e.group ? '<div style="font-size:11px;color:var(--accent);margin-top:1px">' + e.group.replace(/^test_/,'').replace(/_/g,' ').replace(/w/g,function(c){return c.toUpperCase();}) + '</div>' : '') +
+      '</div>' +
+      '<div style="flex-shrink:0;text-align:right">' +
+        '<div style="font-size:11px;color:var(--muted)">' + e.time + '</div>' +
+        '<div style="font-size:10px;color:var(--muted)">' + e.date + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
 }
 
 function addLog(msg, type) {
@@ -394,6 +431,7 @@ function detectChanges(all, now) {
       if (!prev) {
         // New user appeared
         addLog(name + ' appeared in ' + gk, 'ok');
+        addActivity(name + ' joined', 'ok', gk);
       } else {
         // Check GPS update gap
         var gap = (u.ts || 0) - (prev.ts || 0);
@@ -403,6 +441,7 @@ function detectChanges(all, now) {
         // Check going stale
         if (age > LIVE_MS && (now - (prev.ts||0)) < LIVE_MS) {
           addLog(name + ' went STALE — will be hidden from map', 'dead');
+          addActivity(name + ' went offline', 'dead', gk);
         }
       }
       prevSnapshot[key] = { ts: u.ts };
@@ -414,7 +453,9 @@ function detectChanges(all, now) {
     var parts = key.split('/');
     var gk = parts[0], uid = parts[1];
     if (!all[gk] || !all[gk].users || !all[gk].users[uid]) {
-      addLog((prevSnapshot[key].name || uid.slice(0,8)) + ' removed from ' + gk, 'warn');
+      var leftName = prevSnapshot[key].name || uid.slice(0,8);
+      addLog(leftName + ' removed from ' + gk, 'warn');
+      addActivity(leftName + ' left', 'warn', gk);
       delete prevSnapshot[key];
     }
   });
@@ -708,39 +749,100 @@ function _renderAllDataOLD(all, filter) {
 
 var firebaseLogUnsub = null;
 
-function loadFirebaseLog(groupKey) {
-  // Unsubscribe previous listener
-  if (firebaseLogUnsub) { firebaseLogUnsub(); firebaseLogUnsub = null; }
+var _debugFilter = 'all';
+var _allDebugEntries = [];
+var _debugUnsubs = [];
 
+function setDebugFilter(groupKey) {
+  _debugFilter = groupKey;
+  // Update button styles
+  document.getElementById('debug-filter-all').style.background = groupKey === 'all' ? 'var(--accent)' : '';
+  document.getElementById('debug-filter-all').style.color = groupKey === 'all' ? '#000' : '';
+  document.querySelectorAll('#debug-group-btns button').forEach(function(b) {
+    var active = b.dataset.group === groupKey;
+    b.style.background = active ? 'var(--accent)' : '';
+    b.style.color = active ? '#000' : '';
+  });
+  renderDebugLog();
+}
+
+function renderDebugLog() {
   var logEl = document.getElementById('firebase-log');
-  logEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  var filtered = _debugFilter === 'all'
+    ? _allDebugEntries
+    : _allDebugEntries.filter(function(e) { return e.groupKey === _debugFilter; });
+
+  if (!filtered.length) {
+    logEl.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No activity in the last 24 hours.</div>';
+    return;
+  }
+
+  logEl.innerHTML = filtered.slice(0, 200).map(function(e) {
+    var d = new Date(e.ts);
+    var t = d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
+            d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true});
+    var icon = e.msg.includes('joined') ? '&#128994;'
+             : e.msg.includes('exited') ? '&#128308;'
+             : e.msg.includes('GPS active') ? '&#128225;'
+             : e.msg.includes('no GPS') ? '&#128203;'
+             : 'ℹ️';
+    var groupLabel = _debugFilter === 'all'
+      ? '<span style="font-size:10px;color:var(--accent);margin-left:6px">' +
+        e.groupKey.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) +
+        '</span>' : '';
+    return '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+      '<span style="font-size:15px;flex-shrink:0">' + icon + '</span>' +
+      '<div style="flex:1">' +
+        '<span style="font-size:13px;color:var(--text)">' + e.msg + '</span>' + groupLabel +
+      '</div>' +
+      '<span style="font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">' + t + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+function loadFirebaseLog(groupKey) {
+  // Legacy — now handled by loadAllDebugLogs
+  setDebugFilter(groupKey);
+}
+
+function loadAllDebugLogs(allData) {
+  // Unsubscribe previous listeners
+  _debugUnsubs.forEach(function(u) { try { u(); } catch(_) {} });
+  _debugUnsubs = [];
+  _allDebugEntries = [];
+
   var fb = window._fb;
+  if (!fb) return;
   var cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  var groups = Object.keys(allData || {});
 
-  firebaseLogUnsub = fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/debug'), function(snap) {
-    var entries = snap.val() || {};
-    var sorted = Object.values(entries)
-      .filter(function(e) { return e.ts > cutoff; })
-      .sort(function(a,b) { return b.ts - a.ts });
+  if (!groups.length) {
+    document.getElementById('firebase-log').innerHTML =
+      '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No groups found.</div>';
+    return;
+  }
 
-    if (!sorted.length) {
-      logEl.innerHTML = '<div style="color:var(--muted);font-size:12px">No debug entries yet for this group.</div>';
-      return;
-    }
-
-    logEl.innerHTML = sorted.slice(0, 100).map(function(e) {
-      var d = new Date(e.ts);
-      var t = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-      var cls = e.msg.includes('GPS stopped') ? 'log-dead'
-              : e.msg.includes('joined') ? 'log-ok'
-              : 'log-info';
-      return '<div class="log-entry ' + cls + '"><span class="log-time">' + t + '</span><span class="log-msg">' + e.msg + '</span></div>';
-    }).join('');
-
-    // Auto-purge entries older than 24h
-    Object.entries(entries).forEach(function(kv) {
-      if (kv[1].ts < cutoff) fb.remove(fb.ref(fb.db, 'gl/' + groupKey + '/debug/' + kv[0]));
+  var loaded = 0;
+  groups.forEach(function(groupKey) {
+    var unsub = fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/debug'), function(snap) {
+      var entries = snap.val() || {};
+      // Remove old entries for this group
+      _allDebugEntries = _allDebugEntries.filter(function(e) { return e.groupKey !== groupKey; });
+      // Add new entries
+      Object.values(entries).forEach(function(e) {
+        if (e.ts > cutoff) {
+          _allDebugEntries.push({ groupKey: groupKey, msg: e.msg, ts: e.ts });
+        }
+      });
+      // Sort newest first
+      _allDebugEntries.sort(function(a,b) { return b.ts - a.ts; });
+      renderDebugLog();
+      // Auto-purge old entries
+      Object.entries(entries).forEach(function(kv) {
+        if (kv[1].ts < cutoff) fb.remove(fb.ref(fb.db, 'gl/' + groupKey + '/debug/' + kv[0]));
+      });
     });
+    _debugUnsubs.push(unsub);
   });
 }
 
@@ -914,6 +1016,9 @@ function loadAdmin() {
 
       document.getElementById('stat-groups').textContent = totalGroups;
 
+      // Load Firebase debug logs for all groups
+      loadAllDebugLogs(all);
+
       // Update debug group buttons
       var btnContainer = document.getElementById('debug-group-btns');
       if (btnContainer) {
@@ -924,7 +1029,8 @@ function loadAdmin() {
           btn.style.fontSize = '11px';
           btn.style.padding = '5px 10px';
           btn.textContent = entry[0].replace(/_/g,' ');
-          btn.onclick = function() { loadFirebaseLog(entry[0]); };
+          btn.dataset.group = entry[0];
+          btn.onclick = function() { setDebugFilter(this.dataset.group); };
           btnContainer.appendChild(btn);
         });
       }
