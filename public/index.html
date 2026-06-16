@@ -1423,9 +1423,10 @@ function enterMap(name, group, uid) {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
     fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
 
-    // Immediately claim our userId slot in Firebase.
-    // This overwrites any stale ghost entry from a previous session
-    // under the same userId, ensuring only one entry exists per device.
+    // Remove any previous entry for this device before joining
+    // This handles name changes and re-joins cleanly
+    try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch(_) {}
+    // Claim our slot
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
     });
@@ -1538,6 +1539,12 @@ function enterMap(name, group, uid) {
 // ══ AUTO-RESUME ═══════════════════════════════════════════════════
 // If we have a saved session, skip the join screen entirely
 function showJoinScreen() {
+  // Remove presence from Firebase when returning to join screen
+  try {
+    if (typeof db !== 'undefined' && db && typeof groupName !== 'undefined' && groupName && typeof userId !== 'undefined' && userId) {
+      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
+    }
+  } catch(_) {}
   document.getElementById('join-screen').style.display = 'flex';
   setTimeout(initInstallTip, 50);
 
@@ -2356,29 +2363,31 @@ function listenUsers() {
         }
       }
 
-      // Popup content
-      const _gps = window._lastGPS;
-      let _distHTML = '';
-      if (!isMine && _gps) {
-        const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
-        const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
-        _distHTML = `<div class="pop-dist">&#x1F4CD; ${_d} from you &middot; ${_b}</div>`;
+      // Popup content — only for users with GPS markers
+      if (hasGps && userMarkers[uid]) {
+        const _gps = window._lastGPS;
+        let _distHTML = '';
+        if (!isMine && _gps) {
+          const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
+          const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
+          _distHTML = `<div class="pop-dist">&#x1F4CD; ${_d} from you &middot; ${_b}</div>`;
+        }
+        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
+        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
+        var _safeName = data.name.replace(/'/g, '');
+        var _followBtn = !isMine
+          ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
+          : '';
+        userMarkers[uid].getPopup().setHTML(
+          '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
+          '<div class="pop-label">' + data.name + '</div>' +
+          _distHTML +
+          '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
+          _followBtn
+        );
       }
-      const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
-      const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
-      const timeLabel   = data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
 
-      var _safeName = data.name.replace(/'/g, '');
-      var _followBtn = !isMine
-        ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
-        : '';
-      userMarkers[uid].getPopup().setHTML(
-        '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
-        '<div class="pop-label">' + data.name + '</div>' +
-        _distHTML +
-        '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
-        _followBtn
-      );
+      const statusColor = data.noGps ? '#888ea0' : isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
 
       const row = document.createElement('div');
       row.className = 'user-item';
@@ -2960,7 +2969,7 @@ document.getElementById('map').addEventListener('click', () => {
 
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
 document.getElementById('switch-group-btn').addEventListener('click', () => {
-  if (!confirm('Leave this group?\n\nTip: Always EXIT before closing the app so your dot disappears from the map immediately.')) return;
+  // Immediate exit — no confirm dialog needed
   // Remove our presence from Firebase immediately so we vanish from the map
   // and from the active groups list on the join screen
   try {
@@ -2978,6 +2987,15 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   location.reload();
 });
 
+
+// Remove user from Firebase on page unload (tab close, browser close)
+window.addEventListener('beforeunload', function() {
+  try {
+    if (db && groupName && userId) {
+      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
+    }
+  } catch(_) {}
+});
 
 // == INSTALL TIP ==================================================
 function initInstallTip() {
