@@ -981,6 +981,18 @@
             <span id="parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
         </div>
+        <!-- Weather radar (RainViewer) -->
+        <div onclick="var cb=document.getElementById('toggle-radar');cb.checked=!cb.checked;toggleRadar(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:700">&#127783; Weather Radar</div>
+            <div style="font-size:11px;color:var(--muted)">Live precipitation &middot; last 2 hours, animated</div>
+          </div>
+          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-radar" onchange="toggleRadar(this.checked)" style="opacity:0;width:0;height:0">
+            <span id="radar-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="radar-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
         <!-- Florida statewide parcels — activate when shapefile is uploaded -->
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;opacity:0.5">
           <div style="flex:1">
@@ -997,6 +1009,13 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- ══ RADAR PLAYBACK CONTROLS ══════════════════════════════════════════ -->
+<div id="radar-controls" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot) + 16px);z-index:350;align-items:center;gap:10px;background:rgba(13,17,23,.92);border:1px solid var(--border);border-radius:14px;padding:8px 12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 6px 24px rgba(0,0,0,.55)">
+  <button id="radar-play-btn" onclick="_radarTogglePlay()" title="Play/Pause" style="border:none;background:var(--accent);color:#000;width:34px;height:34px;border-radius:50%;font-size:14px;font-weight:800;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center">&#9654;</button>
+  <input id="radar-scrubber" type="range" min="0" max="0" value="0" step="1" oninput="_radarScrub(this.value)" style="width:130px;accent-color:var(--accent)">
+  <span id="radar-time" style="font-size:12px;font-weight:700;color:var(--text);min-width:62px;text-align:right">--:--</span>
 </div>
 
 <!-- ══ PIN HUB SHEET ════════════════════════════════════════════════════ -->
@@ -3420,9 +3439,143 @@ function setBaseLayer(btn) {
       });
     }
     if (parcelsOn) addParcelLayer();
+    if (radarOn) { _buildRadarFrames(); if (_radarPlaying) _radarPlay(); }
     if (window._queuedPins || lastPins) updatePinSource(window._queuedPins || lastPins);
     window._mapReady = true;
   });
+}
+
+// ── Weather radar (RainViewer — free, no API key) · animated 2-hr loop ──
+var radarOn = false;
+var _radarHost = '', _radarFrames = [], _radarIdx = 0;
+var _radarPlaying = false, _radarAnimTimer = null, _radarRefresh = null;
+
+function toggleRadar(on) {
+  radarOn = !!on;
+  _setRadarToggleUI(radarOn);
+  if (radarOn) {
+    showRadarControls();
+    toast('Loading weather radar\u2026');
+    _fetchRadar(true);
+    if (_radarRefresh) clearInterval(_radarRefresh);
+    _radarRefresh = setInterval(function(){ _fetchRadar(false); }, 5 * 60 * 1000);
+  } else {
+    _radarPause();
+    if (_radarRefresh) { clearInterval(_radarRefresh); _radarRefresh = null; }
+    _clearRadarFrames();
+    hideRadarControls();
+    toast('Weather radar off');
+  }
+}
+
+function _fetchRadar(announce) {
+  fetch('https://api.rainviewer.com/public/weather-maps.json')
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!radarOn) return;
+      var past = (j.radar && j.radar.past) || [];
+      if (!past.length) { toast('No radar data right now'); return; }
+      _radarHost = j.host || 'https://tilecache.rainviewer.com';
+      _radarFrames = past.slice(-13).map(function(f){ return { time: f.time, path: f.path }; }); // ~2 hrs
+      var wasPlaying = _radarPlaying;
+      _radarIdx = _radarFrames.length - 1;   // start on most recent
+      _buildRadarFrames();
+      if (announce) { toast('Weather radar on'); _radarPlay(); }
+      else if (wasPlaying) { _radarPlay(); }
+    })
+    .catch(function(){ if (announce) toast('Radar failed to load'); });
+}
+
+// Build one preloaded raster layer per frame (opacity 0 = hidden but cached)
+function _buildRadarFrames() {
+  if (!map || !map.isStyleLoaded()) { setTimeout(_buildRadarFrames, 250); return; }
+  if (!_radarFrames.length) return;
+  _clearRadarFrames();
+  var beforeId = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+  for (var i = 0; i < _radarFrames.length; i++) {
+    var sid = 'radar-' + i, lid = 'radar-layer-' + i;
+    // color scheme 4 = Weather-Channel palette (green->yellow->red), transparent where dry
+    var url = _radarHost + _radarFrames[i].path + '/256/{z}/{x}/{y}/4/1_1.png';
+    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, attribution:'RainViewer' });
+    map.addLayer({ id:lid, type:'raster', source:sid,
+      paint:{ 'raster-opacity':0, 'raster-opacity-transition':{duration:0}, 'raster-fade-duration':0 } }, beforeId);
+  }
+  if (_radarIdx >= _radarFrames.length) _radarIdx = _radarFrames.length - 1;
+  _showRadarFrame(_radarIdx);
+  _updateRadarControls();
+}
+
+function _clearRadarFrames() {
+  if (!map) return;
+  for (var i = 0; i < 40; i++) {
+    var lid = 'radar-layer-' + i, sid = 'radar-' + i;
+    if (map.getLayer(lid)) map.removeLayer(lid);
+    if (map.getSource(sid)) map.removeSource(sid);
+  }
+  if (map.getLayer('radar-layer')) map.removeLayer('radar-layer'); // legacy single-frame cleanup
+  if (map.getSource('radar')) map.removeSource('radar');
+}
+
+function _showRadarFrame(i) {
+  if (i < 0 || i >= _radarFrames.length) return;
+  for (var k = 0; k < _radarFrames.length; k++) {
+    var lid = 'radar-layer-' + k;
+    if (map.getLayer(lid)) map.setPaintProperty(lid, 'raster-opacity', k === i ? 0.65 : 0);
+  }
+  _radarIdx = i;
+  _updateRadarLabel();
+  var s = document.getElementById('radar-scrubber'); if (s) s.value = i;
+}
+
+function _radarPlay() {
+  if (!_radarFrames.length) return;
+  _radarPlaying = true;
+  _updateRadarControls();
+  clearTimeout(_radarAnimTimer);
+  var step = function() {
+    if (!_radarPlaying) return;
+    var next = _radarIdx + 1;
+    if (next >= _radarFrames.length) next = 0;
+    _showRadarFrame(next);
+    var delay = (next === _radarFrames.length - 1) ? 1500 : 600; // linger on "now"
+    _radarAnimTimer = setTimeout(step, delay);
+  };
+  _radarAnimTimer = setTimeout(step, 600);
+}
+
+function _radarPause() {
+  _radarPlaying = false;
+  clearTimeout(_radarAnimTimer);
+  _radarAnimTimer = null;
+  _updateRadarControls();
+}
+
+function _radarTogglePlay() { if (_radarPlaying) _radarPause(); else _radarPlay(); }
+
+function _radarScrub(v) { _radarPause(); _showRadarFrame(parseInt(v, 10) || 0); }
+
+function _updateRadarControls() {
+  var s = document.getElementById('radar-scrubber');
+  if (s) { s.max = Math.max(0, _radarFrames.length - 1); s.value = _radarIdx; }
+  var b = document.getElementById('radar-play-btn');
+  if (b) b.innerHTML = _radarPlaying ? '&#10074;&#10074;' : '&#9654;';
+}
+
+function _updateRadarLabel() {
+  var t = document.getElementById('radar-time');
+  var fr = _radarFrames[_radarIdx];
+  if (t && fr) {
+    var d = new Date(fr.time * 1000);
+    t.textContent = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+  }
+}
+
+function showRadarControls() { var c = document.getElementById('radar-controls'); if (c) c.style.display = 'flex'; }
+function hideRadarControls() { var c = document.getElementById('radar-controls'); if (c) c.style.display = 'none'; }
+
+function _setRadarToggleUI(on) {
+  var cb = document.getElementById('toggle-radar'); if (cb) cb.checked = on;
+  updateToggleUI('radar-toggle-track', 'radar-toggle-thumb', on);
 }
 
 function updateToggleUI(trackId, thumbId, on) {
