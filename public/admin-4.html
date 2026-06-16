@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>GroundLink Admin</title>
+
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue, remove }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
+    messagingSenderId: "371034128407",
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
+  };
+  const app = initializeApp(firebaseConfig);
+  window._fb = { db: getDatabase(app), ref, onValue, remove };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --accent: #f0a500; --text: #e6edf3; --muted: #8b949e;
+    --danger: #f85149; --green: #3fb950; --yellow: #e3b341; --blue: #58a6ff;
+    font-family: system-ui, sans-serif; font-size: 14px; color: var(--text);
+  }
+  body { background: var(--bg) url('/icons/splash.png') center/cover fixed no-repeat; background-blend-mode: overlay; padding: 16px; min-height: 100vh; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 14px 16px; background: rgba(13,17,23,0.9); border: 1px solid rgba(240,165,0,0.3); border-radius: 12px; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  .header h1 { font-size: 18px; font-weight: 700; color: var(--accent); }
+  .header .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .back-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 14px; color: var(--text); font-size: 13px; cursor: pointer; text-decoration: none; }
+
+  /* Tab nav */
+  .tab-nav { display: flex; gap: 4px; margin-bottom: 16px; background: rgba(13,17,23,0.88); border: 1px solid rgba(48,54,61,0.9); border-radius: 10px; padding: 4px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .tab-btn { flex: 1; padding: 8px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+  .tab-btn.active { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid rgba(240,165,0,0.3); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Stats */
+  .stats-row { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-card { background: rgba(13,17,23,0.85); border: 2px solid rgba(240,165,0,0.4); border-radius: 10px; padding: 12px 16px; flex: 1; min-width: 80px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 2px 16px rgba(0,0,0,0.6), inset 0 1px 0 rgba(240,165,0,0.1); }
+  .stat-val { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* Group cards */
+  #admin-list { display: flex; flex-direction: column; gap: 12px; }
+  .group-card { background: rgba(13,17,23,0.88); border: 2px solid rgba(48,54,61,0.9); border-top: 2px solid rgba(240,165,0,0.5); border-radius: 12px; padding: 16px; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 6px 32px rgba(0,0,0,0.6); margin-bottom: 16px; }
+  .group-card.is-test { border: 2px solid rgba(224,90,43,0.6); border-top: 2px solid rgba(224,90,43,1); box-shadow: 0 6px 32px rgba(224,90,43,0.2); }
+  .test-tag { display:inline-block; background:rgba(224,90,43,0.2); border:1px solid rgba(224,90,43,0.6); color:#e05a2b; font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; padding:2px 6px; border-radius:4px; margin-left:6px; vertical-align:middle; }
+  .group-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
+  .group-name { font-size: 15px; font-weight: 700; }
+  .group-key { font-size: 10px; color: var(--muted); font-family: monospace; margin-top: 2px; }
+  .live-badge { background: rgba(63,185,80,.15); border: 1px solid var(--green); border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; color: var(--green); white-space: nowrap; flex-shrink: 0; }
+  .dead-badge { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+  .group-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .user-list { background: var(--bg); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .user-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; gap: 8px; }
+  .user-name { font-weight: 600; min-width: 60px; }
+  .user-ts { color: var(--muted); font-size: 11px; flex: 1; }
+  .user-live { color: var(--green); font-size: 10px; font-weight: 700; }
+  .user-stale { color: var(--danger); font-size: 10px; font-weight: 700; }
+  .user-warn { color: var(--yellow); font-size: 10px; font-weight: 700; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; transition: opacity .15s; }
+  .btn:active { opacity: .7; }
+  .btn-danger { background: rgba(248,81,73,.12); border: 1px solid var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: rgba(248,81,73,.2); }
+  .btn-warn { background: var(--bg); border: 1px solid rgba(240,165,0,0.4); color: var(--accent); }
+  .btn-warn:hover { border-color: var(--accent); background: rgba(240,165,0,0.08); }
+  .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
+  .loading { text-align: center; padding: 40px 20px; color: var(--muted); }
+
+  /* Debug panel */
+  /* Pins + messages in group cards */
+  .pin-list, .msg-list { margin-top:8px; border-top:1px solid var(--border); padding-top:8px; }
+  .pin-row, .msg-row { display:flex; align-items:flex-start; gap:8px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,.04); font-size:12px; }
+  .pin-row:last-child, .msg-row:last-child { border-bottom:none; }
+  .pin-dot { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:800; color:#fff; flex-shrink:0; }
+  .pin-body, .msg-body { flex:1; min-width:0; }
+  .pin-cat { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+  .pin-label { color:var(--text); }
+  .pin-meta, .msg-meta { font-size:10px; color:var(--muted); margin-top:1px; }
+  .msg-name { font-weight:700; color:var(--accent); }
+  .msg-text { color:var(--text); margin-top:1px; }
+  .section-toggle { background:none; border:none; color:var(--muted); font-size:11px; cursor:pointer; padding:0; text-decoration:underline; float:right; }
+  /* All data tab */
+  .alldata-group { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:10px; }
+  .alldata-group-name { font-size:14px; font-weight:700; margin-bottom:10px; color:var(--text); }
+  .alldata-section-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:10px 0 6px; }
+
+  #debug-panel { display: flex; flex-direction: column; gap: 12px; }
+  .debug-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .debug-title { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .debug-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  @media (min-width: 480px) { .debug-row { flex-direction: row; align-items: flex-start; gap: 8px; } .debug-label { min-width: 120px; flex-shrink: 0; } }
+  .debug-row:last-child { border-bottom: none; }
+  .debug-label { color: var(--muted); font-weight: 600; }
+  .debug-val { color: var(--text); font-family: monospace; word-break: break-word; flex: 1; }
+  .debug-status { font-size: 10px; font-weight: 700; white-space: nowrap; }
+  .status-ok { color: var(--green); }
+  .status-warn { color: var(--yellow); }
+  .status-dead { color: var(--danger); }
+
+  /* Event log */
+  #event-log { display: flex; flex-direction: column; gap: 3px; max-height: 320px; overflow-y: auto; }
+  .log-entry { font-size: 11px; font-family: monospace; padding: 4px 8px; border-radius: 4px; background: var(--bg); display: flex; gap: 8px; }
+  .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-msg { color: var(--text); }
+  .log-ok  { border-left: 3px solid var(--green); }
+  .log-warn { border-left: 3px solid var(--yellow); }
+  .log-dead { border-left: 3px solid var(--danger); }
+  .log-info { border-left: 3px solid var(--blue); }
+
+  .copy-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; color: var(--muted); font-size: 11px; cursor: pointer; }
+  .copy-btn:active { color: var(--accent); border-color: var(--accent); }
+
+  .refresh-badge { background: var(--green); border-radius: 20px; padding: 1px 8px; font-size: 10px; color: #000; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>GroundLink Admin</h1>
+    <div class="sub" id="last-refresh">Connecting…</div>
+  </div>
+  <a href="/" class="back-btn">&#8592; App</a>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Groups</div></div>
+  <div class="stat-card"><div class="stat-val" id="stat-users">—</div><div class="stat-label">Live Now</div></div>
+  <div class="stat-card"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
+  <div class="stat-card"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
+</div>
+
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('groups')">Groups</button>
+  <button class="tab-btn" onclick="switchTab('overview')">&#127760; Overview</button>
+  <button class="tab-btn" onclick="switchTab('alldata')">&#128269; All Data</button>
+  <button class="tab-btn" onclick="switchTab('activity')">&#128336; Activity</button>
+  <button class="tab-btn" onclick="switchTab('messages')">&#128172; Messages</button>
+  <button class="tab-btn" onclick="switchTab('debug')">&#128203; Debug</button>
+</div>
+
+<!-- GROUPS TAB -->
+<div class="tab-panel active" id="tab-groups">
+  <div id="admin-list"><div class="loading">Connecting to Firebase…</div></div>
+</div>
+
+<!-- OVERVIEW TAB — all members, everywhere, on one map -->
+<div class="tab-panel" id="tab-overview">
+  <div id="ov-summary" style="margin-bottom:12px"></div>
+  <div id="ov-map" style="height:340px;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#0d1117;border:1px solid var(--border)"></div>
+  <div id="ov-list"></div>
+</div>
+
+<!-- ALL DATA TAB — replaced with useful summary + export -->
+<div class="tab-panel" id="tab-alldata">
+
+  <!-- Export -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">&#128196; Export Data</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Download all pins or messages as a CSV file</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-warn" onclick="exportCSV('pins')">&#11015; Export All Pins</button>
+      <button class="btn btn-warn" onclick="exportCSV('chat')">&#11015; Export All Messages</button>
+    </div>
+  </div>
+
+  <!-- Most active groups -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128200; Most Active Groups</div>
+    <div id="most-active-list"></div>
+  </div>
+
+  <!-- Global pin type breakdown -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128205; Pin Types Across All Groups</div>
+    <div id="pin-type-breakdown"></div>
+  </div>
+
+  <!-- Danger zone -->
+  <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.3);border-radius:12px;padding:14px 16px">
+    <div style="font-size:13px;font-weight:700;color:var(--danger);margin-bottom:4px">&#9888; Danger Zone</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">These actions affect ALL groups and cannot be undone</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups? Cannot be undone.')) clearAllPins()">&#128205; Clear All Pins Everywhere</button>
+      <button class="btn btn-danger" onclick="if(confirm('Delete ALL data for ALL groups? This nukes everything.')) nukeEverything()">&#128165; Nuke Everything</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- DEBUG TAB -->
+<div class="tab-panel" id="tab-activity">
+  <div id="activity-feed" style="display:flex;flex-direction:column;gap:0">
+    <div class="loading" style="padding:20px 0;text-align:center">Watching for activity...</div>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab-messages">
+  <div id="messages-list"><div class="loading">Loading messages...</div></div>
+</div>
+
+<div class="tab-panel" id="tab-debug">
+  <div id="debug-panel">
+
+    <!-- Live Device Monitor -->
+    <div class="debug-section">
+      <div class="debug-title">
+        Live Device Monitor
+        <span class="refresh-badge" id="refresh-badge">LIVE</span>
+      </div>
+      <div id="device-monitor"><div class="loading" style="padding:20px 0">Waiting for data…</div></div>
+    </div>
+
+    <!-- Activity Log — persists in Firebase, shows all groups -->
+    <div class="debug-section">
+      <div class="debug-title">
+        Activity Log
+        <span style="font-size:11px;color:var(--muted);font-weight:400">Last 24hrs — all groups</span>
+      </div>
+      <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted)">Filter:</span>
+        <button class="btn btn-warn" id="debug-filter-all" onclick="setDebugFilter('all')" style="font-size:11px;padding:4px 10px">All Groups</button>
+        <div id="debug-group-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
+      <div id="firebase-log">
+        <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Loading activity log…</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+var LIVE_MS  = 90 * 1000;
+var WARN_MS  = 60 * 1000;
+var eventLog = [];
+var prevSnapshot = {};
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b,i) {
+    b.classList.toggle('active', ['groups','overview','alldata','activity','messages','debug'][i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(function(p) {
+    p.classList.toggle('active', p.id === 'tab-' + name);
+  });
+  // Render activity/messages tabs when switching
+  if (name === 'activity') renderActivity();
+  if (name === 'debug') renderDebugLog();
+  if (name === 'overview') renderOverview();
+  if (name === 'messages' && window._allDataSnapshot) renderMessages(window._allDataSnapshot);
+  // Render alldata when switching to that tab
+  if (name === 'alldata' && Object.keys(_allDataSnapshot).length > 0) {
+    renderAllData(_allDataSnapshot, 'all');
+    // Reset filter buttons
+    document.querySelectorAll('.filter-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.filter === 'all');
+    });
+  }
+}
+
+function timeAgo(ts) {
+  if (!ts) return 'never';
+  var s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 5)  return 'just now';
+  if (s < 60) return s + 's ago';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  return Math.floor(m/60) + 'h ago';
+}
+
+function tsStr(ts) {
+  if (!ts) return '—';
+  var d = new Date(ts);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+// ── Activity feed — persists while admin page is open ────────────
+var activityLog = [];
+
+function addActivity(msg, type, group) {
+  var now = new Date();
+  var timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  var dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  activityLog.unshift({ msg: msg, type: type, group: group || '', time: timeStr, date: dateStr, ts: Date.now() });
+  if (activityLog.length > 200) activityLog.pop(); // keep last 200
+  renderActivity();
+}
+
+function renderActivity() {
+  var el = document.getElementById('activity-feed');
+  if (!el) return;
+  if (!activityLog.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px">No activity yet — watching live...</div>';
+    return;
+  }
+  var icons = { ok: '&#128994;', warn: '&#128992;', dead: '&#128308;', info: '&#128997;' };
+  el.innerHTML = activityLog.map(function(e) {
+    var icon = e.type === 'ok' ? '&#128994;' : e.type === 'warn' ? '&#128992;' : e.type === 'dead' ? '&#128308;' : 'ℹ️';
+    var borderColor = e.type === 'ok' ? 'var(--green)' : e.type === 'warn' ? 'var(--yellow)' : e.type === 'dead' ? 'var(--danger)' : 'var(--blue)';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+      '<span style="font-size:16px;flex-shrink:0;line-height:1.4">' + icon + '</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;color:var(--text);font-weight:600">' + e.msg + '</div>' +
+        (e.group ? '<div style="font-size:11px;color:var(--accent);margin-top:1px">' + e.group.replace(/^test_/,'').replace(/_/g,' ').replace(/w/g,function(c){return c.toUpperCase();}) + '</div>' : '') +
+      '</div>' +
+      '<div style="flex-shrink:0;text-align:right">' +
+        '<div style="font-size:11px;color:var(--muted)">' + e.time + '</div>' +
+        '<div style="font-size:10px;color:var(--muted)">' + e.date + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function addLog(msg, type) {
+  type = type || 'info';
+  var now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  eventLog.unshift({ t: now, msg: msg, type: type });
+  if (eventLog.length > 100) eventLog.pop();
+  renderLog();
+}
+
+function renderLog() {
+  var el = document.getElementById('event-log');
+  if (!el) return;
+  el.innerHTML = eventLog.slice(0, 50).map(function(e) {
+    return '<div class="log-entry log-' + e.type + '"><span class="log-time">' + e.t + '</span><span class="log-msg">' + e.msg + '</span></div>';
+  }).join('');
+}
+
+function copyLog() {
+  var text = eventLog.map(function(e) { return '[' + e.t + '] ' + e.msg; }).join('\n');
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy Log'; }, 1500);
+  });
+}
+
+window.deleteNode = function(path, label) {
+  if (confirm('Delete ' + label + '?\nPath: ' + path + '\n\nCannot be undone.')) {
+    window._fb.remove(window._fb.ref(window._fb.db, path));
+    addLog('DELETED: ' + path, 'warn');
+  }
+};
+
+function renderDeviceMonitor(all, now) {
+  var el = document.getElementById('device-monitor');
+  var staleEl = document.getElementById('stale-analysis');
+  if (!el) return;  // not on debug tab yet
+
+  var rows = '';
+  var staleRows = '';
+  var anyUsers = false;
+
+  Object.entries(all).forEach(function(entry) {
+    var groupKey = entry[0];
+    var group = entry[1];
+    if (!group.users) return;
+
+    Object.entries(group.users).forEach(function(ue) {
+      var uid = ue[0];
+      var u   = ue[1];
+      anyUsers = true;
+      var age = now - (u.ts || 0);
+      var ageSec = Math.floor(age / 1000);
+      var statusClass, statusText;
+
+      if (age < WARN_MS) {
+        statusClass = 'status-ok'; statusText = 'OK (' + ageSec + 's)';
+      } else if (age < LIVE_MS) {
+        statusClass = 'status-warn'; statusText = 'WARN (' + ageSec + 's)';
+      } else {
+        statusClass = 'status-dead'; statusText = 'STALE (' + ageSec + 's)';
+      }
+
+      var lat   = u.lat ? u.lat.toFixed(5) : '—';
+      var lng   = u.lng ? u.lng.toFixed(5) : '—';
+      var acc   = u.accuracy ? '±' + u.accuracy + 'ft' : '—';
+
+      rows +=
+        '<div class="debug-row">' +
+          '<div class="debug-label">' + (u.name || uid.slice(0,8)) + '<br><span style="font-size:10px;color:var(--muted)">' + groupKey + '</span></div>' +
+          '<div class="debug-val">' +
+            '<div>Last: ' + tsStr(u.ts) + '</div>' +
+            '<div style="margin-top:2px"><span style="color:var(--muted);font-size:10px">LAT</span> ' + lat + '</div>' +
+            '<div><span style="color:var(--muted);font-size:10px">LNG</span> ' + lng + '</div>' +
+            '<div><span style="color:var(--muted);font-size:10px">ACC</span> ' + acc + '</div>' +
+          '</div>' +
+          '<div class="debug-status ' + statusClass + '">' + statusText + '</div>' +
+        '</div>';
+
+      // Stale analysis
+      var pct = Math.min(100, Math.round(age / LIVE_MS * 100));
+      var barColor = age < WARN_MS ? '#3fb950' : age < LIVE_MS ? '#e3b341' : '#f85149';
+      staleRows +=
+        '<div style="margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">' +
+            '<span><strong>' + (u.name||uid.slice(0,8)) + '</strong> in ' + groupKey + '</span>' +
+            '<span style="color:' + barColor + ';font-weight:700">' + ageSec + 's / 90s limit</span>' +
+          '</div>' +
+          '<div style="height:6px;background:var(--border);border-radius:3px">' +
+            '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:3px;transition:width .5s"></div>' +
+          '</div>' +
+        '</div>';
+    });
+  });
+
+  el.innerHTML = anyUsers ? rows : '<div style="color:var(--muted);font-size:12px;padding:8px 0">No users in any group right now.</div>';
+  if (staleEl) staleEl.innerHTML = anyUsers ? staleRows : '<div style="color:var(--muted);font-size:12px">No users to analyze.</div>';
+}
+
+function detectChanges(all, now) {
+  // Detect joins, leaves, GPS gaps
+  Object.entries(all).forEach(function(entry) {
+    var gk = entry[0];
+    var group = entry[1];
+    if (!group.users) return;
+
+    Object.entries(group.users).forEach(function(ue) {
+      var uid  = ue[0];
+      var u    = ue[1];
+      var key  = gk + '/' + uid;
+      var prev = prevSnapshot[key];
+      var name = u.name || uid.slice(0,8);
+      var age  = now - (u.ts || 0);
+
+      if (!prev) {
+        // New user appeared
+        addLog(name + ' appeared in ' + gk, 'ok');
+        addActivity(name + ' joined', 'ok', gk);
+      } else {
+        // Check GPS update gap
+        var gap = (u.ts || 0) - (prev.ts || 0);
+        if (gap > 0 && gap > 15000) {
+          addLog(name + ' GPS gap: ' + Math.round(gap/1000) + 's (expected ~3-5s)', 'warn');
+        }
+        // Check going stale
+        if (age > LIVE_MS && (now - (prev.ts||0)) < LIVE_MS) {
+          addLog(name + ' went STALE — will be hidden from map', 'dead');
+          addActivity(name + ' went offline', 'dead', gk);
+        }
+      }
+      prevSnapshot[key] = { ts: u.ts };
+    });
+  });
+
+  // Detect departed users
+  Object.keys(prevSnapshot).forEach(function(key) {
+    var parts = key.split('/');
+    var gk = parts[0], uid = parts[1];
+    if (!all[gk] || !all[gk].users || !all[gk].users[uid]) {
+      var leftName = prevSnapshot[key].name || uid.slice(0,8);
+      addLog(leftName + ' removed from ' + gk, 'warn');
+      addActivity(leftName + ' left', 'warn', gk);
+      delete prevSnapshot[key];
+    }
+  });
+}
+
+// Pin category colors and labels for admin display
+var PIN_COLORS = {
+  'Waypoint':'#f0a500','Deer Stand':'#8B5E3C','Game Trail':'#5a8a3c',
+  'Harvest':'#c0392b','Gobbler':'#8e44ad','Feeder':'#27ae60',
+  'Water':'#2980b9','Hog':'#7f6000','Bear':'#4a235a','Camp':'#e67e22',
+  'Vehicle':'#566573','Boundary':'#922b21','Hazard':'#e74c3c',
+  'Urgent':'#ff0000','Custom':'#00bcd4'
+};
+var PIN_LABELS = {
+  'Waypoint':'WP','Deer Stand':'DS','Game Trail':'GT','Harvest':'HV',
+  'Gobbler':'GB','Feeder':'FD','Water':'WA','Hog':'HG','Bear':'BR',
+  'Camp':'CP','Vehicle':'VH','Boundary':'BN','Hazard':'HZ','Urgent':'!!','Custom':'CT'
+};
+
+var _allDataSnapshot = {};
+
+window.toggleSection = function(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var btn = el.querySelector('.section-toggle');
+  var isHidden = el.dataset.collapsed === '1';
+  el.querySelectorAll('.pin-row,.msg-row').forEach(function(r) {
+    r.style.display = isHidden ? '' : 'none';
+  });
+  el.dataset.collapsed = isHidden ? '0' : '1';
+  if (btn) btn.textContent = isHidden ? 'hide' : 'show';
+};
+
+window.filterAllData = function(type) {
+  renderAllData(_allDataSnapshot, type);
+};
+
+window.exportCSV = function(type) {
+  var fb = window._fb;
+  var rows = [];
+  if (type === 'pins') {
+    rows.push(['Group','Category','Description','Dropped By','Lat','Lng','Time']);
+    Object.entries(_allDataSnapshot).forEach(function(entry) {
+      var key = entry[0], group = entry[1];
+      if (!group.pins) return;
+      Object.values(group.pins).forEach(function(p) {
+        rows.push([key, p.cat||'', p.label||'', p.name||'', p.lat||'', p.lng||'', p.ts ? new Date(p.ts).toLocaleString() : '']);
+      });
+    });
+  } else {
+    rows.push(['Group','From','Message','Time']);
+    Object.entries(_allDataSnapshot).forEach(function(entry) {
+      var key = entry[0], group = entry[1];
+      if (!group.chat) return;
+      Object.values(group.chat).forEach(function(m) {
+        rows.push([key, m.name||'', (m.text||'').replace(/,/g,' '), m.ts ? new Date(m.ts).toLocaleString() : '']);
+      });
+    });
+  }
+  var csv = rows.map(function(r){ return r.join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'groundlink-' + type + '-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  toast('Downloaded ' + rows.length + ' rows');
+};
+
+window.nukeEverything = function() {
+  var fb = window._fb;
+  fb.remove(fb.ref(fb.db, 'gl'));
+  addLog('NUKED: entire gl/ tree deleted', 'warn');
+};
+
+window.clearAllPins = function() {
+  var fb = window._fb;
+  Object.keys(_allDataSnapshot).forEach(function(key) {
+    if (_allDataSnapshot[key].pins) {
+      fb.remove(fb.ref(fb.db, 'gl/' + key + '/pins'));
+    }
+  });
+};
+
+function renderAllData(all) {
+  // Now renders the summary tab
+  renderSummary(all);
+}
+
+function renderSummary(all) {
+  if (!all || !Object.keys(all).length) return;
+  var entries = Object.entries(all);
+  var totalGroups = entries.length;
+  var totalUsers = 0, totalPins = 0, totalMsgs = 0;
+  var pinTypes = {};
+  var groupActivity = [];
+
+  entries.forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    var users = group.users ? Object.keys(group.users).length : 0;
+    var pins  = group.pins  ? Object.keys(group.pins).length  : 0;
+    var msgs  = group.chat  ? Object.keys(group.chat).length  : 0;
+    totalUsers += users;
+    totalPins  += pins;
+    totalMsgs  += msgs;
+
+    // Count pin types
+    if (group.pins) {
+      Object.values(group.pins).forEach(function(p) {
+        var cat = p.cat || 'Unknown';
+        pinTypes[cat] = (pinTypes[cat] || 0) + 1;
+      });
+    }
+
+    var displayName = key.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+    var isTest = key.startsWith('test_');
+    groupActivity.push({ key, displayName, isTest, pins, msgs, users, total: pins + msgs + users });
+  });
+
+  // Summary cards removed (already shown in top stats bar)
+
+  // Most active groups
+  groupActivity.sort(function(a,b){ return b.total - a.total; });
+  var activeEl = document.getElementById('most-active-list');
+  if (activeEl) {
+    activeEl.innerHTML = groupActivity.slice(0,10).map(function(g) {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="font-size:13px;font-weight:600">' + g.displayName + (g.isTest ? ' <span style="font-size:9px;color:var(--accent2);background:rgba(224,90,43,0.15);border-radius:3px;padding:1px 5px">TEST</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">&#128205; ' + g.pins + ' &nbsp;&#128172; ' + g.msgs + ' &nbsp;&#128101; ' + g.users + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Pin type breakdown
+  var breakdownEl = document.getElementById('pin-type-breakdown');
+  if (breakdownEl) {
+    var sorted = Object.entries(pinTypes).sort(function(a,b){ return b[1]-a[1]; });
+    if (!sorted.length) {
+      breakdownEl.innerHTML = '<div style="color:var(--muted);font-size:12px">No pins dropped yet</div>';
+    } else {
+      var max = sorted[0][1];
+      breakdownEl.innerHTML = sorted.map(function(entry) {
+        var cat = entry[0], count = entry[1];
+        var color = PIN_COLORS[cat] || '#f0a500';
+        var pct = Math.round((count/max)*100);
+        return '<div style="margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
+            '<span style="font-size:12px;font-weight:600;color:' + color + '">' + cat + '</span>' +
+            '<span style="font-size:12px;color:var(--muted)">' + count + '</span>' +
+          '</div>' +
+          '<div style="background:var(--border);border-radius:4px;height:6px">' +
+            '<div style="background:' + color + ';width:' + pct + '%;height:6px;border-radius:4px"></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+
+function renderMessages(all) {
+  var el = document.getElementById('messages-list');
+  if (!el) return;
+
+  // Collect all messages across all groups with group context
+  var allMsgs = [];
+  Object.entries(all).forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    if (!group.chat) return;
+    var displayName = key.replace(/^test_/,'').replace(/_/g,' ').replace(/w/g,function(c){return c.toUpperCase();});
+    var isTest = key.startsWith('test_');
+    Object.entries(group.chat).forEach(function(me) {
+      var m = me[1];
+      allMsgs.push({ groupKey: key, groupName: displayName, isTest: isTest, name: m.name||'?', text: m.text||'', ts: m.ts||0 });
+    });
+  });
+
+  if (!allMsgs.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:32px">No messages yet</div>';
+    return;
+  }
+
+  // Sort newest first
+  allMsgs.sort(function(a,b){ return b.ts - a.ts; });
+
+  // Group by group name
+  var byGroup = {};
+  allMsgs.forEach(function(m) {
+    if (!byGroup[m.groupKey]) byGroup[m.groupKey] = { name: m.groupName, isTest: m.isTest, msgs: [] };
+    byGroup[m.groupKey].msgs.push(m);
+  });
+
+  var html = '';
+  Object.entries(byGroup).forEach(function(entry) {
+    var gk = entry[0], g = entry[1];
+    html += '<div style="margin-bottom:20px">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">' +
+        '&#128172; ' + g.name +
+        (g.isTest ? ' <span style="font-size:9px;color:var(--accent2);background:rgba(224,90,43,0.15);border-radius:3px;padding:1px 5px;margin-left:4px">TEST</span>' : '') +
+        ' <span style="font-size:11px;color:var(--muted);font-weight:400">(' + g.msgs.length + ' message' + (g.msgs.length!==1?'s':'') + ')</span>' +
+      '</div>';
+    g.msgs.forEach(function(m) {
+      var d = m.ts ? new Date(m.ts) : null;
+      var timeStr = d ? d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
+        d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+      html +=
+        '<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;gap:10px;align-items:flex-start">' +
+          '<div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;background:rgba(240,165,0,0.15);border:1px solid rgba(240,165,0,0.3);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent)">' +
+            m.name.charAt(0).toUpperCase() +
+          '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">' +
+              '<span style="font-size:12px;font-weight:700;color:var(--accent)">' + m.name + '</span>' +
+              '<span style="font-size:10px;color:var(--muted)">' + timeStr + '</span>' +
+            '</div>' +
+            '<div style="font-size:13px;color:var(--text);word-break:break-word">' + m.text + '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  });
+
+  el.innerHTML = html;
+}
+
+// Stub for old filter function — no longer needed
+window.filterAllData = function() { renderSummary(_allDataSnapshot); };
+
+function _renderAllDataOLD(all, filter) {
+  filter = filter || 'all';
+  var container = document.getElementById('alldata-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  Object.entries(all).forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    var hasPins = group.pins && Object.keys(group.pins).length > 0;
+    var hasChat = group.chat && Object.keys(group.chat).length > 0;
+    if (filter === 'pins' && !hasPins) return;
+    if (filter === 'chat' && !hasChat) return;
+
+    var displayName = key.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+    var div = document.createElement('div');
+    div.className = 'alldata-group';
+    var inner = '<div class="alldata-group-name">' + displayName + '</div>';
+
+    // Pins section
+    if (hasPins && filter !== 'chat') {
+      var pinEntries = Object.entries(group.pins).sort(function(a,b){return (b[1].ts||0)-(a[1].ts||0);});
+      inner += '<div class="alldata-section-title">&#128205; Pins (' + pinEntries.length + ')</div>';
+      pinEntries.forEach(function(pe) {
+        var pid=pe[0], p=pe[1];
+        var color = PIN_COLORS[p.cat] || '#f0a500';
+        var label = PIN_LABELS[p.cat] || (p.cat||'?').substring(0,2).toUpperCase();
+        inner +=
+          '<div class="pin-row">' +
+            '<div class="pin-dot" style="background:' + color + '">' + label + '</div>' +
+            '<div class="pin-body">' +
+              '<div class="pin-cat" style="color:' + color + '">' + (p.cat||'Unknown') + '</div>' +
+              '<div class="pin-label">' + (p.label||'<em style="color:var(--muted)">no description</em>') + '</div>' +
+              '<div class="pin-meta">By ' + (p.name||'?') + ' &middot; ' + timeAgo(p.ts) + '</div>' +
+            '</div>' +
+            '<button style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:11px;padding:0 4px" onclick="window.deleteNode(this.dataset.path,this.dataset.label)" data-path="gl/' + key + '/pins/' + pid + '" data-label="pin">&#10005;</button>' +
+          '</div>';
+      });
+    }
+
+    // Chat section
+    if (hasChat && filter !== 'pins') {
+      var msgEntries = Object.entries(group.chat).sort(function(a,b){return (b[1].ts||0)-(a[1].ts||0);});
+      inner += '<div class="alldata-section-title">&#128172; Messages (' + msgEntries.length + ')</div>';
+      msgEntries.slice(0,30).forEach(function(me) {
+        var m=me[1];
+        inner +=
+          '<div class="msg-row">' +
+            '<div class="msg-body">' +
+              '<div><span class="msg-name">' + (m.name||'?') + '</span> <span class="msg-meta">' + timeAgo(m.ts) + '</span></div>' +
+              '<div class="msg-text">' + (m.text||'') + '</div>' +
+            '</div>' +
+          '</div>';
+      });
+      if (msgEntries.length > 30) inner += '<div style="color:var(--muted);font-size:11px;padding:4px 0">+ ' + (msgEntries.length-30) + ' older</div>';
+    }
+
+    div.innerHTML = inner;
+    container.appendChild(div);
+  });
+
+  if (!container.children.length) {
+    container.innerHTML = '<div class="loading">No data to show.</div>';
+  }
+}
+
+var firebaseLogUnsub = null;
+
+var _debugFilter = 'all';
+var _allDebugEntries = [];
+var _debugUnsubs = [];
+
+function setDebugFilter(groupKey) {
+  _debugFilter = groupKey;
+  // Update button styles
+  document.getElementById('debug-filter-all').style.background = groupKey === 'all' ? 'var(--accent)' : '';
+  document.getElementById('debug-filter-all').style.color = groupKey === 'all' ? '#000' : '';
+  document.querySelectorAll('#debug-group-btns button').forEach(function(b) {
+    var active = b.dataset.group === groupKey;
+    b.style.background = active ? 'var(--accent)' : '';
+    b.style.color = active ? '#000' : '';
+  });
+  renderDebugLog();
+}
+
+function renderDebugLog() {
+  var logEl = document.getElementById('firebase-log');
+  var filtered = _debugFilter === 'all'
+    ? _allDebugEntries
+    : _allDebugEntries.filter(function(e) { return e.groupKey === _debugFilter; });
+
+  if (!filtered.length) {
+    logEl.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No activity in the last 24 hours.</div>';
+    return;
+  }
+
+  logEl.innerHTML = filtered.slice(0, 200).map(function(e) {
+    var d = new Date(e.ts);
+    var t = d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
+            d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true});
+    var icon = e.msg.includes('joined') ? '&#128994;'
+             : e.msg.includes('exited') ? '&#128308;'
+             : e.msg.includes('GPS active') ? '&#128225;'
+             : e.msg.includes('no GPS') ? '&#128203;'
+             : 'ℹ️';
+    var groupLabel = _debugFilter === 'all'
+      ? '<span style="font-size:10px;color:var(--accent);margin-left:6px">' +
+        e.groupKey.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) +
+        '</span>' : '';
+    return '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+      '<span style="font-size:15px;flex-shrink:0">' + icon + '</span>' +
+      '<div style="flex:1">' +
+        '<span style="font-size:13px;color:var(--text)">' + e.msg + '</span>' + groupLabel +
+      '</div>' +
+      '<span style="font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">' + t + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+function loadFirebaseLog(groupKey) {
+  // Legacy — now handled by loadAllDebugLogs
+  setDebugFilter(groupKey);
+}
+
+function loadAllDebugLogs(allData) {
+  // Unsubscribe previous listeners
+  _debugUnsubs.forEach(function(u) { try { u(); } catch(_) {} });
+  _debugUnsubs = [];
+  _allDebugEntries = [];
+
+  var fb = window._fb;
+  if (!fb) return;
+  var cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  var groups = Object.keys(allData || {});
+
+  if (!groups.length) {
+    document.getElementById('firebase-log').innerHTML =
+      '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No groups found.</div>';
+    return;
+  }
+
+  var loaded = 0;
+  groups.forEach(function(groupKey) {
+    var unsub = fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/debug'), function(snap) {
+      var entries = snap.val() || {};
+      // Remove old entries for this group
+      _allDebugEntries = _allDebugEntries.filter(function(e) { return e.groupKey !== groupKey; });
+      // Add new entries
+      Object.values(entries).forEach(function(e) {
+        if (e.ts > cutoff) {
+          _allDebugEntries.push({ groupKey: groupKey, msg: e.msg, ts: e.ts });
+        }
+      });
+      // Sort newest first
+      _allDebugEntries.sort(function(a,b) { return b.ts - a.ts; });
+      renderDebugLog();
+      // Auto-purge old entries
+      Object.entries(entries).forEach(function(kv) {
+        if (kv[1].ts < cutoff) fb.remove(fb.ref(fb.db, 'gl/' + groupKey + '/debug/' + kv[0]));
+      });
+    });
+    _debugUnsubs.push(unsub);
+  });
+}
+
+function copyFirebaseLog() {
+  var el = document.getElementById('firebase-log');
+  var text = Array.from(el.querySelectorAll('.log-entry')).map(function(e) {
+    return '[' + e.querySelector('.log-time').textContent + '] ' + e.querySelector('.log-msg').textContent;
+  }).join('\n');
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+function loadAdmin() {
+  var t = setInterval(function() {
+    if (!window._fb) return;
+    clearInterval(t);
+
+    var fb = window._fb;
+    addLog('Connected to Firebase', 'ok');
+
+    fb.onValue(fb.ref(fb.db, 'gl'), function(snap) {
+      var all = snap.val() || {};
+      var now = Date.now();
+
+      document.getElementById('last-refresh').textContent =
+        'Last update: ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+      detectChanges(all, now);
+      renderDeviceMonitor(all, now);
+      _allDataSnapshot = all;
+      // Always update alldata — render if tab is active, cache if not
+      if (document.getElementById('tab-alldata').classList.contains('active')) {
+        renderAllData(all, 'all');
+      }
+      // Live-refresh the Overview map/list if it's the active tab
+      if (document.getElementById('tab-overview').classList.contains('active')) {
+        renderOverview();
+      }
+
+      // --- GROUPS TAB ---
+      var container = document.getElementById('admin-list');
+      var STALE_24H = 24 * 60 * 60 * 1000;
+      var totalGroups=0, totalLive=0, totalPins=0, totalChats=0;
+
+      var entries = Object.entries(all).sort(function(a,b) { return a[0].localeCompare(b[0]); });
+
+      if (!entries.length) {
+        container.innerHTML = '<div class="empty">No groups in database.</div>';
+        document.getElementById('stat-groups').textContent = '0';
+        document.getElementById('stat-users').textContent  = '0';
+        document.getElementById('stat-pins').textContent   = '0';
+        document.getElementById('stat-chats').textContent  = '0';
+        return;
+      }
+
+      container.innerHTML = '';
+
+      // Active (has live users) vs Inactive/Empty (no live users).
+      var activeFrag = document.createDocumentFragment();
+      var inactiveFrag = document.createDocumentFragment();
+      var activeCount = 0, inactiveCount = 0;
+
+      entries.forEach(function(entry) {
+        var key = entry[0], group = entry[1];
+        totalGroups++;
+
+        var users  = group.users  ? Object.entries(group.users)  : [];
+        var pins   = group.pins   ? Object.keys(group.pins)       : [];
+        var chats  = group.chat   ? Object.keys(group.chat)       : [];
+        var trails = group.trails ? Object.keys(group.trails)     : [];
+
+        var liveUsers = users.filter(function(u) { return (now-(u[1].ts||0)) < LIVE_MS; });
+        totalLive  += liveUsers.length;
+        totalPins  += pins.length;
+        totalChats += chats.length;
+
+        var lastActive = 0;
+        users.forEach(function(u) { if ((u[1].ts||0) > lastActive) lastActive = u[1].ts; });
+        if (group.pins) Object.values(group.pins).forEach(function(p) { if ((p.ts||0) > lastActive) lastActive = p.ts; });
+        if (group.chat) Object.values(group.chat).forEach(function(c) { if ((c.ts||0) > lastActive) lastActive = c.ts; });
+
+        var displayName = key.replace(/_/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();});
+
+        var userRowsHTML = '';
+        if (users.length) {
+          userRowsHTML = '<div class="user-list">';
+          users.forEach(function(ue) {
+            var uid=ue[0], d=ue[1];
+            var age = now-(d.ts||0);
+            var cls = age < WARN_MS ? 'user-live' : age < LIVE_MS ? 'user-warn' : 'user-stale';
+            var lbl = age < WARN_MS ? 'LIVE' : age < LIVE_MS ? 'SLOWING' : 'STALE';
+            userRowsHTML +=
+              '<div class="user-row">' +
+                '<span class="user-name">' + (d.name||uid.slice(0,8)) + '</span>' +
+                '<span class="user-ts">' + tsStr(d.ts) + ' (' + timeAgo(d.ts) + ')</span>' +
+                '<span class="' + cls + '">' + lbl + '</span>' +
+              '</div>';
+          });
+          userRowsHTML += '</div>';
+        }
+
+        // Build pins HTML
+        var pinsHTML = '';
+        if (group.pins && Object.keys(group.pins).length) {
+          var pinEntries = Object.entries(group.pins).sort(function(a,b){return (b[1].ts||0)-(a[1].ts||0);});
+          pinsHTML = '<div class="pin-list" id="pins-' + key + '">' +
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Pins (' + pinEntries.length + ')' +
+            '<button class="section-toggle" onclick="window.toggleSection(\'' + 'pins-' + key + '\')" style="float:right;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline">hide</button></div>';
+          pinEntries.forEach(function(pe) {
+            var pid=pe[0], p=pe[1];
+            var color = PIN_COLORS[p.cat] || '#f0a500';
+            var label = PIN_LABELS[p.cat] || (p.cat||'?').substring(0,2).toUpperCase();
+            pinsHTML +=
+              '<div class="pin-row">' +
+                '<div class="pin-dot" style="background:' + color + '">' + label + '</div>' +
+                '<div class="pin-body">' +
+                  '<div class="pin-cat" style="color:' + color + '">' + (p.cat||'Unknown') + '</div>' +
+                  '<div class="pin-label">' + (p.label||'<em style="color:var(--muted)">no description</em>') + '</div>' +
+                  '<div class="pin-meta">By ' + (p.name||'?') + ' &middot; ' + timeAgo(p.ts) + '</div>' +
+                '</div>' +
+                '<button style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:11px;padding:0 4px" onclick="window.deleteNode(\"gl/' + key + '/pins/' + pid + '\",\"pin\")">&#10005;</button>' +
+              '</div>';
+          });
+          pinsHTML += '</div>';
+        }
+
+        // Build messages HTML
+        var msgsHTML = '';
+        if (group.chat && Object.keys(group.chat).length) {
+          var msgEntries = Object.entries(group.chat).sort(function(a,b){return (b[1].ts||0)-(a[1].ts||0);});
+          var showMsgs = msgEntries.slice(0, 20); // show last 20
+          msgsHTML = '<div class="msg-list" id="msgs-' + key + '">' +
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Messages (' + msgEntries.length + ')' +
+            '<button class="section-toggle" onclick="window.toggleSection(\'' + 'msgs-' + key + '\')" style="float:right;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline">hide</button></div>';
+          showMsgs.forEach(function(me) {
+            var m=me[1];
+            msgsHTML +=
+              '<div class="msg-row">' +
+                '<div class="msg-body">' +
+                  '<div><span class="msg-name">' + (m.name||'?') + '</span> <span class="msg-meta">' + timeAgo(m.ts) + '</span></div>' +
+                  '<div class="msg-text">' + (m.text||'') + '</div>' +
+                '</div>' +
+              '</div>';
+          });
+          if (msgEntries.length > 20) msgsHTML += '<div style="color:var(--muted);font-size:11px;padding:4px 0">+ ' + (msgEntries.length-20) + ' older messages</div>';
+          msgsHTML += '</div>';
+        }
+
+        var card = document.createElement('div');
+        var isTest = key.startsWith('test_');
+        card.className = 'group-card' + (isTest ? ' is-test' : '');
+        // Strip test_ prefix from display name for test groups
+        var displayName2 = isTest ? displayName.replace(/^Test /i, '') : displayName;
+        card.innerHTML =
+          '<div class="group-header">' +
+            '<div><div class="group-name">' + displayName2 + (isTest ? '<span class="test-tag">⚗ test</span>' : '') + '</div><div class="group-key">' + key + '</div></div>' +
+            '<span class="' + (liveUsers.length ? 'live-badge' : 'dead-badge') + '">' +
+              (liveUsers.length ? liveUsers.length + ' LIVE' : 'Empty') + '</span>' +
+          '</div>' +
+          '<div class="group-meta">' +
+            '<span>&#128101; ' + users.length + ' user' + (users.length!==1?'s':'') + '</span>' +
+            '<span>&#128205; ' + pins.length + ' pin' + (pins.length!==1?'s':'') + '</span>' +
+            '<span>&#128172; ' + chats.length + ' msg' + (chats.length!==1?'s':'') + '</span>' +
+            '<span>&#128062; ' + trails.length + ' trail' + (trails.length!==1?'s':'') + '</span>' +
+            '<span>&#128336; ' + timeAgo(lastActive) + '</span>' +
+          '</div>' +
+          userRowsHTML +
+          pinsHTML +
+          msgsHTML +
+          '<div class="btn-row">' +
+            '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/pins\',\'pins for '+displayName+'\')">Clear Pins</button>' +
+            '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/chat\',\'chat for '+displayName+'\')">Clear Chat</button>' +
+            '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/trails\',\'trails for '+displayName+'\')">Clear Trails</button>' +
+            '<button class="btn btn-danger" onclick="deleteNode(\'gl/'+key+'\',\'group '+displayName+'\')">Nuke Room</button>' +
+          '</div>';
+        var isLive = liveUsers.length > 0;
+        var recentlyActive = lastActive && (now - lastActive) < STALE_24H;
+        if (isLive) {
+          activeFrag.appendChild(card);
+          activeCount++;
+        } else if (recentlyActive) {
+          card.style.opacity = '0.6';
+          inactiveFrag.appendChild(card);
+          inactiveCount++;
+        }
+        // else: empty AND idle >24h -> skip (falls out of panel; data stays in Firebase)
+      });
+
+      if (activeCount) {
+        var ah = document.createElement('div');
+        ah.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin:4px 2px 8px;';
+        ah.textContent = 'Active Groups (' + activeCount + ')';
+        container.appendChild(ah);
+        container.appendChild(activeFrag);
+      }
+      if (inactiveCount) {
+        var ih = document.createElement('div');
+        ih.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 2px 8px;border-top:1px solid var(--border);padding-top:14px;';
+        ih.textContent = 'Inactive / Empty \u00b7 last 24h (' + inactiveCount + ')';
+        container.appendChild(ih);
+        container.appendChild(inactiveFrag);
+      }
+      if (!activeCount && !inactiveCount) {
+        container.innerHTML = '<div class="empty">No active or recent groups. Older empty rooms are hidden \u2014 they reappear if used again, and stay available under the All Data tab.</div>';
+      }
+
+      document.getElementById('stat-groups').textContent = totalGroups;
+
+      // Load Firebase debug logs for all groups
+      loadAllDebugLogs(all);
+
+      // Update debug group buttons
+      var btnContainer = document.getElementById('debug-group-btns');
+      if (btnContainer) {
+        btnContainer.innerHTML = '';
+        entries.forEach(function(entry) {
+          var btn = document.createElement('button');
+          btn.className = 'btn btn-warn';
+          btn.style.fontSize = '11px';
+          btn.style.padding = '5px 10px';
+          btn.textContent = entry[0].replace(/_/g,' ');
+          btn.dataset.group = entry[0];
+          btn.onclick = function() { setDebugFilter(this.dataset.group); };
+          btnContainer.appendChild(btn);
+        });
+      }
+      document.getElementById('stat-users').textContent  = totalLive;
+      document.getElementById('stat-pins').textContent   = totalPins;
+      document.getElementById('stat-chats').textContent  = totalChats;
+    });
+
+    // Refresh device monitor every 5 seconds — only when debug tab is active
+    setInterval(function() {
+      var debugTab = document.getElementById('tab-debug');
+      if (!debugTab || !debugTab.classList.contains('active')) return;
+      var fb2 = window._fb;
+      fb2.onValue(fb2.ref(fb2.db, 'gl'), function(snap) {
+        renderDeviceMonitor(snap.val() || {}, Date.now());
+      }, { onlyOnce: true });
+    }, 5000);
+
+  }, 50);
+}
+
+loadAdmin();
+
+// ══ OVERVIEW TAB — all members across all groups on one map ══════════
+var _ovMap = null, _ovMarkers = [], _ovFitted = false;
+var OV_LIVE_MS = 2 * 60 * 1000; // active within 2 min = "live"
+
+function ovEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function ovStatPill(n, label, color) {
+  return '<div style="flex:1;min-width:90px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+    '<div style="font-size:22px;font-weight:800;color:' + (color || 'var(--text)') + '">' + n + '</div>' +
+    '<div style="font-size:11px;color:var(--muted)">' + label + '</div></div>';
+}
+
+function initOvMap() {
+  if (_ovMap) return _ovMap;
+  mapboxgl.accessToken = 'pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg';
+  _ovMap = new mapboxgl.Map({
+    container: 'ov-map',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    center: [-84.88, 30.24], // Liberty County, FL
+    zoom: 8,
+    attributionControl: false
+  });
+  _ovMap.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+  return _ovMap;
+}
+
+window.ovFlyTo = function(lng, lat) {
+  if (_ovMap) { _ovMap.flyTo({ center: [lng, lat], zoom: 15, duration: 800 }); }
+};
+
+function renderOverview() {
+  var all = window._allDataSnapshot || {};
+  var now = Date.now();
+
+  // Flatten every member in every group
+  var members = [];
+  Object.keys(all).forEach(function(gk) {
+    var g = all[gk];
+    if (!g || !g.users) return;
+    Object.keys(g.users).forEach(function(uid) {
+      var u = g.users[uid] || {};
+      members.push({
+        group: gk, uid: uid,
+        name: u.name || '(unnamed)',
+        lat: (typeof u.lat === 'number') ? u.lat : null,
+        lng: (typeof u.lng === 'number') ? u.lng : null,
+        ts: u.ts || 0
+      });
+    });
+  });
+  members.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); }); // most recent first
+
+  var liveCount  = members.filter(function(m) { return m.ts && (now - m.ts) < OV_LIVE_MS; }).length;
+  var groupCount = Object.keys(all).filter(function(gk) {
+    return all[gk] && all[gk].users && Object.keys(all[gk].users).length;
+  }).length;
+
+  document.getElementById('ov-summary').innerHTML =
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      ovStatPill(members.length, 'Members') +
+      ovStatPill(liveCount, 'Live now', '#2ecc71') +
+      ovStatPill(groupCount, 'Active groups') +
+    '</div>';
+
+  // Member list
+  var listHtml = members.map(function(m) {
+    var live    = m.ts && (now - m.ts) < OV_LIVE_MS;
+    var hasLoc  = (m.lat != null && m.lng != null);
+    var dot     = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + (live ? '#2ecc71' : '#6b7280') + ';margin-right:7px"></span>';
+    var coords  = hasLoc ? (m.lat.toFixed(5) + ', ' + m.lng.toFixed(5)) : 'no location';
+    var onclick = hasLoc ? ('ovFlyTo(' + m.lng + ',' + m.lat + ')') : '';
+    return '<div onclick="' + onclick + '" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;' + (hasLoc ? 'cursor:pointer' : 'opacity:.55') + '">' +
+        '<div style="min-width:0">' +
+          '<div style="font-weight:700;font-size:14px">' + dot + ovEsc(m.name) + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + ovEsc(m.group) + ' &middot; ' + coords + '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:' + (live ? '#2ecc71' : 'var(--muted)') + ';white-space:nowrap;margin-left:10px">' + timeAgo(m.ts) + '</div>' +
+      '</div>';
+  }).join('');
+  document.getElementById('ov-list').innerHTML =
+    members.length ? listHtml : '<div class="empty">No members in any group right now.</div>';
+
+  // Map markers
+  var map = initOvMap();
+  var plot = function() {
+    _ovMarkers.forEach(function(mk) { mk.remove(); });
+    _ovMarkers = [];
+    var bounds = new mapboxgl.LngLatBounds();
+    var any = false;
+    members.forEach(function(m) {
+      if (m.lat == null || m.lng == null) return;
+      var live = m.ts && (now - m.ts) < OV_LIVE_MS;
+      var el = document.createElement('div');
+      el.style.cssText = 'width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.6);background:' + (live ? '#2ecc71' : '#9aa4b2');
+      var popup = new mapboxgl.Popup({ offset: 14, closeButton: false })
+        .setHTML('<div style="font-weight:700;color:#111">' + ovEsc(m.name) + '</div>' +
+                 '<div style="font-size:11px;color:#555">' + ovEsc(m.group) + ' &middot; ' + timeAgo(m.ts) + '</div>');
+      var mk = new mapboxgl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([m.lng, m.lat]).setPopup(popup).addTo(_ovMap);
+      _ovMarkers.push(mk);
+      bounds.extend([m.lng, m.lat]);
+      any = true;
+    });
+    if (any && !_ovFitted) {
+      try { _ovMap.fitBounds(bounds, { padding: 50, maxZoom: 14, duration: 0 }); } catch (e) {}
+      _ovFitted = true;
+    }
+  };
+  if (_ovMap.loaded()) plot(); else _ovMap.once('load', plot);
+  // The map is built inside a tab that was hidden — kick it to fill its box
+  setTimeout(function() { try { _ovMap.resize(); } catch (e) {} }, 80);
+}
+
+</script>
+</body>
+</html>
