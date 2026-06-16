@@ -464,6 +464,7 @@ function detectChanges(all, now) {
       var gk = entry[0], group = entry[1];
       if (!group || !group.users) return;
       Object.entries(group.users).forEach(function(ue) {
+        if (!ue[1].name || ue[1].claiming) return; // skip orphan/placeholder records
         prevSnapshot[gk + '/' + ue[0]] = { ts: ue[1].ts, name: ue[1].name };
       });
     });
@@ -479,9 +480,10 @@ function detectChanges(all, now) {
     Object.entries(group.users).forEach(function(ue) {
       var uid  = ue[0];
       var u    = ue[1];
+      if (!u.name || u.claiming) return; // ignore nameless/placeholder orphan records
       var key  = gk + '/' + uid;
       var prev = prevSnapshot[key];
-      var name = u.name || uid.slice(0,8);
+      var name = u.name;
       var age  = now - (u.ts || 0);
 
       if (!prev) {
@@ -509,10 +511,11 @@ function detectChanges(all, now) {
     var parts = key.split('/');
     var gk = parts[0], uid = parts[1];
     if (!all[gk] || !all[gk].users || !all[gk].users[uid]) {
-      var leftName = prevSnapshot[key].name || uid.slice(0,8);
+      var leftName = prevSnapshot[key].name;
+      delete prevSnapshot[key];
+      if (!leftName) return; // never log a device-ID-only departure
       addLog(leftName + ' removed from ' + gk, 'warn');
       addActivity(leftName + ' left', 'warn', gk);
-      delete prevSnapshot[key];
     }
   });
 }
