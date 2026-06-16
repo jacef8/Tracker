@@ -13,54 +13,18 @@ app.get('/version', function(req, res) {
 
 // /join — always shows join screen regardless of saved session
 // Parcel lookup proxy — avoids CORS block on ArcGIS from browser
+// Parcel lookup — returns a URL to Liberty County's public property search
+// The ArcGIS FeatureServer requires auth tokens and cannot be queried publicly
+// Instead we return a deep link to qPublic which IS public
 app.get('/api/parcel', function(req, res) {
   var lat = parseFloat(req.query.lat);
   var lng = parseFloat(req.query.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
-
-  // URLSearchParams for bulletproof encoding, simple x,y geometry, no where or resultRecordCount
-  var params = new URLSearchParams();
-  params.append('geometry', lng + ',' + lat);
-  params.append('geometryType', 'esriGeometryPoint');
-  params.append('inSR', '4326');
-  params.append('outSR', '4326');
-  params.append('spatialRel', 'esriSpatialRelIntersects');
-  params.append('outFields', 'OWN_NAME,PHY_ADDR1,PHY_CITY,ACREAGE,PARCEL_ID,DOR_UC,LND_VAL');
-  params.append('returnGeometry', 'false');
-  params.append('f', 'json');
-  var postBody = params.toString();
-  console.log('POST body:', postBody);
-
-  var https = require('https');
-  var options = {
-    hostname: 'services9.arcgis.com',
-    path: '/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Content-Length': Buffer.byteLength(postBody)
-    }
-  };
-  var apiReq = https.request(options, function(apiRes) {
-    var body = '';
-    apiRes.on('data', function(chunk) { body += chunk; });
-    apiRes.on('end', function() {
-      try {
-        var data = JSON.parse(body);
-        if (data.error) {
-          console.error('ArcGIS Error:', JSON.stringify(data.error));
-        } else {
-          console.log('Parcel lookup:', lat, lng, '-> Features:', (data.features||[]).length);
-        }
-        res.json(data);
-      } catch(e) {
-        res.status(500).json({ error: 'Parse error', raw: body.substring(0, 300) });
-      }
-    });
-  });
-  apiReq.on('error', function(e) { res.status(500).json({ error: e.message }); });
-  apiReq.write(postBody);
-  apiReq.end();
+  console.log('Parcel lookup:', lat, lng);
+  // Return the qPublic map URL centered on these coordinates
+  // Liberty County FL qPublic application
+  var qpublicUrl = 'https://qpublic.schneidercorp.com/Application.aspx?App=LibertyCountyFL&Layer=Parcels&PageType=Map&Q=' + lat + '%2C' + lng;
+  res.json({ qpublicUrl: qpublicUrl, lat: lat, lng: lng });
 });
 
 app.get('/join', function(req, res) {
@@ -83,6 +47,19 @@ app.get('/test', function(req, res) {
   }
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index-test.html'));
+});
+
+// Digital Asset Links — required for TWA/Play Store verification
+app.get('/.well-known/assetlinks.json', function(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify([{
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.groundlink.app",
+      "sha256_cert_fingerprints": ["10:09:BB:FE:B3:3B:9A:44:79:50:C8:07:88:23:25:D0:A5:AA:1A:53:75:84:29:34:5B:24:CA:0A:CD:A9:70:EB"]
+    }
+  }]));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
