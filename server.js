@@ -1,9 +1,67 @@
 const express = require('express');
 const path    = require('path');
+const webpush = require('web-push');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
 const CURRENT_VERSION = '1.7';
 const TEST_PASSWORD   = process.env.TEST_PASSWORD || 'gltest';
+
+app.use(express.json({ limit: '64kb' }));
+
+// ─── Web Push (VAPID) ──────────────────────────────────────────────
+// Only VAPID_PRIVATE must be set as an env var on the host; the public key
+// here must match the one in public/index.html (VAPID_PUBLIC).
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC  || 'BG3E3CXQWRCSBjy4lOwL7CKNNqdeC3ImC5yN2EQT3KgrKorczjiSGQyY7y97cWRGy-q1ZAA4iW4ES9PeMW5i7CE';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@groundlink.app';
+const DB_URL = (process.env.FIREBASE_DB_URL || 'https://tracker-58b87-default-rtdb.firebaseio.com').replace(/\/$/, '');
+let pushReady = false;
+if (VAPID_PRIVATE) {
+  try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); pushReady = true; console.log('Web Push ready'); }
+  catch (e) { console.warn('VAPID setup failed:', e.message); }
+} else {
+  console.warn('VAPID_PRIVATE not set — /push disabled (notifications will not send)');
+}
+
+// Fan-out a push to everyone in a group except the sender. The client calls
+// this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
+app.post('/push', async function(req, res) {
+  if (!pushReady) return res.json({ ok: false, reason: 'push-not-configured' });
+  const b = req.body || {};
+  const group = b.group, senderId = b.senderId;
+  if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
+  const payload = JSON.stringify({
+    title: b.title || 'GroundLink',
+    body:  b.body  || '',
+    type:  b.type  || 'info',
+    url:   b.url   || '/'
+  });
+  const base = DB_URL + '/gl/' + encodeURIComponent(group) + '/pushSubs';
+  try {
+    const subs = await (await fetch(base + '.json')).json();
+    if (!subs) return res.json({ ok: true, sent: 0 });
+    let sent = 0;
+    await Promise.all(Object.entries(subs).map(async function(entry) {
+      const uid = entry[0], rec = entry[1];
+      if (uid === senderId || !rec || !rec.sub) return;
+      let subscription;
+      try { subscription = JSON.parse(rec.sub); } catch (e) { return; }
+      try {
+        await webpush.sendNotification(subscription, payload, { TTL: 3600, urgency: b.type === 'sos' ? 'high' : 'normal' });
+        sent++;
+      } catch (err) {
+        if (err && (err.statusCode === 404 || err.statusCode === 410)) {
+          try { await fetch(base + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
+        }
+      }
+    }));
+    res.json({ ok: true, sent: sent });
+  } catch (e) {
+    console.warn('/push error:', e.message);
+    res.json({ ok: false, reason: 'send-failed' });
+  }
+});
+
 app.get('/version', function(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.send(CURRENT_VERSION);

@@ -3,7 +3,7 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v4';
+const CACHE = 'groundlink-v5';
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 const CACHE_FOREVER = [
@@ -83,5 +83,46 @@ self.addEventListener('fetch', e => {
         }
         return cached;
       })
+  );
+});
+
+// ── Web Push — shows a notification even when the app is closed ──────
+// The server (server.js /push) sends these via VAPID to each member's
+// subscription. iOS only delivers them to an installed home-screen PWA.
+self.addEventListener('push', function(e) {
+  var data = {};
+  try { data = e.data ? e.data.json() : {}; }
+  catch (err) { try { data = { title: 'GroundLink', body: e.data.text() }; } catch (e2) {} }
+
+  var isSOS = data.type === 'sos';
+  var title = data.title || 'GroundLink';
+  var opts = {
+    body: data.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: data.type || 'groundlink',
+    renotify: true,
+    requireInteraction: isSOS,
+    vibrate: isSOS ? [200, 100, 200, 100, 200] : [100, 50, 100],
+    data: { url: data.url || '/' }
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', function(e) {
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if ('focus' in c) {
+          c.focus();
+          if (url && url !== '/' && 'navigate' in c) { try { c.navigate(url); } catch (e2) {} }
+          return;
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
   );
 });
