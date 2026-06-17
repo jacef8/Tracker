@@ -23,7 +23,7 @@
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove }
+  import { getDatabase, ref, set, push, onValue, remove, onDisconnect }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
   // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
@@ -42,7 +42,7 @@
   // ───────────────────────────────────────────────────────────────────
 
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect };
 </script>
 
 <style>
@@ -1457,7 +1457,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ══ PUSH NOTIFICATIONS + SOS ═════════════════════════════════════
-const VAPID_PUBLIC = 'BKD0IUw8jGauYPSqzi-B0MEO_o4qjNu5yzWaIPcdWn1bB5chP6mV_t94aFj2j6-vW9afnQLwegHRvsjKYvTxgNc';
+const VAPID_PUBLIC = 'BG3E3CXQWRCSBjy4lOwL7CKNNqdeC3ImC5yN2EQT3KgrKorczjiSGQyY7y97cWRGy-q1ZAA4iW4ES9PeMW5i7CE';
 let alertsOn = false;
 
 // Preference persists across sessions; defaults to ON
@@ -1514,6 +1514,16 @@ async function enableAlerts(silent) {
     }
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
+    // If an old subscription exists for a different VAPID key, drop it and re-subscribe
+    if (sub) {
+      try {
+        var existingKey = sub.options && sub.options.applicationServerKey;
+        var want = _urlB64ToUint8(VAPID_PUBLIC);
+        var have = existingKey ? new Uint8Array(existingKey) : null;
+        var same = have && have.length === want.length && have.every(function(b, i){ return b === want[i]; });
+        if (!same) { await sub.unsubscribe(); sub = null; }
+      } catch (e) { /* if we can't compare, keep the existing sub */ }
+    }
     if (!sub) {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
@@ -1904,6 +1914,10 @@ function enterMap(name, group, uid) {
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
     });
+    // Reliable presence cleanup: Firebase removes us server-side the instant this
+    // client disconnects (reload, tab close, crash, network drop) so we don't
+    // linger as "online" in the room or on the join-screen group list.
+    try { if (fb.onDisconnect) fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).remove(); } catch(_) {}
 
     // Smooth transition — no black flash
     document.getElementById('join-screen').style.opacity = '0';
@@ -1916,12 +1930,12 @@ function enterMap(name, group, uid) {
     document.getElementById('group-name-label').textContent = group;
     // Check if group has passcode set and update lock icon
     waitForFirebase(function(fb) {
-      fb.onValue(fb.ref(fb.db, 'gl/' + group + '/config/pin'), function(snap) {
+      fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/config/pin'), function(snap) {
         var lockIcon = document.getElementById('group-lock-icon');
         var lockStatus = document.getElementById('group-lock-status');
         var hasPin = !!snap.val();
         window._roomHasPin = hasPin;
-        if (!hasPin) { window._roomPlainPin = null; try { localStorage.removeItem('gl_pin_' + group); } catch (e) {} } // passcode removed
+        if (!hasPin) { window._roomPlainPin = null; try { localStorage.removeItem('gl_pin_' + groupName); } catch (e) {} } // passcode removed
         if (lockIcon) lockIcon.textContent = hasPin ? '\uD83D\uDD12' : '\uD83D\uDD13';
         if (lockStatus) lockStatus.textContent = hasPin ? 'Protected — tap to change' : 'Open — tap to add passcode';
       });
@@ -2908,7 +2922,7 @@ function startLocationSharing() {
     { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
 
   // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
-  navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
+  window._gpsWatchId = navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
 
   // Do NOT remove on close — user may just be pocketing their phone.
@@ -3866,22 +3880,27 @@ document.getElementById('map').addEventListener('click', () => {
 document.getElementById('switch-group-btn').addEventListener('click', () => {
   // Immediate exit — no confirm dialog needed
   if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
-  writeDebugLog(groupName, userName + ' exited');
-  // Remove our presence from Firebase immediately so we vanish from the map
-  // and from the active groups list on the join screen
-  try {
-    if (db && groupName && userId) {
-      fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`));
-      // Keep trails — they persist as last known path for 2 hours
-    }
-  } catch(_) {}
-  // Clear saved group — keep uid and name so rejoin is easy
+  // Stop GPS updates so a late position write can't re-add us after we leave
+  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch(_) {}
+  try { writeDebugLog(groupName, userName + ' exited'); } catch(_) {}
+  // Clear saved group first — keep uid and name so rejoin is easy
   try {
     localStorage.removeItem('gl_group');
     sessionStorage.removeItem('gl_group');
     _cookieSet('gl_group', '');
   } catch(_) {}
-  location.reload();
+  // Remove our presence, and only reload once Firebase confirms the delete — a bare
+  // remove() followed by an immediate reload was getting cut off mid-flight, which
+  // left us showing as "online" in the room. onDisconnect is the backstop.
+  var _exited = false;
+  var _go = function() { if (!_exited) { _exited = true; location.reload(); } };
+  try {
+    if (db && groupName && userId) {
+      var p = fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); // trails persist 2h
+      if (p && typeof p.then === 'function') { p.then(_go).catch(_go); } else { _go(); }
+    } else { _go(); }
+  } catch(_) { _go(); }
+  setTimeout(_go, 1500); // fallback so exit always completes even if offline
 });
 
 
