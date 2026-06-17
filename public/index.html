@@ -912,18 +912,22 @@
   <div class="topbar-row2">
     <!-- PIN HUB — opens bottom sheet with all pin options -->
     <div class="icon-btn" id="pin-hub-btn" title="Pins">
-      <svg class="licon"><use href="#ic-pin"/></svg>
-      <span class="badge" id="pin-badge" style="display:none">0</span>
+      <span style="position:relative;display:inline-flex">
+        <svg class="licon"><use href="#ic-pin"/></svg>
+        <span class="badge" id="pin-badge" style="display:none">0</span>
+      </span>
     </div>
     <!-- CHAT -->
-    <div class="icon-btn" id="chat-toggle-btn" title="Group chat"><svg class="licon"><use href="#ic-chat"/></svg><span class="badge" id="chat-badge" style="display:none">0</span></div>
+    <div class="icon-btn" id="chat-toggle-btn" title="Group chat"><span style="position:relative;display:inline-flex"><svg class="licon"><use href="#ic-chat"/></svg><span class="badge" id="chat-badge" style="display:none">0</span></span></div>
     <!-- MEMBERS -->
     <div class="icon-btn" id="users-toggle-btn" title="Who&#39;s online">
-      <svg class="licon"><use href="#ic-users"/></svg>
-      <span id="users-badge" style="display:none;position:absolute;bottom:2px;right:2px;background:#3fb950;color:#000;font-size:9px;font-weight:800;border-radius:10px;padding:1px 4px;min-width:14px;text-align:center;line-height:14px">0</span>
+      <span style="position:relative;display:inline-flex">
+        <svg class="licon"><use href="#ic-users"/></svg>
+        <span id="users-badge" style="display:none;position:absolute;top:-6px;right:-7px;background:#3fb950;color:#000;font-size:9px;font-weight:800;border-radius:10px;padding:1px 4px;min-width:14px;text-align:center;line-height:14px">0</span>
+      </span>
     </div>
     <!-- BREADCRUMBS -->
-    <div class="icon-btn" id="breadcrumb-btn" title="Toggle breadcrumbs"><svg class="licon"><use href="#ic-footprints"/></svg><span id="breadcrumb-dot" style="position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></div>
+    <div class="icon-btn" id="breadcrumb-btn" title="Toggle breadcrumbs"><span style="position:relative;display:inline-flex"><svg class="licon"><use href="#ic-footprints"/></svg><span id="breadcrumb-dot" style="position:absolute;top:-4px;right:-5px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></span></div>
     <!-- MEASURE -->
     <div class="icon-btn" id="measure-btn" title="Measure"><svg class="licon"><use href="#ic-ruler"/></svg></div>
     <!-- SOS -->
@@ -1884,6 +1888,18 @@ function enterMap(name, group, uid) {
   userId    = uid;
 
   saveSession(name, group, uid);
+
+  // Strip invite params (?room=&k=) from the URL once we're in the room, so a later
+  // reload — including the one EXIT triggers — returns to the normal home screen
+  // instead of re-showing the "You've been invited" popup.
+  try {
+    var _sp = new URLSearchParams(location.search);
+    if (_sp.has('room') || _sp.has('k')) {
+      _sp.delete('room'); _sp.delete('k');
+      var _qs = _sp.toString();
+      history.replaceState({}, '', location.pathname + (_qs ? '?' + _qs : ''));
+    }
+  } catch (_) {}
 
   waitForFirebase(fb => {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
@@ -4720,6 +4736,8 @@ function checkGroupPasscode(name, group, uid, invitePin) {
             window._roomPlainPin = invitePin; // remember so this user can re-invite easily
             try { localStorage.setItem('gl_pin_' + groupKey, invitePin); } catch (e) {}
             enterMap(name, group, uid);
+            // Reinforce the passcode once they're on the map so it isn't missed
+            setTimeout(function(){ toast('Room passcode: ' + invitePin + ' — save it to rejoin later', 5000); }, 1200);
           } else {
             _showPasscodePrompt(name, group, uid, storedHash);
           }
