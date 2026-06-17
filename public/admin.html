@@ -149,10 +149,9 @@
 <div class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('groups')">Groups</button>
   <button class="tab-btn" onclick="switchTab('overview')">&#127760; Overview</button>
-  <button class="tab-btn" onclick="switchTab('alldata')">&#128269; All Data</button>
   <button class="tab-btn" onclick="switchTab('activity')">&#128336; Activity</button>
   <button class="tab-btn" onclick="switchTab('messages')">&#128172; Messages</button>
-  <button class="tab-btn" onclick="switchTab('debug')">&#128203; Debug</button>
+  <button class="tab-btn" onclick="switchTab('alldata')">&#128202; Data</button>
 </div>
 
 <!-- GROUPS TAB -->
@@ -204,50 +203,24 @@
 
 </div>
 
-<!-- ACTIVITY TAB -->
+<!-- ACTIVITY TAB — single activity timeline (app-written, per-group, filterable) -->
 <div class="tab-panel" id="tab-activity">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
-    <span style="font-size:12px;color:var(--muted)">Live feed — all groups</span>
-    <button class="btn btn-danger" onclick="if(confirm('Clear the entire activity feed? This erases all logged joins/leaves. Cannot be undone.')) clearActivity()" style="font-size:11px;padding:5px 12px">&#128465; Clear Feed</button>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px">
+    <span style="font-size:12px;color:var(--muted)">Last 24hrs — joins, exits & GPS events</span>
+    <button class="btn btn-danger" onclick="if(confirm('Clear the activity log for all groups? Cannot be undone.')) clearAllDebugLogs()" style="font-size:11px;padding:5px 12px">&#128465; Clear Feed</button>
   </div>
-  <div id="activity-feed" style="display:flex;flex-direction:column;gap:0">
-    <div class="loading" style="padding:20px 0;text-align:center">Watching for activity...</div>
+  <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+    <span style="font-size:11px;color:var(--muted)">Filter:</span>
+    <button class="btn btn-warn" id="debug-filter-all" onclick="setDebugFilter('all')" style="font-size:11px;padding:4px 10px">All Groups</button>
+    <div id="debug-group-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+  </div>
+  <div id="firebase-log">
+    <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Loading activity…</div>
   </div>
 </div>
 
 <div class="tab-panel" id="tab-messages">
   <div id="messages-list"><div class="loading">Loading messages...</div></div>
-</div>
-
-<div class="tab-panel" id="tab-debug">
-  <div id="debug-panel">
-
-    <!-- Live Device Monitor -->
-    <div class="debug-section">
-      <div class="debug-title">
-        Live Device Monitor
-        <span class="refresh-badge" id="refresh-badge">LIVE</span>
-      </div>
-      <div id="device-monitor"><div class="loading" style="padding:20px 0">Waiting for data…</div></div>
-    </div>
-
-    <!-- Activity Log — persists in Firebase, shows all groups -->
-    <div class="debug-section">
-      <div class="debug-title">
-        Activity Log
-        <span style="font-size:11px;color:var(--muted);font-weight:400">Last 24hrs — all groups</span>
-      </div>
-      <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <span style="font-size:11px;color:var(--muted)">Filter:</span>
-        <button class="btn btn-warn" id="debug-filter-all" onclick="setDebugFilter('all')" style="font-size:11px;padding:4px 10px">All Groups</button>
-        <div id="debug-group-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      </div>
-      <div id="firebase-log">
-        <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Loading activity log…</div>
-      </div>
-    </div>
-
-  </div>
 </div>
 
 <script>
@@ -258,14 +231,13 @@ var prevSnapshot = {};
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b,i) {
-    b.classList.toggle('active', ['groups','overview','alldata','activity','messages','debug'][i] === name);
+    b.classList.toggle('active', ['groups','overview','activity','messages','alldata'][i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
-  // Render activity/messages tabs when switching
-  if (name === 'activity') renderActivity();
-  if (name === 'debug') renderDebugLog();
+  // Render tabs when switching
+  if (name === 'activity') renderDebugLog();
   if (name === 'overview') renderOverview();
   if (name === 'messages' && window._allDataSnapshot) renderMessages(window._allDataSnapshot);
   // Render alldata when switching to that tab
@@ -685,6 +657,21 @@ function renderSummary(all) {
   }
 }
 
+window.deleteMessage = function(groupKey, msgId) {
+  if (!groupKey || !msgId) return;
+  if (!confirm('Delete this message? Cannot be undone.')) return;
+  var fb = window._fb;
+  try {
+    fb.remove(fb.ref(fb.db, 'gl/' + groupKey + '/chat/' + msgId));
+    // Re-render immediately from the cached snapshot so it disappears at once
+    if (window._allDataSnapshot && window._allDataSnapshot[groupKey] &&
+        window._allDataSnapshot[groupKey].chat) {
+      delete window._allDataSnapshot[groupKey].chat[msgId];
+    }
+    renderMessages(window._allDataSnapshot || {});
+  } catch (e) { console.warn('deleteMessage', e); }
+};
+
 function renderMessages(all) {
   var el = document.getElementById('messages-list');
   if (!el) return;
@@ -698,7 +685,7 @@ function renderMessages(all) {
     var isTest = key.startsWith('test_');
     Object.entries(group.chat).forEach(function(me) {
       var m = me[1];
-      allMsgs.push({ groupKey: key, groupName: displayName, isTest: isTest, name: m.name||'?', text: m.text||'', ts: m.ts||0 });
+      allMsgs.push({ groupKey: key, id: me[0], groupName: displayName, isTest: isTest, name: m.name||'?', text: m.text||'', ts: m.ts||0 });
     });
   });
 
@@ -742,6 +729,8 @@ function renderMessages(all) {
             '</div>' +
             '<div style="font-size:13px;color:var(--text);word-break:break-word">' + m.text + '</div>' +
           '</div>' +
+          '<button onclick="deleteMessage(\'' + m.groupKey + '\',\'' + m.id + '\')" title="Delete this message" ' +
+            'style="flex-shrink:0;background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 4px;line-height:1;opacity:.6">&#128465;</button>' +
         '</div>';
     });
     html += '</div>';
@@ -876,6 +865,17 @@ function loadFirebaseLog(groupKey) {
   setDebugFilter(groupKey);
 }
 
+function clearAllDebugLogs() {
+  var fb = window._fb;
+  if (!fb || !fb.remove) { _allDebugEntries = []; renderDebugLog(); return; }
+  var groups = Object.keys(window._allDataSnapshot || {});
+  groups.forEach(function(gk) {
+    try { fb.remove(fb.ref(fb.db, 'gl/' + gk + '/debug')); } catch (e) {}
+  });
+  _allDebugEntries = [];
+  renderDebugLog();
+}
+
 function loadAllDebugLogs(allData) {
   // Unsubscribe previous listeners
   _debugUnsubs.forEach(function(u) { try { u(); } catch(_) {} });
@@ -946,7 +946,6 @@ function loadAdmin() {
         'Last update: ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
       detectChanges(all, now);
-      renderDeviceMonitor(all, now);
       _allDataSnapshot = all;
       // Always update alldata — render if tab is active, cache if not
       if (document.getElementById('tab-alldata').classList.contains('active')) {
@@ -955,6 +954,10 @@ function loadAdmin() {
       // Live-refresh the Overview map/list if it's the active tab
       if (document.getElementById('tab-overview').classList.contains('active')) {
         renderOverview();
+      }
+      // Keep the Messages tab live if it's open
+      if (document.getElementById('tab-messages').classList.contains('active')) {
+        renderMessages(all);
       }
 
       // --- GROUPS TAB ---
@@ -1150,14 +1153,11 @@ function loadAdmin() {
       document.getElementById('stat-chats').textContent  = totalChats;
     });
 
-    // Refresh device monitor every 5 seconds — only when debug tab is active
+    // Refresh the Overview list every 5 seconds (so "live/stale" ticks) — only when active
     setInterval(function() {
-      var debugTab = document.getElementById('tab-debug');
-      if (!debugTab || !debugTab.classList.contains('active')) return;
-      var fb2 = window._fb;
-      fb2.onValue(fb2.ref(fb2.db, 'gl'), function(snap) {
-        renderDeviceMonitor(snap.val() || {}, Date.now());
-      }, { onlyOnce: true });
+      var ovTab = document.getElementById('tab-overview');
+      if (!ovTab || !ovTab.classList.contains('active')) return;
+      renderOverview();
     }, 5000);
 
   }, 50);
@@ -1214,6 +1214,7 @@ function renderOverview() {
         name: u.name || '(unnamed)',
         lat: (typeof u.lat === 'number') ? u.lat : null,
         lng: (typeof u.lng === 'number') ? u.lng : null,
+        accuracy: u.accuracy || 0,
         ts: u.ts || 0
       });
     });
@@ -1232,19 +1233,25 @@ function renderOverview() {
       ovStatPill(groupCount, 'Active groups') +
     '</div>';
 
-  // Member list
+  // Member list (also serves as the live device/status detail)
   var listHtml = members.map(function(m) {
+    var ageSec  = m.ts ? Math.floor((now - m.ts) / 1000) : null;
     var live    = m.ts && (now - m.ts) < OV_LIVE_MS;
     var hasLoc  = (m.lat != null && m.lng != null);
     var dot     = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + (live ? '#2ecc71' : '#6b7280') + ';margin-right:7px"></span>';
     var coords  = hasLoc ? (m.lat.toFixed(5) + ', ' + m.lng.toFixed(5)) : 'no location';
+    var acc     = (hasLoc && m.accuracy) ? ' · ±' + m.accuracy + 'ft' : '';
     var onclick = hasLoc ? ('ovFlyTo(' + m.lng + ',' + m.lat + ')') : '';
+    var status  = live ? 'LIVE' : (ageSec != null ? 'STALE ' + ageSec + 's' : 'offline');
     return '<div onclick="' + onclick + '" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;' + (hasLoc ? 'cursor:pointer' : 'opacity:.55') + '">' +
         '<div style="min-width:0">' +
           '<div style="font-weight:700;font-size:14px">' + dot + ovEsc(m.name) + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + ovEsc(m.group) + ' &middot; ' + coords + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + ovEsc(m.group) + ' &middot; ' + coords + acc + '</div>' +
         '</div>' +
-        '<div style="font-size:11px;color:' + (live ? '#2ecc71' : 'var(--muted)') + ';white-space:nowrap;margin-left:10px">' + timeAgo(m.ts) + '</div>' +
+        '<div style="text-align:right;margin-left:10px">' +
+          '<div style="font-size:11px;color:' + (live ? '#2ecc71' : 'var(--muted)') + ';white-space:nowrap">' + timeAgo(m.ts) + '</div>' +
+          '<div style="font-size:9px;color:' + (live ? '#2ecc71' : 'var(--danger)') + ';white-space:nowrap;font-weight:700;margin-top:1px">' + status + '</div>' +
+        '</div>' +
       '</div>';
   }).join('');
   document.getElementById('ov-list').innerHTML =
