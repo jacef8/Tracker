@@ -146,8 +146,8 @@
   #map-controls button {
     width: 44px;
     height: 44px;
-    background: rgba(13,17,23,0.82);
-    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(13,17,23,0.42);
+    border: 1px solid rgba(240,165,0,0.45);
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -156,12 +156,13 @@
     padding: 0;
     margin: 0;
     -webkit-tap-highlight-color: transparent;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px) saturate(120%);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(240,165,0,0.10);
   }
-  #map-controls button:hover  { background: rgba(30,40,54,0.92); }
-  #map-controls button:active { background: rgba(240,165,0,0.25); border-color: var(--accent); }
+  #map-controls button svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.75)); }
+  #map-controls button:hover  { background: rgba(13,17,23,0.60); border-color: rgba(240,165,0,0.75); }
+  #map-controls button:active { background: rgba(240,165,0,0.30); border-color: var(--accent); }
   /* Hide zoom buttons on mobile */
   @media (max-width: 768px) {
     #zoom-in-btn, #zoom-out-btn { display: none !important; }
@@ -1371,18 +1372,39 @@ function _syncAlertsUI() {
   if (st) st.textContent = alertsOn ? 'Alerts on — tap to turn off' : 'Tap to enable alerts';
 }
 
-// silent=true: only re-enable when permission is already granted; never prompt or toast
+// In-app alerts (SOS banner, chat/pin alerts, sound, vibrate, screen flash) work
+// on EVERY platform while the app is open — they're driven by the live Firebase
+// listeners, not by the Notification/Push APIs. True push (alerts when the app is
+// CLOSED) needs Notification + serviceWorker + PushManager, which iOS only gives
+// to an installed home-screen PWA. So the toggle always turns ON for in-app
+// alerts; we add push on top only where it's available.
 async function enableAlerts(silent) {
-  try {
-    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-      if (!silent) toast('Alerts not supported here');
-      return;
+  var pushSupported = ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
+
+  // No push support (e.g. iPhone in a Safari tab): still enable in-app alerts.
+  if (!pushSupported) {
+    alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+    if (!silent) {
+      var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      toast(isIOS ? 'In-app alerts on ✓ — add to Home Screen for alerts when closed'
+                  : 'In-app alerts on ✓', 4500);
     }
+    return;
+  }
+
+  try {
     let perm = Notification.permission;
     if (perm !== 'granted') {
-      if (silent) return;                 // don't prompt during auto-enable
+      if (silent) {                      // auto-enable: don't prompt, but keep in-app alerts on
+        alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+        return;
+      }
       perm = await Notification.requestPermission();
-      if (perm !== 'granted') { toast('Notifications blocked'); return; }
+      if (perm !== 'granted') {           // declined push — in-app alerts still on
+        alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+        toast('In-app alerts on ✓ — push notifications are blocked', 4500);
+        return;
+      }
     }
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
@@ -1398,7 +1420,12 @@ async function enableAlerts(silent) {
     }
     alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
     if (!silent) toast('Alerts on ✓');
-  } catch (e) { console.warn('enableAlerts', e); if (!silent) toast('Could not enable alerts'); }
+  } catch (e) {
+    console.warn('enableAlerts', e);
+    // Push setup failed, but in-app alerts still work — leave the toggle on.
+    alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+    if (!silent) toast('In-app alerts on ✓', 3000);
+  }
 }
 
 async function disableAlerts() {
@@ -1416,14 +1443,15 @@ function toggleAlerts(on) { on ? enableAlerts() : disableAlerts(); }
 // On entering a room, turn this room's alerts on if the user wants them (default: yes)
 function autoEnableAlerts() {
   if (!_alertsPref()) { _syncAlertsUI(); _syncSettings(); return; }
-  if (typeof Notification === 'undefined') { _syncAlertsUI(); _syncSettings(); return; }
+  var pushSupported = ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
+  if (!pushSupported) { enableAlerts(true); return; }   // in-app alerts on silently (e.g. iOS Safari)
   if (Notification.permission === 'granted') {
     enableAlerts(true);                          // already allowed — silent re-subscribe
   } else if (Notification.permission === 'default' && !window._alertsPrompted) {
     window._alertsPrompted = true;               // ask once per session, then it sticks
     enableAlerts(false);
   } else {
-    _syncAlertsUI(); _syncSettings();
+    enableAlerts(true);                          // denied → keep in-app alerts on silently
   }
 }
 
@@ -1523,8 +1551,15 @@ function sendSOS() {
                name: userName, droppedBy: userId, ts: Date.now(), sos: true });
   }
   if (db) {
+    // The chat message is ALWAYS written (even with no GPS). Receivers raise the
+    // SOS banner off this message, so SOS works for no-GPS devices too. Include
+    // coords when we have them so the banner can still offer "Go".
     const c = fbPush(fbRef(db, `gl/${groupName}/chat`));
-    fbSet(c, { uid: userId, name: userName, text: '🆘 SOS — ' + userName + ' needs help' + (loc ? '' : ' (no GPS fix)'), ts: Date.now(), isPin: false, sos: true });
+    const msg = { uid: userId, name: userName,
+                  text: '🆘 SOS — ' + userName + ' needs help' + (loc ? '' : ' (no GPS fix)'),
+                  ts: Date.now(), isPin: false, sos: true };
+    if (loc) { msg.lat = loc.lat; msg.lng = loc.lng; }
+    fbSet(c, msg);
   }
   pushNotify('sos', '🆘 SOS', userName + ' needs help');
   toast('SOS sent to group');
@@ -3575,23 +3610,33 @@ function listenChat() {
     // Always scroll to bottom — use requestAnimationFrame so DOM is painted first
     requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
 
-    // Only notify for NEW messages (after we joined) and not our own.
-    // SOS messages are excluded here — they already raise the dedicated red
-    // SOS banner via the pin listener, so showing the blue chat alert too is
-    // redundant.
-    if (!chatOpen && !initialLoad) {
-      const newMsgs = sorted.filter(m => m.ts > joinedAt && m.uid !== userId && !m.sos);
-      if (newMsgs.length > 0) {
-        // Show alert banner for the latest new message
-        const latest = newMsgs[newMsgs.length - 1];
-        showChatAlert(latest.name, latest.text);
-        unreadCount += newMsgs.length;
-        const badge = document.getElementById('chat-badge');
-        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
-        badge.style.display = 'flex';
-        badge.classList.remove('pulse');
-        void badge.offsetWidth;
-        badge.classList.add('pulse');
+    if (!initialLoad) {
+      const newFromOthers = sorted.filter(m => m.ts > joinedAt && m.uid !== userId);
+
+      // SOS messages → raise the dedicated red SOS banner. This is what makes a
+      // no-GPS SOS work: that path writes a chat message but NO pin, so the pin
+      // listener never fires. triggerSOSAlert's 10s dedupe prevents a double
+      // banner when a GPS SOS also wrote a pin. Fires even if chat is open.
+      const sosMsgs = newFromOthers.filter(m => m.sos);
+      if (sosMsgs.length) {
+        const s = sosMsgs[sosMsgs.length - 1];
+        triggerSOSAlert(s.name, s.lat, s.lng);
+      }
+
+      // Normal (non-SOS) chat → blue "new message" alert, only when chat is closed.
+      if (!chatOpen) {
+        const newMsgs = newFromOthers.filter(m => !m.sos);
+        if (newMsgs.length > 0) {
+          const latest = newMsgs[newMsgs.length - 1];
+          showChatAlert(latest.name, latest.text);
+          unreadCount += newMsgs.length;
+          const badge = document.getElementById('chat-badge');
+          badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+          badge.style.display = 'flex';
+          badge.classList.remove('pulse');
+          void badge.offsetWidth;
+          badge.classList.add('pulse');
+        }
       }
     }
     initialLoad = false;
