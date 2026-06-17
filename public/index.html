@@ -2586,13 +2586,29 @@ function metersApart(lat1, lng1, lat2, lng2) {
 function showGeoPrime() { var m = document.getElementById('geo-prime'); if (m) m.style.display = 'flex'; }
 function hideGeoPrime() { var m = document.getElementById('geo-prime'); if (m) m.style.display = 'none'; }
 
-// Called on join. Returning users who already granted skip straight to the watch;
-// first-timers see the popup so the permission request fires from a tap (iOS-reliable).
+// Called on join. Returning users who already granted skip straight to the watch.
+// We check the live permission state when possible so we never nag:
+//   granted → just share · denied → share silently (No GPS, no popup) · prompt → primer
 function beginLocation() {
   var primed = false;
   try { primed = localStorage.getItem('gl_geo_ok') === '1'; } catch (e) {}
-  if (primed) startLocationSharing();
-  else showGeoPrime();
+  if (primed) { startLocationSharing(); return; }
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      navigator.permissions.query({ name: 'geolocation' }).then(function (st) {
+        if (st.state === 'granted') {
+          try { localStorage.setItem('gl_geo_ok', '1'); } catch (e) {}
+          startLocationSharing();
+        } else if (st.state === 'denied') {
+          startLocationSharing(); // silent No GPS — no blocking popup
+        } else {
+          showGeoPrime();         // 'prompt' — first-time primer (needed for iOS gesture)
+        }
+      }).catch(function () { showGeoPrime(); });
+      return;
+    } catch (e) { /* fall through */ }
+  }
+  showGeoPrime();
 }
 
 // Runs inside the "Enable Location" tap — the gesture iOS requires to show its prompt.
@@ -2628,14 +2644,11 @@ function skipGeoPrime() {
 }
 
 function showGeoDeniedHelp() {
-  showGeoPrime();
-  var body = document.getElementById('geo-prime-body');
-  var btn  = document.getElementById('geo-prime-btn');
+  hideGeoPrime();
   var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  if (body) body.innerHTML = isIOS
-    ? 'Location is turned off for this app. Open <strong style="color:var(--text)">Settings &rarr; Privacy &amp; Security &rarr; Location Services</strong> (make sure it\u2019s ON), then find <strong style="color:var(--text)">Safari</strong> (or GroundLink) and set <strong style="color:var(--text)">While Using</strong> with <strong style="color:var(--text)">Precise Location</strong> on. Then tap Try Again.'
-    : 'Location is blocked for this site. Allow it in your browser\u2019s site settings (tap the lock near the address bar), then tap Try Again.';
-  if (btn) { btn.textContent = 'Try Again'; btn.disabled = false; }
+  toast(isIOS
+    ? 'Location is off. Settings \u2192 Privacy \u2192 Location Services \u2192 On, allow for this app, then tap \uD83C\uDFAF to retry.'
+    : 'Location is blocked. Allow it in your browser\u2019s site settings, then tap \uD83C\uDFAF to retry.', 6000);
 }
 
 // Toggle from Settings: share=true → broadcast position; share=false → hide (stay in room)
