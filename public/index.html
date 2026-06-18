@@ -2847,6 +2847,54 @@ function toggleLocationShare(share) {
   }
 }
 
+// ── Native background GPS (Capacitor Android) ───────────────────────
+// Completely inert on the web / PWA / TWA build. It only does anything
+// inside the Capacitor native app, where @capacitor-community/background-
+// geolocation runs a foreground service that keeps GPS alive when the app
+// is backgrounded or the screen is off. Native fixes are fed into the same
+// _onGpsFix pipeline, so Firebase writes + breadcrumbs work identically.
+function _isNativeApp() {
+  return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+}
+async function startNativeBackgroundTracking() {
+  if (!_isNativeApp() || window._bgGeoStarted) return;
+  window._bgGeoStarted = true;
+  try {
+    var BG = window.Capacitor.registerPlugin('BackgroundGeolocation');
+    window._bgGeo = BG;
+    window._bgWatcherId = await BG.addWatcher({
+      backgroundTitle: 'GroundLink is sharing your location',
+      backgroundMessage: 'Your group can see you on the map.',
+      requestPermissions: true,
+      stale: false,
+      distanceFilter: 8
+    }, function(location, error) {
+      if (error) {
+        if (error.code === 'NOT_AUTHORIZED' && window._bgGeo &&
+            confirm('Always-on location is off. Open settings to enable background tracking?')) {
+          window._bgGeo.openSettings();
+        }
+        console.warn('bg-geo', error);
+        return;
+      }
+      if (!location || typeof window._onGpsFix !== 'function') return;
+      window._onGpsFix({ coords: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy || 0
+      }});
+    });
+  } catch (e) { window._bgGeoStarted = false; console.warn('startNativeBackgroundTracking', e); }
+}
+async function stopNativeBackgroundTracking() {
+  try {
+    if (window._bgGeo && window._bgWatcherId != null) {
+      await window._bgGeo.removeWatcher({ id: window._bgWatcherId });
+    }
+  } catch (e) {}
+  window._bgGeoStarted = false; window._bgWatcherId = null;
+}
+
 function startLocationSharing() {
   if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
 
@@ -2904,6 +2952,7 @@ function startLocationSharing() {
     }
   };
   window._onGpsFix = onGpsFix; // exposed so the Settings location toggle can refresh fast
+  startNativeBackgroundTracking(); // native Android background GPS — no-op on web/TWA
 
   const markNoGps = () => {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
@@ -2987,13 +3036,48 @@ function toggleBreadcrumbs() {
   lastBreadcrumbPos = null;
   applyBreadcrumbState();
   if (breadcrumbsOn) {
-    toast('Breadcrumbs ON — recording your trail', 2500);
+    toast('Breadcrumbs ON — recording your trail · hold to clear', 2800);
   } else {
-    toast('Breadcrumbs OFF — trail fading', 2000);
+    toast('Breadcrumbs OFF — hold the button to clear your trail now', 2800);
   }
 }
 
-document.getElementById('breadcrumb-btn').addEventListener('click', toggleBreadcrumbs);
+// Remove the user's own breadcrumb trail from the map immediately
+function clearMyTrail() {
+  if (!groupName || !userId || !db) { toast('Join a group first'); return; }
+  try { if (navigator.vibrate) navigator.vibrate(40); } catch (e) {}
+  if (!confirm('Clear your breadcrumb trail from the map now?')) return;
+  fbRemove(fbRef(db, 'gl/' + groupName + '/trails/' + userId));
+  toast('Your breadcrumb trail cleared');
+}
+
+// Breadcrumb button — tap toggles recording, long-press (hold) clears your trail
+(function(){
+  var btn = document.getElementById('breadcrumb-btn');
+  if (!btn) return;
+  var timer = null, didLong = false, moved = false, sx = 0, sy = 0;
+  function begin(x, y) {
+    didLong = false; moved = false; sx = x; sy = y;
+    clearTimeout(timer);
+    timer = setTimeout(function(){ didLong = true; clearMyTrail(); }, 600);
+  }
+  function move(x, y) {
+    if (Math.abs(x - sx) > 10 || Math.abs(y - sy) > 10) { moved = true; clearTimeout(timer); }
+  }
+  function finish() {
+    clearTimeout(timer);
+    if (!didLong && !moved) toggleBreadcrumbs();
+    didLong = false;
+  }
+  btn.addEventListener('touchstart', function(e){ var t = e.touches[0]; begin(t.clientX, t.clientY); }, { passive: true });
+  btn.addEventListener('touchmove',  function(e){ var t = e.touches[0]; move(t.clientX, t.clientY); }, { passive: true });
+  btn.addEventListener('touchend',   function(e){ e.preventDefault(); finish(); });
+  btn.addEventListener('touchcancel', function(){ clearTimeout(timer); didLong = false; });
+  btn.addEventListener('mousedown',  function(e){ begin(e.clientX, e.clientY); });
+  btn.addEventListener('mousemove',  function(e){ move(e.clientX, e.clientY); });
+  btn.addEventListener('mouseup',    function(){ finish(); });
+  btn.addEventListener('mouseleave', function(){ clearTimeout(timer); });
+})();
 
 // ══ USERS ════════════════════════════════════════════════════════
 const LIVE_MS  = 90 * 1000;       // actively broadcasting GPS
@@ -3901,6 +3985,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
   // Stop GPS updates so a late position write can't re-add us after we leave
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch(_) {}
+  try { stopNativeBackgroundTracking(); } catch(_) {} // stop native foreground service if running
   try { writeDebugLog(groupName, userName + ' exited'); } catch(_) {}
   // Clear saved group first — keep uid and name so rejoin is easy
   try {
