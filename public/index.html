@@ -1370,6 +1370,7 @@ if ('serviceWorker' in navigator) {
 
 // ══ PWA INSTALL PROMPT (Android Chrome) ══════════════════════════
 window.addEventListener('beforeinstallprompt', e => {
+  if (_isNativeApp()) return; // inside the native app — never prompt to "install"
   e.preventDefault();
   deferredInstallPrompt = e;
   document.getElementById('install-banner').classList.add('show');
@@ -2109,7 +2110,7 @@ function showJoinScreen() {
 
   // iOS install hint
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-  if (!isStandalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+  if (!isStandalone && !_isNativeApp() && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
     document.getElementById('ios-hint').style.display = 'block';
   }
 
@@ -3081,7 +3082,7 @@ function clearMyTrail() {
 
 // ══ USERS ════════════════════════════════════════════════════════
 const LIVE_MS  = 90 * 1000;       // actively broadcasting GPS
-const STALE_MS = 8 * 60 * 60 * 1000; // 8 hours — only auto-remove true ghosts
+const STALE_MS = 20 * 60 * 1000; // 20 min — drop members who've gone quiet (left, app closed, or long signal loss); active-but-no-signal users stay via the No-GPS heartbeat
 
 // Track known users to detect joins/leaves
 var knownUsers = {};
@@ -3450,6 +3451,7 @@ function triggerSOSAlert(name, lat, lng) {
 // iOS only delivers push/SOS alerts to an installed home-screen app, so guide
 // them to add it. Shown once inside the map; dismissible and remembered.
 function maybeShowIosInstallNudge() {
+  if (_isNativeApp()) return; // native app — no "add to home screen" nudge
   try {
     var ua = navigator.userAgent || '';
     var isIOS = /iphone|ipad|ipod/i.test(ua)
@@ -4019,6 +4021,7 @@ window.addEventListener('beforeunload', function() {
 
 // == INSTALL TIP ==================================================
 function initInstallTip() {
+  if (_isNativeApp()) return; // native app is already "installed" — hide the install tip
   // If already installed as PWA — hide tip entirely, nothing to show
   var isStandalone = window.matchMedia('(display-mode: standalone)').matches
                    || window.navigator.standalone === true;
