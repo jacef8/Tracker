@@ -884,7 +884,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 11</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 13</div>
   </div>
 </div>
 
@@ -1997,6 +1997,7 @@ function enterMap(name, group, uid) {
 
 // ══ INSTALL TIP ══════════════════════════════════════════════════
 (function showInstallTip() {
+  if (_isNativeApp()) return; // already the native app — never prompt to "install"
   // Don't show if already installed as PWA
   var isInstalled = window.matchMedia('(display-mode: standalone)').matches
                  || window.navigator.standalone === true;
@@ -2110,7 +2111,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 11 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 12 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2773,6 +2774,9 @@ function hideGeoPrime() { var m = document.getElementById('geo-prime'); if (m) m
 // We check the live permission state when possible so we never nag:
 //   granted → just share · denied → share silently (No GPS, no popup) · prompt → primer
 function beginLocation() {
+  // Native app: the background-geolocation plugin requests permission and supplies
+  // GPS itself. Skip the web primer + web geolocation so there's only ONE prompt.
+  if (_isNativeApp()) { startLocationSharing(); return; }
   var primed = false;
   try { primed = localStorage.getItem('gl_geo_ok') === '1'; } catch (e) {}
   if (primed) { startLocationSharing(); return; }
@@ -3005,14 +3009,19 @@ function startLocationSharing() {
     }
   };
 
-  // 1) Fast one-shot LOW-accuracy fix first — quick + reliable on iOS, gets them on the
-  //    map right away, and triggers the permission prompt.
-  navigator.geolocation.getCurrentPosition(onGpsFix, onGpsErr,
-    { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
+  // In the native app the background-geolocation plugin already feeds fixes into
+  // _onGpsFix, so skip the web geolocation here — otherwise the user gets a SECOND
+  // permission prompt and two GPS systems run at once.
+  if (!_isNativeApp()) {
+    // 1) Fast one-shot LOW-accuracy fix first — quick + reliable on iOS, gets them on the
+    //    map right away, and triggers the permission prompt.
+    navigator.geolocation.getCurrentPosition(onGpsFix, onGpsErr,
+      { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
 
-  // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
-  window._gpsWatchId = navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
-    { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
+    // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
+    window._gpsWatchId = navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
+  }
 
   // Do NOT remove on close — user may just be pocketing their phone.
   // Single always-on heartbeat: keeps hidden + no-GPS members alive in the list.
