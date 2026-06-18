@@ -2855,7 +2855,19 @@ function toggleLocationShare(share) {
 // is backgrounded or the screen is off. Native fixes are fed into the same
 // _onGpsFix pipeline, so Firebase writes + breadcrumbs work identically.
 function _isNativeApp() {
-  return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+  try {
+    // The native app appends this token to its user agent (capacitor.config.json
+    // appendUserAgent) — deterministic and available before any other JS runs,
+    // even when the app loads the remote site and the Capacitor bridge is late.
+    if (/GroundLinkNative/i.test(navigator.userAgent || '')) return true;
+    var c = window.Capacitor;
+    if (c) {
+      if (typeof c.isNativePlatform === 'function' && c.isNativePlatform()) return true;
+      if (typeof c.getPlatform === 'function' && c.getPlatform() !== 'web') return true;
+      if (c.platform && c.platform !== 'web') return true;
+    }
+  } catch (e) {}
+  return false;
 }
 async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
@@ -4649,7 +4661,7 @@ window._locateMeTapped = function() {
       var cur = null;
       if (window._lastGPS) cur = [window._lastGPS.lng, window._lastGPS.lat];
       else if (userMarkers[userId]) { var ml = userMarkers[userId].getLngLat(); cur = [ml.lng, ml.lat]; }
-      if (cur) map.easeTo({ center: cur, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+      if (cur) map.easeTo({ center: cur, duration: 800 }); // keep your chosen zoom — don't snap back
     }, 3000);
     toast('Following your position — tap the locate button again to stop', 2000);
   } else {
@@ -4671,7 +4683,7 @@ window._followUser = function(uid, name) {
   btn.style.borderColor = isSelf ? 'var(--accent)' : '#39ff8a';
   btn.style.boxShadow   = isSelf ? '0 0 15px rgba(240,165,0,0.5)' : '0 0 15px rgba(57,255,138,0.4)';
   if (!isSelf) toast('Following ' + name + ' — tap to stop', 2500);
-  function doFollow() {
+  function doFollow(initial) {
     var target = null;
     if (isSelf) {
       if (window._lastGPS) target = [window._lastGPS.lng, window._lastGPS.lat];
@@ -4680,10 +4692,13 @@ window._followUser = function(uid, name) {
       var m = userMarkers[uid];
       if (m) { var ol = m.getLngLat(); target = [ol.lng, ol.lat]; }
     }
-    if (target) map.easeTo({ center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+    // Set zoom only on the first centering; after that keep the user's chosen zoom so
+    // they can zoom out (or in) freely while still being followed.
+    if (target) map.easeTo(initial ? { center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 }
+                                   : { center: target, duration: 800 });
   }
-  doFollow();
-  followInterval = setInterval(doFollow, 3000);
+  doFollow(true);
+  followInterval = setInterval(function(){ doFollow(false); }, 3000);
 };
 
 
