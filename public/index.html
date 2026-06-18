@@ -884,7 +884,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 14</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 15</div>
   </div>
 </div>
 
@@ -2111,7 +2111,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 14 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 15 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -3009,19 +3009,19 @@ function startLocationSharing() {
     }
   };
 
-  // In the native app the background-geolocation plugin already feeds fixes into
-  // _onGpsFix, so skip the web geolocation here — otherwise the user gets a SECOND
-  // permission prompt and two GPS systems run at once.
-  if (!_isNativeApp()) {
-    // 1) Fast one-shot LOW-accuracy fix first — quick + reliable on iOS, gets them on the
-    //    map right away, and triggers the permission prompt.
-    navigator.geolocation.getCurrentPosition(onGpsFix, onGpsErr,
-      { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
+  // Web geolocation drives the foreground dot on EVERY platform — it's fast and gives
+  // an immediate fix even while standing still. In the native app the background-
+  // geolocation plugin ALSO feeds _onGpsFix (above) so the dot keeps updating while the
+  // app is backgrounded; the duplicate fixes are harmless. The OS shares one location
+  // permission between the WebView and the plugin, so this does not double-prompt.
+  // 1) Fast one-shot LOW-accuracy fix first — quick + reliable, gets them on the map
+  //    right away.
+  navigator.geolocation.getCurrentPosition(onGpsFix, onGpsErr,
+    { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
 
-    // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
-    window._gpsWatchId = navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
-  }
+  // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
+  window._gpsWatchId = navigator.geolocation.watchPosition(onGpsFix, onGpsErr,
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
 
   // Do NOT remove on close — user may just be pocketing their phone.
   // Single always-on heartbeat: keeps hidden + no-GPS members alive in the list.
