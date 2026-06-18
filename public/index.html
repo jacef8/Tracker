@@ -401,11 +401,18 @@
   .pin-list-meta { font-size: 11px; color: var(--muted); line-height: 1.5; }
   .pin-list-dist { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
   .pin-list-mine { font-size: 10px; color: var(--accent); font-weight: 700; }
+  .pin-list-actions { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; align-self: center; }
   .pin-list-del {
     background: none; border: 1px solid var(--border); border-radius: 6px;
     color: var(--danger); font-size: 11px; cursor: pointer;
     padding: 3px 8px; flex-shrink: 0; align-self: center;
   }
+  .pin-list-save {
+    background: var(--accent); border: none; border-radius: 6px;
+    color: #000; font-size: 11px; font-weight: 700; cursor: pointer;
+    padding: 4px 10px; flex-shrink: 0;
+  }
+  .pin-list-save.is-saved { background: none; border: 1px solid var(--border); color: var(--muted); }
   .pin-list-empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: 13px; }
 
   /* ── User drawer ── */
@@ -892,7 +899,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 18</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 19</div>
   </div>
 </div>
 
@@ -2127,7 +2134,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 18 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 19 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -3728,7 +3735,10 @@ function renderPinList(pins) {
         <div class="pin-list-meta">By ${pin.name} · ${timeAgo(pin.ts)} · ${new Date(pin.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
         <div class="pin-list-meta" style="font-family:monospace;font-size:10px">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</div>
       </div>
-      ${isMine ? `<button class="pin-list-del" onclick="deletePin('${pid}');event.stopPropagation()">Remove</button>` : ''}
+      <div class="pin-list-actions">
+        <button class="pin-list-save${_isPinSaved(pid) ? ' is-saved' : ''}" onclick="window.savePin('${pid}');event.stopPropagation()">${_isPinSaved(pid) ? 'Saved &#10003;' : 'Save'}</button>
+        ${isMine ? `<button class="pin-list-del" onclick="deletePin('${pid}');event.stopPropagation()">Remove</button>` : ''}
+      </div>
     `;
 
     // Tap row — fly to pin and close drawer
@@ -3959,6 +3969,14 @@ document.getElementById('pin-cancel').addEventListener('click', () => {
   if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
   if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
   pendingCoords = null;
+});
+
+// Tap the dimmed area outside the sheet to dismiss — no need to reach the Cancel
+// button on a phone. Clicking the sheet itself does nothing.
+document.getElementById('pin-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('pin-modal')) {
+    document.getElementById('pin-cancel').click();
+  }
 });
 
 document.getElementById('pin-confirm').addEventListener('click', () => {
@@ -4570,16 +4588,24 @@ function getSavedPins() {
 function setSavedPins(arr) {
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
 }
+function _isPinSaved(pid) {
+  return getSavedPins().some(function(p) { return p.pid === pid; });
+}
+function _refreshPinListIfOpen() {
+  var d = document.getElementById('pin-list-drawer');
+  if (d && d.classList.contains('open') && typeof renderPinList === 'function') renderPinList(lastPins);
+}
 window.savePin = function(pid) {
   var pin = lastPins[pid];
   if (!pin) { toast('Pin not found'); return; }
   var saved = getSavedPins();
-  if (saved.find(function(p) { return p.pid === pid; })) { toast('Already saved'); return; }
+  if (saved.find(function(p) { return p.pid === pid; })) { toast('Already in My Saved Pins'); return; }
   saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name,
     lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() });
   setSavedPins(saved);
   toast('Saved to My Pins');
   renderSavedPins();
+  _refreshPinListIfOpen();
 };
 window.removeSavedPin = function(idx) {
   var pins = getSavedPins(); pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
