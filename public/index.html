@@ -654,6 +654,14 @@
   }
   #saved-pins-drawer.open { transform: translateX(0); }
   #saved-pins-list { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
+  #saved-pins-filter { display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); }
+  #saved-pins-filter:empty { display:none; padding:0; border:none; }
+  .sv-chip { background:var(--bg); border:1px solid var(--border); border-radius:14px; padding:4px 11px; font-size:11px; font-weight:600; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  .sv-chip.active { background:var(--accent); border-color:var(--accent); color:#000; }
+  #saved-pins-foot { padding:10px 12px; border-top:1px solid var(--border); background:rgba(13,17,23,0.45); }
+  #saved-pins-foot.hidden { display:none; }
+  #saved-pins-add-all { width:100%; background:var(--accent); border:none; border-radius:10px; padding:11px; font-size:13px; font-weight:800; color:#000; cursor:pointer; }
+  #saved-pins-add-all[disabled] { opacity:.45; cursor:default; }
   .sv-card { background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:border-color .15s; }
   .sv-card:active { border-color:var(--accent); }
   .sv-dot { width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0; }
@@ -884,7 +892,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 15</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 18</div>
   </div>
 </div>
 
@@ -1076,9 +1084,13 @@
     <button class="panel-close" id="close-saved-pins"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
   <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">
-    Saved here across all groups and sessions. Tap to fly there.
+    Saved here across all groups and sessions. Tap to fly there. Filter by type, then add just those to a room.
   </div>
+  <div id="saved-pins-filter"></div>
   <div id="saved-pins-list"></div>
+  <div id="saved-pins-foot">
+    <button id="saved-pins-add-all" onclick="window.addAllShownToRoom()">Add all shown to this room</button>
+  </div>
 </div>
 
 <!-- ══ LAYER PICKER SHEET ════════════════════════════════════════════ -->
@@ -1716,40 +1728,36 @@ function loadRoomList() {
         var users = group.users ? Object.values(group.users) : [];
         var pins  = group.pins  ? Object.keys(group.pins).length : 0;
 
-        // Find the most recent activity across all users
+        // Most recent activity across users / pins / chat.
         var lastActive = 0;
         users.forEach(function(u) { if ((u.ts || 0) > lastActive) lastActive = u.ts || 0; });
+        if (group.pins) Object.values(group.pins).forEach(function(p) {
+          if ((p.ts || 0) > lastActive) lastActive = p.ts || 0;
+        });
+        if (group.chat) Object.values(group.chat).forEach(function(c) {
+          if ((c.ts || 0) > lastActive) lastActive = c.ts || 0;
+        });
 
-        // Also check most recent pin drop
-        if (group.pins) {
-          Object.values(group.pins).forEach(function(p) {
-            if ((p.ts || 0) > lastActive) lastActive = p.ts || 0;
-          });
-        }
+        // Most recent activity-log entry — captures a join/exit even after the users
+        // node clears, so a room someone just left still has a fresh timestamp here.
+        var lastDebug = 0;
+        if (group.debug) Object.values(group.debug).forEach(function(dl) {
+          if ((dl.ts || 0) > lastDebug) lastDebug = dl.ts || 0;
+        });
+        var lastSeen = Math.max(lastActive, lastDebug);
 
-        // Also check most recent chat message
-        if (group.chat) {
-          Object.values(group.chat).forEach(function(c) {
-            if ((c.ts || 0) > lastActive) lastActive = c.ts || 0;
-          });
-        }
+        var hasUsers  = group.users  && Object.keys(group.users).length;
+        var hasPins   = group.pins   && Object.keys(group.pins).length;
+        var hasChat   = group.chat   && Object.keys(group.chat).length;
+        var hasTrails = group.trails && Object.keys(group.trails).length;
 
-        // Zero activity: clean up fully-empty ghost rooms, otherwise skip.
-        // A room with no users, pins, chat, or trails is a dead node (e.g. someone
-        // typed a name and left) — delete it so it stops lingering in admin.
-        if (!lastActive) {
-          var hasUsers  = group.users  && Object.keys(group.users).length;
-          var hasPins   = group.pins   && Object.keys(group.pins).length;
-          var hasChat   = group.chat   && Object.keys(group.chat).length;
-          var hasTrails = group.trails && Object.keys(group.trails).length;
-          if (!hasUsers && !hasPins && !hasChat && !hasTrails) {
-            fb.remove(fb.ref(fb.db, 'gl/' + key));
-          }
+        // Truly dead node (nothing at all) — delete immediately.
+        if (!hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) {
+          fb.remove(fb.ref(fb.db, 'gl/' + key));
           return;
         }
-
-        // Auto-delete groups older than 24 hours — no paid Firebase needed
-        if (now - lastActive > STALE_MS) {
+        // Aged past 24h with nobody present — delete (keeps the DB clean on the free tier).
+        if (!hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
           fb.remove(fb.ref(fb.db, 'gl/' + key));
           return;
         }
@@ -1758,13 +1766,21 @@ function loadRoomList() {
         var liveCount  = liveUsers.length;
         var liveNames  = liveUsers.map(function(u) { return u.name; });
 
-        // Fix title case: "liberty_hunt" -> "Liberty Hunt"
-        // Strip test_ prefix for display
+        // Show in the home list if anyone is live, OR the room emptied within the last
+        // 5 minutes — a grace window so an accidental exit is one tap to rejoin. After
+        // the grace the node still lives (24h, for the activity log + rejoin-by-name)
+        // but drops off the live picker.
+        var EMPTY_GRACE_MS = 5 * 60 * 1000;
+        if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS)) {
+          return;
+        }
+
+        // Fix title case: "liberty_hunt" -> "Liberty Hunt"; strip test_ prefix.
         var displayName = key.replace(/^test_/, '').replace(/_/g, ' ')
           .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 
-        // Human-readable last active time
-        var diffMin = Math.floor((now - lastActive) / 60000);
+        // Human-readable last active time (based on the newest signal we have).
+        var diffMin = Math.floor((now - lastSeen) / 60000);
         var diffHr  = Math.floor(diffMin / 60);
         var lastStr = diffMin < 1   ? 'just now'
                     : diffMin < 60  ? diffMin + 'm ago'
@@ -1772,7 +1788,7 @@ function loadRoomList() {
                     : 'over a day ago';
 
         var config = group.config || {};
-        rooms.push({ key, displayName, liveCount, liveNames, pins, lastActive, lastStr, config });
+        rooms.push({ key, displayName, liveCount, liveNames, pins, lastActive: lastSeen, lastStr, config });
       });
 
       if (rooms.length === 0) {
@@ -1797,7 +1813,7 @@ function loadRoomList() {
           ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
             + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0,3).join(', ')
               + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
-          : '<span style="color:var(--muted)">Last active ' + room.lastStr + '</span>';
+          : '<span style="color:var(--muted)">0 online &middot; last active ' + room.lastStr + '</span>';
 
         var pinText = room.pins > 0
           ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '')
@@ -2111,7 +2127,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 15 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 18 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -4578,17 +4594,83 @@ window.shareSavedPin = function(idx) {
   toast('Pin shared into ' + groupName);
   document.getElementById('saved-pins-drawer').classList.remove('open');
 };
+var _savedFilter = 'all';
+window.setSavedFilter = function(cat) { _savedFilter = cat; renderSavedPins(); };
+
+function _renderSavedFilterChips(pins) {
+  var bar = document.getElementById('saved-pins-filter');
+  if (!bar) return;
+  // Only categories that actually have saved pins, in PIN_DEFS order
+  var present = {};
+  pins.forEach(function(p) { present[p.cat] = (present[p.cat] || 0) + 1; });
+  var cats = Object.keys(PIN_DEFS).filter(function(c) { return present[c]; });
+  // Any saved pins whose cat isn't in PIN_DEFS (legacy/custom) still get a chip
+  pins.forEach(function(p) { if (cats.indexOf(p.cat) === -1 && p.cat) cats.push(p.cat); });
+  if (!pins.length) { bar.innerHTML = ''; return; }
+  // Reset to 'all' if the active filter no longer has any pins
+  if (_savedFilter !== 'all' && !present[_savedFilter]) _savedFilter = 'all';
+  var html = '<button class="sv-chip' + (_savedFilter === 'all' ? ' active' : '') +
+             '" onclick="window.setSavedFilter(\'all\')">All (' + pins.length + ')</button>';
+  cats.forEach(function(c) {
+    html += '<button class="sv-chip' + (_savedFilter === c ? ' active' : '') +
+            '" onclick="window.setSavedFilter(\'' + c.replace(/'/g, "\\'") + '\')">' +
+            c + ' (' + present[c] + ')</button>';
+  });
+  bar.innerHTML = html;
+}
+
+function _updateSavedFoot(shownCount) {
+  var foot = document.getElementById('saved-pins-foot');
+  var btn = document.getElementById('saved-pins-add-all');
+  if (!foot || !btn) return;
+  var inRoom = !!(groupName && db);
+  if (!shownCount) { foot.classList.add('hidden'); return; }
+  foot.classList.remove('hidden');
+  var label = _savedFilter === 'all' ? 'all ' + shownCount : shownCount + ' ' + _savedFilter;
+  if (inRoom) {
+    btn.disabled = false;
+    btn.textContent = 'Add ' + label + ' to this room';
+  } else {
+    btn.disabled = true;
+    btn.textContent = 'Join a room to add pins';
+  }
+}
+
+// Share every saved pin matching the current filter into the active room at once.
+window.addAllShownToRoom = function() {
+  if (!groupName || !db) { toast('Join a room first'); return; }
+  var pins = getSavedPins().filter(function(p) {
+    return _savedFilter === 'all' || p.cat === _savedFilter;
+  });
+  if (!pins.length) { toast('Nothing to add'); return; }
+  pins.forEach(function(pin) {
+    var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
+    fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || (pin.cat + ' pin'),
+      name:userName, droppedBy:userId, ts:Date.now() });
+  });
+  toast('Added ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to ' + groupName);
+  document.getElementById('saved-pins-drawer').classList.remove('open');
+  setLocateMeVisible(true);
+};
+
 function renderSavedPins() {
   var list = document.getElementById('saved-pins-list');
   var pins = getSavedPins();
   if (!list) return;
+  _renderSavedFilterChips(pins);
   if (!pins.length) {
     list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No saved pins yet.<br>Tap a pin on the map and choose Save Pin.</div>';
+    _updateSavedFoot(0);
     return;
   }
   list.innerHTML = '';
   var gps = window._lastGPS;
+  var shown = 0;
   pins.forEach(function(pin, idx) {
+    // Filter by the active category chip — keep idx aligned to the full array so the
+    // per-card Share/Delete buttons still target the right saved pin.
+    if (_savedFilter !== 'all' && pin.cat !== _savedFilter) return;
+    shown++;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
     var card = document.createElement('div');
@@ -4612,6 +4694,10 @@ function renderSavedPins() {
     });
     list.appendChild(card);
   });
+  if (!shown) {
+    list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No ' + _savedFilter + ' pins saved.</div>';
+  }
+  _updateSavedFoot(shown);
 }
 // saved-pins-btn removed from toolbar (now in pin hub sheet)
 document.getElementById('close-saved-pins').addEventListener('click', function() {
