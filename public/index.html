@@ -905,7 +905,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 20</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 21</div>
   </div>
 </div>
 
@@ -2143,7 +2143,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 20 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 21 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2370,24 +2370,10 @@ function initMap() {
   map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
   map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
 
-  // Stop follow mode when user manually drags/pans the map
-  map.on('dragstart', function(e) {
-    // Only stop if it was a user-initiated drag (not programmatic)
-    if (e.originalEvent && followUid) {
-      stopFollowing();
-    }
-  });
-  // Also handle touch drag on mobile
-  map.on('touchstart', function(e) {
-    if (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length > 1) return; // ignore pinch zoom
-    if (followUid) {
-      // Small delay so single tap doesn't kill follow
-      clearTimeout(window._touchFollowTimer);
-      window._touchFollowTimer = setTimeout(function() {
-        if (followUid) stopFollowing();
-      }, 200);
-    }
-  });
+  // Panning or zooming the map no longer cancels follow. While you're following,
+  // the map gently re-centers on your position every few seconds — so you can swipe
+  // around to look or pinch to change zoom, and it snaps right back. Your chosen zoom
+  // is preserved. Tap the locate button again to stop following.
 
   // All map control buttons registered here after map exists
   var layerBtn   = document.getElementById('layer-btn');
