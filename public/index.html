@@ -2093,13 +2093,14 @@ function _setToggleParcels() {
 }
 
 // Fire-and-forget: ask the server to push everyone else in the group
-function pushNotify(type, title, body) {
+function pushNotify(type, title, body, opts) {
   try {
     if (!groupName || !userId) return;
+    opts = opts || {};
     fetch('/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group: groupName, senderId: userId, type, title, body, url: '/' })
+      body: JSON.stringify({ group: groupName, senderId: userId, type, title, body, url: '/', toFavs: !!opts.toFavs })
     }).catch(function(){});
   } catch (e) {}
 }
@@ -2150,12 +2151,27 @@ window._toggleFav = function(key, name, ev) {
 };
 // Register/clear this device's push subscription under the group's favSubs, so the server
 // can notify favoriters of joins even when they're not in the room (needs alerts enabled).
-async function _registerFavSub(key, name) {
+// Make sure this device has a push subscription (prompting for permission once if needed),
+// so a favorited group can alert us in the background. Returns null where push isn't
+// available — notably the native Android WebView, which has no Push API (FCM handles that).
+async function _ensurePushSub() {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return null;
+    if (Notification.permission === 'denied') return null;
+    if (Notification.permission !== 'granted') {
+      var perm = await Notification.requestPermission();
+      if (perm !== 'granted') return null;
+    }
     var reg = await navigator.serviceWorker.ready;
     var sub = await reg.pushManager.getSubscription();
-    if (!sub) return; // no push yet — favorite still pins locally, just no background alert
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _urlB64ToUint8(VAPID_PUBLIC) });
+    return sub;
+  } catch (e) { return null; }
+}
+async function _registerFavSub(key, name) {
+  try {
+    var sub = await _ensurePushSub();
+    if (!sub) return; // no push here — favorite still pins locally, just no background alert
     var fb = window._fb; var s = getSavedSession();
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
     if (fb && uid) fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() });
@@ -2304,7 +2320,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 59;
+var APP_BUILD = 60;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2567,7 +2583,7 @@ function enterMap(name, group, uid) {
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
     }); } catch (e) {}
-    pushNotify('join', groupName, userName + ' joined the group');
+    pushNotify('join', groupName, userName + ' joined the group', { toFavs: true });
     // Notifications default ON — silently re-subscribe to this room if permission is already granted
     setTimeout(autoEnableAlerts, 800);
     // Load this room's cached passcode (so invites can build a direct-join link)
@@ -5050,6 +5066,8 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch(_) {}
   try { stopNativeBackgroundTracking(); } catch(_) {} // stop native foreground service if running
   try { writeDebugLog(groupName, userName + ' exited'); } catch(_) {}
+  // Tell favoriters who aren't in the room that someone left.
+  try { pushNotify('leave', groupName, userName + ' left the group', { toFavs: true }); } catch(_) {}
   // Clear saved group first — keep uid and name so rejoin is easy
   try {
     localStorage.removeItem('gl_group');
