@@ -194,6 +194,9 @@
   #map-controls #north-menu .north-opt:active { background: var(--accent); color: #0d1117; }
   #map-controls button:hover  { background: rgba(240,165,0,0.16); }
   #map-controls button:active { background: var(--accent); color: #0d1117; }
+  /* The locate + north buttons open a chooser, so their press shouldn't flash gold (that
+     reads as "activated"). Use a neutral press; gold is reserved for the active mode. */
+  #map-controls #locate-me:active, #map-controls #north-up-btn:active { background: rgba(255,255,255,0.10); color: #e6edf3; }
   /* Hide zoom buttons on mobile */
   @media (max-width: 768px) {
     #zoom-in-btn, #zoom-out-btn { display: none !important; }
@@ -706,16 +709,17 @@
   .sv-share { background:var(--accent);border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:#000;cursor:pointer; }
   .sv-del { background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--muted);cursor:pointer; }
 
-  /* ── Mapbox popup overrides ── */
+  /* ── Mapbox popup overrides — translucent + compact, sits below the dot ── */
   .mapboxgl-popup-content {
-    background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    background: rgba(13,17,23,0.55) !important;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.12) !important;
     border-radius: 10px !important;
-    padding: 10px 14px !important;
+    padding: 7px 11px !important;
     color: var(--text) !important;
     font-family: inherit !important;
-    box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
-    min-width: 150px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4) !important;
+    min-width: 0;
   }
   .mapboxgl-popup-tip { display: none; }
   .pop-cat { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
@@ -1020,7 +1024,7 @@
   <div id="locate-wrap" style="position:relative;display:flex;align-items:center;justify-content:center">
     <div id="locate-menu" style="display:none">
       <button class="locate-opt" type="button" onclick="window._chooseFollowMe(event)"><svg class="licon licon-sm"><use href="#ic-target"/></svg>Follow Me</button>
-      <button class="locate-opt" type="button" onclick="window._chooseShowGroup(event)"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Show Group</button>
+      <button class="locate-opt" type="button" onclick="window._chooseShowGroup(event)"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Follow Group</button>
     </div>
     <button id="locate-me" title="Locate / Follow" type="button" onclick="window._locateBtnTapped()"><svg class="licon licon-lg"><use href="#ic-target"/></svg></button>
   </div>
@@ -1654,6 +1658,7 @@ function _followRecenter(lng, lat) {
 // One camera update per self-fix, combining recenter (if following yourself) and rotate
 // (if Heading Up is on) — a single easeTo so the two don't cancel each other.
 function _applyCameraOnSelfFix(lng, lat) {
+  if (typeof fitAllInterval !== 'undefined' && fitAllInterval) return; // group-follow owns the camera
   var headed = (typeof headingUpOn !== 'undefined') && headingUpOn &&
                window._lastHeading != null && !isNaN(window._lastHeading) && window._lastSpeedMph > 3;
   var opts = null;
@@ -2134,7 +2139,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 39;
+var APP_BUILD = 42;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3695,7 +3700,7 @@ function listenUsers() {
         el.appendChild(_spdEl);
         _updateMarkerSpeed(el, data);
 
-        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false });
+        const popup = new mapboxgl.Popup({ offset: 26, closeButton: false, anchor: 'top' }); // sits BELOW the dot, out of the path ahead
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
           .setPopup(popup)
@@ -5526,40 +5531,48 @@ function _stopFitAll() {
     b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; b.style.boxShadow = '';
   }
 }
-function _allWithinView(pts, marginPx) {
-  try {
-    var el = map.getContainer(), w = el.clientWidth, h = el.clientHeight;
-    return pts.every(function(p) { var s = map.project(p); return s.x > marginPx && s.x < w - marginPx && s.y > marginPx && s.y < h - marginPx; });
-  } catch (e) { return false; }
-}
-function _doFitAll() {
+// Smoothly track the whole group: ease the map CENTER to the group's framing every tick
+// (so it glides instead of lurching), and only change ZOOM when the spread has drifted
+// enough — keeping the view steady the rest of the time. `force` does a full re-fit (used
+// on start). Linear easing matches the marker glide so the map and dots move together.
+var _linEase = function(t) { return t; };
+function _groupFollowTick(force) {
   var pts = [];
   Object.keys(userMarkers).forEach(function(uid) {
     try { var ll = userMarkers[uid].getLngLat(); pts.push([ll.lng, ll.lat]); } catch (e) {}
   });
   if (window._lastGPS) pts.push([window._lastGPS.lng, window._lastGPS.lat]);
   if (!pts.length) return false;
-  if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: Math.max(map.getZoom(), 14), duration: 800 }); window._fitAllInited = true; return true; }
-  // After the first fit, leave the view alone while everyone stays comfortably on screen —
-  // only re-fit when someone drifts near the edge. This stops the every-few-seconds jump
-  // and lets the smooth marker glide show through.
-  if (window._fitAllInited && _allWithinView(pts, 90)) return true;
+  if (pts.length === 1) {
+    map.easeTo({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(), duration: force ? 700 : 1200, easing: _linEase });
+    return true;
+  }
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
-  map.fitBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16, duration: 900 });
-  window._fitAllInited = true;
+  var cam;
+  try { cam = map.cameraForBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16 }); } catch (e) {}
+  if (!cam) return true;
+  var curZoom = map.getZoom();
+  var targetZoom = Math.min(cam.zoom, 16);
+  // Keep the current zoom unless the ideal has drifted ~0.6 levels (group spread/converge).
+  var zoom = (force || Math.abs(targetZoom - curZoom) > 0.6) ? targetZoom : curZoom;
+  // Skip when nothing meaningfully changed (stationary group) — avoids needless animation.
+  var c = map.getCenter();
+  var moved = Math.abs(cam.center.lng - c.lng) + Math.abs(cam.center.lat - c.lat);
+  if (!force && zoom === curZoom && moved < 0.00004) return true;
+  map.easeTo({ center: cam.center, zoom: zoom, duration: force ? 700 : 1300, easing: _linEase });
   return true;
 }
 window._fitAllTapped = function() {
   var btn = document.getElementById('locate-me');
-  if (fitAllInterval) { _stopFitAll(); toast('Group view off', 1400); return; }
-  // Follow and group-view are mutually exclusive.
+  if (fitAllInterval) { _stopFitAll(); toast('Group follow off', 1400); return; }
+  // Follow-me and follow-group are mutually exclusive.
   if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
-  window._fitAllInited = false; // force a fresh initial fit
-  if (_doFitAll() === false) { toast('No members with a location yet'); return; }
+  if (_groupFollowTick(true) === false) { toast('No members with a location yet'); return; }
   if (btn) { btn.style.background = '#1f6feb'; btn.style.color = '#fff'; btn.style.borderColor = '#1f6feb'; btn.style.boxShadow = '0 0 15px rgba(31,111,235,0.6)'; }
-  fitAllInterval = setInterval(_doFitAll, 3000);
-  toast('Showing whole group — tap the locate button to stop', 2400);
+  // Tick often + ease smoothly so the group view glides instead of lurching every few seconds.
+  fitAllInterval = setInterval(function() { _groupFollowTick(false); }, 1000);
+  toast('Following the group — the map keeps everyone in view. Tap the locate button to stop', 2800);
 };
 
 // dragstart wired inside initMap() below
