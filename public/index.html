@@ -738,6 +738,8 @@
   /* ── Room list ── */
   #room-list-section { display: flex; flex-direction: column; gap: 8px; }
   .room-list-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  #home-filter button { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #home-filter button.active { background: rgba(240,165,0,0.12); border-color: var(--accent); color: var(--accent); }
   #room-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
   .room-item {
     display: flex; align-items: center; justify-content: space-between;
@@ -884,7 +886,10 @@
 
     <!-- Active rooms list -->
     <div id="room-list-section">
-      <div class="room-list-label">Active Groups</div>
+      <div id="home-filter" style="display:flex;gap:6px;margin-bottom:10px">
+        <button id="home-filter-public" class="active" onclick="window._setHomeFilter('public')" type="button">Public</button>
+        <button id="home-filter-favs" onclick="window._setHomeFilter('favorites')" type="button">&#9733; Favorites</button>
+      </div>
       <div id="room-list"><div class="room-loading">Loading groups…</div></div>
     </div>
 
@@ -1120,6 +1125,22 @@
       <button onclick="document.getElementById('set-passcode-modal').style.display='none'" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px">Cancel</button>
       <button id="set-passcode-submit" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ NEW GROUP VISIBILITY ════════════════════════════════════════════ -->
+<div id="visibility-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:330px">
+    <div style="font-size:17px;font-weight:800;margin-bottom:4px">New group — who can find it?</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5">You're creating <b id="vis-group-name" style="color:var(--accent)"></b>. You can change this later in the room.</div>
+    <button onclick="window._pickVisibility('public')" style="width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:10px;cursor:pointer;color:var(--text)">
+      <div style="font-size:14px;font-weight:700">&#127758; Public</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">Shows in the home directory so anyone can find and join it.</div>
+    </button>
+    <button onclick="window._pickVisibility('private')" style="width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:6px;cursor:pointer;color:var(--text)">
+      <div style="font-size:14px;font-weight:700">&#128274; Private</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link.</div>
+    </button>
   </div>
 </div>
 
@@ -1990,147 +2011,159 @@ function waitForFirebase(cb) {
 
 // ══ ROOM LIST ════════════════════════════════════════════════════
 // Reads all groups active in the last 24 hours and shows them as tappable cards
+// ── Favorite groups (device-local) ─────────────────────────────────
+// Favorites pin to the top of the home list and show even if the group is private.
+function _getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) { return []; } }
+function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} }
+function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
+window._toggleFav = function(key, name, ev) {
+  if (ev) ev.stopPropagation();
+  var f = _getFavs(); var i = f.indexOf(key);
+  if (i === -1) { f.push(key); _setFavs(f); _registerFavSub(key, name); toast('★ ' + (name || 'Group') + ' favorited'); }
+  else { f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites'); }
+  if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
+};
+// Register/clear this device's push subscription under the group's favSubs, so the server
+// can notify favoriters of joins even when they're not in the room (needs alerts enabled).
+async function _registerFavSub(key, name) {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (!sub) return; // no push yet — favorite still pins locally, just no background alert
+    var fb = window._fb; var s = getSavedSession();
+    var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
+    if (fb && uid) fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() });
+  } catch (e) {}
+}
+async function _unregisterFavSub(key) {
+  try {
+    var fb = window._fb; var s = getSavedSession();
+    var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
+    if (fb && uid) fb.remove(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid));
+  } catch (e) {}
+}
+
+// Home list filter: 'public' (the directory) or 'favorites' (your starred groups).
+var _homeFilter = 'public';
+window._setHomeFilter = function(f) {
+  _homeFilter = f;
+  var pb = document.getElementById('home-filter-public'), fv = document.getElementById('home-filter-favs');
+  if (pb) pb.classList.toggle('active', f === 'public');
+  if (fv) fv.classList.toggle('active', f === 'favorites');
+  if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
+};
+
 function loadRoomList() {
   waitForFirebase(fb => {
     fb.onValue(fb.ref(fb.db, 'gl'), snap => {
-      const all = snap.val() || {};
-      const listEl = document.getElementById('room-list');
-      const now = Date.now();
-      const LIVE_MS  = 90 * 1000;          // active right now (< 90 sec)
-      const STALE_MS = 24 * 60 * 60 * 1000; // used in last 24 hours
-
-      const rooms = [];
-      Object.entries(all).forEach(function(entry) {
-        var key   = entry[0];
-        var group = entry[1];
-        // Production: exclude test_ groups
-        if (key.startsWith('test_')) return;
-        var users = group.users ? Object.values(group.users) : [];
-        var pins  = group.pins  ? Object.keys(group.pins).length : 0;
-
-        // Most recent activity across users / pins / chat.
-        var lastActive = 0;
-        users.forEach(function(u) { if ((u.ts || 0) > lastActive) lastActive = u.ts || 0; });
-        if (group.pins) Object.values(group.pins).forEach(function(p) {
-          if ((p.ts || 0) > lastActive) lastActive = p.ts || 0;
-        });
-        if (group.chat) Object.values(group.chat).forEach(function(c) {
-          if ((c.ts || 0) > lastActive) lastActive = c.ts || 0;
-        });
-
-        // Most recent activity-log entry — captures a join/exit even after the users
-        // node clears, so a room someone just left still has a fresh timestamp here.
-        var lastDebug = 0;
-        if (group.debug) Object.values(group.debug).forEach(function(dl) {
-          if ((dl.ts || 0) > lastDebug) lastDebug = dl.ts || 0;
-        });
-        var lastSeen = Math.max(lastActive, lastDebug);
-
-        var hasUsers  = group.users  && Object.keys(group.users).length;
-        var hasPins   = group.pins   && Object.keys(group.pins).length;
-        var hasChat   = group.chat   && Object.keys(group.chat).length;
-        var hasTrails = group.trails && Object.keys(group.trails).length;
-
-        // Truly dead node (nothing at all) — delete immediately.
-        if (!hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) {
-          fb.remove(fb.ref(fb.db, 'gl/' + key));
-          return;
-        }
-        // Aged past 24h with nobody present — delete (keeps the DB clean on the free tier).
-        if (!hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
-          fb.remove(fb.ref(fb.db, 'gl/' + key));
-          return;
-        }
-
-        var liveUsers  = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
-        var liveCount  = liveUsers.length;
-        var liveNames  = liveUsers.map(function(u) { return u.name; });
-
-        // Show in the home list if anyone is live, OR the room emptied within the last
-        // 5 minutes — a grace window so an accidental exit is one tap to rejoin. After
-        // the grace the node still lives (24h, for the activity log + rejoin-by-name)
-        // but drops off the live picker.
-        var EMPTY_GRACE_MS = 5 * 60 * 1000;
-        if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS)) {
-          return;
-        }
-
-        // Fix title case: "liberty_hunt" -> "Liberty Hunt"; strip test_ prefix.
-        var displayName = key.replace(/^test_/, '').replace(/_/g, ' ')
-          .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-
-        // Human-readable last active time (based on the newest signal we have).
-        var diffMin = Math.floor((now - lastSeen) / 60000);
-        var diffHr  = Math.floor(diffMin / 60);
-        var lastStr = diffMin < 1   ? 'just now'
-                    : diffMin < 60  ? diffMin + 'm ago'
-                    : diffHr  < 24  ? diffHr  + 'h ago'
-                    : 'over a day ago';
-
-        var config = group.config || {};
-        rooms.push({ key, displayName, liveCount, liveNames, pins, lastActive: lastSeen, lastStr, config });
-      });
-
-      if (rooms.length === 0) {
-        listEl.innerHTML = '<div class="room-empty">No recent groups — create one below.</div>';
-        return;
-      }
-
-      // Sort: live groups first, then by most recent activity
-      rooms.sort(function(a, b) {
-        if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
-        return b.lastActive - a.lastActive;
-      });
-
-      listEl.innerHTML = '';
-      rooms.forEach(function(room) {
-        var item = document.createElement('div');
-        item.className = 'room-item';
-
-        var isLocked = room.config && room.config.pin;
-        var lockIcon = isLocked ? ' &#128274;' : '';
-        var statusHTML = room.liveCount > 0
-          ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
-            + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0,3).join(', ')
-              + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
-          : '<span style="color:var(--muted)">0 online &middot; last active ' + room.lastStr + '</span>';
-
-        var pinText = room.pins > 0
-          ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '')
-          : '';
-
-        item.innerHTML =
-          '<div class="room-item-left">' +
-            '<div class="room-name">' + room.displayName + lockIcon + '</div>' +
-            '<div class="room-meta">' + statusHTML + pinText + '</div>' +
-          '</div>' +
-          '<button class="room-join-btn">Join</button>';
-
-        item.querySelector('.room-join-btn').addEventListener('click', function() {
-          document.getElementById('inp-group').value = room.displayName;
-          var name = document.getElementById('inp-name').value.trim();
-          if (name) {
-            // Clear any error state
-            document.getElementById('inp-name').style.borderColor = '';
-            var nameErr = document.getElementById('name-required-msg');
-            if (nameErr) nameErr.style.display = 'none';
-            var existing = getSavedSession();
-            var uid = existing.uid || genUid();
-            checkGroupPasscode(name, room.key, uid);
-          } else {
-            // Highlight name field with error
-            document.getElementById('inp-name').style.borderColor = 'var(--danger)';
-            document.getElementById('inp-name').focus();
-            var nameErr = document.getElementById('name-required-msg');
-            if (nameErr) nameErr.style.display = 'block';
-            setTimeout(function() {
-              document.getElementById('inp-name').style.borderColor = '';
-            }, 3000);
-          }
-        });
-        listEl.appendChild(item);
-      });
+      window._lastGlSnap = snap.val() || {};
+      renderRoomList(window._lastGlSnap);
     });
+  });
+}
+
+function renderRoomList(all) {
+  var listEl = document.getElementById('room-list');
+  if (!listEl) return;
+  var fb = window._fb;
+  var now = Date.now();
+  var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000;
+  var favs = _getFavs();
+  var rooms = [];
+  Object.entries(all).forEach(function(entry) {
+    var key = entry[0], group = entry[1];
+    if (key.startsWith('test_')) return;
+    var users = group.users ? Object.values(group.users) : [];
+    var pins = group.pins ? Object.keys(group.pins).length : 0;
+
+    var lastActive = 0;
+    users.forEach(function(u) { if ((u.ts || 0) > lastActive) lastActive = u.ts || 0; });
+    if (group.pins) Object.values(group.pins).forEach(function(p) { if ((p.ts || 0) > lastActive) lastActive = p.ts || 0; });
+    if (group.chat) Object.values(group.chat).forEach(function(c) { if ((c.ts || 0) > lastActive) lastActive = c.ts || 0; });
+    var lastDebug = 0;
+    if (group.debug) Object.values(group.debug).forEach(function(dl) { if ((dl.ts || 0) > lastDebug) lastDebug = dl.ts || 0; });
+    var lastSeen = Math.max(lastActive, lastDebug);
+
+    var hasUsers = group.users && Object.keys(group.users).length;
+    var hasPins = group.pins && Object.keys(group.pins).length;
+    var hasChat = group.chat && Object.keys(group.chat).length;
+    var hasTrails = group.trails && Object.keys(group.trails).length;
+    if (fb && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+    if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+
+    var liveUsers = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
+    var liveCount = liveUsers.length;
+    var liveNames = liveUsers.map(function(u) { return u.name; });
+    if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS)) return;
+
+    var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
+    var lastStr = diffMin < 1 ? 'just now' : diffMin < 60 ? diffMin + 'm ago' : diffHr < 24 ? diffHr + 'h ago' : 'over a day ago';
+    var config = group.config || {};
+    var vis = config.visibility || 'public'; // existing/unset groups stay public
+    var isFav = favs.indexOf(key) !== -1;
+
+    // Filter: Favorites view shows only your stars; Public view shows public groups
+    // (private ones only appear if you've favorited them — otherwise they're join-by-name).
+    if (_homeFilter === 'favorites') { if (!isFav) return; }
+    else { if (vis !== 'public' && !isFav) return; }
+
+    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
+  });
+
+  if (rooms.length === 0) {
+    listEl.innerHTML = '<div class="room-empty">' + (_homeFilter === 'favorites'
+      ? 'No favorites yet — tap the ☆ on a group to favorite it.'
+      : 'No public groups active right now — create one below.') + '</div>';
+    return;
+  }
+
+  rooms.sort(function(a, b) {
+    if (a.isFav !== b.isFav) return a.isFav ? -1 : 1;     // favorites pinned on top
+    if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
+    return b.lastActive - a.lastActive;
+  });
+
+  listEl.innerHTML = '';
+  rooms.forEach(function(room) {
+    var item = document.createElement('div');
+    item.className = 'room-item';
+    var isLocked = room.config && room.config.pin;
+    var lockIcon = isLocked ? ' &#128274;' : '';
+    var privIcon = room.vis === 'private' ? ' <span style="font-size:10px;color:var(--muted);font-weight:600">&middot; private</span>' : '';
+    var statusHTML = room.liveCount > 0
+      ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
+        + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0, 3).join(', ') + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
+      : '<span style="color:var(--muted)">0 online &middot; last active ' + room.lastStr + '</span>';
+    var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
+    item.innerHTML =
+      '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
+      '<div class="room-item-left">' +
+        '<div class="room-name">' + room.displayName + lockIcon + privIcon + '</div>' +
+        '<div class="room-meta">' + statusHTML + pinText + '</div>' +
+      '</div>' +
+      '<button class="room-join-btn">Join</button>';
+    item.querySelector('.room-fav-btn').addEventListener('click', function(e) { window._toggleFav(room.key, room.displayName, e); });
+    item.querySelector('.room-join-btn').addEventListener('click', function() {
+      document.getElementById('inp-group').value = room.displayName;
+      var name = document.getElementById('inp-name').value.trim();
+      if (name) {
+        document.getElementById('inp-name').style.borderColor = '';
+        var nameErr = document.getElementById('name-required-msg');
+        if (nameErr) nameErr.style.display = 'none';
+        var existing = getSavedSession();
+        var uid = existing.uid || genUid();
+        checkGroupPasscode(name, room.key, uid);
+      } else {
+        document.getElementById('inp-name').style.borderColor = 'var(--danger)';
+        document.getElementById('inp-name').focus();
+        var nameErr = document.getElementById('name-required-msg');
+        if (nameErr) nameErr.style.display = 'block';
+        setTimeout(function() { document.getElementById('inp-name').style.borderColor = ''; }, 3000);
+      }
+    });
+    listEl.appendChild(item);
   });
 }
 loadRoomList();
@@ -2139,7 +2172,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 47;
+var APP_BUILD = 48;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2298,6 +2331,11 @@ function enterMap(name, group, uid) {
 
     // Log join event
     writeDebugLog(groupName, userName + ' joined');
+    // Creator picked a visibility for this brand-new group — record it on the config.
+    if (window._pendingVisibility) {
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
+      window._pendingVisibility = null;
+    }
     // Claim our slot
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
@@ -2619,9 +2657,33 @@ function handleJoin() {
     var _gk = group.toLowerCase().replace(/[^a-z0-9_-]/g,'_').replace(/__+/g,'_');
     if (_ik === _gk) invitePin = window._invitePin || null;
   }
+  // Brand-new group (typed name that doesn't exist yet, not an invite) → ask the creator
+  // whether it should be public or private, then enter.
+  var gkey = group.toLowerCase().replace(/[^a-z0-9_-]/g,'_').replace(/__+/g,'_');
+  // Only prompt when we actually have the directory loaded and the group truly isn't in it,
+  // so we never overwrite an existing group's visibility.
+  if (window._lastGlSnap && !window._lastGlSnap[gkey] && !window._inviteRoom) {
+    _askVisibility(group, function(vis) {
+      window._pendingVisibility = vis;
+      checkGroupPasscode(name, group, uid, invitePin);
+    });
+    return;
+  }
   // Check passcode before entering
   checkGroupPasscode(name, group, uid, invitePin);
 }
+
+var _visCb = null;
+function _askVisibility(group, cb) {
+  _visCb = cb;
+  var nm = document.getElementById('vis-group-name'); if (nm) nm.textContent = group;
+  document.getElementById('visibility-modal').style.display = 'flex';
+}
+window._pickVisibility = function(v) {
+  document.getElementById('visibility-modal').style.display = 'none';
+  var cb = _visCb; _visCb = null;
+  if (cb) cb(v);
+};
 
 // ══ MAP ══════════════════════════════════════════════════════════
 let measurePoints = [], measureMarkers = [], longPressTimer = null;
