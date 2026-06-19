@@ -23,8 +23,10 @@
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove, onDisconnect }
+  import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
   const firebaseConfig = {
@@ -42,7 +44,15 @@
   // ───────────────────────────────────────────────────────────────────
 
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect };
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update };
+  // Firebase Auth (Google sign-in). Stays dormant until the Google provider is
+  // enabled in the Firebase console — the rest of the app works without it.
+  try {
+    const auth = getAuth(app);
+    window._fb.auth = auth;
+    window._fb.authApi = { GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut };
+    window.dispatchEvent(new Event('gl-auth-ready'));
+  } catch (e) { console.warn('auth init', e); }
 </script>
 
 <style>
@@ -884,6 +894,34 @@
       <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
     </div>
 
+    <!-- ══ ACCOUNT / IDENTITY ════════════════════════════════════════ -->
+    <div id="account-box" style="margin-top:-2px">
+      <!-- Guest / signed-out view -->
+      <div id="acct-guest">
+        <button id="btn-google" type="button" onclick="window.GLAuth && GLAuth.signInGoogle()" style="width:100%;padding:11px;background:#fff;border:none;border-radius:var(--radius);color:#1f1f1f;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px">
+          <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Sign in with Google
+        </button>
+        <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px">
+          <button type="button" onclick="window.GLAuth && GLAuth.openBackup()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Back up this phone</button>
+          <span style="color:var(--border)">·</span>
+          <button id="btn-restore" type="button" onclick="window.GLAuth && GLAuth.openRestore()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Restore from code</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:8px;text-align:center">
+          <strong style="color:var(--text)">Guest</strong> keeps your name &amp; friends on this phone. <strong style="color:var(--text)">Signed in</strong> carries them to any device.
+        </div>
+      </div>
+      <!-- Signed-in view -->
+      <div id="acct-in" style="display:none;align-items:center;gap:10px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:9px 12px">
+        <span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name">Signed in</div>
+          <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-email"></div>
+        </div>
+        <button id="btn-signout" type="button" onclick="window.GLAuth && GLAuth.signOutUser()" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
+      </div>
+    </div>
+
     <!-- Active rooms list -->
     <div id="room-list-section">
       <div id="home-filter" style="display:flex;gap:6px;margin-bottom:10px">
@@ -1141,6 +1179,29 @@
       <div style="font-size:14px;font-weight:700">&#128274; Private</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link.</div>
     </button>
+  </div>
+</div>
+
+<!-- ══ BACKUP / RESTORE CODE (guest durability, no login) ══════════════ -->
+<div id="backup-modal" style="display:none;position:fixed;inset:0;z-index:1150;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:340px">
+    <!-- SHOW code view -->
+    <div id="backup-show">
+      <div style="font-size:17px;font-weight:800;margin-bottom:4px">Your backup code</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Save this somewhere safe. Enter it on a new phone to bring back your name, friends &amp; favorites — no login needed.</div>
+      <div id="backup-code-val" style="font-family:monospace;font-size:18px;font-weight:700;letter-spacing:1px;color:var(--accent);background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:13px;text-align:center;word-break:break-all;margin-bottom:12px">—</div>
+      <button onclick="window.GLAuth && GLAuth.copyCode()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Copy code</button>
+      <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Close</button>
+    </div>
+    <!-- RESTORE code view -->
+    <div id="backup-restore" style="display:none">
+      <div style="font-size:17px;font-weight:800;margin-bottom:4px">Restore from code</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Paste the backup code from your other phone to recover your name, friends &amp; favorites.</div>
+      <input id="backup-code-input" class="join-input" placeholder="Paste your code" autocomplete="off" style="margin-bottom:12px;font-family:monospace" />
+      <div id="backup-restore-msg" style="display:none;font-size:12px;margin-bottom:10px"></div>
+      <button onclick="window.GLAuth && GLAuth.doRestore()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Restore</button>
+      <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -1704,7 +1765,7 @@ function _isOffCenter(lngLat, marginPx) {
 
 // Favorite people / friends (device-local). Friends pin to the top of the member list.
 function _getFriends() { try { return JSON.parse(localStorage.getItem('gl_friends') || '{}'); } catch (e) { return {}; } }
-function _setFriends(m) { try { localStorage.setItem('gl_friends', JSON.stringify(m)); } catch (e) {} }
+function _setFriends(m) { try { localStorage.setItem('gl_friends', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFriend(uid) { return !!_getFriends()[uid]; }
 window._toggleFriend = function(uid, name, ev) {
   if (ev) ev.stopPropagation();
@@ -2028,7 +2089,7 @@ function waitForFirebase(cb) {
 // ── Favorite groups (device-local) ─────────────────────────────────
 // Favorites pin to the top of the home list and show even if the group is private.
 function _getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) { return []; } }
-function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} }
+function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 window._toggleFav = function(key, name, ev) {
   if (ev) ev.stopPropagation();
@@ -2186,7 +2247,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 53;
+var APP_BUILD = 54;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -6036,6 +6097,203 @@ document.addEventListener('click', function(e) {
   }
 });
 // GroundLink UI restyle — admin-matched design language applied
+</script>
+
+<!-- ══ GLAuth — durable identity: Google sign-in + guest backup/restore code ══ -->
+<script>
+(function () {
+  var LS = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+  function uid()  { return LS.get('gl_uid'); }
+  function name() { return LS.get('gl_name') || ''; }
+
+  function setIdentity(u, nm, account) {
+    if (u)  LS.set('gl_uid', u);
+    if (nm) LS.set('gl_name', nm);
+    LS.set('gl_account', account || '');
+  }
+
+  // Profile mirror in the database: gl/_users/<uid> = { name, friends, favs, colors, updated }
+  function localProfile() {
+    return {
+      name:    name(),
+      friends: LS.get('gl_friends') || '{}',
+      favs:    LS.get('gl_favs') || '[]',
+      colors:  LS.get('gl_user_colors') || '{}',
+      updated: Date.now()
+    };
+  }
+  function pushProfile() {
+    try {
+      var f = window._fb; if (!f || !f.db) return;
+      var u = uid(); if (!u) return;
+      f.set(f.ref(f.db, 'gl/_users/' + u), localProfile());
+    } catch (e) {}
+  }
+  function pullProfile(u, cb) {
+    try {
+      var f = window._fb;
+      if (!f || !f.db || !f.get) { cb && cb(null); return; }
+      f.get(f.ref(f.db, 'gl/_users/' + u))
+        .then(function (snap) { cb && cb(snap && snap.exists() ? snap.val() : null); })
+        .catch(function () { cb && cb(null); });
+    } catch (e) { cb && cb(null); }
+  }
+  function applyProfile(p) {
+    if (!p) return;
+    try {
+      if (p.name)    LS.set('gl_name', p.name);
+      if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
+      if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
+      if (p.colors)  LS.set('gl_user_colors', typeof p.colors === 'string' ? p.colors : JSON.stringify(p.colors));
+    } catch (e) {}
+  }
+  // Let other parts of the app push prefs up after a change.
+  window._glSync = pushProfile;
+
+  function refreshUI() {
+    var signedIn = LS.get('gl_account') === 'google';
+    var inEl = document.getElementById('acct-in');
+    var guestEl = document.getElementById('acct-guest');
+    if (inEl)    inEl.style.display = signedIn ? 'flex' : 'none';
+    if (guestEl) guestEl.style.display = signedIn ? 'none' : 'block';
+    if (signedIn) {
+      var nEl = document.getElementById('acct-name');  if (nEl) nEl.textContent = name() || 'Signed in';
+      var eEl = document.getElementById('acct-email'); if (eEl) eEl.textContent = LS.get('gl_email') || '';
+    }
+    try { var ni = document.getElementById('inp-name'); if (ni && !ni.value && name()) ni.value = name(); } catch (e) {}
+  }
+  window.addEventListener('DOMContentLoaded', refreshUI);
+
+  function isNative() {
+    try { return typeof _isNativeApp === 'function' ? _isNativeApp()
+      : !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
+    catch (e) { return false; }
+  }
+  function isStandalone() {
+    try { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone; }
+    catch (e) { return false; }
+  }
+
+  function afterFirebaseUser(user) {
+    if (!user) return;
+    setIdentity(user.uid, user.displayName || name(), 'google');
+    if (user.email) LS.set('gl_email', user.email);
+    pullProfile(user.uid, function (p) {
+      if (p) applyProfile(p);
+      pushProfile(); // either refresh timestamp, or migrate a guest's prefs up
+      refreshUI();
+      try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
+      if (typeof toast === 'function') toast('Signed in as ' + (name() || 'you'), 2500);
+    });
+  }
+
+  function signInGoogle() {
+    var f = window._fb;
+    if (!f || !f.auth || !f.authApi) { if (typeof toast === 'function') toast('Sign-in not ready — try again in a moment', 2600); return; }
+    var A = f.authApi;
+    if (isNative()) {
+      var cap = window.Capacitor;
+      var FA = cap && cap.Plugins && cap.Plugins.FirebaseAuthentication;
+      if (FA && FA.signInWithGoogle) {
+        FA.signInWithGoogle().then(function (res) {
+          var idToken = res && res.credential && res.credential.idToken;
+          if (!idToken) throw new Error('no idToken');
+          return A.signInWithCredential(f.auth, A.GoogleAuthProvider.credential(idToken));
+        }).then(function (uc) { afterFirebaseUser(uc.user); })
+          .catch(function (e) { console.warn('native google', e); if (typeof toast === 'function') toast('Google sign-in failed', 2600); });
+      } else {
+        if (typeof toast === 'function') toast('Update the app to use Google sign-in', 3000);
+      }
+      return;
+    }
+    var prov = new A.GoogleAuthProvider();
+    if (isStandalone()) {
+      A.signInWithRedirect(f.auth, prov).catch(function (e) { console.warn('redirect', e); });
+    } else {
+      A.signInWithPopup(f.auth, prov)
+        .then(function (uc) { afterFirebaseUser(uc.user); })
+        .catch(function (e) {
+          console.warn('popup', e);
+          if (e && /popup|cancelled|blocked/i.test((e.code || '') + (e.message || ''))) A.signInWithRedirect(f.auth, prov);
+          else if (typeof toast === 'function') toast('Google sign-in failed', 2600);
+        });
+    }
+  }
+
+  function signOutUser() {
+    var f = window._fb;
+    try { if (f && f.auth && f.authApi) f.authApi.signOut(f.auth); } catch (e) {}
+    try {
+      var FA = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+      if (FA && FA.signOut) FA.signOut();
+    } catch (e) {}
+    LS.set('gl_account', '');
+    LS.set('gl_email', '');
+    refreshUI(); // keep gl_uid/name so they remain the same identity as a guest
+    if (typeof toast === 'function') toast('Signed out — still here as a guest', 2600);
+  }
+
+  function ensureUid() {
+    var u = uid();
+    if (!u) { u = (typeof genUid === 'function') ? genUid() : Date.now().toString(36); LS.set('gl_uid', u); }
+    return u;
+  }
+  function openBackup() {
+    document.getElementById('backup-show').style.display = 'block';
+    document.getElementById('backup-restore').style.display = 'none';
+    document.getElementById('backup-code-val').textContent = ensureUid();
+    pushProfile();
+    document.getElementById('backup-modal').style.display = 'flex';
+  }
+  function openRestore() {
+    document.getElementById('backup-show').style.display = 'none';
+    document.getElementById('backup-restore').style.display = 'block';
+    document.getElementById('backup-code-input').value = '';
+    var m = document.getElementById('backup-restore-msg'); if (m) m.style.display = 'none';
+    document.getElementById('backup-modal').style.display = 'flex';
+  }
+  function closeBackup() { document.getElementById('backup-modal').style.display = 'none'; }
+  function copyCode() {
+    var u = document.getElementById('backup-code-val').textContent;
+    try { if (navigator.clipboard) navigator.clipboard.writeText(u); } catch (e) {}
+    if (typeof toast === 'function') toast('Code copied', 1800);
+  }
+  function doRestore() {
+    var code = (document.getElementById('backup-code-input').value || '').trim();
+    var msg = document.getElementById('backup-restore-msg');
+    function show(t, ok) { if (msg) { msg.style.display = 'block'; msg.style.color = ok ? '#3fb950' : 'var(--danger)'; msg.textContent = t; } }
+    if (!code) { show('Enter a code first', false); return; }
+    show('Looking up…', true);
+    pullProfile(code, function (p) {
+      if (!p) { show('No data found for that code', false); return; }
+      LS.set('gl_uid', code);
+      applyProfile(p);
+      refreshUI();
+      try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
+      show('Restored! Your name, friends & favorites are back.', true);
+      setTimeout(closeBackup, 1400);
+    });
+  }
+
+  function wireAuth() {
+    var f = window._fb;
+    if (!f || !f.auth || !f.authApi) return;
+    var A = f.authApi;
+    try { A.getRedirectResult(f.auth).then(function (uc) { if (uc && uc.user) afterFirebaseUser(uc.user); }).catch(function () {}); } catch (e) {}
+    try { A.onAuthStateChanged(f.auth, function (user) { if (user) { if (LS.get('gl_account') !== 'google') afterFirebaseUser(user); else refreshUI(); } }); } catch (e) {}
+  }
+  if (window._fb && window._fb.auth) wireAuth();
+  else window.addEventListener('gl-auth-ready', wireAuth);
+
+  window.GLAuth = {
+    signInGoogle: signInGoogle, signOutUser: signOutUser,
+    openBackup: openBackup, openRestore: openRestore, closeBackup: closeBackup,
+    copyCode: copyCode, doRestore: doRestore, refreshUI: refreshUI, sync: pushProfile
+  };
+})();
 </script>
 </body>
 </html>
