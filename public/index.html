@@ -995,7 +995,7 @@
   </div>
 </div>
 <!-- Update-available banner (shown when a newer build is deployed) -->
-<div id="update-banner" onclick="window._applyUpdate()" style="display:none;position:fixed;top:calc(var(--safe-top) + 10px);left:50%;transform:translateX(-50%);z-index:1200;background:var(--accent);color:#000;font-weight:800;font-size:13px;padding:9px 16px;border-radius:22px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer;align-items:center;gap:8px;max-width:92vw;-webkit-tap-highlight-color:transparent">
+<div id="update-banner" onclick="window._applyUpdate()" style="display:none;position:fixed;top:calc(var(--safe-top) + var(--topbar-h) + 10px);left:50%;transform:translateX(-50%);z-index:140;background:var(--accent);color:#000;font-weight:800;font-size:13px;padding:9px 16px;border-radius:22px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer;align-items:center;gap:8px;max-width:92vw;-webkit-tap-highlight-color:transparent">
   <svg class="licon licon-sm" style="color:#000"><use href="#ic-download"/></svg>
   <span>New version available — tap to update</span>
 </div>
@@ -2186,7 +2186,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 50;
+var APP_BUILD = 51;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2215,22 +2215,19 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
 // Force a truly fresh load when the user taps "update": a plain reload can be served the
 // cached page by the service worker / web view, so we clear caches, drop the old worker,
 // and navigate to a cache-busted URL.
-window._applyUpdate = async function() {
+// IMPORTANT: never `await` here. In the native web view the Cache/ServiceWorker promises
+// can hang and the reload would never fire (the "tap does nothing" bug). So we fire the
+// cache-clear + SW-unregister as best-effort, fire-and-forget, and ALWAYS reload via a
+// short timeout to a cache-busted URL.
+window._applyUpdate = function() {
   var b = document.getElementById('update-banner');
   if (b) { var sp = b.querySelector('span'); if (sp) sp.textContent = 'Updating…'; }
-  try {
-    if (window.caches && caches.keys) {
-      var keys = await caches.keys();
-      await Promise.all(keys.map(function(k) { return caches.delete(k); }));
-    }
-  } catch (e) {}
-  try {
-    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-      var regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(function(r) { return r.unregister(); }));
-    }
-  } catch (e) {}
-  location.replace(location.origin + location.pathname + '?v=' + Date.now());
+  try { if (window.caches && caches.keys) caches.keys().then(function(ks) { ks.forEach(function(k) { try { caches.delete(k); } catch (e) {} }); }).catch(function(){}); } catch (e) {}
+  try { if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) navigator.serviceWorker.getRegistrations().then(function(rs) { rs.forEach(function(r) { try { r.unregister(); } catch (e) {} }); }).catch(function(){}); } catch (e) {}
+  setTimeout(function() {
+    var u = location.origin + location.pathname + '?v=' + Date.now();
+    try { location.replace(u); } catch (e) { location.href = u; }
+  }, 500);
 };
 
 // Global "force update" broadcast: an admin can set _forceReload to make every running
