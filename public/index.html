@@ -2172,7 +2172,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 48;
+var APP_BUILD = 49;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3844,13 +3844,18 @@ function listenUsers() {
         var _followBtn = !isMine
           ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
           : '';
+        // Open the phone's navigation app routed to this person's location.
+        var _navBtn = (!isMine && hasGps)
+          ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="margin-top:6px;width:100%;padding:7px;background:transparent;border:1px solid var(--accent);border-radius:8px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
+          : '';
         userMarkers[uid].getPopup().setHTML(
           '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
           '<div class="pop-label">' + data.name + '</div>' +
           _distHTML +
           _speedHTML +
           '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
-          _followBtn
+          _followBtn +
+          _navBtn
         );
       }
 
@@ -5568,6 +5573,22 @@ function setLocateMeVisible(visible) {
     btn.style.display = 'none';
   }
 }
+// Open the device's navigation app routed to a point (a member's location).
+window._navigateTo = function(lat, lng, name) {
+  var ua = navigator.userAgent || '';
+  var label = encodeURIComponent(name || 'Member');
+  if (/iphone|ipad|ipod/i.test(ua)) {
+    // Apple Maps is always present on iOS; this universal link opens the app with directions.
+    window.location.href = 'https://maps.apple.com/?daddr=' + lat + ',' + lng + '&dirflg=d';
+  } else if (/android/i.test(ua)) {
+    // geo: lets Android offer the user's preferred maps app (Google Maps, Waze, etc.).
+    window.location.href = 'geo:' + lat + ',' + lng + '?q=' + lat + ',' + lng + '(' + label + ')';
+  } else {
+    // Desktop / other — Google Maps directions in a new tab.
+    window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving', '_blank');
+  }
+};
+
 function stopFollowing() {
   followUid = null;
   clearInterval(followInterval);
