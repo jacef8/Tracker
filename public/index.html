@@ -2139,7 +2139,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 42;
+var APP_BUILD = 43;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2185,6 +2185,28 @@ window._applyUpdate = async function() {
   } catch (e) {}
   location.replace(location.origin + location.pathname + '?v=' + Date.now());
 };
+
+// Global "force update" broadcast: an admin can set _forceReload to make every running
+// app reload to the latest build. Only fires for apps that loaded BEFORE the trigger
+// (so it never loops). Auto-rejoin restores the user to their room on the fresh build.
+window._pageLoadTs = Date.now();
+(function _forceReloadWatch() {
+  var t = setInterval(function() {
+    var fb = window._fb;
+    if (!fb || !fb.onValue) return;
+    clearInterval(t);
+    try {
+      fb.onValue(fb.ref(fb.db, '_forceReload'), function(snap) {
+        var v = snap.val();
+        if (v && v.ts && v.ts > window._pageLoadTs && !window._forcing) {
+          window._forcing = true;
+          if (typeof toast === 'function') toast('Updating to the latest version…', 4000);
+          setTimeout(function() { if (window._applyUpdate) window._applyUpdate(); else location.reload(); }, 900);
+        }
+      });
+    } catch (e) {}
+  }, 300);
+})();
 
 // ══ DEBUG LOGGING ════════════════════════════════════════════════
 function writeDebugLog(grp, msg) {
@@ -2335,6 +2357,10 @@ function enterMap(name, group, uid) {
     listenPins();
     listenChat();
     listenTrails();
+    // Admin "Close Room" sets a flag here — eject cleanly when it appears.
+    try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
+      if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
+    }); } catch (e) {}
     pushNotify('join', groupName, userName + ' joined the group');
     // Notifications default ON — silently re-subscribe to this room if permission is already granted
     setTimeout(autoEnableAlerts, 800);
@@ -3352,6 +3378,7 @@ function startLocationSharing() {
   var _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
   const onGpsFix = (pos) => {
+    if (window._roomClosed) return; // room was closed by an admin — stop writing
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     const now = Date.now();
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
@@ -3510,6 +3537,7 @@ function startLocationSharing() {
   // Single always-on heartbeat: keeps hidden + no-GPS members alive in the list.
   // (Live-GPS members are kept fresh by onGpsFix, so we don't write over them here.)
   var _noGpsHeartbeat = setInterval(function() {
+    if (window._roomClosed) return; // room closed by an admin — stop the heartbeat
     if (!(db && groupName && userId && userName)) return;
     if (locationHidden) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
@@ -4668,6 +4696,29 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   setTimeout(_go, 1500); // fallback so exit always completes even if offline
 });
 
+
+// Admin closed this room — stop everything, drop our presence so we don't recreate it,
+// show a notice, and return to the home screen.
+function _roomClosedByAdmin() {
+  if (window._roomClosed) return;
+  window._roomClosed = true;
+  try { if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat); } catch (_) {}
+  try { clearInterval(window._diagTimer); } catch (_) {}
+  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
+  try { stopNativeBackgroundTracking(); } catch (_) {}
+  try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
+  try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch (_) {}
+  try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (_) {}
+  var o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
+  o.innerHTML = '<svg class="licon" style="color:var(--accent);width:34px;height:34px;margin-bottom:12px"><use href="#ic-alert"/></svg>' +
+    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">Room closed</div>' +
+    '<div style="font-size:14px;color:#8b949e;max-width:300px;line-height:1.5">This room was closed by an admin. Returning to the home screen…</div>';
+  document.body.appendChild(o);
+  setTimeout(function() { location.reload(); }, 2600);
+}
 
 // Remove user from Firebase on page unload (tab close, browser close)
 window.addEventListener('beforeunload', function() {

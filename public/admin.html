@@ -254,6 +254,13 @@
     <div id="pin-type-breakdown"></div>
   </div>
 
+  <!-- Maintenance -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">&#128260; Maintenance</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">After you deploy a new build, push it to everyone who's currently using the app. They reload to the latest version and stay in their rooms.</div>
+    <button class="btn btn-warn" onclick="forceUpdateAll()">&#128260; Force all users to update</button>
+  </div>
+
   <!-- Danger zone -->
   <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.3);border-radius:12px;padding:14px 16px">
     <div style="font-size:13px;font-weight:700;color:var(--danger);margin-bottom:4px">&#9888; Danger Zone</div>
@@ -557,6 +564,31 @@ window.deleteNode = function(path, label) {
     window._fb.remove(window._fb.ref(window._fb.db, path));
     addLog('DELETED: ' + path, 'warn');
   }
+};
+
+// Close a room: eject everyone cleanly (their app shows "Room closed" and returns home),
+// then delete the room a few seconds later so nobody recreates it.
+window.closeAndNukeRoom = function(key, name) {
+  if (!confirm('Close and delete "' + name + '"?\n\nEveryone in it will be ejected to the home screen, and all its data is removed. Cannot be undone.')) return;
+  var fb = window._fb;
+  if (!fb) return;
+  try { fb.set(fb.ref(fb.db, 'gl/' + key + '/closed'), { ts: Date.now() }); } catch (e) {}
+  addLog('CLOSED room: ' + key + ' (ejecting members, deleting in 6s)', 'warn');
+  setTimeout(function() {
+    try { fb.remove(fb.ref(fb.db, 'gl/' + key)); } catch (e) {}
+    addLog('DELETED room: ' + key, 'warn');
+  }, 6000);
+};
+
+// Force every running app to reload to the latest deployed build (keeps users in their
+// rooms — they auto-rejoin on reload). Use after pushing an update.
+window.forceUpdateAll = function() {
+  if (!confirm('Force ALL active users to update now?\n\nEvery open app reloads to the latest version. They stay in their rooms.')) return;
+  var fb = window._fb;
+  if (!fb) return;
+  try { fb.set(fb.ref(fb.db, '_forceReload'), { ts: Date.now() }); } catch (e) {}
+  addLog('FORCED update for all active users', 'warn');
+  alert('Done — every open app will reload to the latest version within a few seconds.');
 };
 
 function renderDeviceMonitor(all, now) {
@@ -1317,7 +1349,7 @@ function loadAdmin() {
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/pins\',\'pins for '+displayName+'\')">Clear Pins</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/chat\',\'chat for '+displayName+'\')">Clear Chat</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/trails\',\'trails for '+displayName+'\')">Clear Trails</button>' +
-            '<button class="btn btn-danger" onclick="deleteNode(\'gl/'+key+'\',\'group '+displayName+'\')">Nuke Room</button>' +
+            '<button class="btn btn-danger" onclick="closeAndNukeRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">Close &amp; Nuke</button>' +
           '</div>';
         // Active = someone is currently in the room (live OR present-but-quiet). A user
         // who's there but whose updates are throttled shouldn't get demoted to Inactive.
