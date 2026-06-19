@@ -3,7 +3,7 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v8';
+const CACHE = 'groundlink-v9';
 const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -125,7 +125,7 @@ self.addEventListener('push', function(e) {
     body: data.body || '',
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    tag: data.type || 'groundlink',
+    tag: (data.type || 'groundlink') + (data.group ? '-' + data.group : ''),
     renotify: true,
     requireInteraction: isSOS,
     vibrate: isSOS ? [200, 100, 200, 100, 200] : [100, 50, 100],

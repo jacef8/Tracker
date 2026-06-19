@@ -34,15 +34,28 @@ app.post('/push', async function(req, res) {
     title: b.title || 'GroundLink',
     body:  b.body  || '',
     type:  b.type  || 'info',
+    group: group,
     url:   b.url   || '/'
   });
-  const base = DB_URL + '/gl/' + encodeURIComponent(group) + '/pushSubs';
+  const groupBase = DB_URL + '/gl/' + encodeURIComponent(group);
+  const base = groupBase + '/pushSubs';
   try {
-    const subs = await (await fetch(base + '.json')).json();
-    if (!subs) return res.json({ ok: true, sent: 0 });
+    // Members currently in the room.
+    const subs = (await (await fetch(base + '.json')).json()) || {};
+    // For join/leave activity, ALSO notify people who favorited this group but aren't
+    // in the room right now (their subscriptions live at gl/<group>/favSubs).
+    let favs = {};
+    if (b.toFavs) {
+      try { favs = (await (await fetch(groupBase + '/favSubs.json')).json()) || {}; } catch (e) { favs = {}; }
+    }
+    // Merge by uid so someone who's both a member and a favoriter is notified once.
+    const targets = {};
+    Object.entries(subs).forEach(function(e) { targets[e[0]] = { rec: e[1], from: base }; });
+    Object.entries(favs).forEach(function(e) { if (!targets[e[0]]) targets[e[0]] = { rec: e[1], from: groupBase + '/favSubs' }; });
+    if (!Object.keys(targets).length) return res.json({ ok: true, sent: 0 });
     let sent = 0;
-    await Promise.all(Object.entries(subs).map(async function(entry) {
-      const uid = entry[0], rec = entry[1];
+    await Promise.all(Object.entries(targets).map(async function(entry) {
+      const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
       if (uid === senderId || !rec || !rec.sub) return;
       let subscription;
       try { subscription = JSON.parse(rec.sub); } catch (e) { return; }
@@ -51,7 +64,7 @@ app.post('/push', async function(req, res) {
         sent++;
       } catch (err) {
         if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-          try { await fetch(base + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
+          try { await fetch(from + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
         }
       }
     }));
