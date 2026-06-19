@@ -2349,7 +2349,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 66;
+var APP_BUILD = 68;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2777,6 +2777,16 @@ function showJoinScreen() {
     this.style.borderColor = '';
     var nameErr = document.getElementById('name-required-msg');
     if (nameErr) nameErr.style.display = 'none';
+    // The user typed their own name — mark it custom so it sticks and isn't replaced by the
+    // Google account name on the next launch.
+    try { localStorage.setItem('gl_name_custom', '1'); } catch (e) {}
+  });
+  // Persist + sync the custom name when they finish editing.
+  document.getElementById('inp-name').addEventListener('change', function() {
+    var v = (this.value || '').trim();
+    if (!v) return;
+    try { localStorage.setItem('gl_name', v); localStorage.setItem('gl_name_custom', '1'); } catch (e) {}
+    try { if (window._glSync) window._glSync(); } catch (e) {}
   });
   document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
 }
@@ -6484,11 +6494,12 @@ document.addEventListener('click', function(e) {
   // Profile mirror in the database: gl/_users/<uid> = { name, friends, favs, colors, updated }
   function localProfile() {
     return {
-      name:    name(),
-      friends: LS.get('gl_friends') || '{}',
-      favs:    LS.get('gl_favs') || '[]',
-      colors:  LS.get('gl_user_colors') || '{}',
-      updated: Date.now()
+      name:       name(),
+      nameCustom: LS.get('gl_name_custom') === '1',
+      friends:    LS.get('gl_friends') || '{}',
+      favs:       LS.get('gl_favs') || '[]',
+      colors:     LS.get('gl_user_colors') || '{}',
+      updated:    Date.now()
     };
   }
   function pushProfile() {
@@ -6511,6 +6522,7 @@ document.addEventListener('click', function(e) {
     if (!p) return;
     try {
       if (p.name)    LS.set('gl_name', p.name);
+      if (p.nameCustom != null) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
       if (p.colors)  LS.set('gl_user_colors', typeof p.colors === 'string' ? p.colors : JSON.stringify(p.colors));
@@ -6570,12 +6582,18 @@ document.addEventListener('click', function(e) {
 
   function afterFirebaseUser(user) {
     if (!user) return;
-    setIdentity(user.uid, user.displayName || name(), 'google');
+    var googleName = (user.displayName || '').trim();
+    setIdentity(user.uid, googleName || name(), 'google');
     if (user.email) LS.set('gl_email', user.email);
     pullProfile(user.uid, function (p) {
       if (p) applyProfile(p);
-      pushProfile(); // either refresh timestamp, or migrate a guest's prefs up
+      // Use the Google display name only as the INITIAL default. Once the user has set their
+      // own name, that custom name sticks (and syncs across devices) — we don't overwrite it.
+      var custom = LS.get('gl_name_custom') === '1';
+      if (!custom && googleName) LS.set('gl_name', googleName);
+      pushProfile();
       refreshUI();
+      try { var ni = document.getElementById('inp-name'); if (ni && name()) ni.value = name(); } catch (e) {}
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
       try { if (window._watchInvites) window._watchInvites(); } catch (e) {}
       if (typeof toast === 'function') toast('Signed in as ' + (name() || 'you'), 2500);
