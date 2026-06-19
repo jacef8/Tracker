@@ -910,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 24</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 25</div>
   </div>
 </div>
 
@@ -2161,7 +2161,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 24 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 25 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2395,10 +2395,13 @@ function initMap() {
   map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
   map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
 
-  // Panning or zooming the map no longer cancels follow. While you're following,
-  // the map gently re-centers on your position every few seconds — so you can swipe
-  // around to look or pinch to change zoom, and it snaps right back. Your chosen zoom
-  // is preserved. Tap the locate button again to stop following.
+  // Following your OWN position persists through pan/zoom (swipe to look, pinch to zoom,
+  // it snaps back — tap the locate button to stop). But panning while following ANOTHER
+  // member hands control back to you and stops the snap-back, which is what you expect
+  // when you drag the map away from someone you're watching.
+  map.on('dragstart', function(e) {
+    if (e.originalEvent && followUid && followUid !== userId) stopFollowing();
+  });
 
   // All map control buttons registered here after map exists
   var layerBtn   = document.getElementById('layer-btn');
@@ -3099,7 +3102,7 @@ function startLocationSharing() {
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
         vis: document.visibilityState,
         hidden: !!locationHidden,
-        build: 24,
+        build: 25,
         ts: now
       });
     } catch (e) {}
@@ -4926,8 +4929,10 @@ document.getElementById('pin-hub-btn').addEventListener('click', openPinHub);
 // == LOCATE ME ====================================================
 // Global function called directly from onclick — bypasses addEventListener issues
 window._locateMeTapped = function() {
-  // If already following self — tap again to stop
-  if (followUid === userId) {
+  // If already following ANYONE (yourself or another member) — tap again to stop.
+  // This is the universal off-switch, important on desktop where you follow others
+  // but have no GPS of your own.
+  if (followUid) {
     stopFollowing();
     toast('Follow stopped', 1500);
     return;
