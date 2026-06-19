@@ -910,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 29</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 31</div>
   </div>
 </div>
 
@@ -986,6 +986,8 @@
   </button>
   <!-- Locate / Follow me -->
   <button id="locate-me" title="Zoom to me / Follow" type="button" onclick="window._locateMeTapped()"><svg class="licon licon-lg"><use href="#ic-target"/></svg></button>
+  <!-- Fit whole group in view -->
+  <button id="fit-all-btn" title="Show whole group" type="button" onclick="window._fitAllTapped()"><svg class="licon licon-lg"><use href="#ic-users"/></svg></button>
 </div>
 
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
@@ -1362,6 +1364,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Turn off to stay in the room &amp; chat, but hide your spot on the map</div></div></div>
       <span id="set-location-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div onclick="_setToggleSpeed()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-compass"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my speed</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Let the group see your speed while driving (over 25 mph)</div></div></div>
+      <span id="set-speed-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
       <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
@@ -1563,6 +1569,18 @@ function _refreshUserColor(uid) {
   document.querySelectorAll('[data-ucolor="' + uid + '"]').forEach(function(el) {
     if (el.classList.contains('user-avatar')) el.style.background = c; else el.style.background = c;
   });
+}
+// Show/hide the small "NN mph" label under a member's map dot. Only while driving
+// (>25 mph), with GPS, and the member is sharing speed (spdH not set).
+function _updateMarkerSpeed(el, data) {
+  var s = el && el.querySelector ? el.querySelector('.mk-speed') : null;
+  if (!s) return;
+  if (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) {
+    s.textContent = data.spd + ' mph';
+    s.style.display = 'block';
+  } else {
+    s.style.display = 'none';
+  }
 }
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
@@ -1766,6 +1784,7 @@ function _setPill(id, on) {
 function _syncSettings() {
   _setPill('set-alerts-pill', !!alertsOn);
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
+  _setPill('set-speed-pill', _shareSpeed());
   var cb = document.getElementById('toggle-parcels');
   _setPill('set-parcels-pill', !!(cb && cb.checked));
   var lp = document.getElementById('set-location-pill');
@@ -1792,6 +1811,20 @@ function _syncSettings() {
   }
 }
 function _setToggleLocation() { toggleLocationShare(locationHidden); } // hidden→share on, sharing→hide
+// Share-speed preference (per device, default ON). Controls whether OTHER members' apps
+// display your speed. Your speed is ALWAYS written to the database so the admin panel can
+// see everyone's speeds regardless of this setting.
+function _shareSpeed() { try { return localStorage.getItem('gl_share_speed') !== '0'; } catch (e) { return true; } }
+function _setShareSpeed(on) { try { localStorage.setItem('gl_share_speed', on ? '1' : '0'); } catch (e) {} }
+function _setToggleSpeed() {
+  _setShareSpeed(!_shareSpeed());
+  _syncSettings();
+  toast(_shareSpeed() ? 'Group can see your speed when driving' : 'Your speed is hidden from the group', 2300);
+  // Update the room right away so peers reflect it without waiting for the next fix.
+  try {
+    if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
+  } catch (e) {}
+}
 function _setToggleAlerts() { toggleAlerts(!alertsOn); setTimeout(_syncSettings, 350); }
 function _setToggleCrumbs() { if (typeof toggleBreadcrumbs === 'function') toggleBreadcrumbs(); setTimeout(_syncSettings, 60); }
 function _setToggleParcels() {
@@ -2275,7 +2308,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 29 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 31 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -3163,6 +3196,18 @@ function startLocationSharing() {
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
 
+    // Speed in mph — from the GPS Doppler reading when present, else position delta.
+    var _mph = 0;
+    if (pos.coords && pos.coords.speed != null && pos.coords.speed >= 0) {
+      _mph = pos.coords.speed * 2.23694;
+    } else if (window._prevSpeedFix) {
+      var _ds = (now - window._prevSpeedFix.ts) / 1000;
+      if (_ds > 1) _mph = (metersApart(window._prevSpeedFix.lat, window._prevSpeedFix.lng, lat, lng) / _ds) * 2.23694;
+    }
+    window._prevSpeedFix = { lat: lat, lng: lng, ts: now };
+    if (_mph < 1 || _mph > 200) _mph = 0; // drop GPS jitter / implausible values
+    window._lastSpeedMph = Math.round(_mph);
+
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
       fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
@@ -3171,10 +3216,11 @@ function startLocationSharing() {
       return;
     }
 
-    // Write real GPS position — clears the claiming placeholder
+    // Write real GPS position — clears the claiming placeholder. Speed is always written
+    // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat, lng, name: userName, accuracy: Math.round(accuracy * 3.28084), ts: now,
-      trail: breadcrumbsOn
+      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1
     });
 
     // Write breadcrumb if enabled and moved enough
@@ -3274,7 +3320,7 @@ function startLocationSharing() {
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
         vis: document.visibilityState,
         hidden: !!locationHidden,
-        build: 29,
+        build: 31,
         ts: now
       });
     } catch (e) {}
@@ -3470,6 +3516,13 @@ function listenUsers() {
           fontFamily: 'system-ui, sans-serif', userSelect: 'none',
         });
         el.textContent = initials(data.name);
+        el.style.position = 'relative';
+        // Small speed label that sits just under the dot (shown only while driving).
+        var _spdEl = document.createElement('div');
+        _spdEl.className = 'mk-speed';
+        _spdEl.style.cssText = 'position:absolute;top:48px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:800;color:#fff;background:rgba(0,0,0,.62);padding:1px 6px;border-radius:7px;white-space:nowrap;display:none;pointer-events:none;letter-spacing:.02em';
+        el.appendChild(_spdEl);
+        _updateMarkerSpeed(el, data);
 
         const popup = new mapboxgl.Popup({ offset: 18, closeButton: false });
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
@@ -3501,6 +3554,7 @@ function listenUsers() {
           el.style.borderColor  = borderColor;
           el.style.opacity      = opacity;
           el.style.color        = textColor;
+          _updateMarkerSpeed(el, data);
         }
       }
 
@@ -3516,6 +3570,9 @@ function listenUsers() {
         const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
         const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
         var _safeName = data.name.replace(/'/g, '');
+        // Speed — only when sharing is on, there's GPS, and they're driving (>25 mph).
+        var _speedHTML = (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps)
+          ? '<div class="pop-dist" style="color:#ffa657;display:flex;align-items:center;gap:5px">&#128663; ' + data.spd + ' mph</div>' : '';
         var _followBtn = !isMine
           ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
           : '';
@@ -3523,6 +3580,7 @@ function listenUsers() {
           '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
           '<div class="pop-label">' + data.name + '</div>' +
           _distHTML +
+          _speedHTML +
           '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
           _followBtn
         );
@@ -3549,6 +3607,7 @@ function listenUsers() {
           '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
+            ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
           '</div>' +
         '</div>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
@@ -5137,6 +5196,7 @@ window._locateMeTapped = function() {
     pos = [ll.lng, ll.lat];
   }
   if (pos) {
+    if (typeof _stopFitAll === 'function') _stopFitAll();
     map.flyTo({ center: pos, zoom: 17, duration: 800 });
     followUid = userId;
     clearInterval(followInterval);
@@ -5162,6 +5222,7 @@ var followInterval = null;
 
 window._followUser = function(uid, name) {
   // Always start/restart follow — don't toggle off on tap
+  if (typeof _stopFitAll === 'function') _stopFitAll();
   followUid = uid;
   clearInterval(followInterval);
   var isSelf = uid === userId;
@@ -5220,6 +5281,38 @@ function stopFollowing() {
   btn.style.borderColor = '';
   btn.style.boxShadow   = '';
 }
+
+// ── Fit whole group in view (toggle) ───────────────────────────────
+var fitAllInterval = null;
+function _stopFitAll() {
+  if (fitAllInterval) { clearInterval(fitAllInterval); fitAllInterval = null; }
+  var b = document.getElementById('fit-all-btn');
+  if (b) { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; b.style.boxShadow = ''; }
+}
+function _doFitAll() {
+  var pts = [];
+  Object.keys(userMarkers).forEach(function(uid) {
+    try { var ll = userMarkers[uid].getLngLat(); pts.push([ll.lng, ll.lat]); } catch (e) {}
+  });
+  if (window._lastGPS) pts.push([window._lastGPS.lng, window._lastGPS.lat]);
+  if (!pts.length) return false;
+  if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: Math.max(map.getZoom(), 14), duration: 700 }); return true; }
+  var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
+  pts.forEach(function(p) { b.extend(p); });
+  map.fitBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16, duration: 700 });
+  return true;
+}
+window._fitAllTapped = function() {
+  var btn = document.getElementById('fit-all-btn');
+  if (fitAllInterval) { _stopFitAll(); toast('Group view off', 1400); return; }
+  // Follow and group-view are mutually exclusive.
+  if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
+  if (_doFitAll() === false) { toast('No members with a location yet'); return; }
+  btn.style.background = 'var(--accent)'; btn.style.color = '#000';
+  btn.style.borderColor = 'var(--accent)'; btn.style.boxShadow = '0 0 15px rgba(240,165,0,0.5)';
+  fitAllInterval = setInterval(_doFitAll, 3000);
+  toast('Showing whole group — tap again to stop', 2200);
+};
 
 // dragstart wired inside initMap() below
 
