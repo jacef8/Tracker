@@ -172,6 +172,16 @@
     transition: background .12s, color .12s;
   }
   #map-controls button svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55)); }
+  /* Locate-button flyout (Follow Me / Show Group) */
+  #locate-menu { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); flex-direction: column; gap: 8px; align-items: stretch; }
+  #map-controls #locate-menu .locate-opt {
+    width: auto; height: auto; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(13,17,23,0.95); border: 1px solid rgba(240,165,0,0.6);
+    border-radius: 11px; padding: 10px 14px; font-size: 13px; font-weight: 700; color: #e6edf3;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  }
+  #map-controls #locate-menu .locate-opt:active { background: var(--accent); color: #0d1117; }
   #map-controls button:hover  { background: rgba(240,165,0,0.16); }
   #map-controls button:active { background: var(--accent); color: #0d1117; }
   /* Hide zoom buttons on mobile */
@@ -966,7 +976,7 @@
   </div>
 </div>
 <!-- Update-available banner (shown when a newer build is deployed) -->
-<div id="update-banner" onclick="location.reload()" style="display:none;position:fixed;top:calc(var(--safe-top) + 10px);left:50%;transform:translateX(-50%);z-index:1200;background:var(--accent);color:#000;font-weight:800;font-size:13px;padding:9px 16px;border-radius:22px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer;align-items:center;gap:8px;max-width:92vw;-webkit-tap-highlight-color:transparent">
+<div id="update-banner" onclick="window._applyUpdate()" style="display:none;position:fixed;top:calc(var(--safe-top) + 10px);left:50%;transform:translateX(-50%);z-index:1200;background:var(--accent);color:#000;font-weight:800;font-size:13px;padding:9px 16px;border-radius:22px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer;align-items:center;gap:8px;max-width:92vw;-webkit-tap-highlight-color:transparent">
   <svg class="licon licon-sm" style="color:#000"><use href="#ic-download"/></svg>
   <span>New version available — tap to update</span>
 </div>
@@ -990,10 +1000,14 @@
       <circle cx="12" cy="12" r="2" fill="#e6edf3"/>
     </svg>
   </button>
-  <!-- Locate / Follow me -->
-  <button id="locate-me" title="Zoom to me / Follow" type="button" onclick="window._locateMeTapped()"><svg class="licon licon-lg"><use href="#ic-target"/></svg></button>
-  <!-- Fit whole group in view -->
-  <button id="fit-all-btn" title="Show whole group" type="button" onclick="window._fitAllTapped()"><svg class="licon licon-lg"><use href="#ic-users"/></svg></button>
+  <!-- Locate / Follow — tap to reveal: Follow Me or Show Group -->
+  <div id="locate-wrap" style="position:relative;display:flex;align-items:center;justify-content:center">
+    <div id="locate-menu" style="display:none">
+      <button class="locate-opt" type="button" onclick="window._chooseFollowMe(event)"><svg class="licon licon-sm"><use href="#ic-target"/></svg>Follow Me</button>
+      <button class="locate-opt" type="button" onclick="window._chooseShowGroup(event)"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Show Group</button>
+    </div>
+    <button id="locate-me" title="Locate / Follow" type="button" onclick="window._locateBtnTapped()"><svg class="licon licon-lg"><use href="#ic-target"/></svg></button>
+  </div>
 </div>
 
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
@@ -1611,6 +1625,16 @@ function _followRecenter(lng, lat) {
   if (!followUid) return;
   try { map.easeTo({ center: [lng, lat], duration: 1400, easing: function(t) { return t; } }); } catch (e) {}
 }
+// True if a point is more than `marginPx` from the screen center — used so the periodic
+// follow timer only snaps back after you've actually panned away (no jump when centered).
+function _isOffCenter(lngLat, marginPx) {
+  try {
+    var p = map.project(lngLat);
+    var el = map.getContainer();
+    var dx = p.x - el.clientWidth / 2, dy = p.y - el.clientHeight / 2;
+    return Math.sqrt(dx * dx + dy * dy) > (marginPx || 70);
+  } catch (e) { return false; }
+}
 
 // Show/hide the small "NN mph" label under a member's map dot. Only while driving
 // (>25 mph), with GPS, and the member is sharing speed (spdH not set).
@@ -2070,7 +2094,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 34;
+var APP_BUILD = 37;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2095,6 +2119,27 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
     if (document.visibilityState === 'visible') check(); // and whenever the app regains focus
   });
 })();
+
+// Force a truly fresh load when the user taps "update": a plain reload can be served the
+// cached page by the service worker / web view, so we clear caches, drop the old worker,
+// and navigate to a cache-busted URL.
+window._applyUpdate = async function() {
+  var b = document.getElementById('update-banner');
+  if (b) { var sp = b.querySelector('span'); if (sp) sp.textContent = 'Updating…'; }
+  try {
+    if (window.caches && caches.keys) {
+      var keys = await caches.keys();
+      await Promise.all(keys.map(function(k) { return caches.delete(k); }));
+    }
+  } catch (e) {}
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(function(r) { return r.unregister(); }));
+    }
+  } catch (e) {}
+  location.replace(location.origin + location.pathname + '?v=' + Date.now());
+};
 
 // ══ DEBUG LOGGING ════════════════════════════════════════════════
 function writeDebugLog(grp, msg) {
@@ -4539,6 +4584,7 @@ document.getElementById('users-toggle-btn').addEventListener('click', () => {
 document.getElementById('map').addEventListener('click', () => {
   document.getElementById('user-drawer').classList.remove('open');
   setLocateMeVisible(true);
+  if (typeof _toggleLocateMenu === 'function') _toggleLocateMenu(false); // close the Follow/Group chooser
 });
 
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
@@ -5292,7 +5338,9 @@ window._locateMeTapped = function() {
       var cur = null;
       if (window._lastGPS) cur = [window._lastGPS.lng, window._lastGPS.lat];
       else if (userMarkers[userId]) { var ml = userMarkers[userId].getLngLat(); cur = [ml.lng, ml.lat]; }
-      if (cur) map.easeTo({ center: cur, duration: 800 }); // keep your chosen zoom — don't snap back
+      // Only snap back if you've panned the icon off-center — otherwise the on-fix
+      // recenter already keeps you centered, and re-easing here just causes a jump.
+      if (cur && _isOffCenter(cur)) map.easeTo({ center: cur, duration: 800 });
     }, 3000);
     toast('Following your position — tap the locate button again to stop', 2000);
   } else {
@@ -5325,9 +5373,12 @@ window._followUser = function(uid, name) {
       if (m) { var ol = m.getLngLat(); target = [ol.lng, ol.lat]; }
     }
     // Set zoom only on the first centering; after that keep the user's chosen zoom so
-    // they can zoom out (or in) freely while still being followed.
-    if (target) map.easeTo(initial ? { center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 }
-                                   : { center: target, duration: 800 });
+    // they can zoom out (or in) freely while still being followed. On the periodic tick,
+    // only recenter if they've panned off-center (the on-fix recenter handles the rest,
+    // so this avoids a jump every few seconds while already centered).
+    if (!target) return;
+    if (initial) map.easeTo({ center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+    else if (_isOffCenter(target)) map.easeTo({ center: target, duration: 800 });
   }
   doFollow(true);
   followInterval = setInterval(function(){ doFollow(false); }, 3000);
@@ -5338,6 +5389,7 @@ window._followUser = function(uid, name) {
 function setLocateMeVisible(visible) {
   var btn = document.getElementById('locate-me');
   if (!btn) return;
+  if (typeof _toggleLocateMenu === 'function') _toggleLocateMenu(false); // never leave the chooser floating
   // If being asked to show, double-check no panels are actually open
   if (visible) {
     var anyOpen =
@@ -5365,12 +5417,46 @@ function stopFollowing() {
   btn.style.boxShadow   = '';
 }
 
+// ── Locate-button flyout (Follow Me / Show Group) ──────────────────
+function _toggleLocateMenu(force) {
+  var m = document.getElementById('locate-menu');
+  if (!m) return;
+  var isOpen = m.style.display === 'flex';
+  var open = (force === undefined) ? !isOpen : force;
+  m.style.display = open ? 'flex' : 'none';
+}
+// Main locate button: if a mode (follow or group) is active, tapping stops it; otherwise
+// it reveals the Follow Me / Show Group chooser.
+window._locateBtnTapped = function() {
+  var following = (typeof followUid !== 'undefined') && followUid;
+  var grouping = !!fitAllInterval;
+  if (following || grouping) {
+    if (following && typeof stopFollowing === 'function') stopFollowing();
+    if (grouping) _stopFitAll();
+    _toggleLocateMenu(false);
+    toast('Stopped', 1200);
+    return;
+  }
+  _toggleLocateMenu();
+};
+window._chooseFollowMe = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._locateMeTapped(); };
+window._chooseShowGroup = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._fitAllTapped(); };
+
 // ── Fit whole group in view (toggle) ───────────────────────────────
 var fitAllInterval = null;
 function _stopFitAll() {
   if (fitAllInterval) { clearInterval(fitAllInterval); fitAllInterval = null; }
-  var b = document.getElementById('fit-all-btn');
-  if (b) { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; b.style.boxShadow = ''; }
+  // Group-view shares the locate button's active glow; clear it unless follow is on.
+  var b = document.getElementById('locate-me');
+  if (b && !(typeof followUid !== 'undefined' && followUid)) {
+    b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; b.style.boxShadow = '';
+  }
+}
+function _allWithinView(pts, marginPx) {
+  try {
+    var el = map.getContainer(), w = el.clientWidth, h = el.clientHeight;
+    return pts.every(function(p) { var s = map.project(p); return s.x > marginPx && s.x < w - marginPx && s.y > marginPx && s.y < h - marginPx; });
+  } catch (e) { return false; }
 }
 function _doFitAll() {
   var pts = [];
@@ -5379,22 +5465,27 @@ function _doFitAll() {
   });
   if (window._lastGPS) pts.push([window._lastGPS.lng, window._lastGPS.lat]);
   if (!pts.length) return false;
-  if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: Math.max(map.getZoom(), 14), duration: 700 }); return true; }
+  if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: Math.max(map.getZoom(), 14), duration: 800 }); window._fitAllInited = true; return true; }
+  // After the first fit, leave the view alone while everyone stays comfortably on screen —
+  // only re-fit when someone drifts near the edge. This stops the every-few-seconds jump
+  // and lets the smooth marker glide show through.
+  if (window._fitAllInited && _allWithinView(pts, 90)) return true;
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
-  map.fitBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16, duration: 700 });
+  map.fitBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16, duration: 900 });
+  window._fitAllInited = true;
   return true;
 }
 window._fitAllTapped = function() {
-  var btn = document.getElementById('fit-all-btn');
+  var btn = document.getElementById('locate-me');
   if (fitAllInterval) { _stopFitAll(); toast('Group view off', 1400); return; }
   // Follow and group-view are mutually exclusive.
   if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
+  window._fitAllInited = false; // force a fresh initial fit
   if (_doFitAll() === false) { toast('No members with a location yet'); return; }
-  btn.style.background = 'var(--accent)'; btn.style.color = '#000';
-  btn.style.borderColor = 'var(--accent)'; btn.style.boxShadow = '0 0 15px rgba(240,165,0,0.5)';
+  if (btn) { btn.style.background = '#1f6feb'; btn.style.color = '#fff'; btn.style.borderColor = '#1f6feb'; btn.style.boxShadow = '0 0 15px rgba(31,111,235,0.6)'; }
   fitAllInterval = setInterval(_doFitAll, 3000);
-  toast('Showing whole group — tap again to stop', 2200);
+  toast('Showing whole group — tap the locate button to stop', 2400);
 };
 
 // dragstart wired inside initMap() below
