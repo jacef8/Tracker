@@ -94,13 +94,14 @@
     border: 1px solid rgba(240,165,0,0.22);
     border-top: 2px solid rgba(240,165,0,0.55);
     box-shadow: 0 8px 40px rgba(0,0,0,0.6);
-    border-radius: 16px; padding: 22px 20px 20px;
-    display: flex; flex-direction: column; gap: 12px;
+    border-radius: 16px; padding: 13px 16px 14px;
+    display: flex; flex-direction: column; gap: 9px;
     margin: auto;
   }
   #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; }
   #join-pager::-webkit-scrollbar { display: none; }
-  .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 12px; padding: 0 2px; align-self: flex-start; }
+  .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 9px; padding: 0 2px; align-self: flex-start; }
+  #room-list { max-height: 30vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .jtab.active { background: var(--accent); color: #000; }
   .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
@@ -874,12 +875,11 @@
 <!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
 <div id="join-screen" style="display:none">
   <div class="join-card">
-    <div style="display:flex;align-items:center;gap:14px">
-      <img src="/icons/icon-192.png" alt="GroundLink" style="width:56px;height:56px;border-radius:14px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.4)" />
+    <div style="display:flex;align-items:center;gap:12px">
+      <img src="/icons/icon-192.png" alt="GroundLink" style="width:42px;height:42px;border-radius:11px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.4)" />
       <div>
-        <div class="join-logo">GroundLink</div>
-        <div class="join-title">Live Field Map</div>
-        <div class="join-sub" style="margin-top:2px">Satellite · Live positions · Shared pins</div>
+        <div class="join-title" style="font-size:20px">GroundLink</div>
+        <div class="join-sub">Live field map · shared pins</div>
       </div>
     </div>
 
@@ -929,7 +929,6 @@
         <div>
           <div class="field-label">Group name</div>
           <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
-          <div class="join-hint">Anyone who types the same group name will appear on your map together.</div>
           <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a group name or select one above</div>
         </div>
 
@@ -2349,7 +2348,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 68;
+var APP_BUILD = 69;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -6550,20 +6549,17 @@ document.addEventListener('click', function(e) {
       statusEl.style.display = 'block';
       if (signedIn) {
         statusEl.innerHTML =
-          '<div style="display:flex;align-items:center;gap:9px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:9px 12px">' +
-            '<span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>' +
-            '<div style="min-width:0"><div style="font-size:13px;color:var(--text);font-weight:600">Signed in as ' + esc(name() || 'you') + '</div>' +
-            '<div style="font-size:11px;color:#a7b0bd">Rooms you create &amp; favorite are saved to your account</div></div>' +
+          '<div style="display:flex;align-items:center;gap:9px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:8px 12px">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>' +
+            '<div style="font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(name() || 'you') + ' <span style="color:#a7b0bd;font-weight:400">· saved</span></div>' +
           '</div>';
       } else {
         statusEl.innerHTML =
-          '<div style="background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.4);border-radius:10px;padding:10px 12px">' +
-            '<div style="font-size:12.5px;color:var(--text);line-height:1.45;margin-bottom:9px">You&rsquo;re a <b>guest</b> — sign in to save your rooms &amp; favorites and keep them on every device.</div>' +
-            '<button onclick="window.GLAuth && GLAuth.signInGoogle()" style="width:100%;padding:10px;background:#fff;border:none;border-radius:8px;color:#1f1f1f;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">' +
-              '<svg width="16" height="16" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>' +
-              'Sign in with Google' +
-            '</button>' +
-          '</div>';
+          '<button onclick="window.GLAuth && GLAuth.signInGoogle()" style="width:100%;padding:10px;background:#fff;border:none;border-radius:10px;color:#1f1f1f;font-size:13.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">' +
+            '<svg width="16" height="16" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>' +
+            'Sign in with Google' +
+          '</button>' +
+          '<div style="font-size:11px;color:#a7b0bd;text-align:center;margin-top:5px">or stay a guest — signing in saves your groups across devices</div>';
       }
     }
     try { var ni = document.getElementById('inp-name'); if (ni && !ni.value && name()) ni.value = name(); } catch (e) {}
