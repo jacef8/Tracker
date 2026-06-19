@@ -1053,12 +1053,26 @@ function clearAllDebugLogs() {
 // Delete every room currently listed under the Inactive sub-tab (empty rooms that
 // still had activity in the last 24h). Active rooms with live members are untouched.
 function clearInactiveRooms() {
-  var keys = window._retiredKeys || [];
+  var keys = (window._retiredKeys || []).slice();
   if (!keys.length) { alert('No inactive rooms to clear.'); return; }
   if (!confirm('Delete ' + keys.length + ' inactive room' + (keys.length > 1 ? 's' : '') + '? This removes their pins, chat, trails and activity logs. Cannot be undone.')) return;
   var fb = window._fb;
-  if (!fb || !fb.remove) return;
-  keys.forEach(function(k) { try { fb.remove(fb.ref(fb.db, 'gl/' + k)); } catch (e) {} });
+  if (!fb || !fb.remove) { alert('Not connected to the database yet — try again in a moment.'); return; }
+  var done = 0, fail = 0, errMsg = '', pending = keys.length;
+  function finish() {
+    alert('Cleared ' + done + ' of ' + keys.length + ' room' + (keys.length !== 1 ? 's' : '') +
+          (fail ? '\n' + fail + ' failed: ' + errMsg : '') +
+          (done ? '' : '\n\nIf rooms reappear, a device is still in them and recreating them.'));
+  }
+  keys.forEach(function(k) {
+    try {
+      var p = fb.remove(fb.ref(fb.db, 'gl/' + k));
+      if (p && typeof p.then === 'function') {
+        p.then(function() { done++; if (--pending === 0) finish(); },
+               function(e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); });
+      } else { done++; if (--pending === 0) finish(); }
+    } catch (e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); }
+  });
 }
 
 function loadAllDebugLogs(allData) {
