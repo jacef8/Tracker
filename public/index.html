@@ -888,6 +888,9 @@
       <svg class="licon licon-sm" style="color:var(--accent);margin-right:2px"><use href="#ic-pin"/></svg>You&#39;ve been invited to <strong id="invite-room-name" style="color:var(--accent)"></strong>.<br>Enter your name below to join.
     </div>
 
+    <!-- In-app invites from people inside a room -->
+    <div id="invite-inbox" style="display:none"></div>
+
     <div>
       <div class="field-label">Your name</div>
       <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
@@ -903,12 +906,12 @@
           Sign in with Google
         </button>
         <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px">
-          <button type="button" onclick="window.GLAuth && GLAuth.openBackup()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Back up this phone</button>
+          <button type="button" onclick="window.GLAuth && GLAuth.openBackup()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Back up my profile</button>
           <span style="color:var(--border)">·</span>
           <button id="btn-restore" type="button" onclick="window.GLAuth && GLAuth.openRestore()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Restore from code</button>
         </div>
         <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:8px;text-align:center">
-          <strong style="color:var(--text)">Guest</strong> keeps your name &amp; friends on this phone. <strong style="color:var(--text)">Signed in</strong> carries them to any device.
+          <strong style="color:var(--text)">Guest</strong> keeps your name &amp; friends on this device. <strong style="color:var(--text)">Signed in</strong> carries them to any device.
         </div>
       </div>
       <!-- Signed-in view -->
@@ -1188,7 +1191,7 @@
     <!-- SHOW code view -->
     <div id="backup-show">
       <div style="font-size:17px;font-weight:800;margin-bottom:4px">Your backup code</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Save this somewhere safe. Enter it on a new phone to bring back your name, friends &amp; favorites — no login needed.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Save this somewhere safe. Enter it on any other device to bring back your name, friends &amp; favorites — no login needed.</div>
       <div id="backup-code-val" style="font-family:monospace;font-size:18px;font-weight:700;letter-spacing:1px;color:var(--accent);background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:13px;text-align:center;word-break:break-all;margin-bottom:12px">—</div>
       <button onclick="window.GLAuth && GLAuth.copyCode()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Copy code</button>
       <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Close</button>
@@ -1196,12 +1199,35 @@
     <!-- RESTORE code view -->
     <div id="backup-restore" style="display:none">
       <div style="font-size:17px;font-weight:800;margin-bottom:4px">Restore from code</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Paste the backup code from your other phone to recover your name, friends &amp; favorites.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Paste the backup code from your other device to recover your name, friends &amp; favorites.</div>
       <input id="backup-code-input" class="join-input" placeholder="Paste your code" autocomplete="off" style="margin-bottom:12px;font-family:monospace" />
       <div id="backup-restore-msg" style="display:none;font-size:12px;margin-bottom:10px"></div>
       <button onclick="window.GLAuth && GLAuth.doRestore()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Restore</button>
       <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Cancel</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ OWNER: member controls (kick / transfer ownership) ══════════════ -->
+<div id="owner-member-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:320px">
+    <div style="font-size:16px;font-weight:800;margin-bottom:3px">Owner controls</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">For <b id="ownmem-name" style="color:var(--accent)"></b></div>
+    <button onclick="window._makeOwner()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
+    <button onclick="window._kickMember()" style="width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove &amp; block from room</button>
+    <button onclick="document.getElementById('owner-member-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Cancel</button>
+  </div>
+</div>
+
+<!-- ══ INVITE PICKER — share link or invite a favorite directly ════════ -->
+<div id="invite-picker-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:340px;max-height:84vh;overflow-y:auto">
+    <div style="font-size:16px;font-weight:800;margin-bottom:3px">Invite to this room</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or invite one of your favorites straight into the room.</div>
+    <button onclick="document.getElementById('invite-picker-modal').style.display='none';shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Your favorites</div>
+    <div id="invite-pick-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
+    <button onclick="document.getElementById('invite-picker-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Close</button>
   </div>
 </div>
 
@@ -1470,11 +1496,12 @@
       <div id="ri-room" style="font-size:16px;font-weight:700;color:var(--accent);word-break:break-word;margin-top:2px"></div>
     </div>
     <div id="ri-pin-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px"></div>
-    <button onclick="closeRoomInfo();shareRoomInvite();" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;width:100%;text-align:left">
+    <div id="ri-vis-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:none"></div>
+    <button onclick="closeRoomInfo();window._openInvitePicker();" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;width:100%;text-align:left">
       <svg class="licon" style="color:var(--accent)"><use href="#ic-link"/></svg>
       <div>
         <div style="font-size:13px;font-weight:600;color:var(--text)">Invite someone to this room</div>
-        <div style="font-size:11px;color:var(--muted)">Send a link that opens straight here</div>
+        <div style="font-size:11px;color:var(--muted)">Send a link, or invite a favorite directly</div>
       </div>
     </button>
   </div>
@@ -1949,6 +1976,8 @@ function openRoomInfo() {
   if (row) {
     var head = '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Passcode</div>';
     var editBtn = function(txt) {
+      // Only the room owner can set or change the passcode.
+      if (!window._isRoomOwner) return '';
       return '<button onclick="_editPasscode()" style="margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer">' + txt + '</button>';
     };
     if (!window._roomHasPin) {
@@ -1974,8 +2003,37 @@ function openRoomInfo() {
       }
     }
   }
+  // Visibility control — owner only.
+  var visRow = document.getElementById('ri-vis-row');
+  if (visRow) {
+    if (window._isRoomOwner) {
+      visRow.style.display = 'block';
+      var vis = window._roomVisibility || 'public';
+      var vbtn = function(val, label) {
+        var on = (vis === val);
+        return '<button onclick="window._setRoomVisibility(\'' + val + '\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (on ? 'rgba(240,165,0,.12)' : 'var(--surface)') + ';color:' + (on ? 'var(--accent)' : 'var(--text)') + ';font-size:12px;font-weight:700;cursor:pointer">' + label + '</button>';
+      };
+      visRow.innerHTML =
+        '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Visibility</div>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' + vbtn('public', '🌐 Public') + vbtn('private', '🔒 Private') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:6px">' + (vis === 'private' ? 'Hidden from the home directory — join by name or invite link.' : 'Listed in the home directory so anyone can find it.') + '</div>';
+    } else {
+      visRow.style.display = 'none';
+    }
+  }
   document.getElementById('room-info-sheet').style.display = 'block';
 }
+function renderRoomInfoOwner() {
+  var sheet = document.getElementById('room-info-sheet');
+  if (sheet && sheet.style.display === 'block') openRoomInfo();
+}
+window._setRoomVisibility = function(v) {
+  if (!window._isRoomOwner || !db || !groupName) return;
+  try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), v); } catch (e) {}
+  window._roomVisibility = v;
+  toast(v === 'private' ? 'Room set to private' : 'Room set to public', 2200);
+  renderRoomInfoOwner();
+};
 function closeRoomInfo() { document.getElementById('room-info-sheet').style.display = 'none'; }
 function _editPasscode() { closeRoomInfo(); if (window._openSetPasscode) window._openSetPasscode(); }
 function _copyRoomPin(pin) {
@@ -2247,7 +2305,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 54;
+var APP_BUILD = 57;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2406,8 +2464,41 @@ function enterMap(name, group, uid) {
     // Creator picked a visibility for this brand-new group — record it on the config.
     if (window._pendingVisibility) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
+      // The creator of a brand-new group is its owner.
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (_) {}
       window._pendingVisibility = null;
     }
+    // ── Room ownership ────────────────────────────────────────────────
+    // Track who owns this room. If no owner has ever been recorded (older
+    // rooms created before this feature), the first person to open it claims it.
+    window._isRoomOwner = false;
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/owner'), function(snap) {
+        var owner = snap.val();
+        if (!owner) {
+          try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (e) {}
+          window._isRoomOwner = true;
+        } else {
+          window._isRoomOwner = (owner === userId);
+        }
+        try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
+    // Track visibility so the owner's Room Info toggle reflects the live value.
+    window._roomVisibility = 'public';
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/visibility'), function(snap) {
+        window._roomVisibility = snap.val() || 'public';
+        try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
+    // ── Ban enforcement ──────────────────────────────────────────────
+    // If the owner removes me from the room, eject cleanly back to home.
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/banned/' + userId), function(snap) {
+        if (snap.val() && !window._roomClosed) _removedByOwner();
+      });
+    } catch (e) {}
     // Claim our slot
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), claiming: true
@@ -2609,6 +2700,8 @@ function showJoinScreen() {
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
   setTimeout(initInstallTip, 50);
+  // Refresh any pending in-app invites for the home screen.
+  try { if (window._watchInvites) window._watchInvites(); if (window._renderInviteInbox) window._renderInviteInbox(); } catch (e) {}
 
   // iOS install hint
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -3964,6 +4057,7 @@ function listenUsers() {
         '</div>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
+          ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
       // Tap the avatar dot → set this member's color (only for others). Stops the tap from
@@ -3972,6 +4066,8 @@ function listenUsers() {
       if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       var _frb = row.querySelector('.ufriend-btn');
       if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
+      var _ob = row.querySelector('.uowner-btn');
+      if (_ob) _ob.addEventListener('click', function(e) { e.stopPropagation(); window._ownerMemberMenu(uid, data.name); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         if (!hasGps) {
@@ -4741,15 +4837,20 @@ function listenChat() {
   fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
     const msgs = snap.val() || {};
     const container = document.getElementById('chat-messages');
-    const sorted = Object.values(msgs).sort((a, b) => a.ts - b.ts);
+    const sorted = Object.entries(msgs).map(([k, v]) => Object.assign({ _key: k }, v)).sort((a, b) => a.ts - b.ts);
 
     container.innerHTML = '';
     sorted.forEach(m => {
       const isMine = m.uid === userId;
+      const canDel = isMine || window._isRoomOwner;
       const div = document.createElement('div');
       div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
-      div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text;
+      div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text +
+        (canDel ? ' <button class="msg-del" data-k="' + m._key + '" title="Delete message" style="margin-left:6px;background:none;border:none;color:rgba(230,237,243,.45);font-size:12px;line-height:1;cursor:pointer;padding:0 2px;vertical-align:middle">&#10005;</button>' : '');
       container.appendChild(div);
+    });
+    container.querySelectorAll('.msg-del').forEach(function(b) {
+      b.addEventListener('click', function(e) { e.stopPropagation(); window._deleteMsg(b.getAttribute('data-k')); });
     });
     // Always scroll to bottom — use requestAnimationFrame so DOM is painted first
     requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
@@ -4793,6 +4894,22 @@ function sendChat(text, isPin = false) {
   fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
   if (!isPin) pushNotify('chat', groupName + ' — new message', userName + ': ' + text.trim());
 }
+
+// Delete a chat message. Allowed for the message's author or the room owner.
+window._deleteMsg = function(key) {
+  if (!key || !db || !groupName) return;
+  try {
+    fbOnValue(fbRef(db, 'gl/' + groupName + '/chat/' + key), function(snap) {
+      var m = snap.val();
+      if (!m) return;
+      if (m.uid === userId || window._isRoomOwner) {
+        fbRemove(fbRef(db, 'gl/' + groupName + '/chat/' + key));
+      } else {
+        toast('Only the sender or room owner can delete this', 2500);
+      }
+    }, { onlyOnce: true });
+  } catch (e) {}
+};
 
 document.getElementById('chat-send').addEventListener('click', () => {
   const inp = document.getElementById('chat-input');
@@ -4969,6 +5086,157 @@ function _roomClosedByAdmin() {
   document.body.appendChild(o);
   setTimeout(function() { location.reload(); }, 2600);
 }
+
+// The room owner removed this user — eject cleanly to the home screen.
+function _removedByOwner() {
+  if (window._roomClosed) return;
+  window._roomClosed = true;
+  try { if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat); } catch (_) {}
+  try { clearInterval(window._diagTimer); } catch (_) {}
+  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
+  try { stopNativeBackgroundTracking(); } catch (_) {}
+  try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
+  try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch (_) {}
+  try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (_) {}
+  var o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
+  o.innerHTML = '<svg class="licon" style="color:var(--danger);width:34px;height:34px;margin-bottom:12px"><use href="#ic-alert"/></svg>' +
+    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">Removed from room</div>' +
+    '<div style="font-size:14px;color:#8b949e;max-width:300px;line-height:1.5">The room owner removed you from this group. Returning to the home screen…</div>';
+  document.body.appendChild(o);
+  setTimeout(function() { location.reload(); }, 2800);
+}
+
+// ══ OWNER MEMBER CONTROLS ════════════════════════════════════════════
+var _ownMemUid = null;
+window._ownerMemberMenu = function(uid, name) {
+  if (!window._isRoomOwner || uid === userId) return;
+  _ownMemUid = uid;
+  var nm = document.getElementById('ownmem-name'); if (nm) nm.textContent = name || 'this member';
+  document.getElementById('owner-member-modal').style.display = 'flex';
+};
+window._kickMember = function() {
+  var uid = _ownMemUid;
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  try {
+    fbSet(fbRef(db, 'gl/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
+    fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
+    fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
+  } catch (e) {}
+  toast('Removed from the room', 2500);
+};
+window._makeOwner = function() {
+  var uid = _ownMemUid;
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), uid); } catch (e) {}
+  window._isRoomOwner = false;
+  toast('Ownership transferred', 2500);
+};
+
+// ══ INVITE A FAVORITE DIRECTLY (in-app delivery via Firebase) ════════════
+function _escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); }
+
+window._openInvitePicker = function() {
+  var listEl = document.getElementById('invite-pick-list');
+  if (!listEl) return;
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var entries = Object.keys(friends).map(function(u) { return [u, friends[u]]; });
+  if (!entries.length) {
+    listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">You haven’t starred anyone yet. Tap the &#9734; next to a person in the member list to add them, then you can invite them here in one tap.</div>';
+  } else {
+    listEl.innerHTML = entries.map(function(e) {
+      return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px">' +
+               '<span style="flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(e[1]) + '</span>' +
+               '<button onclick="window._sendRoomInvite(\'' + _escHtml(e[0]) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>' +
+             '</div>';
+    }).join('');
+  }
+  document.getElementById('invite-picker-modal').style.display = 'flex';
+};
+
+window._sendRoomInvite = function(uid) {
+  if (!uid || !db || !groupName) return;
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var nm = friends[uid] || 'them';
+  var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
+  var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
+  if (pin) rec.pin = pin;
+  try { var r = fbPush(fbRef(db, 'gl/_invites/' + uid)); fbSet(r, rec); } catch (e) {}
+  toast('Invited ' + nm + (pin ? '' : '') , 2200);
+};
+
+// ── Receiving: watch my invite inbox and surface it on the home screen ──
+window._pendingInvites = [];
+function _watchInvites() {
+  var f = window._fb; if (!f || !f.db) return;
+  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  if (!uid) return;
+  if (window._inviteWatchUid === uid) return; // already watching this id
+  window._inviteWatchUid = uid;
+  try {
+    f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
+      var data = snap.val() || {};
+      window._pendingInvites = Object.keys(data)
+        .map(function(k) { var v = data[k] || {}; v._key = k; return v; })
+        .sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
+      _renderInviteInbox();
+    });
+  } catch (e) {}
+}
+window._watchInvites = _watchInvites;
+
+function _renderInviteInbox() {
+  var box = document.getElementById('invite-inbox');
+  if (!box) return;
+  var list = window._pendingInvites || [];
+  // Only show on the home/join screen (not while inside a room).
+  var joinVisible = false;
+  try { var js = document.getElementById('join-screen'); joinVisible = js && js.style.display !== 'none'; } catch (e) {}
+  if (!list.length || !joinVisible) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var inv = list[0];
+  var more = list.length > 1 ? '<div style="font-size:11px;color:var(--muted);margin-top:7px">+' + (list.length - 1) + ' more invite' + (list.length - 1 > 1 ? 's' : '') + '</div>' : '';
+  box.style.display = 'block';
+  box.innerHTML =
+    '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
+      '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#00e676;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to <strong style="color:#00e676">' + _escHtml(inv.room || 'a room') + '</strong>' + (inv.pin ? ' · one-tap join' : '') + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:9px">' +
+        '<button onclick="window._acceptInvite(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:#00e676;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Join</button>' +
+        '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
+      '</div>' + more +
+    '</div>';
+}
+window._renderInviteInbox = _renderInviteInbox;
+
+window._acceptInvite = function(key) {
+  var inv = (window._pendingInvites || []).filter(function(i) { return i._key === key; })[0];
+  if (!inv) return;
+  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  var f = window._fb;
+  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  window._inviteRoom = inv.room;
+  window._invitePin = inv.pin || null;
+  showInviteJoin(inv.room, inv.pin || null);
+};
+window._dismissInvite = function(key) {
+  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  var f = window._fb;
+  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+};
+
+// Start watching once Firebase is ready (and again if identity changes after sign-in).
+(function _initInviteWatch() {
+  var tries = 0;
+  var t = setInterval(function() {
+    tries++;
+    if (window._fb && window._fb.db) { _watchInvites(); }
+    if (tries > 60) clearInterval(t);
+  }, 500);
+})();
 
 // Remove user from Firebase on page unload (tab close, browser close)
 window.addEventListener('beforeunload', function() {
@@ -5996,6 +6264,14 @@ function checkGroupPasscode(name, group, uid, invitePin) {
     }
 
     var fb = window._fb;
+    // Blocked by the room owner? Refuse entry (covers invite links too).
+    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/banned/' + uid), function(bsnap) {
+      if (bsnap.val()) { toast('The owner has removed you from this room.', 4000); return; }
+      _continuePasscode();
+    }, { onlyOnce: true });
+    return;
+
+    function _continuePasscode() {
     fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/pin'), function(snap) {
       var storedHash = snap.val();
       if (!storedHash) {
@@ -6019,6 +6295,7 @@ function checkGroupPasscode(name, group, uid, invitePin) {
       }
       _showPasscodePrompt(name, group, uid, storedHash);
     }, { onlyOnce: true });
+    } // end _continuePasscode
   }, 80);
 }
 
@@ -6186,6 +6463,7 @@ document.addEventListener('click', function(e) {
       pushProfile(); // either refresh timestamp, or migrate a guest's prefs up
       refreshUI();
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
+      try { if (window._watchInvites) window._watchInvites(); } catch (e) {}
       if (typeof toast === 'function') toast('Signed in as ' + (name() || 'you'), 2500);
     });
   }
@@ -6273,6 +6551,7 @@ document.addEventListener('click', function(e) {
       applyProfile(p);
       refreshUI();
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
+      try { window._inviteWatchUid = null; if (window._watchInvites) window._watchInvites(); } catch (e) {}
       show('Restored! Your name, friends & favorites are back.', true);
       setTimeout(closeBackup, 1400);
     });
