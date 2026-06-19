@@ -910,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 25</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 26</div>
   </div>
 </div>
 
@@ -2161,7 +2161,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 25 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 26 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2940,7 +2940,18 @@ async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
   window._bgGeoStarted = true;
   try {
-    var BG = window.Capacitor.registerPlugin('BackgroundGeolocation');
+    // The Capacitor bridge exposes registered native plugins on Capacitor.Plugins.
+    // (Older code used Capacitor.registerPlugin(), which isn't a function in this
+    // runtime — that was why the background service never started.)
+    var cap = window.Capacitor || {};
+    var BG = (cap.Plugins && cap.Plugins.BackgroundGeolocation)
+          || (typeof cap.registerPlugin === 'function' && cap.registerPlugin('BackgroundGeolocation'))
+          || null;
+    if (!BG || typeof BG.addWatcher !== 'function') {
+      window._bgGeoError = 'BackgroundGeolocation plugin not found on the Capacitor bridge';
+      window._bgGeoStarted = false;
+      return;
+    }
     window._bgGeo = BG;
     window._bgWatcherId = await BG.addWatcher({
       backgroundTitle: 'GroundLink is sharing your location',
@@ -3102,7 +3113,7 @@ function startLocationSharing() {
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
         vis: document.visibilityState,
         hidden: !!locationHidden,
-        build: 25,
+        build: 26,
         ts: now
       });
     } catch (e) {}
