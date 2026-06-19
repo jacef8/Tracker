@@ -1487,6 +1487,14 @@ document.getElementById('share-app-btn').addEventListener('click', async () => {
     url: 'https://tracker-production-3b03.up.railway.app/'
   };
   try {
+    // Native app first: the Android web view doesn't expose the Web Share API, so use the
+    // Capacitor Share plugin to open the real system share sheet (Messages, etc.).
+    var _cap = window.Capacitor || {};
+    var _SharePlugin = _cap.Plugins && _cap.Plugins.Share;
+    if (_isNativeApp() && _SharePlugin && _SharePlugin.share) {
+      await _SharePlugin.share({ title: shareData.title, text: shareData.text + ' ' + shareData.url, url: shareData.url, dialogTitle: 'Share GroundLink' });
+      return;
+    }
     if (navigator.share) {
       await navigator.share(shareData);
     } else {
@@ -1576,6 +1584,34 @@ function _refreshUserColor(uid) {
     if (el.classList.contains('user-avatar')) el.style.background = c; else el.style.background = c;
   });
 }
+// Glide a marker from its current spot to a new one over ~1.4s (constant speed) instead
+// of teleporting, so movement looks smooth. Big jumps snap instantly.
+function _animateMarker(marker, toLng, toLat) {
+  if (!marker) return;
+  if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
+  var cur = marker._curLngLat;
+  if (!cur) { var l = marker.getLngLat(); cur = [l.lng, l.lat]; }
+  var fromLng = cur[0], fromLat = cur[1];
+  if ((Math.abs(toLng - fromLng) + Math.abs(toLat - fromLat)) > 0.05) {
+    marker.setLngLat([toLng, toLat]); marker._curLngLat = [toLng, toLat]; return; // teleport
+  }
+  var dur = 1400, start = performance.now();
+  function step(t2) {
+    var t = Math.min(1, (t2 - start) / dur);
+    var lng = fromLng + (toLng - fromLng) * t;
+    var lat = fromLat + (toLat - fromLat) * t;
+    marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
+    if (t < 1) marker._anim = requestAnimationFrame(step); else marker._anim = null;
+  }
+  marker._anim = requestAnimationFrame(step);
+}
+// Smoothly recenter the map on a followed member as each new fix arrives (linear easing
+// matches the marker glide, so the icon stays centered and moves smoothly together).
+function _followRecenter(lng, lat) {
+  if (!followUid) return;
+  try { map.easeTo({ center: [lng, lat], duration: 1400, easing: function(t) { return t; } }); } catch (e) {}
+}
+
 // Show/hide the small "NN mph" label under a member's map dot. Only while driving
 // (>25 mph), with GPS, and the member is sharing speed (spdH not set).
 function _updateMarkerSpeed(el, data) {
@@ -2034,7 +2070,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 32;
+var APP_BUILD = 33;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3157,7 +3193,8 @@ async function startNativeBackgroundTracking() {
       window._onGpsFix({ coords: {
         latitude: location.latitude,
         longitude: location.longitude,
-        accuracy: location.accuracy || 0
+        accuracy: location.accuracy || 0,
+        speed: (location.speed != null ? location.speed : null) // m/s, for accurate speed
       }});
       // Refresh diagnostics on each native fix so the Debug card stays current in deep
       // background (the 15s interval gets throttled while the screen is off).
@@ -3229,18 +3266,28 @@ function startLocationSharing() {
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
+    // If following myself, glide the map to my new spot right away (don't wait for the
+    // DB round-trip) so the centering stays smooth.
+    if (typeof followUid !== 'undefined' && followUid === userId && typeof _followRecenter === 'function') _followRecenter(lng, lat);
 
-    // Speed in mph — from the GPS Doppler reading when present, else position delta.
-    var _mph = 0;
+    // Instantaneous speed in mph — from the GPS Doppler reading when present, else from
+    // the distance moved since the last fix.
+    var _inst = 0;
     if (pos.coords && pos.coords.speed != null && pos.coords.speed >= 0) {
-      _mph = pos.coords.speed * 2.23694;
+      _inst = pos.coords.speed * 2.23694;
     } else if (window._prevSpeedFix) {
       var _ds = (now - window._prevSpeedFix.ts) / 1000;
-      if (_ds > 1) _mph = (metersApart(window._prevSpeedFix.lat, window._prevSpeedFix.lng, lat, lng) / _ds) * 2.23694;
+      if (_ds > 0.4) _inst = (metersApart(window._prevSpeedFix.lat, window._prevSpeedFix.lng, lat, lng) / _ds) * 2.23694;
     }
     window._prevSpeedFix = { lat: lat, lng: lng, ts: now };
-    if (_mph < 1 || _mph > 200) _mph = 0; // drop GPS jitter / implausible values
-    window._lastSpeedMph = Math.round(_mph);
+    if (_inst > 200) _inst = 0; // implausible — drop it
+
+    // Smooth it (exponential moving average) so the readout doesn't flicker, and hold
+    // through brief gaps: a single missing/zero reading decays instead of blanking.
+    if (window._smoothMph == null) window._smoothMph = _inst;
+    else window._smoothMph = window._smoothMph * 0.6 + _inst * 0.4;
+    if (window._smoothMph < 1.5) window._smoothMph = 0; // settle to a clean 0 when stopped
+    window._lastSpeedMph = Math.round(window._smoothMph);
 
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
@@ -3577,9 +3624,11 @@ function listenUsers() {
           }, 850);
         });
       } else if (hasGps && userMarkers[uid]) {
-        // Update position only if live — keep last known position if not
+        // Update position only if live — keep last known position if not. Glide instead
+        // of teleport, and if we're following this person, recenter smoothly on the fix.
         if (isLive || isMine) {
-          userMarkers[uid].setLngLat([data.lng, data.lat]);
+          _animateMarker(userMarkers[uid], data.lng, data.lat);
+          if (followUid === uid && !isMine) _followRecenter(data.lng, data.lat);
         }
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
