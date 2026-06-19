@@ -910,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 26</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 29</div>
   </div>
 </div>
 
@@ -1077,6 +1077,55 @@
     <div style="display:flex;gap:8px">
       <button onclick="document.getElementById('set-passcode-modal').style.display='none'" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px">Cancel</button>
       <button id="set-passcode-submit" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ BACKGROUND TRACKING SETUP (native app only) ════════════════════ -->
+<div id="bg-setup-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(240,165,0,0.35);border-radius:16px;padding:22px;width:100%;max-width:340px;max-height:88vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px">
+      <svg class="licon" style="color:var(--accent)"><use href="#ic-pin"/></svg>
+      <div style="font-size:17px;font-weight:800">Keep tracking with the screen off</div>
+    </div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px">
+      So your group keeps seeing you when GroundLink is in your pocket, Android needs two quick permissions. It can't be done for you — but each is one tap.
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span id="bg-step1-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">1</span>
+        <div style="font-size:14px;font-weight:700">Location: Allow all the time</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:10px">Tap below, choose <b>Location</b>, then pick <b>Allow all the time</b> (not just "while using").</div>
+      <button onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Location Settings</button>
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span id="bg-step2-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">2</span>
+        <div style="font-size:14px;font-weight:700">Battery: don't restrict</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:10px">So Android doesn't put GroundLink to sleep. Set battery usage to <b>Unrestricted</b> (Samsung: also turn off "Put app to sleep").</div>
+      <button onclick="window._bgOpenBatterySettings()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">Open App Settings</button>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button onclick="window._dismissBgSetup(false)" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--muted);cursor:pointer;font-size:13px">Not now</button>
+      <button onclick="window._dismissBgSetup(true)" style="flex:1;padding:11px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;cursor:pointer;font-size:13px">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ USER COLOR PICKER (per-device) ═════════════════════════════════ -->
+<div id="color-picker-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.5);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:300px">
+    <div style="font-size:15px;font-weight:800;margin-bottom:3px">Color for <span id="cp-name" style="color:var(--accent)">member</span></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Only you see this color — it's saved on your device.</div>
+    <div id="cp-swatches" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="window._resetUserColor()" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--muted);cursor:pointer;font-size:13px">Reset to default</button>
+      <button onclick="document.getElementById('color-picker-modal').style.display='none'" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;cursor:pointer;font-size:13px">Done</button>
     </div>
   </div>
 </div>
@@ -1313,6 +1362,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Turn off to stay in the room &amp; chat, but hide your spot on the map</div></div></div>
       <span id="set-location-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
+      <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
+    </div>
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.7">
       <div>Screen stays awake automatically while tracking.</div>
       <div>GroundLink &middot; <a href="/privacy.html" style="color:var(--accent);text-decoration:none">Privacy Policy</a></div>
@@ -1462,10 +1515,54 @@ function toast(msg, ms = 1800) {
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), ms);
 }
+// Per-device color overrides: each person can recolor other members on their own map.
+// Stored locally (gl_user_colors), so it's private to this device — never shared.
+function _getUserColors() { try { return JSON.parse(localStorage.getItem('gl_user_colors') || '{}'); } catch (e) { return {}; } }
+function _getUserColorOverride(uid) { var m = _getUserColors(); return m[uid] || null; }
+function _setUserColorOverride(uid, color) {
+  var m = _getUserColors();
+  if (color) m[uid] = color; else delete m[uid];
+  try { localStorage.setItem('gl_user_colors', JSON.stringify(m)); } catch (e) {}
+}
 function userColor(uid) {
+  var ov = _getUserColorOverride(uid);
+  if (ov) return ov;
   let h = 0;
   for (const c of uid) h = (h << 5) - h + c.charCodeAt(0);
   return COLORS[Math.abs(h) % COLORS.length];
+}
+var _cpTargetUid = null;
+window._pickUserColor = function(uid, name) {
+  _cpTargetUid = uid;
+  var nm = document.getElementById('cp-name'); if (nm) nm.textContent = name || 'member';
+  var cur = _getUserColorOverride(uid);
+  var sw = document.getElementById('cp-swatches');
+  if (sw) {
+    sw.innerHTML = COLORS.map(function(c) {
+      var ring = (cur === c) ? 'box-shadow:0 0 0 3px #fff' : 'box-shadow:0 0 0 2px rgba(255,255,255,.18)';
+      return '<button data-c="' + c + '" style="width:38px;height:38px;border-radius:50%;background:' + c + ';border:none;cursor:pointer;padding:0;' + ring + '"></button>';
+    }).join('');
+    Array.prototype.forEach.call(sw.querySelectorAll('button'), function(b) {
+      b.addEventListener('click', function() { window._applyUserColor(b.getAttribute('data-c')); });
+    });
+  }
+  document.getElementById('color-picker-modal').style.display = 'flex';
+};
+window._applyUserColor = function(c) {
+  if (_cpTargetUid) { _setUserColorOverride(_cpTargetUid, c); _refreshUserColor(_cpTargetUid); }
+  document.getElementById('color-picker-modal').style.display = 'none';
+};
+window._resetUserColor = function() {
+  if (_cpTargetUid) { _setUserColorOverride(_cpTargetUid, null); _refreshUserColor(_cpTargetUid); }
+  document.getElementById('color-picker-modal').style.display = 'none';
+};
+// Apply a recolor immediately to the live map marker + any member-list rows for that uid.
+function _refreshUserColor(uid) {
+  var c = userColor(uid);
+  try { if (userMarkers[uid] && userMarkers[uid]._el) userMarkers[uid]._el.style.background = c; } catch (e) {}
+  document.querySelectorAll('[data-ucolor="' + uid + '"]').forEach(function(el) {
+    if (el.classList.contains('user-avatar')) el.style.background = c; else el.style.background = c;
+  });
 }
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
@@ -1675,6 +1772,23 @@ function _syncSettings() {
   if (lp) {
     if (locationHidden) { lp.textContent = 'HIDDEN'; lp.style.background = 'var(--border)'; lp.style.color = 'var(--muted)'; }
     else { lp.textContent = 'ON'; lp.style.background = '#13361f'; lp.style.color = '#3fb950'; }
+  }
+  // Background-tracking row — native app only. Healthy = service started, no permission
+  // error, and a native fix has actually come in.
+  var bgRow = document.getElementById('set-bgtrack-row');
+  if (bgRow) {
+    if (!_isNativeApp()) { bgRow.style.display = 'none'; }
+    else {
+      bgRow.style.display = 'flex';
+      var bp = document.getElementById('set-bgtrack-pill');
+      var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
+      var healthy = !!window._bgGeoStarted && !permProblem && window._lastFixSrc === 'native';
+      if (bp) {
+        if (healthy) { bp.textContent = 'ON'; bp.style.background = '#13361f'; bp.style.color = '#3fb950'; }
+        else if (window._bgGeoStarted && !permProblem) { bp.textContent = 'STARTING'; bp.style.background = 'var(--border)'; bp.style.color = 'var(--muted)'; }
+        else { bp.textContent = 'SET UP'; bp.style.background = '#3a2a13'; bp.style.color = 'var(--accent)'; }
+      }
+    }
   }
 }
 function _setToggleLocation() { toggleLocationShare(locationHidden); } // hidden→share on, sharing→hide
@@ -2161,7 +2275,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 26 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 29 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2962,9 +3076,10 @@ async function startNativeBackgroundTracking() {
     }, function(location, error) {
       if (error) {
         window._bgGeoError = (error.code || 'err') + (error.message ? ': ' + error.message : '');
-        if (error.code === 'NOT_AUTHORIZED' && window._bgGeo &&
-            confirm('Always-on location is off. Open settings to enable background tracking?')) {
-          window._bgGeo.openSettings();
+        // Background ("always") permission missing — open the guided setup card instead
+        // of a bare confirm dialog.
+        if (error.code === 'NOT_AUTHORIZED' && typeof window._openBgSetup === 'function') {
+          window._openBgSetup();
         }
         console.warn('bg-geo', error);
         return;
@@ -2977,6 +3092,9 @@ async function startNativeBackgroundTracking() {
         longitude: location.longitude,
         accuracy: location.accuracy || 0
       }});
+      // Refresh diagnostics on each native fix so the Debug card stays current in deep
+      // background (the 15s interval gets throttled while the screen is off).
+      if (typeof window._writeDiag === 'function') window._writeDiag();
     });
   } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); }
 }
@@ -2988,6 +3106,46 @@ async function stopNativeBackgroundTracking() {
   } catch (e) {}
   window._bgGeoStarted = false; window._bgWatcherId = null;
 }
+
+// ── Guided background-permission setup (native app only) ────────────
+function _resolveBgPlugin() {
+  var cap = window.Capacitor || {};
+  return window._bgGeo
+      || (cap.Plugins && cap.Plugins.BackgroundGeolocation)
+      || (typeof cap.registerPlugin === 'function' && cap.registerPlugin('BackgroundGeolocation'))
+      || null;
+}
+function _bgOpenAppSettings(checkId) {
+  var BG = _resolveBgPlugin();
+  try { if (BG && BG.openSettings) BG.openSettings(); else toast('Open Settings → Apps → GroundLink'); } catch (e) { toast('Open Settings → Apps → GroundLink'); }
+  var c = document.getElementById(checkId);
+  if (c) { c.style.background = '#3fb950'; c.innerHTML = '&#10003;'; }
+}
+window._bgOpenLocationSettings = function() { _bgOpenAppSettings('bg-step1-check'); };
+window._bgOpenBatterySettings  = function() { _bgOpenAppSettings('bg-step2-check'); };
+window._openBgSetup = function() {
+  var m = document.getElementById('bg-setup-modal');
+  if (m) m.style.display = 'flex';
+};
+window._dismissBgSetup = function(done) {
+  var m = document.getElementById('bg-setup-modal');
+  if (m) m.style.display = 'none';
+  try {
+    localStorage.setItem('gl_bg_setup', done ? 'done' : 'snooze');
+    localStorage.setItem('gl_bg_setup_ts', String(Date.now()));
+  } catch (e) {}
+};
+// Show the setup card on the native app: first time in a room, or whenever the OS has
+// since had a background-permission problem. Snoozes for 12h if dismissed with "Not now".
+window._maybeShowBgSetup = function() {
+  if (!_isNativeApp()) return;
+  var state = '', ts = 0;
+  try { state = localStorage.getItem('gl_bg_setup') || ''; ts = parseInt(localStorage.getItem('gl_bg_setup_ts') || '0'); } catch (e) {}
+  var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
+  if (state === 'done' && !permProblem) return;
+  if (state === 'snooze' && (Date.now() - ts) < 12 * 60 * 60 * 1000 && !permProblem) return;
+  window._openBgSetup();
+};
 
 function startLocationSharing() {
   if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
@@ -3049,6 +3207,9 @@ function startLocationSharing() {
   };
   window._onGpsFix = onGpsFix; // exposed so the Settings location toggle can refresh fast
   startNativeBackgroundTracking(); // native Android background GPS — no-op on web/TWA
+  // After the service has had a moment to start, offer the one-time guided setup so
+  // users actually grant "Allow all the time" + battery-unrestricted (native only).
+  setTimeout(function(){ try { window._maybeShowBgSetup(); } catch(e){} }, 6000);
 
   const markNoGps = () => {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
@@ -3113,7 +3274,7 @@ function startLocationSharing() {
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
         vis: document.visibilityState,
         hidden: !!locationHidden,
-        build: 26,
+        build: 29,
         ts: now
       });
     } catch (e) {}
@@ -3134,6 +3295,10 @@ function startLocationSharing() {
     } else if (!window._lastGPS) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
+    } else {
+      // Stationary but still tracking — bump only our timestamp (keep position/accuracy)
+      // so we stay "Live" for the group instead of flipping to "Paused" while sitting still.
+      try { fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now()); } catch(_) {}
     }
   }, 30000);
 
@@ -3365,17 +3530,33 @@ function listenUsers() {
 
       const statusColor = data.noGps ? '#888ea0' : isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
 
+      // Status badge so the group can see at a glance who's actually reporting:
+      // LIVE (updating now), PAUSED (in the room but no recent fix — stale/backgrounded),
+      // OFF (location sharing turned off), NO GPS (desktop / no fix).
+      var bd;
+      if (isMine)            bd = { t: 'YOU',    bg: 'rgba(240,165,0,.15)', c: '#f0a500' };
+      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#888ea0' };
+      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#888ea0' };
+      else if (isLive)       bd = { t: 'LIVE',   bg: '#13361f',             c: '#3fb950' };
+      else                   bd = { t: 'PAUSED', bg: '#3a2a13',             c: '#f0a500' };
+
       const row = document.createElement('div');
       row.className = 'user-item';
       row.style.opacity = opacity;
       row.innerHTML =
-        '<div class="user-avatar" style="background:' + fillColor + ';color:' + textColor + ';font-weight:800">' + initials(data.name) + '</div>' +
-        '<div>' +
+        '<div class="user-avatar" data-ucolor="' + uid + '" style="background:' + fillColor + ';color:' + textColor + ';font-weight:800">' + initials(data.name) + '</div>' +
+        '<div style="min-width:0">' +
           '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
-            (data.hidden ? 'Hidden · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
+            (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
           '</div>' +
+        '</div>' +
+        '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+          (!isMine ? '<button class="ucolor-btn" data-ucolor="' + uid + '" title="Set color (only you see it)" style="width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.3);background:' + fillColor + ';cursor:pointer;padding:0"></button>' : '') +
+          '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
+      var _cb = row.querySelector('.ucolor-btn');
+      if (_cb) _cb.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         if (!hasGps) {
