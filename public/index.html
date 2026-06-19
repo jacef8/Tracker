@@ -2186,7 +2186,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 52;
+var APP_BUILD = 53;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3949,9 +3949,109 @@ function getBearing(lat1, lng1, lat2, lng2) {
   return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((b+360)%360)/45)%8];
 }
 
+// ══ UNIFIED ALERT EFFECTS (sound + vibrate + screen-edge flash) ══════
+// Works on web AND inside the native Android WebView. Sound uses WebAudio
+// (no audio file needed); it stays muted until the first user tap because
+// of mobile autoplay rules, so we unlock the audio context on first touch.
+var _glAudioCtx = null;
+function _glAudio() {
+  try {
+    _glAudioCtx = _glAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_glAudioCtx.state === 'suspended') _glAudioCtx.resume();
+  } catch (e) {}
+  return _glAudioCtx;
+}
+(function _unlockAudioOnce() {
+  function unlock() {
+    var ctx = _glAudio();
+    try {
+      if (ctx) {
+        var b = ctx.createBuffer(1, 1, 22050);
+        var s = ctx.createBufferSource();
+        s.buffer = b; s.connect(ctx.destination); s.start(0);
+      }
+    } catch (e) {}
+  }
+  window.addEventListener('touchstart', unlock, { passive: true });
+  window.addEventListener('touchend', unlock, { passive: true });
+  window.addEventListener('click', unlock);
+})();
+
+// Play a short chime. notes = [{ f:freq, t:startOffsetSec, d:durationSec }]
+function _chime(notes, wave) {
+  var ctx = _glAudio();
+  if (!ctx) return;
+  try {
+    var now = ctx.currentTime;
+    notes.forEach(function (n) {
+      var osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = wave || 'sine';
+      osc.frequency.value = n.f;
+      gain.gain.setValueAtTime(0.0001, now + n.t);
+      gain.gain.exponentialRampToValueAtTime(0.3, now + n.t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.d);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(now + n.t); osc.stop(now + n.t + n.d + 0.02);
+    });
+  } catch (e) {}
+}
+
+// Vibrate — prefer the native Capacitor Haptics plugin, fall back to the
+// web Vibration API (works in the WebView once VIBRATE permission is granted).
+function _buzz(pattern) {
+  try {
+    var cap = window.Capacitor;
+    var H = cap && cap.Plugins && cap.Plugins.Haptics;
+    if (H && H.vibrate) {
+      var dur = Array.isArray(pattern) ? (pattern[0] || 60) : pattern;
+      H.vibrate({ duration: dur }).catch(function () {});
+      return;
+    }
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
+}
+
+// Flash a colored glow around the edges of the screen.
+function _ringFlash(color) {
+  try {
+    var el = document.getElementById('gl-ring-flash');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'gl-ring-flash';
+      el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:0;transition:opacity .3s ease';
+      document.body.appendChild(el);
+    }
+    el.style.boxShadow = 'inset 0 0 70px 16px ' + color;
+    void el.offsetWidth; // restart transition
+    el.style.opacity = '1';
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.style.opacity = '0'; }, 750);
+  } catch (e) {}
+}
+
+// One call to fire all enabled effects for an event.
+function _notify(kind) {
+  if (kind === 'join') {
+    _ringFlash('rgba(0,230,118,.55)');
+    _buzz([30, 20, 30]);
+    _chime([{ f: 587, t: 0, d: 0.18 }, { f: 880, t: 0.12, d: 0.22 }], 'sine');
+  } else if (kind === 'chat') {
+    _ringFlash('rgba(70,160,255,.5)');
+    _buzz([40, 30, 40]);
+    _chime([{ f: 660, t: 0, d: 0.16 }], 'triangle');
+  } else if (kind === 'pin') {
+    _ringFlash('rgba(255,190,60,.55)');
+    _buzz([60, 40, 60]);
+    _chime([{ f: 784, t: 0, d: 0.14 }, { f: 1046, t: 0.1, d: 0.18 }], 'sine');
+  } else if (kind === 'sos') {
+    _ringFlash('rgba(231,76,60,.7)');
+    _buzz([200, 100, 200, 100, 400]);
+  }
+}
+
 // ══ JOIN / LEAVE ALERTS ══════════════════════════════════
 function showJoinAlert(name) {
-  if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
+  _notify('join');
   toast(name + ' joined the map', 3000);
   // Flash the users button green
   var btn = document.getElementById('users-toggle-btn');
@@ -3973,7 +4073,7 @@ function showChatAlert(name, text) {
   document.getElementById('chat-alert-msg').textContent = text.length > 60 ? text.slice(0, 58) + '…' : text;
   const alertEl = document.getElementById('chat-alert');
   alertEl.classList.add('show');
-  if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+  _notify('chat');
   clearTimeout(_chatAlertTimer);
   _chatAlertTimer = setTimeout(() => alertEl.classList.remove('show'), 6000);
 }
@@ -3988,7 +4088,7 @@ function showPinAlert(pin) {
   document.getElementById('pin-alert-label').textContent = pin.label ? pin.cat + ' — ' + pin.label : pin.cat;
   const alertEl = document.getElementById('pin-alert');
   alertEl.classList.add('show');
-  if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  _notify('pin');
   clearTimeout(_pinAlertTimer);
   _pinAlertTimer = setTimeout(() => alertEl.classList.remove('show'), 8000);
 }
@@ -4102,7 +4202,7 @@ function triggerSOSAlert(name, lat, lng) {
   var now = Date.now();
   if (now - _lastSosHandled < 10000) return; // dedupe (pin + chat for same SOS)
   _lastSosHandled = now;
-  try { if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]); } catch (e) {}
+  _buzz([200, 100, 200, 100, 400]);
   _playSosTone();
   flashScreenRim();
   showSOSBanner(name, lat, lng);
