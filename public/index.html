@@ -319,8 +319,8 @@
     flex-shrink: 0; letter-spacing: -.5px;
   }
   .pin-feed-body { flex: 1; min-width: 0; }
-  .pin-feed-cat { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; margin-bottom: 2px; }
-  .pin-feed-label { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .pin-feed-cat { font-size: 14px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
+  .pin-feed-label { font-size: 16px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
   .pin-feed-meta { font-size: 11px; color: var(--muted); }
   .pin-feed-dist { font-size: 12px; font-weight: 700; color: var(--accent); }
   .pin-feed-arrow { font-size: 20px; color: var(--muted); flex-shrink: 0; }
@@ -703,7 +703,12 @@
   .pop-dist { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
   .pop-coords { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 4px; }
   .pop-meta { font-size: 12px; color: var(--muted); }
-  .pop-del { background: none; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 12px; cursor: pointer; margin-top: 10px; display: block; width: 100%; padding: 6px; }
+  .pop-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .pop-btn { flex: 1; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; padding: 7px 6px; border: 1px solid var(--border); }
+  .pop-edit { background: var(--accent); border-color: var(--accent); color: #000; }
+  .pop-save { background: none; color: var(--accent); border-color: var(--accent); }
+  .pop-save.is-saved { color: var(--muted); border-color: var(--border); }
+  .pop-del { background: none; border: 1px solid var(--danger); color: var(--danger); }
   .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none; }
 
   /* ── Room list ── */
@@ -905,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 21</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 22</div>
   </div>
 </div>
 
@@ -1383,6 +1388,7 @@
 let map, db, fbRef, fbSet, fbPush, fbOnValue, fbRemove;
 let groupName = '', userId = '', userName = '';
 let pinMode = false, pendingCoords = null;
+let _editingPid = null; // set when the pin sheet is editing an existing pin instead of dropping a new one
 let userMarkers = {}, pinMarkers = {};
 var locationHidden = false; // when true: stay in room, chat & view, but don't broadcast position
 let chatOpen = false, unreadCount = 0;
@@ -2143,7 +2149,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 21 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 22 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2410,6 +2416,15 @@ function initMap() {
       // up the keyboard on every pin drop. User can tap the field to type.
       disablePinMode();
       return;
+    }
+
+    // ── 2b. Tapped an existing pin → show its info card (edit / save / delete) ──
+    if (map.getLayer('pins-layer')) {
+      var _pinHit = map.queryRenderedFeatures(e.point, { layers: ['pins-layer'] });
+      if (_pinHit.length) {
+        window._showPinPopup(_pinHit[0].properties.pid, e.lngLat);
+        return; // don't also open a parcel popup underneath
+      }
     }
 
     // ── 3. FL statewide parcel tap ────────────────────────────────
@@ -3597,6 +3612,75 @@ window.deletePin = pid => {
   toast('Pin removed');
 };
 
+// Tap a pin on the map → info card with edit / save / delete.
+window._closePinPopup = function() {
+  if (window._pinInfoPopup) { try { window._pinInfoPopup.remove(); } catch (e) {} window._pinInfoPopup = null; }
+};
+window._showPinPopup = function(pid, lngLat) {
+  var pin = lastPins[pid];
+  if (!pin) return;
+  var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
+  var color  = def.color;
+  var isMine = pin.droppedBy === userId;
+  var gps    = window._lastGPS;
+  var distHTML = gps
+    ? '<div class="pop-dist">' + distanceMiles(gps.lat, gps.lng, pin.lat, pin.lng) + ' &middot; ' + getBearing(gps.lat, gps.lng, pin.lat, pin.lng) + '</div>'
+    : '';
+  var saved = (typeof _isPinSaved === 'function') && _isPinSaved(pid);
+  var html =
+    '<div class="pop-cat" style="color:' + color + '">' + pin.cat + '</div>' +
+    (pin.label ? '<div class="pop-label">' + pin.label + '</div>' : '') +
+    distHTML +
+    '<div class="pop-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
+    '<div class="pop-meta">By ' + (pin.name || '?') + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+    '<div class="pop-actions">' +
+      '<button class="pop-btn pop-edit" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
+      '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
+      (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
+    '</div>';
+  window._closePinPopup();
+  window._pinInfoPopup = new mapboxgl.Popup({ offset: 18, closeButton: true, maxWidth: '250px' })
+    .setLngLat([pin.lng, pin.lat]).setHTML(html).addTo(map);
+};
+
+// Open the pin sheet pre-filled to edit an existing pin's type + description.
+window.editPin = function(pid) {
+  var pin = lastPins[pid];
+  if (!pin) return;
+  window._closePinPopup();
+  _editingPid = pid;
+  var known = pin.cat in PIN_DEFS;
+  selectedCat = known ? pin.cat : 'Custom';
+  document.querySelectorAll('.cat-btn').forEach(function(b) { b.classList.toggle('active', b.dataset.cat === selectedCat); });
+  var customRow = document.getElementById('custom-cat-row');
+  var customInput = document.getElementById('pin-custom-cat-input');
+  if (!known) {
+    if (customRow) customRow.style.display = 'block';
+    if (customInput) customInput.value = pin.cat;
+  } else {
+    if (customRow) customRow.style.display = 'none';
+    if (customInput) customInput.value = '';
+  }
+  document.getElementById('pin-label-input').value = pin.label || '';
+  document.getElementById('pin-coords-label').textContent = pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5);
+  var title = document.querySelector('#pin-modal .pin-sheet-title');
+  if (title) title.textContent = 'Edit Pin';
+  document.getElementById('pin-confirm').textContent = 'Save Changes';
+  document.getElementById('pin-modal').classList.add('show');
+};
+
+// Reset + close the pin sheet (shared by drop, edit, cancel, backdrop-tap).
+function _closePinModal() {
+  document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-label-input').value = '';
+  var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
+  var cr = document.getElementById('custom-cat-row'); if (cr) cr.style.display = 'none';
+  pendingCoords = null;
+  _editingPid = null;
+  var title = document.querySelector('#pin-modal .pin-sheet-title'); if (title) title.textContent = 'Drop a Pin';
+  document.getElementById('pin-confirm').textContent = 'Drop Pin → Chat';
+}
+
 // Clear pins buttons
 document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
   const mine = Object.entries(lastPins).filter(([, p]) => p.droppedBy === userId);
@@ -3651,7 +3735,6 @@ function renderPinFeed(pins) {
     var distHTML = distStr
       ? '<div class="pin-feed-dist">&#128205; ' + distStr + ' &middot; ' + bearStr + '</div>'
       : '';
-    var mineTag = isMine ? ' &nbsp;&#9679; MINE' : '';
     var ring = isMine ? '#f0a500' : 'rgba(255,255,255,.3)';
 
     card.innerHTML =
@@ -3659,7 +3742,7 @@ function renderPinFeed(pins) {
         def.label +
       '</div>' +
       '<div class="pin-feed-body">' +
-        '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + mineTag + '</div>' +
+        '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
         (pin.label ? '<div class="pin-feed-label">' + pin.label + '</div>' : '') +
         distHTML +
         '<div class="pin-feed-meta">' + pin.name + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
@@ -3981,42 +4064,48 @@ document.getElementById('pin-cats').addEventListener('click', e => {
   selectedCat = e.target.dataset.cat;
 });
 
-document.getElementById('pin-cancel').addEventListener('click', () => {
-  document.getElementById('pin-modal').classList.remove('show');
-  document.getElementById('pin-label-input').value = '';
-  if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
-  if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
-  pendingCoords = null;
-});
+document.getElementById('pin-cancel').addEventListener('click', _closePinModal);
 
 // Tap the dimmed area outside the sheet to dismiss — no need to reach the Cancel
 // button on a phone. Clicking the sheet itself does nothing.
 document.getElementById('pin-modal').addEventListener('click', e => {
-  if (e.target === document.getElementById('pin-modal')) {
-    document.getElementById('pin-cancel').click();
-  }
+  if (e.target === document.getElementById('pin-modal')) _closePinModal();
 });
 
 document.getElementById('pin-confirm').addEventListener('click', () => {
-  if (!pendingCoords) return;
   const label = document.getElementById('pin-label-input').value.trim();
   const customCatEl = document.getElementById('pin-custom-cat-input');
   const finalCat = (selectedCat === 'Custom' && customCatEl && customCatEl.value.trim())
                    ? customCatEl.value.trim().substring(0, 20)
                    : selectedCat;
+
+  // Edit mode — update the existing pin's type + description in place.
+  if (_editingPid) {
+    var existing = lastPins[_editingPid];
+    if (existing && db && groupName) {
+      fbSet(fbRef(db, `gl/${groupName}/pins/${_editingPid}`), {
+        lat: existing.lat, lng: existing.lng,
+        cat: finalCat, label,
+        name: existing.name || userName,
+        droppedBy: existing.droppedBy || userId,
+        ts: existing.ts || Date.now()
+      });
+      toast('Pin updated');
+    }
+    _closePinModal();
+    return;
+  }
+
+  if (!pendingCoords) return;
   const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
   fbSet(pinRef, {
     lat: pendingCoords.lat, lng: pendingCoords.lng,
     cat: finalCat, label, name: userName,
     droppedBy: userId, ts: Date.now()
   });
-  document.getElementById('pin-modal').classList.remove('show');
-  document.getElementById('pin-label-input').value = '';
-  if (document.getElementById('pin-custom-cat-input')) document.getElementById('pin-custom-cat-input').value = '';
-  if (document.getElementById('custom-cat-row')) document.getElementById('custom-cat-row').style.display = 'none';
-  pendingCoords = null;
   toast('Pin dropped');
   pushNotify('pin', groupName + ' — new pin', userName + ' dropped a ' + finalCat + ' pin');
+  _closePinModal();
 });
 
 document.getElementById('pin-label-input').addEventListener('keydown', e => {

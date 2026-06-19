@@ -71,6 +71,9 @@
   .group-card { background: rgba(13,17,23,0.88); border: 2px solid rgba(48,54,61,0.9); border-top: 2px solid rgba(240,165,0,0.5); border-radius: 12px; padding: 16px; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 6px 32px rgba(0,0,0,0.6); margin-bottom: 16px; }
   .group-card.is-test { border: 2px solid rgba(224,90,43,0.6); border-top: 2px solid rgba(224,90,43,1); box-shadow: 0 6px 32px rgba(224,90,43,0.2); }
   .test-tag { display:inline-block; background:rgba(224,90,43,0.2); border:1px solid rgba(224,90,43,0.6); color:#e05a2b; font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; padding:2px 6px; border-radius:4px; margin-left:6px; vertical-align:middle; }
+  .group-subtabs { display:flex; gap:8px; margin-bottom:14px; }
+  .gsub-btn { flex:1; background:rgba(13,17,23,0.8); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; font-weight:700; color:var(--muted); cursor:pointer; transition:all .12s; }
+  .gsub-btn.active { background:rgba(240,165,0,0.12); border-color:var(--accent); color:var(--accent); }
   .group-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
   .group-name { font-size: 15px; font-weight: 700; }
   .group-key { font-size: 10px; color: var(--muted); font-family: monospace; margin-top: 2px; }
@@ -168,7 +171,12 @@
 
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
+  <div class="group-subtabs">
+    <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">Active &middot; <span id="gsub-active-n">0</span></button>
+    <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Empty / Retired &middot; <span id="gsub-retired-n">0</span></button>
+  </div>
   <div id="admin-list"><div class="loading">Connecting to Firebase…</div></div>
+  <div id="admin-list-retired" style="display:none"></div>
 </div>
 
 <!-- OVERVIEW TAB — all members + pins on one map -->
@@ -251,6 +259,15 @@ var LIVE_MS  = 90 * 1000;
 var WARN_MS  = 60 * 1000;
 var eventLog = [];
 var prevSnapshot = {};
+
+var _groupSub = 'active';
+function setGroupSub(which) {
+  _groupSub = which;
+  document.getElementById('gsub-active-btn').classList.toggle('active', which === 'active');
+  document.getElementById('gsub-retired-btn').classList.toggle('active', which === 'retired');
+  document.getElementById('admin-list').style.display         = which === 'active'  ? '' : 'none';
+  document.getElementById('admin-list-retired').style.display = which === 'retired' ? '' : 'none';
+}
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b,i) {
@@ -1024,6 +1041,9 @@ function loadAdmin() {
         users.forEach(function(u) { if ((u[1].ts||0) > lastActive) lastActive = u[1].ts; });
         if (group.pins) Object.values(group.pins).forEach(function(p) { if ((p.ts||0) > lastActive) lastActive = p.ts; });
         if (group.chat) Object.values(group.chat).forEach(function(c) { if ((c.ts||0) > lastActive) lastActive = c.ts; });
+        // Include the activity log so an emptied room (users cleared) still counts as
+        // recently active and shows up under Empty / Retired instead of vanishing.
+        if (group.debug) Object.values(group.debug).forEach(function(d) { if ((d.ts||0) > lastActive) lastActive = d.ts; });
 
         var displayName = key.replace(/_/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();});
 
@@ -1133,23 +1153,26 @@ function loadAdmin() {
         // else: empty AND idle >24h -> skip (falls out of panel; data stays in Firebase)
       });
 
+      // Active sub-tab \u2014 rooms with live members.
+      container.innerHTML = '';
       if (activeCount) {
-        var ah = document.createElement('div');
-        ah.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin:4px 2px 8px;';
-        ah.textContent = 'Active Groups (' + activeCount + ')';
-        container.appendChild(ah);
         container.appendChild(activeFrag);
+      } else {
+        container.innerHTML = '<div class="empty">No rooms with members right now.</div>';
       }
+
+      // Empty / Retired sub-tab \u2014 rooms that emptied out but still have recent activity.
+      var retiredContainer = document.getElementById('admin-list-retired');
+      retiredContainer.innerHTML = '';
       if (inactiveCount) {
-        var ih = document.createElement('div');
-        ih.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 2px 8px;border-top:1px solid var(--border);padding-top:14px;';
-        ih.textContent = 'Inactive / Empty \u00b7 last 24h (' + inactiveCount + ')';
-        container.appendChild(ih);
-        container.appendChild(inactiveFrag);
+        retiredContainer.appendChild(inactiveFrag);
+      } else {
+        retiredContainer.innerHTML = '<div class="empty">No empty or retired rooms in the last 24 hours.</div>';
       }
-      if (!activeCount && !inactiveCount) {
-        container.innerHTML = '<div class="empty">No active or recent groups. Older empty rooms are hidden \u2014 they reappear if used again, and stay available under the All Data tab.</div>';
-      }
+
+      // Update the sub-tab counters.
+      document.getElementById('gsub-active-n').textContent  = activeCount;
+      document.getElementById('gsub-retired-n').textContent = inactiveCount;
 
       document.getElementById('stat-groups').textContent = totalGroups;
 
