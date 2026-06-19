@@ -1702,6 +1702,20 @@ function _isOffCenter(lngLat, marginPx) {
   } catch (e) { return false; }
 }
 
+// Favorite people / friends (device-local). Friends pin to the top of the member list.
+function _getFriends() { try { return JSON.parse(localStorage.getItem('gl_friends') || '{}'); } catch (e) { return {}; } }
+function _setFriends(m) { try { localStorage.setItem('gl_friends', JSON.stringify(m)); } catch (e) {} }
+function _isFriend(uid) { return !!_getFriends()[uid]; }
+window._toggleFriend = function(uid, name, ev) {
+  if (ev) ev.stopPropagation();
+  var m = _getFriends(); var nowFriend;
+  if (m[uid]) { delete m[uid]; nowFriend = false; toast('Removed from friends'); }
+  else { m[uid] = name || uid.slice(0, 6); nowFriend = true; toast('★ ' + (name || 'Friend') + ' added to friends'); }
+  _setFriends(m);
+  // Immediate star feedback; the pin-to-top reorder happens on the next member update.
+  if (ev && ev.currentTarget) { ev.currentTarget.textContent = nowFriend ? '★' : '☆'; ev.currentTarget.style.color = nowFriend ? 'var(--accent)' : 'var(--muted)'; }
+};
+
 // Show/hide the small "NN mph" label under a member's map dot. Only while driving
 // (>25 mph), with GPS, and the member is sharing speed (spdH not set).
 function _updateMarkerSpeed(el, data) {
@@ -2172,7 +2186,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 49;
+var APP_BUILD = 50;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3756,7 +3770,14 @@ function listenUsers() {
       if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; }
     });
 
-    Object.entries(users).forEach(([uid, data]) => {
+    var _frMap = _getFriends();
+    Object.entries(users).sort(function(a, b) {
+      var fa = !!_frMap[a[0]], fb2 = !!_frMap[b[0]];
+      if (fa !== fb2) return fa ? -1 : 1;            // friends pinned to the top
+      var am = a[0] === userId, bm = b[0] === userId;
+      if (am !== bm) return am ? -1 : 1;             // then you
+      return (b[1].ts || 0) - (a[1].ts || 0);        // then most recent
+    }).forEach(([uid, data]) => {
       const isMine   = uid === userId;
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
       const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
@@ -3883,11 +3904,16 @@ function listenUsers() {
             ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
           '</div>' +
         '</div>' +
-        '<span style="margin-left:auto;flex-shrink:0;font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>';
+        '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+          (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
+          '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
+        '</div>';
       // Tap the avatar dot → set this member's color (only for others). Stops the tap from
       // bubbling to the row so it doesn't start tracking them at the same time.
       var _av = row.querySelector('.user-avatar');
       if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
+      var _frb = row.querySelector('.ufriend-btn');
+      if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         if (!hasGps) {
