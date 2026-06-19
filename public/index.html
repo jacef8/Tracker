@@ -98,18 +98,24 @@
     display: flex; flex-direction: column; gap: 12px;
     margin: auto;
   }
+  #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; }
+  #join-pager::-webkit-scrollbar { display: none; }
+  .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 12px; padding: 0 2px; align-self: flex-start; }
+  .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .jtab.active { background: var(--accent); color: #000; }
   .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
   .join-title { font-size: 24px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
-  .join-sub { font-size: 13px; color: var(--muted); }
-  .field-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .join-sub { font-size: 13px; color: #aab3bf; }
+  .field-label { font-size: 13px; font-weight: 600; letter-spacing: .01em; color: #d4dbe4; margin-bottom: 7px; }
   .join-input {
-    width: 100%; padding: 11px 14px;
+    width: 100%; padding: 13px 14px;
     background: var(--bg); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text); font-size: 15px;
+    border-radius: var(--radius); color: var(--text); font-size: 16px;
     outline: none; transition: border-color .15s; -webkit-appearance: none;
   }
+  .join-input::placeholder { color: #7d8794; }
   .join-input:focus { border-color: var(--accent); }
-  .join-hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .join-hint { font-size: 12.5px; color: #a7b0bd; margin-top: 6px; line-height: 1.5; }
   .btn-primary {
     width: 100%; padding: 12px;
     background: var(--accent); border: none; border-radius: var(--radius);
@@ -748,7 +754,7 @@
   /* ── Room list ── */
   #room-list-section { display: flex; flex-direction: column; gap: 8px; }
   .room-list-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-  #home-filter button { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #home-filter button { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; font-size: 13.5px; font-weight: 700; color: #b6bfca; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #home-filter button.active { background: rgba(240,165,0,0.12); border-color: var(--accent); color: var(--accent); }
   #room-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
   .room-item {
@@ -759,18 +765,18 @@
   }
   .room-item:active { border-color: var(--accent); }
   .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .room-name { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .room-meta { font-size: 11px; color: var(--muted); }
+  .room-name { font-size: 15.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .room-meta { font-size: 12.5px; color: #a7b0bd; margin-top: 1px; }
   .room-join-btn {
     background: var(--accent); border: none; border-radius: 8px;
     padding: 6px 14px; color: #0d1117; font-size: 12px; font-weight: 700;
     cursor: pointer; white-space: nowrap; flex-shrink: 0;
   }
-  .room-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px 0; }
-  .room-loading { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; }
+  .room-empty { font-size: 13.5px; color: #a7b0bd; text-align: center; padding: 12px 0; line-height: 1.5; }
+  .room-loading { font-size: 13px; color: #a7b0bd; text-align: center; padding: 8px 0; }
   .divider-or {
     display: flex; align-items: center; gap: 10px;
-    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em;
+    font-size: 12px; color: #9aa4b1; font-weight: 600; letter-spacing: .04em;
   }
   .divider-or::before, .divider-or::after { content:''; flex:1; height:1px; background: var(--border); }
 
@@ -877,78 +883,85 @@
       </div>
     </div>
 
-    <!-- Install prompt (Android Chrome) -->
-    <div id="install-banner">
-      <span style="display:flex;align-items:center;gap:7px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-download"/></svg>Install for best experience</span>
-      <button id="install-btn">Add to Home Screen</button>
+    <!-- Swipe pager: Quick join ⇄ Account -->
+    <div id="join-tabs" style="display:flex;gap:4px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:4px;margin-top:2px">
+      <button type="button" class="jtab active" data-panel="0" onclick="window._goPanel(0)">Quick join</button>
+      <button type="button" class="jtab" data-panel="1" onclick="window._goPanel(1)">Account&nbsp;<span id="pager-acct-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#3fb950;box-shadow:0 0 6px #3fb950"></span></button>
     </div>
 
-    <!-- Invite banner (shown when opened from a room invite link) -->
-    <div id="invite-banner" style="display:none;background:rgba(240,165,0,.1);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.4">
-      <svg class="licon licon-sm" style="color:var(--accent);margin-right:2px"><use href="#ic-pin"/></svg>You&#39;ve been invited to <strong id="invite-room-name" style="color:var(--accent)"></strong>.<br>Enter your name below to join.
-    </div>
+    <div id="join-pager">
+      <!-- ░░ PANEL 0 — QUICK JOIN ░░ -->
+      <section class="join-panel" id="panel-join">
+        <!-- Install prompt (Android Chrome) -->
+        <div id="install-banner">
+          <span style="display:flex;align-items:center;gap:7px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-download"/></svg>Install for best experience</span>
+          <button id="install-btn">Add to Home Screen</button>
+        </div>
 
-    <!-- In-app invites from people inside a room -->
-    <div id="invite-inbox" style="display:none"></div>
+        <!-- Invite banner (shown when opened from a room invite link) -->
+        <div id="invite-banner" style="display:none;background:rgba(240,165,0,.1);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.4">
+          <svg class="licon licon-sm" style="color:var(--accent);margin-right:2px"><use href="#ic-pin"/></svg>You&#39;ve been invited to <strong id="invite-room-name" style="color:var(--accent)"></strong>.<br>Enter your name below to join.
+        </div>
 
-    <div>
-      <div class="field-label">Your name</div>
-      <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
-      <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
-    </div>
+        <!-- In-app invites from people inside a room -->
+        <div id="invite-inbox" style="display:none"></div>
 
-    <!-- ══ ACCOUNT / IDENTITY ════════════════════════════════════════ -->
-    <div id="account-box" style="margin-top:-2px">
-      <!-- Guest / signed-out view -->
-      <div id="acct-guest">
-        <button id="btn-google" type="button" onclick="window.GLAuth && GLAuth.signInGoogle()" style="width:100%;padding:11px;background:#fff;border:none;border-radius:var(--radius);color:#1f1f1f;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px">
-          <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-          Sign in with Google
+        <div>
+          <div class="field-label">Your name</div>
+          <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+          <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
+        </div>
+
+        <!-- Active rooms list -->
+        <div id="room-list-section">
+          <div class="field-label" style="margin-bottom:2px">Tap a group to join</div>
+          <div id="home-filter" style="display:flex;gap:6px;margin-bottom:4px">
+            <button id="home-filter-public" class="active" onclick="window._setHomeFilter('public')" type="button">Public</button>
+            <button id="home-filter-favs" onclick="window._setHomeFilter('favorites')" type="button">&#9733; Favorites</button>
+          </div>
+          <div id="room-list"><div class="room-loading">Loading groups…</div></div>
+        </div>
+
+        <div class="divider-or">or start a new group</div>
+
+        <div>
+          <div class="field-label">Group name</div>
+          <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
+          <div class="join-hint">Anyone who types the same group name will appear on your map together.</div>
+          <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a group name or select one above</div>
+        </div>
+
+        <button class="btn-primary" id="join-btn">Open Map →</button>
+      </section>
+
+      <!-- ░░ PANEL 1 — ACCOUNT & EXTRAS ░░ -->
+      <section class="join-panel" id="panel-account">
+        <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.5;margin-bottom:2px">Keep your name, friends &amp; favorites across devices — or stay a guest. Your choice.</div>
+        <!-- ══ ACCOUNT / IDENTITY ════ -->
+        <div id="account-box">
+          <!-- Guest / signed-out view -->
+          <div id="acct-guest">
+            <button id="btn-google" type="button" onclick="window.GLAuth && GLAuth.signInGoogle()" style="width:100%;padding:11px;background:#fff;border:none;border-radius:var(--radius);color:#1f1f1f;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px">
+              <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+              Sign in with Google
+            </button>
+            <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:9px;line-height:1.5">Free, and keeps your name, friends &amp; favorites on every device you use.</div>
+          </div>
+          <!-- Signed-in view -->
+          <div id="acct-in" style="display:none;align-items:center;gap:10px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:9px 12px">
+            <span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name">Signed in</div>
+              <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-email"></div>
+            </div>
+            <button id="btn-signout" type="button" onclick="window.GLAuth && GLAuth.signOutUser()" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
+          </div>
+        </div>
+
+        <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+          <svg class="licon licon-sm"><use href="#ic-share"/></svg>
+          Share GroundLink
         </button>
-        <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px">
-          <button type="button" onclick="window.GLAuth && GLAuth.openBackup()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Back up my profile</button>
-          <span style="color:var(--border)">·</span>
-          <button id="btn-restore" type="button" onclick="window.GLAuth && GLAuth.openRestore()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">Restore from code</button>
-        </div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:8px;text-align:center">
-          <strong style="color:var(--text)">Guest</strong> keeps your name &amp; friends on this device. <strong style="color:var(--text)">Signed in</strong> carries them to any device.
-        </div>
-      </div>
-      <!-- Signed-in view -->
-      <div id="acct-in" style="display:none;align-items:center;gap:10px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:9px 12px">
-        <span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name">Signed in</div>
-          <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-email"></div>
-        </div>
-        <button id="btn-signout" type="button" onclick="window.GLAuth && GLAuth.signOutUser()" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
-      </div>
-    </div>
-
-    <!-- Active rooms list -->
-    <div id="room-list-section">
-      <div id="home-filter" style="display:flex;gap:6px;margin-bottom:10px">
-        <button id="home-filter-public" class="active" onclick="window._setHomeFilter('public')" type="button">Public</button>
-        <button id="home-filter-favs" onclick="window._setHomeFilter('favorites')" type="button">&#9733; Favorites</button>
-      </div>
-      <div id="room-list"><div class="room-loading">Loading groups…</div></div>
-    </div>
-
-    <div class="divider-or">or create / join by name</div>
-
-    <div>
-      <div class="field-label">Group name</div>
-      <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
-      <div class="join-hint">Anyone who types the same group name will appear on your map together.</div>
-      <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a group name or select one above</div>
-    </div>
-
-    <button class="btn-primary" id="join-btn">Open Map →</button>
-
-    <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-      <svg class="licon licon-sm"><use href="#ic-share"/></svg>
-      Share GroundLink
-    </button>
 
     <!-- iOS install hint -->
     <!-- Install tip card — shown if not already installed as PWA -->
@@ -979,6 +992,8 @@
     </div>
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
+    </div>
+      </section>
     </div>
     <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build …</div>
   </div>
@@ -1182,29 +1197,6 @@
       <div style="font-size:14px;font-weight:700">&#128274; Private</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link.</div>
     </button>
-  </div>
-</div>
-
-<!-- ══ BACKUP / RESTORE CODE (guest durability, no login) ══════════════ -->
-<div id="backup-modal" style="display:none;position:fixed;inset:0;z-index:1150;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
-  <div style="background:rgba(22,27,34,0.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:340px">
-    <!-- SHOW code view -->
-    <div id="backup-show">
-      <div style="font-size:17px;font-weight:800;margin-bottom:4px">Your backup code</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Save this somewhere safe. Enter it on any other device to bring back your name, friends &amp; favorites — no login needed.</div>
-      <div id="backup-code-val" style="font-family:monospace;font-size:18px;font-weight:700;letter-spacing:1px;color:var(--accent);background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:13px;text-align:center;word-break:break-all;margin-bottom:12px">—</div>
-      <button onclick="window.GLAuth && GLAuth.copyCode()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Copy code</button>
-      <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Close</button>
-    </div>
-    <!-- RESTORE code view -->
-    <div id="backup-restore" style="display:none">
-      <div style="font-size:17px;font-weight:800;margin-bottom:4px">Restore from code</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Paste the backup code from your other device to recover your name, friends &amp; favorites.</div>
-      <input id="backup-code-input" class="join-input" placeholder="Paste your code" autocomplete="off" style="margin-bottom:12px;font-family:monospace" />
-      <div id="backup-restore-msg" style="display:none;font-size:12px;margin-bottom:10px"></div>
-      <button onclick="window.GLAuth && GLAuth.doRestore()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#000;cursor:pointer;margin-bottom:8px">Restore</button>
-      <button onclick="window.GLAuth && GLAuth.closeBackup()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);cursor:pointer">Cancel</button>
-    </div>
   </div>
 </div>
 
@@ -2201,7 +2193,7 @@ function renderRoomList(all) {
   if (!listEl) return;
   var fb = window._fb;
   var now = Date.now();
-  var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000;
+  var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000, YEAR_MS = 365 * 24 * 60 * 60 * 1000;
   var favs = _getFavs();
   var rooms = [];
   Object.entries(all).forEach(function(entry) {
@@ -2222,20 +2214,27 @@ function renderRoomList(all) {
     var hasPins = group.pins && Object.keys(group.pins).length;
     var hasChat = group.chat && Object.keys(group.chat).length;
     var hasTrails = group.trails && Object.keys(group.trails).length;
-    if (fb && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
-    if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+    var config = group.config || {};
+    var persistent = !!config.persistent;   // rooms owned by a signed-in user never auto-expire
+    var isFav = favs.indexOf(key) !== -1;
+    // Empty husk with no data at all — safe to remove (unless it's a claimed persistent room).
+    if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+    // Nobody in it for 24h — auto-retire, EXCEPT persistent rooms (kept until a year of total silence).
+    if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
+      if (!(persistent && (now - lastSeen) < YEAR_MS)) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+    }
 
     var liveUsers = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
     var liveCount = liveUsers.length;
     var liveNames = liveUsers.map(function(u) { return u.name; });
-    if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS)) return;
+    // Hide rooms that have gone empty from the directory — but keep your favorites visible even
+    // when dormant, so a saved group is always one tap away to rejoin (Life360-style).
+    if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
 
     var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
     var lastStr = diffMin < 1 ? 'just now' : diffMin < 60 ? diffMin + 'm ago' : diffHr < 24 ? diffHr + 'h ago' : 'over a day ago';
-    var config = group.config || {};
     var vis = config.visibility || 'public'; // existing/unset groups stay public
-    var isFav = favs.indexOf(key) !== -1;
 
     // Filter: Favorites view shows only your stars; Public view shows public groups
     // (private ones only appear if you've favorited them — otherwise they're join-by-name).
@@ -2268,7 +2267,7 @@ function renderRoomList(all) {
     var statusHTML = room.liveCount > 0
       ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
         + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0, 3).join(', ') + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
-      : '<span style="color:var(--muted)">0 online &middot; last active ' + room.lastStr + '</span>';
+      : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
     var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
     item.innerHTML =
       '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
@@ -2305,7 +2304,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 57;
+var APP_BUILD = 59;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2481,6 +2480,12 @@ function enterMap(name, group, uid) {
         } else {
           window._isRoomOwner = (owner === userId);
         }
+        // A room owned by a signed-in (Google) user becomes permanent — it won't auto-expire.
+        try {
+          if (window._isRoomOwner && localStorage.getItem('gl_account') === 'google') {
+            fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
+          }
+        } catch (e) {}
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
@@ -2700,6 +2705,8 @@ function showJoinScreen() {
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
   setTimeout(initInstallTip, 50);
+  // Always open on the Quick-join panel.
+  try { if (window._joinPagerReset) window._joinPagerReset(); } catch (e) {}
   // Refresh any pending in-app invites for the home screen.
   try { if (window._watchInvites) window._watchInvites(); if (window._renderInviteInbox) window._renderInviteInbox(); } catch (e) {}
 
@@ -6440,6 +6447,7 @@ document.addEventListener('click', function(e) {
       var nEl = document.getElementById('acct-name');  if (nEl) nEl.textContent = name() || 'Signed in';
       var eEl = document.getElementById('acct-email'); if (eEl) eEl.textContent = LS.get('gl_email') || '';
     }
+    var dot = document.getElementById('pager-acct-dot'); if (dot) dot.style.display = signedIn ? 'inline-block' : 'none';
     try { var ni = document.getElementById('inp-name'); if (ni && !ni.value && name()) ni.value = name(); } catch (e) {}
   }
   window.addEventListener('DOMContentLoaded', refreshUI);
@@ -6572,6 +6580,41 @@ document.addEventListener('click', function(e) {
     openBackup: openBackup, openRestore: openRestore, closeBackup: closeBackup,
     copyCode: copyCode, doRestore: doRestore, refreshUI: refreshUI, sync: pushProfile
   };
+})();
+</script>
+
+<!-- ══ Home-screen swipe pager (Quick join ⇄ Account) ══════════════════ -->
+<script>
+(function () {
+  function setActive(i) {
+    var tabs = document.querySelectorAll('#join-tabs .jtab');
+    for (var k = 0; k < tabs.length; k++) {
+      if (k === i) tabs[k].classList.add('active'); else tabs[k].classList.remove('active');
+    }
+  }
+  window._goPanel = function (i) {
+    var p = document.getElementById('join-pager');
+    if (!p) return;
+    var x = i * p.clientWidth;
+    try { p.scrollTo({ left: x, behavior: 'smooth' }); } catch (e) { p.scrollLeft = x; }
+    setActive(i);
+  };
+  window._joinPagerReset = function () {
+    var p = document.getElementById('join-pager');
+    if (p) p.scrollLeft = 0;
+    setActive(0);
+  };
+  var p = document.getElementById('join-pager');
+  if (p) {
+    var raf = null;
+    p.addEventListener('scroll', function () {
+      if (raf) return;
+      raf = requestAnimationFrame(function () {
+        raf = null;
+        setActive(Math.round(p.scrollLeft / Math.max(1, p.clientWidth)));
+      });
+    });
+  }
 })();
 </script>
 </body>

@@ -1382,9 +1382,11 @@ function loadAdmin() {
         // Strip test_ prefix from display name for test groups
         var displayName2 = isTest ? displayName.replace(/^Test /i, '') : displayName;
         var _inactiveMs = lastActive ? (now - lastActive) : 0;
+        var persistent = !!(group.config && group.config.persistent);
         var _badgeClass, _badgeText, _clockText;
         if (liveUsers.length)  { _badgeClass = 'live-badge'; _badgeText = liveUsers.length + ' LIVE';        _clockText = 'active &middot; updated ' + timeAgo(lastActive); }
         else if (presentUsers.length) { _badgeClass = 'live-badge'; _badgeText = presentUsers.length + ' in room'; _clockText = 'in room &middot; last update ' + timeAgo(lastActive); }
+        else if (persistent)   { _badgeClass = 'dead-badge'; _badgeText = 'Dormant';                       _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; permanent (signed-in owner)'; }
         else                   { _badgeClass = 'dead-badge'; _badgeText = 'Inactive ' + durShort(_inactiveMs); _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; deletes at 24h'; }
         card.innerHTML =
           '<div class="group-header">' +
@@ -1414,14 +1416,14 @@ function loadAdmin() {
         if (hasUsers) {
           activeFrag.appendChild(card);
           activeCount++;
-        } else if (recentlyActive) {
+        } else if (recentlyActive || persistent) {
           card.style.opacity = '0.9';
           card.style.border = '1px solid rgba(192,57,43,0.7)';
           inactiveFrag.appendChild(card);
           inactiveCount++;
-          retiredKeys.push(key);
+          if (!persistent) retiredKeys.push(key); // permanent rooms never get bulk-cleared
         }
-        // else: empty AND idle >24h -> skip (falls out of panel; data stays in Firebase)
+        // else: empty AND idle >24h (and not permanent) -> skip (falls out of panel; data stays in Firebase)
       });
 
       // Active sub-tab \u2014 rooms with live members.
