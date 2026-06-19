@@ -3,7 +3,7 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v6';
+const CACHE = 'groundlink-v7';
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 const CACHE_FOREVER = [
@@ -52,19 +52,19 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // The app page itself (navigation) — ALWAYS pull fresh from the network with
-  // no-store so the app can NEVER get stuck on a stale cached build. Cache only
-  // as an offline fallback.
+  // The app page itself (navigation) — NETWORK-FIRST with no-store, so when you have any
+  // signal you ALWAYS get the latest build (never stale). We keep a copy of only the most
+  // recent successful fetch, used solely as a fallback when the network is fully down, so
+  // the app still opens in a dead zone (live data fills in once signal returns).
   if (e.request.mode === 'navigate') {
     e.respondWith(
       fetch(e.request, { cache: 'no-store' })
         .then(response => {
-          const clone = response.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone)).catch(function(){});
+          try { const clone = response.clone(); caches.open(CACHE).then(c => c.put('/', clone)).catch(function(){}); } catch (e2) {}
           return response;
         })
         .catch(function() {
-          return caches.match(e.request).then(function(c){ return c || caches.match('/'); });
+          return caches.match('/').then(function(c) { return c || caches.match(e.request); });
         })
     );
     return;

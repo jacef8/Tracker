@@ -124,6 +124,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('index.html') || filePath.endsWith('index-test.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
+    if (filePath.endsWith('version.json')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
     if (filePath.endsWith('admin.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
