@@ -910,7 +910,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 22</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 23</div>
   </div>
 </div>
 
@@ -1976,7 +1976,12 @@ function enterMap(name, group, uid) {
     // Reliable presence cleanup: Firebase removes us server-side the instant this
     // client disconnects (reload, tab close, crash, network drop) so we don't
     // linger as "online" in the room or on the join-screen group list.
-    try { if (fb.onDisconnect) fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).remove(); } catch(_) {}
+    // Web/PWA: remove presence the instant the tab disconnects (tab close, reload).
+    // Native app: do NOT auto-remove on disconnect — when the phone screen sleeps the
+    // WebView's socket can briefly drop, and onDisconnect would yank the user out of the
+    // room even though the background-location service is still tracking. Without it they
+    // simply go "stale/last known" if updates pause, and stay live while the service runs.
+    try { if (fb.onDisconnect && !_isNativeApp()) fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).remove(); } catch(_) {}
 
     // Smooth transition — no black flash
     document.getElementById('join-screen').style.opacity = '0';
@@ -2146,10 +2151,17 @@ function showJoinScreen() {
     }
   } catch(_) {}
   document.getElementById('join-screen').style.display = 'flex';
+  // Pre-fill the name from the last session so returning users can join a room in one
+  // tap without re-typing their name (and so an empty name doesn't silently block join).
+  try {
+    var _ss = getSavedSession();
+    var _ni = document.getElementById('inp-name');
+    if (_ni && !_ni.value && _ss && _ss.name) _ni.value = _ss.name;
+  } catch (e) {}
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 22 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 23 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -2256,7 +2268,14 @@ function handleJoin() {
   }
   // Admin shortcut
   if (group === '777') { window.location.href = '/777'; return; }
-  if (!name)  { toast('Enter your name'); return; }
+  if (!name) {
+    document.getElementById('inp-name').style.borderColor = 'var(--danger)';
+    document.getElementById('inp-name').focus();
+    var nameErr = document.getElementById('name-required-msg');
+    if (nameErr) nameErr.style.display = 'block';
+    setTimeout(function() { document.getElementById('inp-name').style.borderColor = ''; }, 3000);
+    return;
+  }
   // Reuse existing uid if one exists
   const existing = getSavedSession();
   const uid = existing.uid || genUid();
