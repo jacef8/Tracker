@@ -2347,7 +2347,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 64;
+var APP_BUILD = 65;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -6574,17 +6574,23 @@ document.addEventListener('click', function(e) {
       return;
     }
     var prov = new A.GoogleAuthProvider();
-    if (isStandalone()) {
-      A.signInWithRedirect(f.auth, prov).catch(function (e) { console.warn('redirect', e); });
-    } else {
-      A.signInWithPopup(f.auth, prov)
-        .then(function (uc) { afterFirebaseUser(uc.user); })
-        .catch(function (e) {
-          console.warn('popup', e);
-          if (e && /popup|cancelled|blocked/i.test((e.code || '') + (e.message || ''))) A.signInWithRedirect(f.auth, prov);
-          else if (typeof toast === 'function') toast('Google sign-in failed', 2600);
-        });
-    }
+    // Popup first on every web surface — desktop browser AND installed PWA. The redirect flow
+    // through the default firebaseapp.com handler is unreliable now that browsers block
+    // third-party cookies (you log in, but come back signed-out). Only fall back to redirect if
+    // the popup is actually blocked (mainly some mobile PWAs).
+    A.signInWithPopup(f.auth, prov)
+      .then(function (uc) { afterFirebaseUser(uc.user); })
+      .catch(function (e) {
+        var code = ((e && e.code) || '') + ' ' + ((e && e.message) || '');
+        console.warn('google sign-in', code);
+        if (/popup-blocked|popup_blocked|operation-not-supported|cancelled-popup-request|web-storage-unsupported/i.test(code)) {
+          A.signInWithRedirect(f.auth, prov).catch(function (e2) { if (typeof toast === 'function') toast('Sign-in failed: ' + ((e2 && e2.code) || 'redirect'), 4500); });
+        } else if (/popup-closed-by-user|cancelled|user-cancelled/i.test(code)) {
+          /* user closed the popup — do nothing */
+        } else if (typeof toast === 'function') {
+          toast('Google sign-in failed: ' + ((e && e.code) || 'unknown'), 5000);
+        }
+      });
   }
 
   function signOutUser() {
