@@ -3,7 +3,8 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v7';
+const CACHE = 'groundlink-v8';
+const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 const CACHE_FOREVER = [
@@ -21,7 +22,9 @@ const ALWAYS_NETWORK = [
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => c.addAll(CACHE_FOREVER))
+      .then(c => c.addAll(CACHE_FOREVER)
+        // Also precache the home page so there's always an offline fallback.
+        .then(() => c.add(new Request('/', { cache: 'reload' })).catch(function(){})))
       .then(() => self.skipWaiting())
   );
 });
@@ -52,21 +55,25 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // The app page itself (navigation) — NETWORK-FIRST with no-store, so when you have any
-  // signal you ALWAYS get the latest build (never stale). We keep a copy of only the most
-  // recent successful fetch, used solely as a fallback when the network is fully down, so
-  // the app still opens in a dead zone (live data fills in once signal returns).
+  // The app page itself (navigation) — NETWORK-FIRST with no-store so a good connection
+  // always loads the latest build, but with a TIMEOUT: if the network is slow or down,
+  // fall back to the cached page within a few seconds instead of hanging forever (so the
+  // app still opens on poor service; live data fills in once signal returns).
   if (e.request.mode === 'navigate') {
-    e.respondWith(
-      fetch(e.request, { cache: 'no-store' })
-        .then(response => {
-          try { const clone = response.clone(); caches.open(CACHE).then(c => c.put('/', clone)).catch(function(){}); } catch (e2) {}
-          return response;
-        })
-        .catch(function() {
-          return caches.match('/').then(function(c) { return c || caches.match(e.request); });
-        })
-    );
+    e.respondWith((async function() {
+      var cached = await caches.match('/');
+      try {
+        var resp = await Promise.race([
+          fetch(e.request, { cache: 'no-store' }),
+          new Promise(function(_, reject) { setTimeout(function() { reject(new Error('slow-network')); }, NAV_TIMEOUT_MS); })
+        ]);
+        try { var clone = resp.clone(); caches.open(CACHE).then(function(c) { c.put('/', clone); }).catch(function(){}); } catch (e2) {}
+        return resp;
+      } catch (err) {
+        // Slow or no network — use the cached page if we have one, else a last-ditch fetch.
+        return cached || fetch(e.request);
+      }
+    })());
     return;
   }
 
