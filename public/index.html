@@ -2139,7 +2139,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 46;
+var APP_BUILD = 47;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5600,7 +5600,9 @@ function _groupFollowTick(force) {
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
   var cam;
-  try { cam = map.cameraForBounds(b, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16 }); } catch (e) {}
+  // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
+  // or the screen edge — extra at the bottom to clear the map controls, but not excessive.
+  try { cam = map.cameraForBounds(b, { padding: { top: 100, bottom: 130, left: 72, right: 72 }, maxZoom: 16 }); } catch (e) {}
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
@@ -5649,19 +5651,28 @@ function _inviteUrl(includePin, plainPin) {
   return u;
 }
 
+// Single share helper used by EVERY share button. Native app → Capacitor Share plugin
+// (the real system share sheet, incl. Messages). Web/PWA → Web Share API. Else clipboard.
+window._nativeShare = async function(data, copyMsg) {
+  copyMsg = copyMsg || 'Link copied';
+  try {
+    var cap = window.Capacitor || {};
+    var SharePlugin = cap.Plugins && cap.Plugins.Share;
+    if (typeof _isNativeApp === 'function' && _isNativeApp() && SharePlugin && SharePlugin.share) {
+      await SharePlugin.share({ title: data.title, text: (data.text || '') + ' ' + (data.url || ''), url: data.url, dialogTitle: 'Share' });
+      return;
+    }
+    if (navigator.share) { await navigator.share(data); return; }
+    if (navigator.clipboard && data.url) { await navigator.clipboard.writeText(data.url); toast(copyMsg); return; }
+    toast(data.url || '', 5000);
+  } catch (e) { /* user cancelled the share — that's fine */ }
+};
+
 function _shareInvite(url, withPin) {
   var label = (typeof groupName === 'string' && groupName) ? groupName : 'our group';
   var text = 'Join me on GroundLink — live map for "' + label + '". ' +
              (withPin ? 'Tap the link and you\u2019re in.' : 'You\u2019ll need the room passcode I\u2019ll send you.');
-  var data = { title: 'GroundLink invite', text: text, url: url };
-  if (navigator.share) {
-    navigator.share(data).catch(function(){});
-  } else if (navigator.clipboard) {
-    navigator.clipboard.writeText(url).then(function(){ toast('Invite link copied'); })
-      .catch(function(){ toast('Could not copy link'); });
-  } else {
-    toast('Invite: ' + url, 5000);
-  }
+  window._nativeShare({ title: 'GroundLink invite', text: text, url: url }, 'Invite link copied');
 }
 
 function shareRoomInvite() {
