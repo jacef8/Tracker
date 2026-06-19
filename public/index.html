@@ -1211,6 +1211,19 @@
   </div>
 </div>
 
+<!-- ══ DELETE GROUP — second confirmation ══════════════════════════════ -->
+<div id="delete-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1170;background:rgba(0,0,0,.65);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.86);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(248,81,73,0.45);border-radius:16px;padding:22px;width:100%;max-width:330px">
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><svg class="licon" style="color:var(--danger)"><use href="#ic-alert"/></svg><div style="font-size:18px;font-weight:800;color:var(--danger)">Are you sure?</div></div>
+    <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:6px">You're about to permanently delete <b id="del-group-name" style="color:var(--accent)">this group</b>.</div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:18px">Every member is removed and all pins, chat &amp; history are erased for everyone. This can&rsquo;t be undone.</div>
+    <div style="display:flex;gap:10px">
+      <button onclick="window._closeDeleteConfirm()" style="flex:1;padding:13px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer">No, keep it</button>
+      <button onclick="window._confirmDeleteRoom()" style="flex:1;padding:13px;background:var(--danger);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">Yes, delete</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ INVITE PICKER — share link or invite a favorite directly ════════ -->
 <div id="invite-picker-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:340px;max-height:84vh;overflow-y:auto">
@@ -1496,6 +1509,13 @@
         <div style="font-size:11px;color:var(--muted)">Send a link, or invite a favorite directly</div>
       </div>
     </button>
+    <div id="ri-owner-actions" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Owner</div>
+      <button onclick="window._ownerDeleteRoom()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.45);border-radius:10px;padding:12px 14px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer">
+        <svg class="licon licon-sm"><use href="#ic-x"/></svg>Delete this group
+      </button>
+      <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;line-height:1.5">Removes all members, pins, chat &amp; history for everyone. Can&rsquo;t be undone.</div>
+    </div>
   </div>
 </div>
 
@@ -2013,6 +2033,8 @@ function openRoomInfo() {
       visRow.style.display = 'none';
     }
   }
+  var ownerActions = document.getElementById('ri-owner-actions');
+  if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
   document.getElementById('room-info-sheet').style.display = 'block';
 }
 function renderRoomInfoOwner() {
@@ -2145,8 +2167,16 @@ function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 window._toggleFav = function(key, name, ev) {
   if (ev) ev.stopPropagation();
   var f = _getFavs(); var i = f.indexOf(key);
-  if (i === -1) { f.push(key); _setFavs(f); _registerFavSub(key, name); toast('★ ' + (name || 'Group') + ' favorited'); }
-  else { f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites'); }
+  if (i === -1) {
+    f.push(key); _setFavs(f);
+    toast('★ ' + (name || 'Group') + ' favorited');
+    _registerFavSub(key, name).then(function(ok) {
+      toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
+               : 'Favorited. Background alerts need the installed web app with notifications allowed (not the native app yet).', 5500);
+    });
+  } else {
+    f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites');
+  }
   if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
 };
 // Register/clear this device's push subscription under the group's favSubs, so the server
@@ -2171,11 +2201,12 @@ async function _ensurePushSub() {
 async function _registerFavSub(key, name) {
   try {
     var sub = await _ensurePushSub();
-    if (!sub) return; // no push here — favorite still pins locally, just no background alert
+    if (!sub) return false; // no push here (native WebView / permission denied) — favorite still pins locally
     var fb = window._fb; var s = getSavedSession();
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
-    if (fb && uid) fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() });
-  } catch (e) {}
+    if (fb && uid) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
+    return false;
+  } catch (e) { return false; }
 }
 async function _unregisterFavSub(key) {
   try {
@@ -2320,7 +2351,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 60;
+var APP_BUILD = 63;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5092,6 +5123,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
 // Admin closed this room — stop everything, drop our presence so we don't recreate it,
 // show a notice, and return to the home screen.
 function _roomClosedByAdmin() {
+  if (window._ownerDeleting) return; // the owner is deleting this room themselves — don't double-eject
   if (window._roomClosed) return;
   window._roomClosed = true;
   try { if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat); } catch (_) {}
@@ -5160,6 +5192,38 @@ window._makeOwner = function() {
   try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), uid); } catch (e) {}
   window._isRoomOwner = false;
   toast('Ownership transferred', 2500);
+};
+
+// Owner deletes the entire group — step 1: open the "Are you sure?" confirmation.
+window._ownerDeleteRoom = function() {
+  if (!window._isRoomOwner || !db || !groupName) return;
+  var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  var nm = document.getElementById('del-group-name'); if (nm) nm.textContent = label;
+  try { closeRoomInfo(); } catch (e) {}
+  var m = document.getElementById('delete-confirm-modal'); if (m) m.style.display = 'flex';
+};
+window._closeDeleteConfirm = function() {
+  var m = document.getElementById('delete-confirm-modal'); if (m) m.style.display = 'none';
+};
+// Step 2: confirmed — eject everyone, then wipe all the group's data.
+window._confirmDeleteRoom = function() {
+  window._closeDeleteConfirm();
+  if (!window._isRoomOwner || !db || !groupName) return;
+  var gk = groupName;
+  window._ownerDeleting = true; // keep our own app alive through the close → delete sequence
+  // 1) Flag the room closed so every member is ejected and stops writing presence.
+  try { fbSet(fbRef(db, 'gl/' + gk + '/closed'), { ts: Date.now(), by: userId, byOwner: true }); } catch (e) {}
+  // Stop our own location writes so we don't recreate presence during the delete.
+  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
+  try { stopNativeBackgroundTracking(); } catch (e) {}
+  try { fbRemove(fbRef(db, 'gl/' + gk + '/users/' + userId)); } catch (e) {}
+  toast('Deleting group…', 4500);
+  // 2) After members have had a few seconds to receive the close, remove everything.
+  setTimeout(function() {
+    try { fbRemove(fbRef(db, 'gl/' + gk)); } catch (e) {}
+    try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
+    setTimeout(function() { location.reload(); }, 900);
+  }, 4000);
 };
 
 // ══ INVITE A FAVORITE DIRECTLY (in-app delivery via Firebase) ════════════
