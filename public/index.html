@@ -2139,7 +2139,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 43;
+var APP_BUILD = 44;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3808,7 +3808,7 @@ function listenUsers() {
       row.className = 'user-item';
       row.style.opacity = opacity;
       row.innerHTML =
-        '<div class="user-avatar" data-ucolor="' + uid + '" style="background:' + fillColor + ';color:' + textColor + ';font-weight:800">' + initials(data.name) + '</div>' +
+        '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + initials(data.name) + '</div>' +
         '<div style="min-width:0">' +
           '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
@@ -3816,12 +3816,11 @@ function listenUsers() {
             ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
           '</div>' +
         '</div>' +
-        '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
-          (!isMine ? '<button class="ucolor-btn" data-ucolor="' + uid + '" title="Set color (only you see it)" style="width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.3);background:' + fillColor + ';cursor:pointer;padding:0"></button>' : '') +
-          '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
-        '</div>';
-      var _cb = row.querySelector('.ucolor-btn');
-      if (_cb) _cb.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
+        '<span style="margin-left:auto;flex-shrink:0;font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>';
+      // Tap the avatar dot → set this member's color (only for others). Stops the tap from
+      // bubbling to the row so it doesn't start tracking them at the same time.
+      var _av = row.querySelector('.user-avatar');
+      if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         if (!hasGps) {
