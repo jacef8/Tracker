@@ -649,6 +649,12 @@
     border-radius: 2px; margin: 10px auto 12px;
   }
   /* ── Saved pins drawer ── */
+  #drawer-backdrop {
+    position: fixed; inset: 0; z-index: 199; display: none;
+    background: rgba(0,0,0,0.18);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #drawer-backdrop.show { display: block; }
   #saved-pins-drawer {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); right: 0; bottom: 0; z-index: 302;
     width: min(320px, 92vw);
@@ -899,7 +905,7 @@
     <div id="ios-hint" style="display:none; font-size:12px; color:var(--muted); text-align:center; line-height:1.6">
       On iPhone: tap <strong style="color:var(--text)">Share</strong> → <strong style="color:var(--text)">Add to Home Screen</strong> for best experience.
     </div>
-    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 19</div>
+    <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build 20</div>
   </div>
 </div>
 
@@ -1085,6 +1091,9 @@
 </div>
 
 <!-- ══ SAVED PINS DRAWER ══════════════════════════════════ -->
+<!-- Tap-anywhere-outside backdrop for the slide-in panels (mobile-friendly dismiss) -->
+<div id="drawer-backdrop"></div>
+
 <div id="saved-pins-drawer">
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-star"/></svg>My Saved Pins</span>
@@ -2134,7 +2143,7 @@ function showJoinScreen() {
   // Live diagnostic on the build stamp: are we detected as the native app?
   try {
     var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build 19 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+    if (_bs) _bs.textContent = 'build 20 · ' + (_isNativeApp() ? 'NATIVE' : 'web')
       + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
       + (window.Capacitor ? ' · cap' : '');
   } catch (e) {}
@@ -3777,6 +3786,29 @@ document.getElementById('map').addEventListener('click', () => {
   document.getElementById('pin-list-drawer').classList.remove('open');
   setLocateMeVisible(true);
 });
+
+// ── Tap-outside-to-close for all slide-in panels ───────────────────
+// A shared backdrop appears whenever any panel is open; tapping it (anywhere
+// outside the panel) closes them — no need to find the X or Cancel on a phone.
+(function() {
+  var ids = ['chat-panel','pin-feed-panel','pin-list-drawer','user-drawer','saved-pins-drawer'];
+  var bd = document.getElementById('drawer-backdrop');
+  if (!bd) return;
+  function anyOpen() {
+    return ids.some(function(id) { var d = document.getElementById(id); return d && d.classList.contains('open'); });
+  }
+  function sync() { bd.classList.toggle('show', anyOpen()); }
+  ids.forEach(function(id) {
+    var d = document.getElementById(id);
+    if (d) new MutationObserver(sync).observe(d, { attributes: true, attributeFilter: ['class'] });
+  });
+  bd.addEventListener('click', function() {
+    ids.forEach(function(id) { var d = document.getElementById(id); if (d) d.classList.remove('open'); });
+    try { pinFeedOpen = false; } catch (e) {}
+    sync();
+    if (typeof setLocateMeVisible === 'function') setLocateMeVisible(true);
+  });
+})();
 
 
 // ══ TRAILS ═══════════════════════════════════════════════════════
