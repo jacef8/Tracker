@@ -2348,7 +2348,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 69;
+var APP_BUILD = 70;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3434,7 +3434,10 @@ function clearUnreadPins() {
 }
 const TRAIL_MAX_MS = 2 * 60 * 60 * 1000; // 2 hours of breadcrumb history
 const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
+const TRAIL_MAX_ACC_M = 50;          // skip breadcrumbs from fixes worse than 50 m accuracy
+const TRAIL_MAX_MPH = 150;           // skip breadcrumbs implying an impossible teleport (bad fix)
 let lastBreadcrumbPos = null;
+let lastBreadcrumbTs = 0;
 
 function metersApart(lat1, lng1, lat2, lng2) {
   const R = 6371000;
@@ -3716,15 +3719,27 @@ function startLocationSharing() {
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1
     });
 
-    // Write breadcrumb if enabled and moved enough
+    // Write breadcrumb if enabled, moved enough, AND the fix is trustworthy. Low-accuracy
+    // fixes (common when the screen is off and the OS falls back to cell/wifi location) and
+    // impossible teleports are what scatter the trail — so we drop them here.
     if (breadcrumbsOn) {
-      const moved = !lastBreadcrumbPos ||
-        metersApart(lastBreadcrumbPos.lat, lastBreadcrumbPos.lng, lat, lng) > TRAIL_MIN_DIST_M;
+      const accM = accuracy || 0; // meters, from GPS or the native background fix
+      const goodAccuracy = accM > 0 && accM <= TRAIL_MAX_ACC_M;
+      const distM = lastBreadcrumbPos
+        ? metersApart(lastBreadcrumbPos.lat, lastBreadcrumbPos.lng, lat, lng) : Infinity;
+      const moved = distM > TRAIL_MIN_DIST_M;
+      let plausible = true;
+      if (lastBreadcrumbPos && lastBreadcrumbTs) {
+        const dtSec = Math.max(1, (now - lastBreadcrumbTs) / 1000);
+        const mph = (distM / dtSec) * 2.23694;
+        if (mph > TRAIL_MAX_MPH) plausible = false; // jumped too far, too fast → bad fix
+      }
 
-      if (moved) {
+      if (moved && goodAccuracy && plausible) {
         lastBreadcrumbPos = { lat, lng };
+        lastBreadcrumbTs = now;
         const crumbRef = fbPush(fbRef(db, `gl/${groupName}/trails/${userId}`));
-        fbSet(crumbRef, { lat, lng, ts: now });
+        fbSet(crumbRef, { lat, lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' });
 
         // Prune points older than 10 min from Firebase
         fbOnValue(fbRef(db, `gl/${groupName}/trails/${userId}`), snap => {
@@ -3869,6 +3884,7 @@ function toggleBreadcrumbs() {
   // Persist setting so it survives app close/reopen
   try { localStorage.setItem('gl_breadcrumbs', breadcrumbsOn ? '1' : '0'); } catch(e) {}
   lastBreadcrumbPos = null;
+  lastBreadcrumbTs = 0;
   applyBreadcrumbState();
   if (breadcrumbsOn) {
     toast('Breadcrumbs ON — recording your trail · hold to clear', 2800);
