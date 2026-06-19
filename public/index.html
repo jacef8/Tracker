@@ -182,6 +182,16 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.55);
   }
   #map-controls #locate-menu .locate-opt:active { background: var(--accent); color: #0d1117; }
+  /* North-button flyout (North Up / Heading Up) — same look as the locate flyout */
+  #north-menu { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); flex-direction: column; gap: 8px; align-items: stretch; }
+  #map-controls #north-menu .north-opt {
+    width: auto; height: auto; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(13,17,23,0.95); border: 1px solid rgba(240,165,0,0.6);
+    border-radius: 11px; padding: 10px 14px; font-size: 13px; font-weight: 700; color: #e6edf3;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  }
+  #map-controls #north-menu .north-opt:active { background: var(--accent); color: #0d1117; }
   #map-controls button:hover  { background: rgba(240,165,0,0.16); }
   #map-controls button:active { background: var(--accent); color: #0d1117; }
   /* Hide zoom buttons on mobile */
@@ -992,14 +1002,20 @@
   <button id="zoom-out-btn" title="Zoom out" type="button"><svg class="licon"><use href="#ic-minus"/></svg></button>
   <!-- Layers -->
   <button id="layer-btn" title="Map layers" type="button"><svg class="licon"><use href="#ic-layers"/></svg></button>
-  <!-- North arrow — bigger -->
-  <button id="north-up-btn" title="Reset north" type="button">
-    <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
-      <polygon points="12,2 15,11 12,9 9,11" fill="#e63946"/>
-      <polygon points="12,22 15,13 12,15 9,13" fill="#8b949e"/>
-      <circle cx="12" cy="12" r="2" fill="#e6edf3"/>
-    </svg>
-  </button>
+  <!-- North arrow — tap to reveal: North Up or Heading Up -->
+  <div id="north-wrap" style="position:relative;display:flex;align-items:center;justify-content:center">
+    <div id="north-menu" style="display:none">
+      <button class="north-opt" type="button" onclick="window._chooseNorthUp(event)"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>North Up</button>
+      <button class="north-opt" type="button" onclick="window._chooseHeadingUp(event)"><svg class="licon licon-sm"><use href="#ic-arrow-right"/></svg>Heading Up</button>
+    </div>
+    <button id="north-up-btn" title="Map orientation" type="button" onclick="window._northBtnTapped()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
+        <polygon points="12,2 15,11 12,9 9,11" fill="#e63946"/>
+        <polygon points="12,22 15,13 12,15 9,13" fill="#8b949e"/>
+        <circle cx="12" cy="12" r="2" fill="#e6edf3"/>
+      </svg>
+    </button>
+  </div>
   <!-- Locate / Follow — tap to reveal: Follow Me or Show Group -->
   <div id="locate-wrap" style="position:relative;display:flex;align-items:center;justify-content:center">
     <div id="locate-menu" style="display:none">
@@ -1111,25 +1127,35 @@
       <div style="font-size:17px;font-weight:800">Keep tracking with the screen off</div>
     </div>
     <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px">
-      So your group keeps seeing you when GroundLink is in your pocket, Android needs two quick permissions. It can't be done for you — but each is one tap.
+      So your group keeps seeing you when GroundLink is in your pocket, set these two things. Tap a button to jump to GroundLink's settings, then follow the steps.
     </div>
 
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span id="bg-step1-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">1</span>
-        <div style="font-size:14px;font-weight:700">Location: Allow all the time</div>
+        <div style="font-size:14px;font-weight:700">Location → Allow all the time</div>
       </div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:10px">Tap below, choose <b>Location</b>, then pick <b>Allow all the time</b> (not just "while using").</div>
-      <button onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Location Settings</button>
+      <div style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
+        On the settings page that opens:<br>
+        &#8201;1.&nbsp; Tap <b style="color:var(--accent)">Permissions</b><br>
+        &#8201;2.&nbsp; Tap <b style="color:var(--accent)">Location</b><br>
+        &#8201;3.&nbsp; Choose <b style="color:var(--accent)">Allow all the time</b> <span style="color:var(--muted)">— not "While using the app"</span>
+      </div>
+      <button onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Settings for Location</button>
     </div>
 
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span id="bg-step2-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">2</span>
-        <div style="font-size:14px;font-weight:700">Battery: don't restrict</div>
+        <div style="font-size:14px;font-weight:700">Battery → Unrestricted</div>
       </div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:10px">So Android doesn't put GroundLink to sleep. Set battery usage to <b>Unrestricted</b> (Samsung: also turn off "Put app to sleep").</div>
-      <button onclick="window._bgOpenBatterySettings()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">Open App Settings</button>
+      <div style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
+        On the settings page that opens:<br>
+        &#8201;1.&nbsp; Tap <b style="color:var(--accent)">Battery</b><br>
+        &#8201;2.&nbsp; Choose <b style="color:var(--accent)">Unrestricted</b> <span style="color:var(--muted)">(or "Don't optimize")</span><br>
+        &#8201;3.&nbsp; <b>Samsung phones:</b> also turn off <b style="color:var(--accent)">Pause app activity if unused</b>
+      </div>
+      <button onclick="window._bgOpenBatterySettings()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">Open Settings for Battery</button>
     </div>
 
     <div style="display:flex;gap:8px">
@@ -1625,6 +1651,20 @@ function _followRecenter(lng, lat) {
   if (!followUid) return;
   try { map.easeTo({ center: [lng, lat], duration: 1400, easing: function(t) { return t; } }); } catch (e) {}
 }
+// One camera update per self-fix, combining recenter (if following yourself) and rotate
+// (if Heading Up is on) — a single easeTo so the two don't cancel each other.
+function _applyCameraOnSelfFix(lng, lat) {
+  var headed = (typeof headingUpOn !== 'undefined') && headingUpOn &&
+               window._lastHeading != null && !isNaN(window._lastHeading) && window._lastSpeedMph > 3;
+  var opts = null;
+  if (followUid === userId) {
+    opts = { center: [lng, lat], duration: 1400, easing: function(t) { return t; } };
+    if (headed) opts.bearing = window._lastHeading;
+  } else if (headed) {
+    opts = { bearing: window._lastHeading, duration: 700 };
+  }
+  if (opts) { try { map.easeTo(opts); } catch (e) {} }
+}
 // True if a point is more than `marginPx` from the screen center — used so the periodic
 // follow timer only snaps back after you've actually panned away (no jump when centered).
 function _isOffCenter(lngLat, marginPx) {
@@ -2094,7 +2134,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 37;
+var APP_BUILD = 39;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2671,7 +2711,7 @@ function initMap() {
   var zoomInBtn  = document.getElementById('zoom-in-btn');
   var zoomOutBtn = document.getElementById('zoom-out-btn');
   if (layerBtn)   layerBtn.addEventListener('click', openLayerSheet);
-  if (northBtn)   northBtn.addEventListener('click', function() { map.easeTo({ bearing: 0, pitch: 0, duration: 400 }); });
+  // north button now opens the North Up / Heading Up chooser via its onclick
   if (zoomInBtn)  zoomInBtn.addEventListener('click', function() { map.zoomIn(); });
   if (zoomOutBtn) zoomOutBtn.addEventListener('click', function() { map.zoomOut(); });
 
@@ -3239,7 +3279,8 @@ async function startNativeBackgroundTracking() {
         latitude: location.latitude,
         longitude: location.longitude,
         accuracy: location.accuracy || 0,
-        speed: (location.speed != null ? location.speed : null) // m/s, for accurate speed
+        speed: (location.speed != null ? location.speed : null),  // m/s, for accurate speed
+        heading: (location.bearing != null ? location.bearing : null) // degrees, for heading-up
       }});
       // Refresh diagnostics on each native fix so the Debug card stays current in deep
       // background (the 15s interval gets throttled while the screen is off).
@@ -3311,9 +3352,6 @@ function startLocationSharing() {
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
-    // If following myself, glide the map to my new spot right away (don't wait for the
-    // DB round-trip) so the centering stays smooth.
-    if (typeof followUid !== 'undefined' && followUid === userId && typeof _followRecenter === 'function') _followRecenter(lng, lat);
 
     // Instantaneous speed in mph — from the GPS Doppler reading when present, else from
     // the distance moved since the last fix.
@@ -3333,6 +3371,13 @@ function startLocationSharing() {
     else window._smoothMph = window._smoothMph * 0.6 + _inst * 0.4;
     if (window._smoothMph < 1.5) window._smoothMph = 0; // settle to a clean 0 when stopped
     window._lastSpeedMph = Math.round(window._smoothMph);
+
+    // Heading (course over ground) for the "Heading up" map rotation.
+    if (pos.coords && pos.coords.heading != null && !isNaN(pos.coords.heading)) {
+      window._lastHeading = pos.coords.heading;
+    }
+    // One combined camera update: recenter (if following self) + rotate (if Heading Up).
+    _applyCameraOnSelfFix(lng, lat);
 
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
@@ -4585,6 +4630,7 @@ document.getElementById('map').addEventListener('click', () => {
   document.getElementById('user-drawer').classList.remove('open');
   setLocateMeVisible(true);
   if (typeof _toggleLocateMenu === 'function') _toggleLocateMenu(false); // close the Follow/Group chooser
+  if (typeof _toggleNorthMenu === 'function') _toggleNorthMenu(false);   // close the North/Heading chooser
 });
 
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
@@ -5390,6 +5436,7 @@ function setLocateMeVisible(visible) {
   var btn = document.getElementById('locate-me');
   if (!btn) return;
   if (typeof _toggleLocateMenu === 'function') _toggleLocateMenu(false); // never leave the chooser floating
+  if (typeof _toggleNorthMenu === 'function') _toggleNorthMenu(false);
   // If being asked to show, double-check no panels are actually open
   if (visible) {
     var anyOpen =
@@ -5437,10 +5484,37 @@ window._locateBtnTapped = function() {
     toast('Stopped', 1200);
     return;
   }
+  if (typeof _toggleNorthMenu === 'function') _toggleNorthMenu(false);
   _toggleLocateMenu();
 };
 window._chooseFollowMe = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._locateMeTapped(); };
 window._chooseShowGroup = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._fitAllTapped(); };
+
+// ── North-button flyout (North Up / Heading Up) ────────────────────
+var headingUpOn = false;
+function _toggleNorthMenu(force) {
+  var m = document.getElementById('north-menu');
+  if (!m) return;
+  var open = (force === undefined) ? (m.style.display !== 'flex') : force;
+  m.style.display = open ? 'flex' : 'none';
+}
+window._northBtnTapped = function() { _toggleLocateMenu(false); _toggleNorthMenu(); };
+window._chooseNorthUp = function(e) {
+  if (e) e.stopPropagation();
+  _toggleNorthMenu(false);
+  headingUpOn = false;
+  try { map.easeTo({ bearing: 0, pitch: 0, duration: 500 }); } catch (e2) {}
+  toast('North up', 1200);
+};
+window._chooseHeadingUp = function(e) {
+  if (e) e.stopPropagation();
+  _toggleNorthMenu(false);
+  headingUpOn = true;
+  if (window._lastHeading != null && !isNaN(window._lastHeading)) {
+    try { map.easeTo({ bearing: window._lastHeading, duration: 600 }); } catch (e2) {}
+  }
+  toast('Heading up — the map turns with your direction while moving', 2600);
+};
 
 // ── Fit whole group in view (toggle) ───────────────────────────────
 var fitAllInterval = null;
