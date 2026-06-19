@@ -173,6 +173,11 @@
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
   <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:6px">&#128994; Active Users &middot; <span id="active-users-count">0</span></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Tap a person to jump to their group.</div>
+    <div id="active-users-list"></div>
+  </div>
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
     <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128200; Most Active Groups</div>
     <div id="most-active-list"></div>
   </div>
@@ -805,6 +810,55 @@ function renderAllData(all) {
   renderSummary(all);
 }
 
+// All users seen in the last few minutes, across every group. Tap one to jump to their
+// group card.
+function renderActiveUsers(all) {
+  var el = document.getElementById('active-users-list');
+  if (!el) return;
+  var now = Date.now();
+  var users = [];
+  Object.keys(all || {}).forEach(function(gk) {
+    var g = all[gk];
+    if (!g || !g.users) return;
+    Object.keys(g.users).forEach(function(uid) {
+      var u = g.users[uid];
+      if (!u || u.claiming) return;
+      var age = now - (u.ts || 0);
+      if (age < 5 * 60 * 1000) users.push({ name: u.name || uid.slice(0, 6), gk: gk, age: age, hidden: u.hidden, noGps: u.noGps });
+    });
+  });
+  var cnt = document.getElementById('active-users-count');
+  if (cnt) cnt.textContent = users.length;
+  if (!users.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0">No users active right now.</div>'; return; }
+  users.sort(function(a, b) { return a.age - b.age; });
+  el.innerHTML = users.map(function(u) {
+    var room = u.gk.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    var live = u.age < LIVE_MS;
+    var dot = u.hidden ? '#888ea0' : u.noGps ? '#888ea0' : live ? '#3fb950' : '#f0a500';
+    return '<div onclick="goToGroup(\'' + u.gk + '\')" style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer">' +
+        '<span style="width:9px;height:9px;border-radius:50%;background:' + dot + ';flex-shrink:0"></span>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">' + u.name + '</div>' +
+          '<div style="font-size:11px;color:var(--accent)">' + room + '</div></div>' +
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted);flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>' +
+      '</div>';
+  }).join('');
+}
+
+// Jump to a group's card on the Groups tab and flash it.
+function goToGroup(key) {
+  switchTab('groups');
+  var el = document.getElementById('gcard-' + key);
+  if (!el) return;
+  var retired = document.getElementById('admin-list-retired');
+  if (retired && retired.contains(el)) setGroupSub('retired'); else setGroupSub('active');
+  setTimeout(function() {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.style.transition = 'box-shadow .3s';
+    el.style.boxShadow = '0 0 0 2px var(--accent)';
+    setTimeout(function() { el.style.boxShadow = ''; }, 2200);
+  }, 60);
+}
+
 function renderSummary(all) {
   if (!all || !Object.keys(all).length) return;
   var entries = Object.entries(all);
@@ -1193,6 +1247,7 @@ function loadAdmin() {
       // Most Active Groups now lives on the Groups tab, so keep its summary fresh every
       // snapshot regardless of which tab is open (the render is guarded by element id).
       renderSummary(all);
+      renderActiveUsers(all);
       // Live-refresh the Map (overview) tab if it's open
       if (document.getElementById('tab-overview').classList.contains('active')) {
         renderOverview();
@@ -1322,6 +1377,7 @@ function loadAdmin() {
 
         var card = document.createElement('div');
         var isTest = key.startsWith('test_');
+        card.id = 'gcard-' + key;
         card.className = 'group-card' + (isTest ? ' is-test' : '');
         // Strip test_ prefix from display name for test groups
         var displayName2 = isTest ? displayName.replace(/^Test /i, '') : displayName;
