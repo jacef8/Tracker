@@ -5950,6 +5950,19 @@ function addRegridParcels() {
           window._evt('parcels (Regrid) rendered ' + n + ' features at z' + map.getZoom().toFixed(1));
         } catch (e) {}
       });
+      // Decisive probe: fetch ONE real tile at the current center and log its HTTP status, byte
+      // size, and the coordinates — separates auth (401), CORS, empty area (0 bytes), and "tiles
+      // have data but aren't rendering" (200 + bytes) from each other.
+      try {
+        var c = map.getCenter(), pz = 16, nn = Math.pow(2, pz);
+        var tx = Math.floor((c.lng + 180) / 360 * nn);
+        var latR = c.lat * Math.PI / 180;
+        var ty = Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * nn);
+        fetch('https://tiles.regrid.com/api/v1/parcels/' + pz + '/' + tx + '/' + ty + '.mvt?token=' + window.REGRID_TOKEN)
+          .then(function(rr) { return rr.blob().then(function(b) { return { s: rr.status, b: b.size }; }); })
+          .then(function(o) { window._evt('parcels tile probe — HTTP ' + o.s + ', ' + o.b + ' bytes @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3)); })
+          .catch(function(e) { window._evt('parcels tile probe — fetch blocked (' + ((e && e.message) || 'CORS?') + ') @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3)); });
+      } catch (e) {}
     })
     .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
 }
