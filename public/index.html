@@ -1355,8 +1355,8 @@
         <!-- Nationwide parcels (Regrid) -->
         <div onclick="var cb=document.getElementById('toggle-regrid');cb.checked=!cb.checked;toggleRegridParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">Parcels — Nationwide</div>
-            <div style="font-size:11px;color:var(--muted)">All 50 states &middot; tap a parcel for owner info</div>
+            <div style="font-size:14px;font-weight:700">Parcels — Nationwide (Regrid)</div>
+            <div style="font-size:11px;color:var(--muted)">All 50 states &middot; requires paid Regrid plan</div>
           </div>
           <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
             <input type="checkbox" id="toggle-regrid" onchange="toggleRegridParcels(this.checked)" style="opacity:0;width:0;height:0">
@@ -1388,14 +1388,14 @@
             <span id="radar-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
         </div>
-        <!-- Florida statewide parcels — activate when shapefile is uploaded -->
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;opacity:0.5">
+        <!-- Florida statewide parcels — live from the FL state GIS (free, no key) -->
+        <div onclick="var cb=document.getElementById('toggle-fl-parcels');cb.checked=!cb.checked;toggleFLParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">Florida Statewide Parcels</div>
-            <div style="font-size:11px;color:var(--muted)">Statewide data — coming soon</div>
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e86de"><use href="#ic-layers"/></svg>Florida Parcels</div>
+            <div style="font-size:11px;color:var(--muted)">Property lines &amp; owners &middot; all 67 counties &middot; tap a parcel for info</div>
           </div>
-          <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0" disabled>
+          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0">
             <span id="fl-parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
             <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 80;
+var APP_BUILD = 81;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3062,6 +3062,9 @@ function initMap() {
   // Parcel label refresh on pan/zoom
   map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
   map.on('zoomend', function() { if (parcelsOn) loadParcelLabels(); });
+  // FL statewide parcels: reload the parcels in view as the map moves/zooms
+  map.on('moveend', function() { if (flParcelsOn) loadFLParcelsInView(false); });
+  map.on('zoomend', function() { if (flParcelsOn) loadFLParcelsInView(false); });
 
   // Following your OWN position persists through pan/zoom (swipe to look, pinch to zoom,
   // it snaps back — tap the locate button to stop). But panning while following ANOTHER
@@ -5793,19 +5796,31 @@ function addParcelLayer() {
 
 }
 
-// ── Florida Statewide Parcel Layer ───────────────────────────────
-// Placeholder — activate by uploading fl_parcels.geojson to public/
+// ── Florida Statewide Parcels (free, live from FL DOR / state GIS) ─────────
+// Authoritative statewide cadastral served by the Florida Geographic Information
+// Office. No API key, no hosting, no monthly fee — we query the FeatureServer for
+// the current map view and draw parcels as GeoJSON. ~10.8M parcels, all 67 counties.
 var flParcelsOn = false;
-var FL_PARCELS_FILE = '/fl_parcels.geojson'; // drop file here when ready
+var FL_PARCELS_URL = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query';
+var FL_PARCELS_MINZOOM = 14;
+var _flLoadTimer = null, _flLastBox = '', _flSchemaLogged = false;
 
 function toggleFLParcels(on) {
   flParcelsOn = on;
   updateToggleUI('fl-parcels-toggle-track', 'fl-parcels-toggle-thumb', on);
+  try { localStorage.setItem('gl_flparcels', on ? '1' : '0'); } catch (e) {}
   if (on) {
     addFLParcelLayer();
-    toast('Loading FL statewide parcels...', 2000);
+    if (map.getZoom() < FL_PARCELS_MINZOOM) {
+      map.flyTo({ zoom: FL_PARCELS_MINZOOM + 1, duration: 1200 });
+      toast('Zooming in to load Florida parcels…', 2600);
+    } else {
+      toast('Loading Florida parcels for this area…', 2000);
+    }
+    loadFLParcelsInView(true);
   } else {
-    ['fl-parcels-fill','fl-parcels-line','fl-parcels-labels','fl-parcels-hover'].forEach(function(id) {
+    if (window._activeParcelPopup) { window._activeParcelPopup.remove(); window._activeParcelPopup = null; }
+    ['fl-parcels-fill','fl-parcels-line','fl-parcels-labels','fl-parcels-hover','fl-parcels-hover-line'].forEach(function(id) {
       if (map.getLayer(id)) map.removeLayer(id);
     });
     if (map.getSource('fl-parcels')) map.removeSource('fl-parcels');
@@ -5816,30 +5831,19 @@ function addFLParcelLayer() {
   if (!map.isStyleLoaded()) { setTimeout(addFLParcelLayer, 200); return; }
   if (map.getLayer('fl-parcels-fill')) return;
   if (!map.getSource('fl-parcels')) {
-    map.addSource('fl-parcels', {
-      type: 'geojson',
-      data: FL_PARCELS_FILE,
-      generateId: true
-    });
+    map.addSource('fl-parcels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true });
   }
   var beforeLayer = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
   map.addLayer({
-    id: 'fl-parcels-fill',
-    type: 'fill',
-    source: 'fl-parcels',
-    paint: { 'fill-color': 'rgba(41,128,185,0.06)', 'fill-outline-color': 'rgba(41,128,185,0.9)' }
+    id: 'fl-parcels-fill', type: 'fill', source: 'fl-parcels',
+    paint: { 'fill-color': 'rgba(46,134,222,0.06)' }
   }, beforeLayer);
   map.addLayer({
-    id: 'fl-parcels-line',
-    type: 'line',
-    source: 'fl-parcels',
-    paint: { 'line-color': '#2980b9', 'line-width': 1 }
+    id: 'fl-parcels-line', type: 'line', source: 'fl-parcels',
+    paint: { 'line-color': '#2e86de', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.6, 16, 1.2, 18, 2], 'line-opacity': 0.95 }
   }, beforeLayer);
   map.addLayer({
-    id: 'fl-parcels-labels',
-    type: 'symbol',
-    source: 'fl-parcels',
-    minzoom: 14,
+    id: 'fl-parcels-labels', type: 'symbol', source: 'fl-parcels', minzoom: 16,
     layout: {
       'text-field': ['get', 'o'],
       'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
@@ -5849,19 +5853,75 @@ function addFLParcelLayer() {
     paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.5 }
   });
   map.addLayer({
-    id: 'fl-parcels-hover',
-    type: 'fill',
-    source: 'fl-parcels',
-    paint: { 'fill-color': 'rgba(41,128,185,0.2)' },
-    filter: ['==', ['id'], -1]
+    id: 'fl-parcels-hover', type: 'fill', source: 'fl-parcels',
+    paint: { 'fill-color': 'rgba(46,134,222,0.22)' }, filter: ['==', ['id'], -1]
   }, beforeLayer);
   map.addLayer({
-    id: 'fl-parcels-hover-line',
-    type: 'line',
-    source: 'fl-parcels',
-    paint: { 'line-color': '#2980b9', 'line-width': 3 },
-    filter: ['==', ['id'], -1]
+    id: 'fl-parcels-hover-line', type: 'line', source: 'fl-parcels',
+    paint: { 'line-color': '#2e86de', 'line-width': 3 }, filter: ['==', ['id'], -1]
   }, beforeLayer);
+}
+
+// Pick the first present, non-empty value among candidate field names (case-insensitive).
+function _flPick(props, cands) {
+  var keys = Object.keys(props || {});
+  for (var i = 0; i < cands.length; i++) {
+    for (var k = 0; k < keys.length; k++) {
+      if (keys[k].toLowerCase() === cands[i]) {
+        var v = props[keys[k]];
+        if (v != null && v !== '') return v;
+      }
+    }
+  }
+  return '';
+}
+
+// Query the state FeatureServer for whatever is in view and repaint. Debounced so
+// panning/zooming doesn't spam the service.
+function loadFLParcelsInView(force) {
+  if (!flParcelsOn) return;
+  if (map.getZoom() < FL_PARCELS_MINZOOM) {
+    if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: [] });
+    return;
+  }
+  clearTimeout(_flLoadTimer);
+  _flLoadTimer = setTimeout(function() {
+    if (!flParcelsOn) return;
+    var b = map.getBounds();
+    var box = [b.getWest().toFixed(5), b.getSouth().toFixed(5), b.getEast().toFixed(5), b.getNorth().toFixed(5)].join(',');
+    if (!force && box === _flLastBox) return;
+    _flLastBox = box;
+    var url = FL_PARCELS_URL + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
+      + '&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=2000'
+      + '&geometry=' + encodeURIComponent(box);
+    fetch(url)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(gj) {
+        if (!gj || !gj.features) gj = { type: 'FeatureCollection', features: [] };
+        if (gj.features.length && !_flSchemaLogged) {
+          _flSchemaLogged = true;
+          try { window._evt('FL parcels schema — ' + Object.keys(gj.features[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
+        }
+        // Normalize owner/address/city/acres/value across schema variants so the
+        // existing label + popup code (o / a / c / ac / v) just works.
+        gj.features.forEach(function(f) {
+          var p = f.properties || (f.properties = {});
+          p.o  = String(_flPick(p, ['own_name', 'owner_name', 'owner', 'ownername', 'name', 'own1']) || '');
+          p.a  = String(_flPick(p, ['phy_addr1', 'phy_address', 'site_addr', 'situs', 'address', 'phy_addr', 's_addr']) || '');
+          p.c  = String(_flPick(p, ['phy_city', 'city', 'situs_city', 's_city']) || '');
+          var ac = _flPick(p, ['acres', 'gis_acres', 'acreage', 'tot_acres']);
+          if (!ac) { var sf = _flPick(p, ['lnd_sqfoot', 'land_sqft', 'sqft']); if (sf) ac = (parseFloat(sf) / 43560).toFixed(2); }
+          p.ac = ac ? (Math.round(parseFloat(ac) * 100) / 100) : '';
+          p.v  = _flPick(p, ['jv', 'just_value', 'tot_val', 'market_val', 'av_nsd', 'landval', 'lnd_val']) || '';
+        });
+        if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData(gj);
+        try { window._evt('FL parcels — ' + gj.features.length + ' in view at z' + map.getZoom().toFixed(1)); } catch (e) {}
+      })
+      .catch(function(e) {
+        try { window._evt('FL parcels load failed — ' + ((e && e.message) || 'network/CORS')); } catch (x) {}
+        toast('FL parcels: ' + ((e && e.message) || 'load failed'), 4000);
+      });
+  }, force ? 0 : 450);
 }
 
 function toggleParcels(on) {
