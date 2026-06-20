@@ -1497,6 +1497,10 @@
       <div class="section-title" style="margin-bottom:0">Room</div>
       <div id="ri-room" style="font-size:16px;font-weight:700;color:var(--accent);word-break:break-word;margin-top:2px"></div>
     </div>
+    <div id="ri-fav-row" onclick="window._riToggleFav()" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+      <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
+      <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen for quick rejoin</div></div>
+    </div>
     <div id="ri-pin-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px"></div>
     <div id="ri-vis-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:none"></div>
     <button onclick="closeRoomInfo();window._openInvitePicker();" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;width:100%;text-align:left">
@@ -2032,8 +2036,22 @@ function openRoomInfo() {
   }
   var ownerActions = document.getElementById('ri-owner-actions');
   if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
+  try { _renderRiFav(); } catch (e) {}
   document.getElementById('room-info-sheet').style.display = 'block';
 }
+function _renderRiFav() {
+  var on = (typeof _isFav === 'function') && groupName && _isFav(groupName);
+  var star = document.getElementById('ri-fav-star');
+  var sub = document.getElementById('ri-fav-sub');
+  if (star) { star.innerHTML = on ? '&#9733;' : '&#9734;'; star.style.color = on ? 'var(--accent)' : 'var(--muted)'; }
+  if (sub) sub.textContent = on ? 'Saved — shows on your home screen for quick rejoin' : 'Pin it to your home screen for quick rejoin';
+}
+window._riToggleFav = function() {
+  if (!groupName) return;
+  var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  try { window._toggleFav(groupName, label); } catch (e) {}
+  _renderRiFav();
+};
 function renderRoomInfoOwner() {
   var sheet = document.getElementById('room-info-sheet');
   if (sheet && sheet.style.display === 'block') openRoomInfo();
@@ -2042,6 +2060,7 @@ window._setRoomVisibility = function(v) {
   if (!window._isRoomOwner || !db || !groupName) return;
   try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), v); } catch (e) {}
   window._roomVisibility = v;
+  try { window._evt('set room visibility to ' + v); } catch (e) {}
   toast(v === 'private' ? 'Room set to private' : 'Room set to public', 2200);
   renderRoomInfoOwner();
 };
@@ -2077,7 +2096,7 @@ function _syncSettings() {
       bgRow.style.display = 'flex';
       var bp = document.getElementById('set-bgtrack-pill');
       var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
-      var healthy = !!window._bgGeoStarted && !permProblem && window._lastFixSrc === 'native';
+      var healthy = !!window._bgGeoStarted && !permProblem && !!window._gotNativeFix;
       if (bp) {
         if (healthy) { bp.textContent = 'ON'; bp.style.background = '#13361f'; bp.style.color = '#3fb950'; }
         else if (window._bgGeoStarted && !permProblem) { bp.textContent = 'STARTING'; bp.style.background = 'var(--border)'; bp.style.color = 'var(--muted)'; }
@@ -2145,6 +2164,7 @@ function sendSOS() {
     fbSet(c, msg);
   }
   pushNotify('sos', 'SOS', userName + ' needs help');
+  try { window._evt('sent an SOS'); } catch (e) {}
   toast('SOS sent to group');
 }
 
@@ -2348,7 +2368,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 70;
+var APP_BUILD = 72;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2422,6 +2442,15 @@ function writeDebugLog(grp, msg) {
     fbSet(ref, { msg: msg, ts: Date.now() });
   } catch(e) {}
 }
+// Convenience: log a timeline event for the current room, attributed to this user. Used
+// throughout to feed the admin Event Log so trouble can be isolated chronologically.
+window._evt = function(msg) {
+  try {
+    if (typeof groupName !== 'undefined' && groupName) {
+      writeDebugLog(groupName, (typeof userName !== 'undefined' && userName ? userName : '?') + ' — ' + msg);
+    }
+  } catch (e) {}
+};
 
 // ══ SESSION PERSISTENCE ══════════════════════════════════════════
 // userId is stored permanently — same device = same dot on the map
@@ -3524,6 +3553,7 @@ function toggleLocationShare(share) {
   locationHidden = !share;
   try { localStorage.setItem('gl_loc_hidden', locationHidden ? '1' : '0'); } catch (e) {}
   _syncSettings();
+  try { window._evt(locationHidden ? 'turned location sharing OFF' : 'turned location sharing ON'); } catch (e) {}
   if (!(db && groupName && userId && userName)) return;
   if (locationHidden) {
     // Hide now: broadcast a no-GPS/hidden record so the dot drops for everyone, and clear my own marker
@@ -3588,6 +3618,7 @@ async function startNativeBackgroundTracking() {
     }, function(location, error) {
       if (error) {
         window._bgGeoError = (error.code || 'err') + (error.message ? ': ' + error.message : '');
+        try { if (window._lastBgErr !== window._bgGeoError) { window._lastBgErr = window._bgGeoError; window._evt('background tracking error — ' + window._bgGeoError); } } catch (e) {}
         // Background ("always") permission missing — open the guided setup card instead
         // of a bare confirm dialog.
         if (error.code === 'NOT_AUTHORIZED' && typeof window._openBgSetup === 'function') {
@@ -3599,6 +3630,8 @@ async function startNativeBackgroundTracking() {
       window._bgGeoError = '';
       if (!location || typeof window._onGpsFix !== 'function') return;
       window._lastFixSrc = 'native'; // diagnostics: this fix came from the background service
+      if (!window._gotNativeFix) { window._gotNativeFix = true; try { window._evt('background GPS confirmed — first native fix'); } catch (e) {} }
+      window._gotNativeFix = true;   // confirms the native service has delivered at least one fix
       window._onGpsFix({ coords: {
         latitude: location.latitude,
         longitude: location.longitude,
@@ -3610,7 +3643,8 @@ async function startNativeBackgroundTracking() {
       // background (the 15s interval gets throttled while the screen is off).
       if (typeof window._writeDiag === 'function') window._writeDiag();
     });
-  } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); }
+    try { window._evt('background tracking service started'); } catch (e) {}
+  } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); try { window._evt('background tracking failed to start — ' + String(e)); } catch (e2) {} }
 }
 async function stopNativeBackgroundTracking() {
   try {
@@ -3677,6 +3711,14 @@ function startLocationSharing() {
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
+    window._lastAccM = accuracy || 0; // diagnostics: accuracy (meters) of this fix
+    // Timeline events (edge-triggered so we log transitions, not every fix).
+    try {
+      if (window._wasNoGps) { window._wasNoGps = false; window._evt('GPS recovered (' + Math.round(accuracy || 0) + ' m)'); }
+      var _accM = accuracy || 0;
+      if (_accM > TRAIL_MAX_ACC_M && !window._wasLowAcc) { window._wasLowAcc = true; window._evt('GPS accuracy went low (' + Math.round(_accM) + ' m)'); }
+      else if (_accM > 0 && _accM <= TRAIL_MAX_ACC_M && window._wasLowAcc) { window._wasLowAcc = false; window._evt('GPS accuracy recovered (' + Math.round(_accM) + ' m)'); }
+    } catch (e) {}
 
     // Instantaneous speed in mph — from the GPS Doppler reading when present, else from
     // the distance moved since the last fix.
@@ -3767,6 +3809,7 @@ function startLocationSharing() {
 
   const markNoGps = () => {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
+    if (!window._wasNoGps) { window._wasNoGps = true; try { window._evt('GPS lost / no fix'); } catch (e) {} }
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, accuracy: 0,
       ts: Date.now(), claiming: false, noGps: true
@@ -3824,6 +3867,8 @@ function startLocationSharing() {
         bgStarted: !!window._bgGeoStarted,
         bgErr: window._bgGeoError || '',
         fixSrc: window._lastFixSrc || 'none',
+        gotNative: !!window._gotNativeFix,
+        acc: (window._lastAccM != null ? Math.round(window._lastAccM) : -1),
         lastFixAgo: window._lastFixTs ? Math.round((now - window._lastFixTs) / 1000) : -1,
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
         vis: document.visibilityState,
@@ -5064,6 +5109,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   });
   toast('Pin dropped');
   pushNotify('pin', groupName + ' — new pin', userName + ' dropped a ' + finalCat + ' pin');
+  try { window._evt('dropped a pin — ' + finalCat + (label ? ' (' + label + ')' : '')); } catch (e) {}
   _closePinModal();
 });
 
@@ -5208,6 +5254,7 @@ window._kickMember = function() {
     fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
     fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
   } catch (e) {}
+  try { window._evt('removed ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member') + ' from the room'); } catch (e) {}
   toast('Removed from the room', 2500);
 };
 window._makeOwner = function() {
@@ -5216,6 +5263,7 @@ window._makeOwner = function() {
   if (!uid || !window._isRoomOwner || !db || !groupName) return;
   try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), uid); } catch (e) {}
   window._isRoomOwner = false;
+  try { window._evt('transferred room ownership to ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member')); } catch (e) {}
   toast('Ownership transferred', 2500);
 };
 
