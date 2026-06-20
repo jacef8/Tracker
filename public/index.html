@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 77;
+var APP_BUILD = 79;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5959,8 +5959,20 @@ function addRegridParcels() {
         var latR = c.lat * Math.PI / 180;
         var ty = Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * nn);
         fetch('https://tiles.regrid.com/api/v1/parcels/' + pz + '/' + tx + '/' + ty + '.mvt?token=' + window.REGRID_TOKEN)
-          .then(function(rr) { return rr.blob().then(function(b) { return { s: rr.status, b: b.size }; }); })
-          .then(function(o) { window._evt('parcels tile probe — HTTP ' + o.s + ', ' + o.b + ' bytes @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3)); })
+          .then(function(rr) { return rr.arrayBuffer().then(function(buf) { return { s: rr.status, buf: buf }; }); })
+          .then(function(o) {
+            var size = o.buf.byteLength, strs = '';
+            if (size > 0) {
+              var bytes = new Uint8Array(o.buf), cur = '', found = [];
+              for (var i = 0; i < bytes.length && found.length < 14; i++) {
+                var ch = bytes[i];
+                if (ch >= 32 && ch < 127) { cur += String.fromCharCode(ch); }
+                else { if (cur.length >= 4 && found.indexOf(cur) === -1) found.push(cur); cur = ''; }
+              }
+              strs = found.join(' | ');
+            }
+            window._evt('parcels tile probe — HTTP ' + o.s + ', ' + size + ' bytes @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3) + (strs ? ' · strings: ' + strs : ''));
+          })
           .catch(function(e) { window._evt('parcels tile probe — fetch blocked (' + ((e && e.message) || 'CORS?') + ') @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3)); });
       } catch (e) {}
     })
