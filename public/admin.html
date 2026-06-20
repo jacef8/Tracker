@@ -157,10 +157,10 @@
 </div>
 
 <div class="stats-row">
-  <div class="stat-card"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups</div></div>
-  <div class="stat-card"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups</div></div>
-  <div class="stat-card"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
-  <div class="stat-card"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
+  <div class="stat-card" onclick="statJump('groups')" style="cursor:pointer" title="View all groups"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups &rsaquo;</div></div>
+  <div class="stat-card" onclick="statJump('groups','active')" style="cursor:pointer" title="View active groups"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups &rsaquo;</div></div>
+  <div class="stat-card" onclick="statJump('overview')" style="cursor:pointer" title="See pins on the map"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins &rsaquo;</div></div>
+  <div class="stat-card" onclick="statJump('alldata')" style="cursor:pointer" title="Browse raw data"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages &rsaquo;</div></div>
 </div>
 
 <div class="tab-nav">
@@ -172,15 +172,6 @@
 
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
-  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:13px;font-weight:700;margin-bottom:6px">&#128994; Active Users &middot; <span id="active-users-count">0</span></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Tap a person to jump to their group.</div>
-    <div id="active-users-list"></div>
-  </div>
-  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128200; Most Active Groups</div>
-    <div id="most-active-list"></div>
-  </div>
   <div class="group-subtabs">
     <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">Active &middot; <span id="gsub-active-n">0</span></button>
     <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Inactive &middot; <span id="gsub-retired-n">0</span></button>
@@ -322,6 +313,13 @@ function switchTab(name) {
   }
 }
 
+// The top KPI cards double as shortcuts into the relevant tab.
+function statJump(tab, sub) {
+  switchTab(tab);
+  if (sub && tab === 'groups') { try { setGroupSub(sub); } catch (e) {} }
+  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+}
+
 // Live per-device diagnostics each member's app writes to gl/<group>/diag/<uid>.
 function renderDeviceDebug() {
   var el = document.getElementById('debug-list');
@@ -352,23 +350,43 @@ function renderDeviceDebug() {
     var roomName = r.gk.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();});
     var fixOk   = d.lastFixAgo   >= 0 && d.lastFixAgo   < 60;
     var writeOk = d.lastWriteAgo >= 0 && d.lastWriteAgo < 60;
+    var bgState = !d.native ? '&mdash;'
+      : (!d.bgStarted ? pill(false, 'NOT STARTED')
+        : (d.gotNative ? pill(true, 'ON') : pill(false, 'STARTING')));
+    var accTxt = (d.acc != null && d.acc >= 0)
+      ? (d.acc + ' m' + (d.acc > 50 ? ' <span style="color:#f0a500">&#9888; low</span>' : '')) : '?';
     return '<div class="group-card">' +
       '<div class="group-header"><div><div class="group-name">' + (d.name || r.uid.slice(0,6)) + '</div>' +
         '<div class="group-key">' + roomName + '</div></div>' +
-        pill(reportAge >= 0 && reportAge < 60, reportAge >= 0 ? 'reported ' + reportAge + 's ago' : 'stale') + '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+          pill(reportAge >= 0 && reportAge < 60, reportAge >= 0 ? reportAge + 's ago' : 'stale') +
+          '<button class="btn btn-warn" onclick="clearOneDevice(\'' + r.gk + '\',\'' + r.uid + '\')" style="font-size:11px;padding:4px 9px">Clear</button>' +
+        '</div></div>' +
       '<div style="margin-top:8px">' +
         row('Platform', d.native ? pill(true, 'NATIVE APP') : pill(false, 'web / browser')) +
-        row('UA token &middot; Capacitor', (d.uaTok ? 'UA&#10003;' : 'UA&#10007;') + ' &middot; ' + (d.cap ? 'cap&#10003;' : 'cap&#10007;')) +
-        row('Background GPS service', d.native ? pill(!!d.bgStarted, d.bgStarted ? 'STARTED' : 'NOT STARTED') : '—') +
+        row('Background GPS', bgState) +
         (d.bgErr ? row('Background error', '<span style="color:#f85149">' + d.bgErr + '</span>') : '') +
         row('GPS source', d.fixSrc || 'none') +
+        row('Native fix seen', d.native ? (d.gotNative ? pill(true, 'yes') : pill(false, 'no')) : '&mdash;') +
         row('Last GPS fix', d.lastFixAgo >= 0 ? pill(fixOk, d.lastFixAgo + 's ago') : pill(false, 'never')) +
+        row('Last accuracy', accTxt) +
         row('Last DB write', d.lastWriteAgo >= 0 ? pill(writeOk, d.lastWriteAgo + 's ago') : pill(false, 'never')) +
+        row('UA &middot; Capacitor', (d.uaTok ? 'UA&#10003;' : 'UA&#10007;') + ' &middot; ' + (d.cap ? 'cap&#10003;' : 'cap&#10007;')) +
         row('Screen state', d.vis || '?') +
         row('Location hidden', d.hidden ? 'yes' : 'no') +
         row('App build', d.build || '?') +
       '</div></div>';
   }).join('');
+}
+
+// Clear one device's diagnostics (the per-device version of the Clear-all button).
+function clearOneDevice(gk, uid) {
+  var fb = window._fb;
+  if (!fb || !fb.remove) return;
+  try { fb.remove(fb.ref(fb.db, 'gl/' + gk + '/diag/' + uid)); } catch (e) {}
+  var all = window._allDataSnapshot || {};
+  if (all[gk] && all[gk].diag) delete all[gk].diag[uid];
+  renderDeviceDebug();
 }
 
 // Build a plain-text dump of every device's diagnostics (for pasting into chat).
@@ -1113,10 +1131,21 @@ function renderDebugLog() {
     var d = new Date(e.ts);
     var t = d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
             d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true});
-    var icon = e.msg.includes('joined') ? '&#128994;'
-             : e.msg.includes('exited') ? '&#128308;'
-             : e.msg.includes('GPS active') ? '&#128225;'
-             : e.msg.includes('no GPS') ? '&#128203;'
+    var m = e.msg;
+    var icon = /SOS/.test(m) ? '&#128680;'                         // 🚨
+             : /removed .* from the room/.test(m) ? '&#9940;'      // ⛔
+             : /ownership/.test(m) ? '&#128081;'                   // 👑
+             : /signed in/.test(m) ? '&#128273;'                   // 🔑
+             : /dropped a pin/.test(m) ? '&#128205;'               // 📍
+             : /accuracy went low|failed to start|tracking error/.test(m) ? '&#9888;&#65039;' // ⚠️
+             : /background .*confirmed|background tracking service started|accuracy recovered/.test(m) ? '&#128225;' // 📡
+             : /GPS recovered|GPS active/.test(m) ? '&#128225;'    // 📡
+             : /GPS lost|no fix/.test(m) ? '&#128245;'             // 📵
+             : /location sharing OFF/.test(m) ? '&#128584;'        // 🙈
+             : /location sharing ON/.test(m) ? '&#128065;&#65039;'// 👁️
+             : /visibility/.test(m) ? '&#127760;'                  // 🌐
+             : /joined/.test(m) ? '&#128994;'                      // 🟢
+             : /exited/.test(m) ? '&#128308;'                      // 🔴
              : 'ℹ️';
     var groupLabel = _debugFilter === 'all'
       ? '<span style="font-size:10px;color:var(--accent);margin-left:6px">' +
