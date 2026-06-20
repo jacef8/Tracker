@@ -1375,8 +1375,8 @@
         <!-- Florida statewide parcels — live from the FL state GIS (free, no key) -->
         <div onclick="var cb=document.getElementById('toggle-fl-parcels');cb.checked=!cb.checked;toggleFLParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
-            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e86de"><use href="#ic-layers"/></svg>Florida Parcels</div>
-            <div style="font-size:11px;color:var(--muted)">Property lines &amp; owners &middot; all 67 counties &middot; tap a parcel for info</div>
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e86de"><use href="#ic-layers"/></svg>Parcels (auto-detect)</div>
+            <div style="font-size:11px;color:var(--muted)">Property lines &amp; owners &middot; loads the right source for where you are &middot; tap for info</div>
           </div>
           <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
             <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0">
@@ -2368,7 +2368,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 82;
+var APP_BUILD = 83;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3120,7 +3120,7 @@ function initMap() {
           .setLngLat(e.lngLat)
           .setHTML(
             '<div style="position:relative;padding-right:20px">' +
-            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2980b9;margin-bottom:6px">&#127968; FL Property Info</div>' +
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2980b9;margin-bottom:6px">&#127968; Property Info</div>' +
             '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
             (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
             (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + acres + '</div>' : '') +
@@ -5745,20 +5745,39 @@ function addParcelLayer() {
 
 }
 
-// ── Florida Statewide Parcels (free, live from FL DOR / state GIS) ─────────
-// Authoritative statewide cadastral served by the Florida Geographic Information
-// Office. No API key, no hosting, no monthly fee — we query the FeatureServer for
-// the current map view and draw parcels as GeoJSON. ~10.8M parcels, all 67 counties.
+// ── Parcels (auto-detect by location) ─────────────────────────────────────
+// One toggle. When on, we look at where the map is centered and load whichever
+// free, authoritative parcel service covers that spot — a statewide service where
+// one exists (e.g. Florida's), or a county service elsewhere. No API key, no fee.
+// To add coverage, append an entry below: give it a rough bbox [W,S,E,N] and the
+// ArcGIS .../FeatureServer/<layer>/query URL. The loader + tile cache do the rest.
+var PARCEL_SOURCES = [
+  {
+    id: 'fl', label: 'Florida (statewide)',
+    bbox: [-87.70, 24.30, -79.80, 31.10],
+    url: 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query',
+    minzoom: 14
+  }
+];
+function _parcelSourceAt(lng, lat) {
+  for (var i = 0; i < PARCEL_SOURCES.length; i++) {
+    var b = PARCEL_SOURCES[i].bbox;
+    if (lng >= b[0] && lng <= b[2] && lat >= b[1] && lat <= b[3]) return PARCEL_SOURCES[i];
+  }
+  return null;
+}
+
 var flParcelsOn = false;
-var FL_PARCELS_URL = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query';
-var FL_PARCELS_MINZOOM = 14;
-var _flLoadTimer = null, _flSchemaLogged = false;
+var FL_PARCELS_MINZOOM = 14;        // default min zoom if a source doesn't set one
+var _flLoadTimer = null, _flSchemaLogged = {};
+var _flActiveSrc = null, _flNoSrcWarned = false;
 // Tiled cache: we fetch parcels on a fixed slippy-tile grid so panning back over an
-// area you've already seen is instant (served from memory, no re-download).
+// area you've already seen is instant (served from memory, no re-download). Keys are
+// prefixed with the source id so different services never collide.
 var FL_TILE_Z = 14;                 // fetch grid zoom
 var FL_TILE_CACHE_MAX = 280;        // LRU cap (tiles kept in memory)
-var _flTileCache = {};              // "z/x/y" -> { feats:[...], t:lastUsed }
-var _flInFlight = {};               // "z/x/y" -> true while fetching
+var _flTileCache = {};              // "srcId/z/x/y" -> { feats:[...], t:lastUsed }
+var _flInFlight = {};               // "srcId/z/x/y" -> true while fetching
 var _flCacheOrder = [];             // insertion order for LRU eviction
 
 function toggleFLParcels(on) {
@@ -5767,11 +5786,15 @@ function toggleFLParcels(on) {
   try { localStorage.setItem('gl_flparcels', on ? '1' : '0'); } catch (e) {}
   if (on) {
     addFLParcelLayer();
-    if (map.getZoom() < FL_PARCELS_MINZOOM) {
-      map.flyTo({ zoom: FL_PARCELS_MINZOOM + 1, duration: 1200 });
-      toast('Zooming in to load Florida parcels…', 2600);
+    _flNoSrcWarned = false;
+    var c0 = map.getCenter(), src0 = _parcelSourceAt(c0.lng, c0.lat);
+    if (!src0) {
+      toast('No free parcel layer here yet — pan to a covered area (e.g. Florida)', 4000);
+    } else if (map.getZoom() < (src0.minzoom || FL_PARCELS_MINZOOM)) {
+      map.flyTo({ zoom: (src0.minzoom || FL_PARCELS_MINZOOM) + 1, duration: 1200 });
+      toast('Zooming in to load ' + src0.label + ' parcels…', 2600);
     } else {
-      toast('Loading Florida parcels for this area…', 2000);
+      toast('Loading ' + src0.label + ' parcels for this area…', 2000);
     }
     loadFLParcelsInView(true);
   } else {
@@ -5869,13 +5892,15 @@ function _flNormalize(f) {
   p.pid = String(_flPick(p, ['parcelid', 'parcel_id', 'parcelno', 'parcelnumb', 'pin', 'altkey', 'pin_1']) || '');
 }
 
-// Repaint the source from whatever cached tiles overlap the current view (deduped by
-// parcel id). Instant — no network — so panning back is free.
+// Repaint the source from whatever cached tiles (for the active source) overlap the
+// current view, deduped by parcel id. Instant — no network — so panning back is free.
 function _flRepaintFromCache() {
   if (!map.getSource('fl-parcels')) return;
+  var sid = _flActiveSrc && _flActiveSrc.id;
+  if (!sid) { map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: [] }); return; }
   var tiles = _flTilesInView(FL_TILE_Z), seen = {}, feats = [];
   tiles.forEach(function(k) {
-    var c = _flTileCache[k];
+    var c = _flTileCache[sid + '/' + k];
     if (!c) return;
     c.t = Date.now();
     for (var i = 0; i < c.feats.length; i++) {
@@ -5887,47 +5912,62 @@ function _flRepaintFromCache() {
   map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: feats });
 }
 
-// Repaint instantly from cache, then fetch only the tiles we haven't already loaded.
+// Pick the source under the map center, repaint instantly from cache, then fetch only
+// the tiles we haven't loaded yet for that source.
 function loadFLParcelsInView(force) {
   if (!flParcelsOn) return;
-  if (map.getZoom() < FL_PARCELS_MINZOOM) {
+  var ctr = map.getCenter();
+  var src = _parcelSourceAt(ctr.lng, ctr.lat);
+  _flActiveSrc = src;
+  if (!src) {
+    if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: [] });
+    if (!_flNoSrcWarned) { _flNoSrcWarned = true; try { window._evt('parcels — no free source covers this area yet'); } catch (e) {} }
+    return;
+  }
+  _flNoSrcWarned = false;
+  if (map.getZoom() < (src.minzoom || FL_PARCELS_MINZOOM)) {
     if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: [] });
     return;
   }
   clearTimeout(_flLoadTimer);
   _flLoadTimer = setTimeout(function() {
     if (!flParcelsOn) return;
+    var c2 = map.getCenter(), s = _parcelSourceAt(c2.lng, c2.lat);
+    _flActiveSrc = s;
+    if (!s) { if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: [] }); return; }
     _flRepaintFromCache(); // show cached parcels immediately, no flicker
     var tiles = _flTilesInView(FL_TILE_Z);
     tiles.forEach(function(key) {
-      if (_flTileCache[key] || _flInFlight[key]) return; // already have it / fetching it
-      _flInFlight[key] = true;
+      var ck = s.id + '/' + key;
+      if (_flTileCache[ck] || _flInFlight[ck]) return; // already have it / fetching it
+      _flInFlight[ck] = true;
       var bb = _flTileBounds(key).join(',');
       // geometryPrecision trims coordinate bytes; per-tile bbox keeps each request small.
-      var url = FL_PARCELS_URL + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
+      var url = s.url + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
         + '&geometryPrecision=6&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=5000'
         + '&geometry=' + encodeURIComponent(bb);
       fetch(url)
         .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function(gj) {
-          delete _flInFlight[key];
+          delete _flInFlight[ck];
           var feats = (gj && gj.features) || [];
-          if (feats.length && !_flSchemaLogged) {
-            _flSchemaLogged = true;
-            try { window._evt('FL parcels schema — ' + Object.keys(feats[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
+          if (feats.length && !_flSchemaLogged[s.id]) {
+            _flSchemaLogged[s.id] = true;
+            try { window._evt('parcels schema [' + s.id + '] — ' + Object.keys(feats[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
           }
           for (var i = 0; i < feats.length; i++) _flNormalize(feats[i]);
-          _flTileCache[key] = { feats: feats, t: Date.now() };
-          _flCacheOrder.push(key);
+          _flTileCache[ck] = { feats: feats, t: Date.now() };
+          _flCacheOrder.push(ck);
           while (_flCacheOrder.length > FL_TILE_CACHE_MAX) {
             var ev = _flCacheOrder.shift();
-            if (ev && ev !== key && _flTilesInView(FL_TILE_Z).indexOf(ev) === -1) delete _flTileCache[ev];
+            var keep = _flActiveSrc ? _flTilesInView(FL_TILE_Z).map(function(k) { return _flActiveSrc.id + '/' + k; }) : [];
+            if (ev && ev !== ck && keep.indexOf(ev) === -1) delete _flTileCache[ev];
           }
           if (flParcelsOn) _flRepaintFromCache();
         })
         .catch(function(e) {
-          delete _flInFlight[key];
-          try { window._evt('FL parcels tile failed — ' + ((e && e.message) || 'net') + ' @ ' + key); } catch (x) {}
+          delete _flInFlight[ck];
+          try { window._evt('parcels tile failed [' + s.id + '] — ' + ((e && e.message) || 'net') + ' @ ' + key); } catch (x) {}
         });
     });
   }, force ? 0 : 250);
