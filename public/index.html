@@ -41,10 +41,6 @@
   };
   // ─── CONFIGURE YOUR MAPBOX TOKEN HERE ──────────────────────────────
   window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
-  // ─── CONFIGURE YOUR REGRID TOKEN HERE ──────────────────────────────
-  // Paste your Regrid Tileserver/API token between the quotes. Trial tokens work for
-  // testing but have a low tile cap — swap in your production token before real use.
-  window.REGRID_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyZWdyaWQuY29tIiwiaWF0IjoxNzgxNDU4NzYzLCJleHAiOjE3ODQwNTA3NjMsInUiOjgxNTExNCwiZyI6MjMxNTMsImNhcCI6InBhOnRzOnBzOmJmOm1hOnR5OmVvOnpvOnNiIn0.ay9-_Cs9MQTL5gTt5zwbo9xZMbxknANqNgNuZm3uSB4";
   // ───────────────────────────────────────────────────────────────────
 
   const app = initializeApp(firebaseConfig);
@@ -1352,18 +1348,6 @@
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-        <!-- Nationwide parcels (Regrid) -->
-        <div onclick="var cb=document.getElementById('toggle-regrid');cb.checked=!cb.checked;toggleRegridParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">Parcels — Nationwide (Regrid)</div>
-            <div style="font-size:11px;color:var(--muted)">All 50 states &middot; requires paid Regrid plan</div>
-          </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-regrid" onchange="toggleRegridParcels(this.checked)" style="opacity:0;width:0;height:0">
-            <span id="regrid-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="regrid-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
-        </div>
         <!-- Liberty County parcels -->
         <div onclick="var cb=document.getElementById('toggle-parcels');cb.checked=!cb.checked;toggleParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
@@ -2384,7 +2368,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 81;
+var APP_BUILD = 82;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3018,7 +3002,7 @@ function initMap() {
   // Catch map errors
   map.on('error', function(e) {
     console.error('Map error:', e);
-    if (e.sourceId === 'regrid-parcels' || e.sourceId === 'usda-clu') return;
+    if (e.sourceId === 'usda-clu') return;
     if (e.error && (e.error.status === 401 || e.error.status === 403)) {
       toast('Map error ' + e.error.status + ' — check Mapbox token', 5000);
     }
@@ -3117,40 +3101,6 @@ function initMap() {
       if (_pinHit.length) {
         window._showPinPopup(_pinHit[0].properties.pid, e.lngLat);
         return; // don't also open a parcel popup underneath
-      }
-    }
-
-    // ── 3a. Regrid nationwide parcel tap (covers all states; takes priority) ──
-    if (regridOn && map.getZoom() >= 13) {
-      if (window._regridSuppressNext) { window._regridSuppressNext = false; return; }
-      var rgF = map.queryRenderedFeatures(e.point, { layers: ['regrid-fill'] });
-      if (rgF.length) {
-        var rp = rgF[0].properties || {};
-        var rOwner = rp.owner || 'Unknown owner';
-        var rAddr  = rp.address || '';
-        var rPN    = rp.parcelnumb || '';
-        var ruuid  = rp.ll_uuid || '__none__';
-        map.setFilter('regrid-hover', ['==', ['get', 'll_uuid'], ruuid]);
-        if (map.getLayer('regrid-hover-line')) map.setFilter('regrid-hover-line', ['==', ['get', 'll_uuid'], ruuid]);
-        if (window._regridPopup) { window._regridPopup.remove(); window._regridPopup = null; }
-        window._regridPopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '300px' })
-          .setLngLat(e.lngLat)
-          .setHTML(
-            '<div style="position:relative;padding-right:20px">' +
-            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Parcel</div>' +
-            '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + rOwner + '</div>' +
-            (rAddr ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + rAddr + '</div>' : '') +
-            (rPN   ? '<div style="font-size:11px;color:#8b949e">Parcel #' + rPN + '</div>' : '') +
-            '<div onclick="if(window._regridPopup){window._regridPopup.remove();window._regridPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
-            '</div>'
-          ).addTo(map);
-        window._regridPopup.on('close', function() {
-          map.setFilter('regrid-hover', ['==', ['get', 'll_uuid'], '__none__']);
-          if (map.getLayer('regrid-hover-line')) map.setFilter('regrid-hover-line', ['==', ['get', 'll_uuid'], '__none__']);
-          window._regridPopup = null;
-          window._regridSuppressNext = true; setTimeout(function() { window._regridSuppressNext = false; }, 400);
-        });
-        return;
       }
     }
 
@@ -5718,7 +5668,6 @@ function updateToggleUI(trackId, thumbId, on) {
   thumb.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
 }
 
-// Regrid API token for parcel lookups on tap
 // Florida DOR 2025 Cadastral FeatureServer — public, no token required
 
 function addParcelLayer() {
@@ -5803,7 +5752,14 @@ function addParcelLayer() {
 var flParcelsOn = false;
 var FL_PARCELS_URL = 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query';
 var FL_PARCELS_MINZOOM = 14;
-var _flLoadTimer = null, _flLastBox = '', _flSchemaLogged = false;
+var _flLoadTimer = null, _flSchemaLogged = false;
+// Tiled cache: we fetch parcels on a fixed slippy-tile grid so panning back over an
+// area you've already seen is instant (served from memory, no re-download).
+var FL_TILE_Z = 14;                 // fetch grid zoom
+var FL_TILE_CACHE_MAX = 280;        // LRU cap (tiles kept in memory)
+var _flTileCache = {};              // "z/x/y" -> { feats:[...], t:lastUsed }
+var _flInFlight = {};               // "z/x/y" -> true while fetching
+var _flCacheOrder = [];             // insertion order for LRU eviction
 
 function toggleFLParcels(on) {
   flParcelsOn = on;
@@ -5876,8 +5832,62 @@ function _flPick(props, cands) {
   return '';
 }
 
-// Query the state FeatureServer for whatever is in view and repaint. Debounced so
-// panning/zooming doesn't spam the service.
+// ── Tile math (slippy grid) ──
+function _flTileXY(lng, lat, z) {
+  var n = Math.pow(2, z);
+  var x = Math.floor((lng + 180) / 360 * n);
+  var r = lat * Math.PI / 180;
+  var y = Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+  return [Math.max(0, Math.min(n - 1, x)), Math.max(0, Math.min(n - 1, y))];
+}
+function _flTilesInView(z) {
+  var b = map.getBounds();
+  var tl = _flTileXY(b.getWest(), b.getNorth(), z);
+  var br = _flTileXY(b.getEast(), b.getSouth(), z);
+  var tiles = [];
+  for (var x = tl[0]; x <= br[0]; x++) for (var y = tl[1]; y <= br[1]; y++) tiles.push(z + '/' + x + '/' + y);
+  return tiles;
+}
+function _flTileBounds(key) {
+  var p = key.split('/'), z = +p[0], x = +p[1], y = +p[2], n = Math.pow(2, z);
+  function lng(xx) { return xx / n * 360 - 180; }
+  function lat(yy) { var m = Math.PI * (1 - 2 * yy / n); return 180 / Math.PI * Math.atan(0.5 * (Math.exp(m) - Math.exp(-m))); }
+  return [lng(x), lat(y + 1), lng(x + 1), lat(y)]; // W,S,E,N
+}
+
+// Normalize owner/address/city/acres/value/id across schema variants so the existing
+// label + popup code (o / a / c / ac / v) just works, and pid lets us de-dupe seams.
+function _flNormalize(f) {
+  var p = f.properties || (f.properties = {});
+  p.o  = String(_flPick(p, ['own_name', 'owner_name', 'owner', 'ownername', 'name', 'own1']) || '');
+  p.a  = String(_flPick(p, ['phy_addr1', 'phy_address', 'site_addr', 'situs', 'address', 'phy_addr', 's_addr']) || '');
+  p.c  = String(_flPick(p, ['phy_city', 'city', 'situs_city', 's_city']) || '');
+  var ac = _flPick(p, ['acres', 'gis_acres', 'acreage', 'tot_acres']);
+  if (!ac) { var sf = _flPick(p, ['lnd_sqfoot', 'land_sqft', 'sqft']); if (sf) ac = (parseFloat(sf) / 43560).toFixed(2); }
+  p.ac = ac ? (Math.round(parseFloat(ac) * 100) / 100) : '';
+  p.v  = _flPick(p, ['jv', 'just_value', 'tot_val', 'market_val', 'av_nsd', 'landval', 'lnd_val']) || '';
+  p.pid = String(_flPick(p, ['parcelid', 'parcel_id', 'parcelno', 'parcelnumb', 'pin', 'altkey', 'pin_1']) || '');
+}
+
+// Repaint the source from whatever cached tiles overlap the current view (deduped by
+// parcel id). Instant — no network — so panning back is free.
+function _flRepaintFromCache() {
+  if (!map.getSource('fl-parcels')) return;
+  var tiles = _flTilesInView(FL_TILE_Z), seen = {}, feats = [];
+  tiles.forEach(function(k) {
+    var c = _flTileCache[k];
+    if (!c) return;
+    c.t = Date.now();
+    for (var i = 0; i < c.feats.length; i++) {
+      var f = c.feats[i], id = f.properties && f.properties.pid;
+      if (id) { if (seen[id]) continue; seen[id] = 1; }
+      feats.push(f);
+    }
+  });
+  map.getSource('fl-parcels').setData({ type: 'FeatureCollection', features: feats });
+}
+
+// Repaint instantly from cache, then fetch only the tiles we haven't already loaded.
 function loadFLParcelsInView(force) {
   if (!flParcelsOn) return;
   if (map.getZoom() < FL_PARCELS_MINZOOM) {
@@ -5887,41 +5897,40 @@ function loadFLParcelsInView(force) {
   clearTimeout(_flLoadTimer);
   _flLoadTimer = setTimeout(function() {
     if (!flParcelsOn) return;
-    var b = map.getBounds();
-    var box = [b.getWest().toFixed(5), b.getSouth().toFixed(5), b.getEast().toFixed(5), b.getNorth().toFixed(5)].join(',');
-    if (!force && box === _flLastBox) return;
-    _flLastBox = box;
-    var url = FL_PARCELS_URL + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
-      + '&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=2000'
-      + '&geometry=' + encodeURIComponent(box);
-    fetch(url)
-      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(gj) {
-        if (!gj || !gj.features) gj = { type: 'FeatureCollection', features: [] };
-        if (gj.features.length && !_flSchemaLogged) {
-          _flSchemaLogged = true;
-          try { window._evt('FL parcels schema — ' + Object.keys(gj.features[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
-        }
-        // Normalize owner/address/city/acres/value across schema variants so the
-        // existing label + popup code (o / a / c / ac / v) just works.
-        gj.features.forEach(function(f) {
-          var p = f.properties || (f.properties = {});
-          p.o  = String(_flPick(p, ['own_name', 'owner_name', 'owner', 'ownername', 'name', 'own1']) || '');
-          p.a  = String(_flPick(p, ['phy_addr1', 'phy_address', 'site_addr', 'situs', 'address', 'phy_addr', 's_addr']) || '');
-          p.c  = String(_flPick(p, ['phy_city', 'city', 'situs_city', 's_city']) || '');
-          var ac = _flPick(p, ['acres', 'gis_acres', 'acreage', 'tot_acres']);
-          if (!ac) { var sf = _flPick(p, ['lnd_sqfoot', 'land_sqft', 'sqft']); if (sf) ac = (parseFloat(sf) / 43560).toFixed(2); }
-          p.ac = ac ? (Math.round(parseFloat(ac) * 100) / 100) : '';
-          p.v  = _flPick(p, ['jv', 'just_value', 'tot_val', 'market_val', 'av_nsd', 'landval', 'lnd_val']) || '';
+    _flRepaintFromCache(); // show cached parcels immediately, no flicker
+    var tiles = _flTilesInView(FL_TILE_Z);
+    tiles.forEach(function(key) {
+      if (_flTileCache[key] || _flInFlight[key]) return; // already have it / fetching it
+      _flInFlight[key] = true;
+      var bb = _flTileBounds(key).join(',');
+      // geometryPrecision trims coordinate bytes; per-tile bbox keeps each request small.
+      var url = FL_PARCELS_URL + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
+        + '&geometryPrecision=6&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=5000'
+        + '&geometry=' + encodeURIComponent(bb);
+      fetch(url)
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(gj) {
+          delete _flInFlight[key];
+          var feats = (gj && gj.features) || [];
+          if (feats.length && !_flSchemaLogged) {
+            _flSchemaLogged = true;
+            try { window._evt('FL parcels schema — ' + Object.keys(feats[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
+          }
+          for (var i = 0; i < feats.length; i++) _flNormalize(feats[i]);
+          _flTileCache[key] = { feats: feats, t: Date.now() };
+          _flCacheOrder.push(key);
+          while (_flCacheOrder.length > FL_TILE_CACHE_MAX) {
+            var ev = _flCacheOrder.shift();
+            if (ev && ev !== key && _flTilesInView(FL_TILE_Z).indexOf(ev) === -1) delete _flTileCache[ev];
+          }
+          if (flParcelsOn) _flRepaintFromCache();
+        })
+        .catch(function(e) {
+          delete _flInFlight[key];
+          try { window._evt('FL parcels tile failed — ' + ((e && e.message) || 'net') + ' @ ' + key); } catch (x) {}
         });
-        if (map.getSource('fl-parcels')) map.getSource('fl-parcels').setData(gj);
-        try { window._evt('FL parcels — ' + gj.features.length + ' in view at z' + map.getZoom().toFixed(1)); } catch (e) {}
-      })
-      .catch(function(e) {
-        try { window._evt('FL parcels load failed — ' + ((e && e.message) || 'network/CORS')); } catch (x) {}
-        toast('FL parcels: ' + ((e && e.message) || 'load failed'), 4000);
-      });
-  }, force ? 0 : 450);
+    });
+  }, force ? 0 : 250);
 }
 
 function toggleParcels(on) {
@@ -5945,107 +5954,6 @@ function toggleParcels(on) {
   }
 }
 
-// ── Regrid nationwide parcels (vector tiles, all 50 states) ──────────────
-var regridOn = false;
-function toggleRegridParcels(on) {
-  regridOn = on;
-  updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', on);
-  try { localStorage.setItem('gl_regrid', on ? '1' : '0'); } catch (e) {}
-  if (on) {
-    if (!window.REGRID_TOKEN || window.REGRID_TOKEN.indexOf('PASTE') === 0) {
-      toast('Add your Regrid token in the code first', 4000);
-      regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
-      var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
-      return;
-    }
-    addRegridParcels();
-    if (map.getZoom() < 15) { map.flyTo({ zoom: 16, duration: 1200 }); toast('Zooming in for parcel lines…', 2600); }
-    else { toast('Nationwide parcels on · tap a parcel for owner info', 2600); }
-  } else {
-    if (window._regridPopup) { window._regridPopup.remove(); window._regridPopup = null; }
-    ['regrid-fill','regrid-line','regrid-hover','regrid-hover-line'].forEach(function(id) { if (map.getLayer(id)) map.removeLayer(id); });
-    if (map.getSource('regrid')) map.removeSource('regrid');
-  }
-}
-function addRegridParcels() {
-  if (!map.isStyleLoaded()) { setTimeout(addRegridParcels, 200); return; }
-  if (map.getLayer('regrid-line')) return;
-  var _fail = function(msg) {
-    toast(msg, 6000);
-    try { window._evt('parcels (Regrid) failed — ' + msg); } catch (e) {}
-    regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
-    var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
-  };
-  // Regrid serves TileJSON that gives us the exact tile URL template + the MVT source-layer
-  // name (in vector_layers). We must use that exact name or Mapbox renders nothing.
-  fetch('https://tiles.regrid.com/api/v1/parcels?format=mvt&token=' + encodeURIComponent(window.REGRID_TOKEN))
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function(tj) {
-      if (!tj || !tj.tiles || !tj.tiles.length) { _fail('Regrid: no tiles in TileJSON response'); return; }
-      var vlNames = (tj.vector_layers || []).map(function(v) { return v.id; }).join(',') || '(none)';
-      var sl = (tj.vector_layers && tj.vector_layers[0] && tj.vector_layers[0].id) || tj.id || 'parcels';
-      window._regridSrcLayer = sl;
-      // Build the tile URL ourselves so the token is guaranteed to be attached. Some TileJSON
-      // responses return tile URLs WITHOUT the token, which silently 401s every tile (blank map).
-      var tileUrl = 'https://tiles.regrid.com/api/v1/parcels/{z}/{x}/{y}.mvt?token=' + window.REGRID_TOKEN;
-      if (!map.getSource('regrid')) {
-        map.addSource('regrid', { type: 'vector', tiles: [tileUrl], minzoom: tj.minzoom || 10, maxzoom: tj.maxzoom || 21 });
-      }
-      var before = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
-      map.addLayer({ id: 'regrid-fill', type: 'fill', source: 'regrid', 'source-layer': sl, minzoom: 13,
-        paint: { 'fill-color': 'rgba(240,165,0,0.05)' } }, before);
-      map.addLayer({ id: 'regrid-line', type: 'line', source: 'regrid', 'source-layer': sl, minzoom: 13,
-        paint: { 'line-color': '#ffb300', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.5, 16, 1.2, 18, 2], 'line-opacity': 0.95 } }, before);
-      map.addLayer({ id: 'regrid-hover', type: 'fill', source: 'regrid', 'source-layer': sl,
-        paint: { 'fill-color': 'rgba(240,165,0,0.18)' }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
-      map.addLayer({ id: 'regrid-hover-line', type: 'line', source: 'regrid', 'source-layer': sl,
-        paint: { 'line-color': '#ffb300', 'line-width': 3 }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
-      toast('Parcels on · layer "' + sl + '" · zoom to 16+ over a U.S. area', 5000);
-      try { window._evt('parcels (Regrid) loaded — source-layer "' + sl + '" · vector_layers=[' + vlNames + ']'); } catch (e) {}
-      // Once the tiles settle, count what actually rendered — distinguishes "no data flowing"
-      // (wrong source-layer / token) from "you're just not zoomed in over parcels".
-      map.once('idle', function() {
-        try {
-          var n = map.queryRenderedFeatures({ layers: ['regrid-line', 'regrid-fill'] }).length;
-          window._evt('parcels (Regrid) rendered ' + n + ' features at z' + map.getZoom().toFixed(1));
-        } catch (e) {}
-      });
-      // Decisive probe: fetch ONE real tile at the current center and log its HTTP status, byte
-      // size, and the coordinates — separates auth (401), CORS, empty area (0 bytes), and "tiles
-      // have data but aren't rendering" (200 + bytes) from each other.
-      var _probeTile = function(lat, lng, label) {
-        try {
-          var pz = 16, nn = Math.pow(2, pz);
-          var tx = Math.floor((lng + 180) / 360 * nn);
-          var latR = lat * Math.PI / 180;
-          var ty = Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * nn);
-          fetch('https://tiles.regrid.com/api/v1/parcels/' + pz + '/' + tx + '/' + ty + '.mvt?token=' + window.REGRID_TOKEN)
-            .then(function(rr) { return rr.arrayBuffer().then(function(buf) { return { s: rr.status, buf: buf }; }); })
-            .then(function(o) {
-              var size = o.buf.byteLength, strs = '';
-              if (size > 0) {
-                var bytes = new Uint8Array(o.buf), cur = '', found = [];
-                for (var i = 0; i < bytes.length && found.length < 14; i++) {
-                  var ch = bytes[i];
-                  if (ch >= 32 && ch < 127) { cur += String.fromCharCode(ch); }
-                  else { if (cur.length >= 4 && found.indexOf(cur) === -1) found.push(cur); cur = ''; }
-                }
-                strs = found.join(' | ');
-              }
-              window._evt('parcels probe [' + label + '] — HTTP ' + o.s + ', ' + size + ' bytes @ ' + lat.toFixed(3) + ',' + lng.toFixed(3) + (strs ? ' · strings: ' + strs : ''));
-            })
-            .catch(function(e) { window._evt('parcels probe [' + label + '] — fetch blocked (' + ((e && e.message) || 'CORS?') + ')'); });
-        } catch (e) {}
-      };
-      var c = map.getCenter();
-      _probeTile(c.lat, c.lng, 'your map');
-      // Control: a guaranteed parcel-dense tile (downtown Tallahassee). If THIS one is also
-      // empty, the token has no data coverage (plan issue). If it has bytes, your token is fine
-      // and the only reason you saw nothing is your map was parked over empty forest land.
-      _probeTile(30.4383, -84.2807, 'Tallahassee');
-    })
-    .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
-}
 
 
 
