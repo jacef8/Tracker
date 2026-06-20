@@ -157,11 +157,12 @@
 </div>
 
 <div class="stats-row">
-  <div class="stat-card" onclick="statJump('groups')" style="cursor:pointer" title="View all groups"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups &rsaquo;</div></div>
-  <div class="stat-card" onclick="statJump('groups','active')" style="cursor:pointer" title="View active groups"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups &rsaquo;</div></div>
-  <div class="stat-card" onclick="statJump('overview')" style="cursor:pointer" title="See pins on the map"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins &rsaquo;</div></div>
-  <div class="stat-card" onclick="statJump('alldata')" style="cursor:pointer" title="Browse raw data"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages &rsaquo;</div></div>
+  <div class="stat-card" onclick="statExpand('groups')" style="cursor:pointer" title="Tap for the full list"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups</div></div>
+  <div class="stat-card" onclick="statExpand('live')" style="cursor:pointer" title="Tap to see who's live"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups</div></div>
+  <div class="stat-card" onclick="statExpand('pins')" style="cursor:pointer" title="Tap for pins by group"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
+  <div class="stat-card" onclick="statExpand('messages')" style="cursor:pointer" title="Tap for recent messages"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
 </div>
+<div id="stat-detail" style="display:none"></div>
 
 <div class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('groups')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7a3 3 0 1 0 0-.01"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>Groups</button>
@@ -313,11 +314,104 @@ function switchTab(name) {
   }
 }
 
-// The top KPI cards double as shortcuts into the relevant tab.
-function statJump(tab, sub) {
-  switchTab(tab);
-  if (sub && tab === 'groups') { try { setGroupSub(sub); } catch (e) {} }
-  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+// The top KPI cards expand an inline detail panel — so the quick rosters live here on
+// demand instead of cluttering the tabs. Tapping the same card again collapses it.
+var _statOpen = null;
+function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function _gname(gk) { return gk.replace(/^test_/,'').replace(/_/g,' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); }); }
+function statExpand(kind) {
+  var box = document.getElementById('stat-detail');
+  if (!box) return;
+  if (_statOpen === kind) { _statOpen = null; box.style.display = 'none'; box.innerHTML = ''; _statHi(null); return; }
+  _statOpen = kind;
+  _statHi(kind);
+  box.innerHTML = _renderStatDetail(kind);
+  box.style.display = 'block';
+}
+function _statHi(kind) {
+  var idx = { groups:0, live:1, pins:2, messages:3 };
+  document.querySelectorAll('.stats-row .stat-card').forEach(function(c, i) {
+    c.style.outline = (idx[kind] === i) ? '2px solid var(--accent)' : '';
+    c.style.outlineOffset = '0';
+  });
+}
+function _statWrap(title, inner) {
+  return '<div style="background:rgba(13,17,23,0.92);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;margin:-4px 0 16px;max-height:46vh;overflow-y:auto">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--accent)">' + title + '</div>' +
+      '<button onclick="statExpand(\'' + _statOpen + '\')" style="background:none;border:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer">&times;</button>' +
+    '</div>' + (inner || '<div style="color:var(--muted);font-size:12px;padding:8px 0">Nothing to show.</div>') + '</div>';
+}
+function _statRow(left, right, onclick) {
+  return '<div ' + (onclick ? 'onclick="' + onclick + '" style="cursor:pointer;' : 'style="') +
+    'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
+    '<span style="font-size:13px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + left + '</span>' +
+    '<span style="font-size:12px;color:var(--muted);flex-shrink:0;text-align:right">' + right + '</span></div>';
+}
+function _renderStatDetail(kind) {
+  var all = window._allDataSnapshot || {};
+  var now = Date.now();
+  var keys = Object.keys(all).filter(function(k){ return !k.startsWith('test_'); });
+
+  if (kind === 'groups') {
+    var rows = keys.map(function(gk) {
+      var g = all[gk] || {};
+      var users = g.users ? Object.values(g.users) : [];
+      var live = users.filter(function(u){ return now - (u.ts||0) < 90000 && !u.noGps; }).length;
+      var pins = g.pins ? Object.keys(g.pins).length : 0;
+      var last = 0; users.forEach(function(u){ if ((u.ts||0) > last) last = u.ts; });
+      if (g.chat) Object.values(g.chat).forEach(function(c){ if ((c.ts||0) > last) last = c.ts; });
+      return { gk: gk, live: live, n: users.length, pins: pins, last: last };
+    }).sort(function(a,b){ return b.last - a.last; });
+    var inner = rows.map(function(r){
+      var meta = (r.live ? '<span style="color:var(--green)">' + r.live + ' live</span> &middot; ' : '') +
+        r.n + ' in room &middot; ' + r.pins + ' pins &middot; ' + (r.last ? timeAgo(r.last) : 'idle');
+      return _statRow(_esc(_gname(r.gk)), meta, "goToGroup('" + r.gk + "')");
+    }).join('');
+    return _statWrap('All groups (' + rows.length + ')', inner);
+  }
+
+  if (kind === 'live') {
+    var us = [];
+    keys.forEach(function(gk) {
+      var users = all[gk] && all[gk].users; if (!users) return;
+      Object.values(users).forEach(function(u){ if (now - (u.ts||0) < 90000 && !u.noGps) us.push({ name: u.name, gk: gk, ts: u.ts }); });
+    });
+    us.sort(function(a,b){ return b.ts - a.ts; });
+    var li = us.map(function(u){
+      return _statRow('<span style="color:var(--green)">&#9679;</span> ' + _esc(u.name || '?'), _esc(_gname(u.gk)), "goToGroup('" + u.gk + "')");
+    }).join('');
+    return _statWrap('Live right now (' + us.length + ')', li);
+  }
+
+  if (kind === 'pins') {
+    var pr = keys.map(function(gk){ return { gk: gk, pins: all[gk] && all[gk].pins ? Object.keys(all[gk].pins).length : 0 }; })
+      .filter(function(r){ return r.pins > 0; }).sort(function(a,b){ return b.pins - a.pins; });
+    var pi = pr.map(function(r){ return _statRow(_esc(_gname(r.gk)), r.pins + ' pin' + (r.pins!==1?'s':''), "goToGroup('" + r.gk + "')"); }).join('');
+    return _statWrap('Pins by group', pi);
+  }
+
+  if (kind === 'messages') {
+    var msgs = [];
+    keys.forEach(function(gk) {
+      var chat = all[gk] && all[gk].chat; if (!chat) return;
+      Object.values(chat).forEach(function(c){ msgs.push({ name: c.name, text: c.text, ts: c.ts, gk: gk }); });
+    });
+    msgs.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+    var mi = msgs.slice(0, 25).map(function(m){
+      return '<div onclick="goToGroup(\'' + m.gk + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
+        '<div style="font-size:12px"><b>' + _esc(m.name || '?') + '</b> <span style="color:var(--muted)">&middot; ' + _esc(_gname(m.gk)) + ' &middot; ' + (m.ts ? timeAgo(m.ts) : '') + '</span></div>' +
+        '<div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _esc(m.text || '') + '</div></div>';
+    }).join('');
+    return _statWrap('Recent messages', mi);
+  }
+  return _statWrap('—', '');
+}
+// Keep an open panel fresh as data streams in.
+function _refreshStatDetail() {
+  if (!_statOpen) return;
+  var box = document.getElementById('stat-detail');
+  if (box && box.style.display !== 'none') box.innerHTML = _renderStatDetail(_statOpen);
 }
 
 // Live per-device diagnostics each member's app writes to gl/<group>/diag/<uid>.
@@ -1273,6 +1367,7 @@ function loadAdmin() {
 
       detectChanges(all, now);
       _allDataSnapshot = all;
+      try { _refreshStatDetail(); } catch (e) {} // keep an open KPI-card panel current
       // Most Active Groups now lives on the Groups tab, so keep its summary fresh every
       // snapshot regardless of which tab is open (the render is guarded by element id).
       renderSummary(all);
