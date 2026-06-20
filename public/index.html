@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 75;
+var APP_BUILD = 76;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5912,6 +5912,7 @@ function addRegridParcels() {
   if (map.getLayer('regrid-line')) return;
   var _fail = function(msg) {
     toast(msg, 6000);
+    try { window._evt('parcels (Regrid) failed — ' + msg); } catch (e) {}
     regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
     var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
   };
@@ -5936,6 +5937,7 @@ function addRegridParcels() {
       map.addLayer({ id: 'regrid-hover-line', type: 'line', source: 'regrid', 'source-layer': sl,
         paint: { 'line-color': '#ffb300', 'line-width': 3 }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
       toast('Parcels on · tile layer "' + sl + '" · zoom to 14+', 4500); // diagnostic
+      try { window._evt('parcels (Regrid) loaded — layer "' + sl + '", ' + (tj.tiles[0] || '').split('?')[0]); } catch (e) {}
     })
     .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
 }
