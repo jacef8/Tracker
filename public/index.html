@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 74;
+var APP_BUILD = 75;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5910,34 +5910,34 @@ function toggleRegridParcels(on) {
 function addRegridParcels() {
   if (!map.isStyleLoaded()) { setTimeout(addRegridParcels, 200); return; }
   if (map.getLayer('regrid-line')) return;
-  // Regrid serves TileJSON that gives us the exact tile URL template + source-layer id.
+  var _fail = function(msg) {
+    toast(msg, 6000);
+    regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
+    var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
+  };
+  // Regrid serves TileJSON that gives us the exact tile URL template + the MVT source-layer
+  // name (in vector_layers). We must use that exact name or Mapbox renders nothing.
   fetch('https://tiles.regrid.com/api/v1/parcels?format=mvt&token=' + encodeURIComponent(window.REGRID_TOKEN))
-    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(tj) {
-      if (!tj || !tj.tiles) {
-        toast('Couldn’t load Regrid parcels — check the token / plan', 4500);
-        regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
-        var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
-        return;
+      if (!tj || !tj.tiles || !tj.tiles.length) { _fail('Regrid: no tiles in TileJSON response'); return; }
+      var sl = (tj.vector_layers && tj.vector_layers[0] && tj.vector_layers[0].id) || tj.id || 'parcels';
+      window._regridSrcLayer = sl;
+      if (!map.getSource('regrid')) {
+        map.addSource('regrid', { type: 'vector', tiles: tj.tiles, minzoom: tj.minzoom || 10, maxzoom: tj.maxzoom || 21 });
       }
-      window._regridSrcLayer = tj.id || 'parcels';
-      if (!map.getSource('regrid')) map.addSource('regrid', { type: 'vector', tiles: tj.tiles, minzoom: 10, maxzoom: 21 });
-      var sl = window._regridSrcLayer;
       var before = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
       map.addLayer({ id: 'regrid-fill', type: 'fill', source: 'regrid', 'source-layer': sl, minzoom: 13,
-        paint: { 'fill-color': 'rgba(240,165,0,0.04)' } }, before);
+        paint: { 'fill-color': 'rgba(240,165,0,0.05)' } }, before);
       map.addLayer({ id: 'regrid-line', type: 'line', source: 'regrid', 'source-layer': sl, minzoom: 13,
-        paint: { 'line-color': '#f0a500', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.4, 16, 1, 18, 1.8], 'line-opacity': 0.9 } }, before);
+        paint: { 'line-color': '#ffb300', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.5, 16, 1.2, 18, 2], 'line-opacity': 0.95 } }, before);
       map.addLayer({ id: 'regrid-hover', type: 'fill', source: 'regrid', 'source-layer': sl,
         paint: { 'fill-color': 'rgba(240,165,0,0.18)' }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
       map.addLayer({ id: 'regrid-hover-line', type: 'line', source: 'regrid', 'source-layer': sl,
-        paint: { 'line-color': '#f0a500', 'line-width': 3 }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
+        paint: { 'line-color': '#ffb300', 'line-width': 3 }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
+      toast('Parcels on · tile layer "' + sl + '" · zoom to 14+', 4500); // diagnostic
     })
-    .catch(function() {
-      toast('Couldn’t reach the Regrid tileserver', 4500);
-      regridOn = false; updateToggleUI('regrid-toggle-track', 'regrid-toggle-thumb', false);
-      var rcb = document.getElementById('toggle-regrid'); if (rcb) rcb.checked = false;
-    });
+    .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
 }
 
 
