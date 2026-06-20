@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 79;
+var APP_BUILD = 80;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5953,28 +5953,36 @@ function addRegridParcels() {
       // Decisive probe: fetch ONE real tile at the current center and log its HTTP status, byte
       // size, and the coordinates — separates auth (401), CORS, empty area (0 bytes), and "tiles
       // have data but aren't rendering" (200 + bytes) from each other.
-      try {
-        var c = map.getCenter(), pz = 16, nn = Math.pow(2, pz);
-        var tx = Math.floor((c.lng + 180) / 360 * nn);
-        var latR = c.lat * Math.PI / 180;
-        var ty = Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * nn);
-        fetch('https://tiles.regrid.com/api/v1/parcels/' + pz + '/' + tx + '/' + ty + '.mvt?token=' + window.REGRID_TOKEN)
-          .then(function(rr) { return rr.arrayBuffer().then(function(buf) { return { s: rr.status, buf: buf }; }); })
-          .then(function(o) {
-            var size = o.buf.byteLength, strs = '';
-            if (size > 0) {
-              var bytes = new Uint8Array(o.buf), cur = '', found = [];
-              for (var i = 0; i < bytes.length && found.length < 14; i++) {
-                var ch = bytes[i];
-                if (ch >= 32 && ch < 127) { cur += String.fromCharCode(ch); }
-                else { if (cur.length >= 4 && found.indexOf(cur) === -1) found.push(cur); cur = ''; }
+      var _probeTile = function(lat, lng, label) {
+        try {
+          var pz = 16, nn = Math.pow(2, pz);
+          var tx = Math.floor((lng + 180) / 360 * nn);
+          var latR = lat * Math.PI / 180;
+          var ty = Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * nn);
+          fetch('https://tiles.regrid.com/api/v1/parcels/' + pz + '/' + tx + '/' + ty + '.mvt?token=' + window.REGRID_TOKEN)
+            .then(function(rr) { return rr.arrayBuffer().then(function(buf) { return { s: rr.status, buf: buf }; }); })
+            .then(function(o) {
+              var size = o.buf.byteLength, strs = '';
+              if (size > 0) {
+                var bytes = new Uint8Array(o.buf), cur = '', found = [];
+                for (var i = 0; i < bytes.length && found.length < 14; i++) {
+                  var ch = bytes[i];
+                  if (ch >= 32 && ch < 127) { cur += String.fromCharCode(ch); }
+                  else { if (cur.length >= 4 && found.indexOf(cur) === -1) found.push(cur); cur = ''; }
+                }
+                strs = found.join(' | ');
               }
-              strs = found.join(' | ');
-            }
-            window._evt('parcels tile probe — HTTP ' + o.s + ', ' + size + ' bytes @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3) + (strs ? ' · strings: ' + strs : ''));
-          })
-          .catch(function(e) { window._evt('parcels tile probe — fetch blocked (' + ((e && e.message) || 'CORS?') + ') @ ' + c.lat.toFixed(3) + ',' + c.lng.toFixed(3)); });
-      } catch (e) {}
+              window._evt('parcels probe [' + label + '] — HTTP ' + o.s + ', ' + size + ' bytes @ ' + lat.toFixed(3) + ',' + lng.toFixed(3) + (strs ? ' · strings: ' + strs : ''));
+            })
+            .catch(function(e) { window._evt('parcels probe [' + label + '] — fetch blocked (' + ((e && e.message) || 'CORS?') + ')'); });
+        } catch (e) {}
+      };
+      var c = map.getCenter();
+      _probeTile(c.lat, c.lng, 'your map');
+      // Control: a guaranteed parcel-dense tile (downtown Tallahassee). If THIS one is also
+      // empty, the token has no data coverage (plan issue). If it has bytes, your token is fine
+      // and the only reason you saw nothing is your map was parked over empty forest land.
+      _probeTile(30.4383, -84.2807, 'Tallahassee');
     })
     .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
 }
