@@ -23,7 +23,7 @@
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update }
+  import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -44,7 +44,7 @@
   // ───────────────────────────────────────────────────────────────────
 
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update };
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp };
   // Firebase Auth (Google sign-in). Stays dormant until the Google provider is
   // enabled in the Firebase console — the rest of the app works without it.
   try {
@@ -1540,6 +1540,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-compass"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my speed</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Let the group see your speed while driving (over 25 mph)</div></div></div>
       <span id="set-speed-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div onclick="_setToggleBatterySaver()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-rain"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Battery saver</div><div style="font-size:11px;color:var(--muted);margin-top:2px">When you sit still a while, ease off GPS &amp; send a slow heartbeat. Moving wakes it instantly.</div></div></div>
+      <span id="set-battsaver-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
       <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
@@ -2080,6 +2084,7 @@ function _syncSettings() {
   _setPill('set-alerts-pill', !!alertsOn);
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
   _setPill('set-speed-pill', _shareSpeed());
+  _setPill('set-battsaver-pill', window._batterySaver !== false);
   var cb = document.getElementById('toggle-parcels');
   _setPill('set-parcels-pill', !!(cb && cb.checked));
   var lp = document.getElementById('set-location-pill');
@@ -2120,6 +2125,18 @@ function _setToggleSpeed() {
     if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
   } catch (e) {}
 }
+function _setToggleBatterySaver() {
+  window._batterySaver = !window._batterySaver;
+  try { localStorage.setItem('gl_battsaver', window._batterySaver ? '1' : '0'); } catch (e) {}
+  if (!window._batterySaver) {
+    // Turning it off: drop any idle state and restore full-power tracking now.
+    if (window._bsIdle) { window._bsIdle = false; if (typeof _bsApplyPower === 'function') _bsApplyPower(false); }
+    window._bsLastMoveTs = Date.now();
+  }
+  _syncSettings();
+  toast(window._batterySaver ? 'Battery saver on — eases off GPS during long sits' : 'Battery saver off — full GPS always', 2600);
+  try { window._evt('battery saver ' + (window._batterySaver ? 'enabled' : 'disabled')); } catch (e) {}
+}
 function _setToggleAlerts() { toggleAlerts(!alertsOn); setTimeout(_syncSettings, 350); }
 function _setToggleCrumbs() { if (typeof toggleBreadcrumbs === 'function') toggleBreadcrumbs(); setTimeout(_syncSettings, 60); }
 function _setToggleParcels() {
@@ -2146,6 +2163,7 @@ function pushNotify(type, title, body, opts) {
 function sendSOS() {
   if (!groupName || !userId) { toast('Join a group first'); return; }
   if (!confirm('Send an SOS alert to everyone in your group?')) return;
+  try { if (typeof window._bsWake === 'function') window._bsWake(); } catch (e) {} // never let battery saver delay an SOS
   const loc = window._lastGPS;
   if (loc && db) {
     const r = fbPush(fbRef(db, `gl/${groupName}/pins`));
@@ -2258,6 +2276,9 @@ function renderRoomList(all) {
   var fb = window._fb;
   var now = Date.now();
   var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000, YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  var HOME_DISC_GRACE_MS = 3 * 60 * 1000; // disconnected clients drop from the count after this grace
+  // A member still "counts" unless their live connection has been gone past the grace.
+  var _present = function(u) { return !(u.conn === false && (now - (u.discTs || u.ts || 0)) >= HOME_DISC_GRACE_MS); };
   var favs = _getFavs();
   var rooms = [];
   Object.entries(all).forEach(function(entry) {
@@ -2288,12 +2309,22 @@ function renderRoomList(all) {
       if (!(persistent && (now - lastSeen) < YEAR_MS)) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
     }
 
-    var liveUsers = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
+    var liveUsers = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS && _present(u); });
     var liveCount = liveUsers.length;
     var liveNames = liveUsers.map(function(u) { return u.name; });
+    // Battery-saver "resting" members aren't live (no fix in 90s) but are intentionally
+    // low-power and still present — count them so the home screen matches the in-room view
+    // (otherwise a stand full of resting hunters would read "0 online" and vanish). A member
+    // whose connection has actually dropped past the grace no longer counts.
+    var BS_REST_HOME_MS = 6 * 60 * 60 * 1000;
+    var restingCount = users.filter(function(u) {
+      var age = now - (u.ts || 0);
+      return u.rest && !u.noGps && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS && _present(u);
+    }).length;
+    var presentCount = liveCount + restingCount;
     // Hide rooms that have gone empty from the directory — but keep your favorites visible even
     // when dormant, so a saved group is always one tap away to rejoin (Life360-style).
-    if (liveCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
+    if (presentCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
 
     var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
@@ -2305,7 +2336,7 @@ function renderRoomList(all) {
     if (_homeFilter === 'favorites') { if (!isFav) return; }
     else { if (vis !== 'public' && !isFav) return; }
 
-    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
+    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
   });
 
   if (rooms.length === 0) {
@@ -2317,7 +2348,7 @@ function renderRoomList(all) {
 
   rooms.sort(function(a, b) {
     if (a.isFav !== b.isFav) return a.isFav ? -1 : 1;     // favorites pinned on top
-    if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
+    if (b.presentCount !== a.presentCount) return b.presentCount - a.presentCount;
     return b.lastActive - a.lastActive;
   });
 
@@ -2328,10 +2359,13 @@ function renderRoomList(all) {
     var isLocked = room.config && room.config.pin;
     var lockIcon = isLocked ? ' &#128274;' : '';
     var privIcon = room.vis === 'private' ? ' <span style="font-size:10px;color:var(--muted);font-weight:600">&middot; private</span>' : '';
+    var restHTML = room.restingCount > 0 ? ' <span style="color:#2ec4b6;font-weight:700">&middot; ' + room.restingCount + ' resting</span>' : '';
     var statusHTML = room.liveCount > 0
-      ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>'
+      ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>' + restHTML
         + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0, 3).join(', ') + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
-      : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
+      : room.restingCount > 0
+        ? '<span style="color:#2ec4b6;font-weight:700">' + room.restingCount + ' resting</span>'
+        : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
     var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
     item.innerHTML =
       '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
@@ -2368,7 +2402,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 83;
+var APP_BUILD = 87;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2584,12 +2618,25 @@ function enterMap(name, group, uid) {
     // Reliable presence cleanup: Firebase removes us server-side the instant this
     // client disconnects (reload, tab close, crash, network drop) so we don't
     // linger as "online" in the room or on the join-screen group list.
-    // Web/PWA: remove presence the instant the tab disconnects (tab close, reload).
-    // Native app: do NOT auto-remove on disconnect — when the phone screen sleeps the
-    // WebView's socket can briefly drop, and onDisconnect would yank the user out of the
-    // room even though the background-location service is still tracking. Without it they
-    // simply go "stale/last known" if updates pause, and stay live while the service runs.
-    try { if (fb.onDisconnect && !_isNativeApp()) fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).remove(); } catch(_) {}
+    // Live connection presence — this is what lets the group tell "resting (still
+    // connected)" apart from "closed/lost (socket actually gone)". We watch Firebase's
+    // own .info/connected: while connected we clear any stale conn:false; the instant the
+    // socket truly closes, the SERVER stamps conn:false + the real disconnect time.
+    //   • Web/PWA: also remove the slot outright on disconnect (clean tab-close).
+    //   • Native: keep the slot but flag conn:false — a short grace on the viewing side
+    //     absorbs screen-sleep blips, while a genuine close clears within a minute or two.
+    try {
+      var _meRef = fb.ref(fb.db, `gl/${groupName}/users/${userId}`);
+      fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
+        if (s.val() !== true) return;
+        try {
+          if (_isNativeApp()) fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
+          else fb.onDisconnect(_meRef).remove();
+        } catch (_) {}
+        // Re-assert presence on (re)connect so a resolved blip doesn't leave conn:false behind.
+        try { fb.update(_meRef, { conn: true, discTs: 0 }); } catch (_) {}
+      });
+    } catch (_) {}
 
     // Smooth transition — no black flash
     document.getElementById('join-screen').style.opacity = '0';
@@ -3612,13 +3659,8 @@ async function startNativeBackgroundTracking() {
       return;
     }
     window._bgGeo = BG;
-    window._bgWatcherId = await BG.addWatcher({
-      backgroundTitle: 'GroundLink is sharing your location',
-      backgroundMessage: 'Your group can see you on the map.',
-      requestPermissions: true,
-      stale: false,
-      distanceFilter: 8
-    }, function(location, error) {
+    // Named so the battery-saver can re-arm the watcher at a wider distanceFilter.
+    window._bgWatcherCb = function(location, error) {
       if (error) {
         window._bgGeoError = (error.code || 'err') + (error.message ? ': ' + error.message : '');
         try { if (window._lastBgErr !== window._bgGeoError) { window._lastBgErr = window._bgGeoError; window._evt('background tracking error — ' + window._bgGeoError); } } catch (e) {}
@@ -3645,7 +3687,14 @@ async function startNativeBackgroundTracking() {
       // Refresh diagnostics on each native fix so the Debug card stays current in deep
       // background (the 15s interval gets throttled while the screen is off).
       if (typeof window._writeDiag === 'function') window._writeDiag();
-    });
+    };
+    window._bgWatcherId = await BG.addWatcher({
+      backgroundTitle: 'GroundLink is sharing your location',
+      backgroundMessage: 'Your group can see you on the map.',
+      requestPermissions: true,
+      stale: false,
+      distanceFilter: 8
+    }, window._bgWatcherCb);
     try { window._evt('background tracking service started'); } catch (e) {}
   } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); try { window._evt('background tracking failed to start — ' + String(e)); } catch (e2) {} }
 }
@@ -3657,6 +3706,44 @@ async function stopNativeBackgroundTracking() {
   } catch (e) {}
   window._bgGeoStarted = false; window._bgWatcherId = null;
 }
+
+// ── Battery saver (motion-based, with a safety heartbeat) ───────────
+// When you've been still for a while (e.g. a long sit in the stand), we widen the
+// GPS distance filter so the radio samples far less often, and we stop writing on
+// every fix — instead sending a low-rate "still here" heartbeat so the group can
+// always see you and SOS still works. Movement instantly restores full tracking.
+var BS_IDLE_ENTER_MS = 15 * 60 * 1000;  // still this long → enter low-power
+var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
+var BS_MOVE_M        = 30;              // moved more than this → you're moving again
+var BS_DF_IDLE       = 75;              // native GPS distance filter while idle (m)
+var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
+window._batterySaver = (function(){ try { return localStorage.getItem('gl_battsaver') !== '0'; } catch(e){ return true; } })();
+
+// Re-arm the native watcher at a wider/narrower distance filter so the GPS radio
+// works less while you're parked. No-op on web (foreground watch handles itself).
+function _bsApplyPower(idle) {
+  try {
+    if (!window._bgGeo || window._bgWatcherId == null || typeof window._bgWatcherCb !== 'function') return;
+    var prev = window._bgWatcherId;
+    window._bgGeo.addWatcher({
+      backgroundTitle: 'GroundLink is sharing your location',
+      backgroundMessage: idle ? 'Battery saver on — updating when you move.' : 'Your group can see you on the map.',
+      requestPermissions: false,
+      stale: false,
+      distanceFilter: idle ? BS_DF_IDLE : BS_DF_ACTIVE
+    }, window._bgWatcherCb).then(function(id) {
+      window._bgWatcherId = id;
+      try { window._bgGeo.removeWatcher({ id: prev }); } catch (e) {}
+    }).catch(function(){});
+  } catch (e) {}
+}
+window._bsApplyPower = _bsApplyPower;
+
+// Force full-power tracking immediately (used by SOS so an alert never waits on a heartbeat).
+window._bsWake = function() {
+  window._bsLastMoveTs = Date.now();
+  if (window._bsIdle) { window._bsIdle = false; try { window._evt('battery saver — woken (full tracking)'); } catch (e) {} _bsApplyPower(false); }
+};
 
 // ── Guided background-permission setup (native app only) ────────────
 function _resolveBgPlugin() {
@@ -3757,12 +3844,33 @@ function startLocationSharing() {
       return;
     }
 
+    // Battery saver: when stationary a long while, drop to a low-power heartbeat. Movement
+    // (real speed or moving past the anchor) instantly restores full tracking.
+    if (window._batterySaver) {
+      var bsMoved = window._bsAnchor ? metersApart(window._bsAnchor.lat, window._bsAnchor.lng, lat, lng) : Infinity;
+      var bsMoving = (window._lastSpeedMph >= 2) || (bsMoved > BS_MOVE_M);
+      if (bsMoving) {
+        window._bsAnchor = { lat: lat, lng: lng };
+        window._bsLastMoveTs = now;
+        if (window._bsIdle) { window._bsIdle = false; try { window._evt('battery saver — moving, full tracking resumed'); } catch (e) {} _bsApplyPower(false); }
+      } else {
+        if (!window._bsLastMoveTs) window._bsLastMoveTs = now;
+        if (!window._bsAnchor) window._bsAnchor = { lat: lat, lng: lng };
+        if (!window._bsIdle && (now - window._bsLastMoveTs) > BS_IDLE_ENTER_MS) {
+          window._bsIdle = true; try { window._evt('battery saver — idle, low-power heartbeat'); } catch (e) {} _bsApplyPower(true);
+        }
+      }
+      // While idle, let only a periodic heartbeat through (skips frequent writes + breadcrumbs).
+      if (window._bsIdle && window._bsLastWrite && (now - window._bsLastWrite) < BS_HEARTBEAT_MS) return;
+    }
+
     // Write real GPS position — clears the claiming placeholder. Speed is always written
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat, lng, name: userName, accuracy: Math.round(accuracy * 3.28084), ts: now,
-      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1
+      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0
     });
+    window._bsLastWrite = now; // heartbeat clock for the battery saver
 
     // Write breadcrumb if enabled, moved enough, AND the fix is trustworthy. Low-accuracy
     // fixes (common when the screen is off and the OS falls back to cell/wifi location) and
@@ -3981,6 +4089,8 @@ function clearMyTrail() {
 // ══ USERS ════════════════════════════════════════════════════════
 const LIVE_MS  = 90 * 1000;       // actively broadcasting GPS
 const STALE_MS = 20 * 60 * 1000; // 20 min — drop members who've gone quiet (left, app closed, or long signal loss); active-but-no-signal users stay via the No-GPS heartbeat
+const BS_REST_MAX_MS = 6 * 60 * 60 * 1000; // battery-saver "resting" members stay visible far longer (a long sit), with their last position
+const DISC_GRACE_MS  = 3 * 60 * 1000;      // once the live connection is truly gone (conn:false), clear within this grace — absorbs screen-sleep blips, but a closed app drops fast
 
 // Track known users to detect joins/leaves
 var knownUsers = {};
@@ -3998,17 +4108,25 @@ function listenUsers() {
     const users = Object.fromEntries(
       Object.entries(allUsers).filter(([, d]) =>
         d.name && !d.claiming &&
-        (d.noGps
-          ? (now - (d.ts || 0)) < NO_GPS_MS
-          : (now - (d.ts || 0)) < STALE_MS)
+        // conn:false means the live connection actually closed (app shut, network gone) —
+        // these clear after a short grace measured from the server's disconnect stamp.
+        // Otherwise: no-GPS heartbeat window, the long resting window, or the normal one.
+        (d.conn === false
+          ? (now - (d.discTs || d.ts || 0)) < DISC_GRACE_MS
+          : d.noGps
+            ? (now - (d.ts || 0)) < NO_GPS_MS
+            : (now - (d.ts || 0)) < (d.rest ? BS_REST_MAX_MS : STALE_MS))
       )
     );
 
-    // Auto-remove ghosts: 8hr for GPS users, 3min for no-GPS users
+    // Auto-remove ghosts. A truly disconnected client (conn:false) clears within the grace;
+    // otherwise 3min for no-GPS, the long window for battery-saver "resting", 20min normally.
     const NO_GPS_STALE = 3 * 60 * 1000;
     Object.entries(allUsers).forEach(([uid, d]) => {
-      const staleLimit = d.noGps ? NO_GPS_STALE : STALE_MS;
-      if ((now - (d.ts || 0)) >= staleLimit || (d.claiming && (now - (d.ts||0)) > 30000)) {
+      let stale;
+      if (d.conn === false) stale = (now - (d.discTs || d.ts || 0)) >= DISC_GRACE_MS;
+      else stale = (now - (d.ts || 0)) >= (d.noGps ? NO_GPS_STALE : (d.rest ? BS_REST_MAX_MS : STALE_MS));
+      if (stale || (d.claiming && (now - (d.ts || 0)) > 30000)) {
         fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
       }
     });
@@ -4058,14 +4176,19 @@ function listenUsers() {
     }).forEach(([uid, data]) => {
       const isMine   = uid === userId;
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
+      // Battery-saver "resting": not live, but intentionally low-power (last fix flagged rest:1).
+      // Treat as a calm, still-present state — not the gray "last known / lost signal".
+      const isResting = !isLive && !!data.rest && !data.noGps && !data.hidden
+                        && (now - (data.ts || 0)) < BS_REST_MAX_MS && (data.lat !== 0 || data.lng !== 0);
       const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
       const hasGps   = !data.noGps && (data.lat !== 0 || data.lng !== 0);
-      const timeLabel = data.hidden ? 'Hidden' : data.noGps ? 'No GPS' : isLive ? formatTime(data.ts) : (ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago');
+      const _ago      = ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago';
+      const timeLabel = data.hidden ? 'Hidden' : data.noGps ? 'No GPS' : isLive ? formatTime(data.ts) : isResting ? ('Resting · ' + _ago) : _ago;
 
-      // Color scheme: gold=me, green=live teammate, gray=last known
+      // Color scheme: gold=me, green=live teammate, teal=resting (battery saver), gray=last known
       const fillColor   = isMine ? '#f0a500' : userColor(uid);
-      const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff'  : '#888ea0';
-      const opacity     = isLive || isMine ? '1' : '0.65';
+      const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
+      const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
       if (hasGps && !userMarkers[uid]) {
@@ -4134,8 +4257,8 @@ function listenUsers() {
           const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
           _distHTML = `<div class="pop-dist" style="display:flex;align-items:center;gap:5px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg>${_d} from you &middot; ${_b}</div>`;
         }
-        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : 'LAST KNOWN';
-        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
+        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : isResting ? 'RESTING' : 'LAST KNOWN';
+        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#888ea0';
         var _safeName = data.name.replace(/'/g, '');
         // Speed — only when sharing is on, there's GPS, and they're driving (>25 mph).
         var _speedHTML = (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps)
@@ -4167,8 +4290,9 @@ function listenUsers() {
       if (isMine)            bd = { t: 'YOU',    bg: 'rgba(240,165,0,.15)', c: '#f0a500' };
       else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#888ea0' };
       else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#888ea0' };
-      else if (isLive)       bd = { t: 'LIVE',   bg: '#13361f',             c: '#3fb950' };
-      else                   bd = { t: 'PAUSED', bg: '#3a2a13',             c: '#f0a500' };
+      else if (isLive)       bd = { t: 'LIVE',    bg: '#13361f',            c: '#3fb950' };
+      else if (isResting)    bd = { t: 'RESTING', bg: 'rgba(46,196,182,.16)', c: '#2ec4b6' };
+      else                   bd = { t: 'PAUSED',  bg: '#3a2a13',            c: '#f0a500' };
 
       const row = document.createElement('div');
       row.className = 'user-item';
@@ -4178,7 +4302,7 @@ function listenUsers() {
         '<div style="min-width:0">' +
           '<div class="uname">' + data.name + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
-            (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : 'Last seen: ' + timeLabel) +
+            (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Resting (battery saver) · ' + timeLabel : 'Last seen: ' + timeLabel) +
             ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
           '</div>' +
         '</div>' +
@@ -5186,6 +5310,8 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   var _go = function() { if (!_exited) { _exited = true; location.reload(); } };
   try {
     if (db && groupName && userId) {
+      // Cancel the queued conn:false disconnect write so the reload below doesn't resurrect a husk.
+      try { window._fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
       var p = fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); // trails persist 2h
       if (p && typeof p.then === 'function') { p.then(_go).catch(_go); } else { _go(); }
     } else { _go(); }
@@ -5756,6 +5882,33 @@ var PARCEL_SOURCES = [
     id: 'fl', label: 'Florida (statewide)',
     bbox: [-87.70, 24.30, -79.80, 31.10],
     url: 'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query',
+    minzoom: 14
+  },
+  // ── Southern Georgia (Southern Ga. Regional Commission hosted county parcels) ──
+  {
+    id: 'ga-dooly', label: 'Dooly County, GA',
+    bbox: [-84.04, 32.02, -83.60, 32.30],
+    url: 'https://services1.arcgis.com/Ug5xGQbHsD8zuZzM/arcgis/rest/services/Dooly_County_Parcels/FeatureServer/0/query',
+    minzoom: 14
+  },
+  {
+    id: 'ga-crisp', label: 'Crisp County, GA',
+    bbox: [-83.96, 31.80, -83.60, 32.04],
+    url: 'https://services1.arcgis.com/Ug5xGQbHsD8zuZzM/arcgis/rest/services/CrispParcels/FeatureServer/0/query',
+    minzoom: 14
+  },
+  // ── Southwest Alabama (Mobile County Revenue Commission, updated 2026) ──
+  {
+    id: 'al-mobile', label: 'Mobile County, AL',
+    bbox: [-88.44, 30.20, -87.92, 31.18],
+    url: 'https://services8.arcgis.com/HND1NcQt6vgOGn1z/arcgis/rest/services/MCRC_Public_Parcels/FeatureServer/0/query',
+    minzoom: 14
+  },
+  // ── Illinois — Hardin County (Cave-in-Rock & Elizabethtown) ──
+  {
+    id: 'il-hardin', label: 'Hardin County, IL',
+    bbox: [-88.55, 37.34, -88.04, 37.73],
+    url: 'https://services1.arcgis.com/fYwcHOBzInDTQxh0/arcgis/rest/services/Parcels_Apr_2014/FeatureServer/0/query',
     minzoom: 14
   }
 ];
