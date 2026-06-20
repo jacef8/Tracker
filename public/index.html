@@ -2384,7 +2384,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 76;
+var APP_BUILD = 77;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -5899,7 +5899,7 @@ function toggleRegridParcels(on) {
       return;
     }
     addRegridParcels();
-    if (map.getZoom() < 12) { map.flyTo({ zoom: 14, duration: 1200 }); toast('Zoom in for parcel lines · tap a parcel for owner', 2600); }
+    if (map.getZoom() < 15) { map.flyTo({ zoom: 16, duration: 1200 }); toast('Zooming in for parcel lines…', 2600); }
     else { toast('Nationwide parcels on · tap a parcel for owner info', 2600); }
   } else {
     if (window._regridPopup) { window._regridPopup.remove(); window._regridPopup = null; }
@@ -5922,10 +5922,14 @@ function addRegridParcels() {
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(tj) {
       if (!tj || !tj.tiles || !tj.tiles.length) { _fail('Regrid: no tiles in TileJSON response'); return; }
+      var vlNames = (tj.vector_layers || []).map(function(v) { return v.id; }).join(',') || '(none)';
       var sl = (tj.vector_layers && tj.vector_layers[0] && tj.vector_layers[0].id) || tj.id || 'parcels';
       window._regridSrcLayer = sl;
+      // Build the tile URL ourselves so the token is guaranteed to be attached. Some TileJSON
+      // responses return tile URLs WITHOUT the token, which silently 401s every tile (blank map).
+      var tileUrl = 'https://tiles.regrid.com/api/v1/parcels/{z}/{x}/{y}.mvt?token=' + window.REGRID_TOKEN;
       if (!map.getSource('regrid')) {
-        map.addSource('regrid', { type: 'vector', tiles: tj.tiles, minzoom: tj.minzoom || 10, maxzoom: tj.maxzoom || 21 });
+        map.addSource('regrid', { type: 'vector', tiles: [tileUrl], minzoom: tj.minzoom || 10, maxzoom: tj.maxzoom || 21 });
       }
       var before = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
       map.addLayer({ id: 'regrid-fill', type: 'fill', source: 'regrid', 'source-layer': sl, minzoom: 13,
@@ -5936,8 +5940,16 @@ function addRegridParcels() {
         paint: { 'fill-color': 'rgba(240,165,0,0.18)' }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
       map.addLayer({ id: 'regrid-hover-line', type: 'line', source: 'regrid', 'source-layer': sl,
         paint: { 'line-color': '#ffb300', 'line-width': 3 }, filter: ['==', ['get', 'll_uuid'], '__none__'] }, before);
-      toast('Parcels on · tile layer "' + sl + '" · zoom to 14+', 4500); // diagnostic
-      try { window._evt('parcels (Regrid) loaded — layer "' + sl + '", ' + (tj.tiles[0] || '').split('?')[0]); } catch (e) {}
+      toast('Parcels on · layer "' + sl + '" · zoom to 16+ over a U.S. area', 5000);
+      try { window._evt('parcels (Regrid) loaded — source-layer "' + sl + '" · vector_layers=[' + vlNames + ']'); } catch (e) {}
+      // Once the tiles settle, count what actually rendered — distinguishes "no data flowing"
+      // (wrong source-layer / token) from "you're just not zoomed in over parcels".
+      map.once('idle', function() {
+        try {
+          var n = map.queryRenderedFeatures({ layers: ['regrid-line', 'regrid-fill'] }).length;
+          window._evt('parcels (Regrid) rendered ' + n + ' features at z' + map.getZoom().toFixed(1));
+        } catch (e) {}
+      });
     })
     .catch(function(e) { _fail('Regrid error: ' + ((e && e.message) || 'network/CORS blocked')); });
 }
