@@ -273,6 +273,14 @@
 <script>
 var LIVE_MS  = 90 * 1000;
 var WARN_MS  = 60 * 1000;
+var DISC_GRACE_MS = 3 * 60 * 1000;
+// SAME definition the app uses for a "real" occupant: has a name, isn't a half-finished
+// claiming slot, and hasn't been disconnected past the grace. Keeps phantom/husk records
+// from inflating admin counts so the app and admin agree on who's actually in a room.
+function _realUser(u) {
+  return !!(u && u.name && !u.claiming &&
+    !(u.conn === false && (Date.now() - (u.discTs || u.ts || 0)) >= DISC_GRACE_MS));
+}
 var eventLog = [];
 var prevSnapshot = {};
 
@@ -357,7 +365,7 @@ function _renderStatDetail(kind) {
     var rows = keys.map(function(gk) {
       var g = all[gk] || {};
       var users = g.users ? Object.values(g.users) : [];
-      var live = users.filter(function(u){ return now - (u.ts||0) < 90000 && !u.noGps; }).length;
+      var live = users.filter(function(u){ return _realUser(u) && now - (u.ts||0) < 90000 && !u.noGps; }).length;
       var pins = g.pins ? Object.keys(g.pins).length : 0;
       var last = 0; users.forEach(function(u){ if ((u.ts||0) > last) last = u.ts; });
       if (g.chat) Object.values(g.chat).forEach(function(c){ if ((c.ts||0) > last) last = c.ts; });
@@ -375,7 +383,7 @@ function _renderStatDetail(kind) {
     var us = [];
     keys.forEach(function(gk) {
       var users = all[gk] && all[gk].users; if (!users) return;
-      Object.values(users).forEach(function(u){ if (now - (u.ts||0) < 90000 && !u.noGps) us.push({ name: u.name, gk: gk, ts: u.ts }); });
+      Object.values(users).forEach(function(u){ if (_realUser(u) && now - (u.ts||0) < 90000 && !u.noGps) us.push({ name: u.name, gk: gk, ts: u.ts }); });
     });
     us.sort(function(a,b){ return b.ts - a.ts; });
     var li = us.map(function(u){
@@ -981,7 +989,7 @@ function renderSummary(all) {
 
   entries.forEach(function(entry) {
     var key = entry[0], group = entry[1];
-    var users = group.users ? Object.keys(group.users).length : 0;
+    var users = group.users ? Object.values(group.users).filter(_realUser).length : 0;
     var pins  = group.pins  ? Object.keys(group.pins).length  : 0;
     var msgs  = group.chat  ? Object.keys(group.chat).length  : 0;
     totalUsers += users;

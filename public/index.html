@@ -2295,7 +2295,13 @@ function renderRoomList(all) {
     if (group.debug) Object.values(group.debug).forEach(function(dl) { if ((dl.ts || 0) > lastDebug) lastDebug = dl.ts || 0; });
     var lastSeen = Math.max(lastActive, lastDebug);
 
-    var hasUsers = group.users && Object.keys(group.users).length;
+    // A "real" member has a name, isn't a half-finished claiming slot, and is still
+    // connected (or within the disconnect grace). Phantom husks — nameless onDisconnect
+    // remnants, abandoned claiming slots, or members whose connection died past the grace —
+    // do NOT count as occupying the room, so they stop inflating counts and keeping dead
+    // rooms alive. This is the SAME definition the in-room view and admin should use.
+    var realUsers = users.filter(function(u) { return u.name && !u.claiming && _present(u); });
+    var hasUsers = realUsers.length;
     var hasPins = group.pins && Object.keys(group.pins).length;
     var hasChat = group.chat && Object.keys(group.chat).length;
     var hasTrails = group.trails && Object.keys(group.trails).length;
@@ -2309,7 +2315,7 @@ function renderRoomList(all) {
       if (!(persistent && (now - lastSeen) < YEAR_MS)) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
     }
 
-    var liveUsers = users.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS && _present(u); });
+    var liveUsers = realUsers.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
     var liveCount = liveUsers.length;
     var liveNames = liveUsers.map(function(u) { return u.name; });
     // Battery-saver "resting" members aren't live (no fix in 90s) but are intentionally
@@ -2317,9 +2323,9 @@ function renderRoomList(all) {
     // (otherwise a stand full of resting hunters would read "0 online" and vanish). A member
     // whose connection has actually dropped past the grace no longer counts.
     var BS_REST_HOME_MS = 6 * 60 * 60 * 1000;
-    var restingCount = users.filter(function(u) {
+    var restingCount = realUsers.filter(function(u) {
       var age = now - (u.ts || 0);
-      return u.rest && !u.noGps && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS && _present(u);
+      return u.rest && !u.noGps && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS;
     }).length;
     var presentCount = liveCount + restingCount;
     // Hide rooms that have gone empty from the directory — but keep your favorites visible even
@@ -2402,7 +2408,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 88;
+var APP_BUILD = 90;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3102,8 +3108,14 @@ function initMap() {
   // member hands control back to you and stops the snap-back, which is what you expect
   // when you drag the map away from someone you're watching.
   map.on('dragstart', function(e) {
-    if (e.originalEvent && followUid && followUid !== userId) stopFollowing();
+    if (!e.originalEvent) return;               // ignore our own programmatic eases
+    if (followUid && followUid !== userId) stopFollowing(); // panning away ends follow-me
+    if (window._pauseFollow) window._pauseFollow();          // and pauses group-follow
   });
+  // Pinch-zoom / rotate are user interaction too — pause auto-recenter so the gesture isn't
+  // fought and any open popup survives. (Programmatic eases have no originalEvent.)
+  map.on('zoomstart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
+  map.on('rotatestart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
 
   // All map control buttons registered here after map exists
   var layerBtn   = document.getElementById('layer-btn');
@@ -3675,7 +3687,21 @@ async function startNativeBackgroundTracking() {
       window._bgGeoError = '';
       if (!location || typeof window._onGpsFix !== 'function') return;
       window._lastFixSrc = 'native'; // diagnostics: this fix came from the background service
-      if (!window._gotNativeFix) { window._gotNativeFix = true; try { window._evt('background GPS confirmed — first native fix'); } catch (e) {} }
+      if (!window._gotNativeFix) {
+        window._gotNativeFix = true;
+        try { window._evt('background GPS confirmed — first native fix'); } catch (e) {}
+        // Hand off from the bootstrap web watch to native: the native foreground service is
+        // now the authoritative source, so stop the foreground watchPosition. This removes
+        // the web layer that was masking the source as "web" and wasting battery. We only
+        // do this AFTER a real native fix, so if native never works the web watch survives.
+        try {
+          if (window._gpsWatchId != null) {
+            navigator.geolocation.clearWatch(window._gpsWatchId);
+            window._gpsWatchId = null;
+            window._evt('foreground web GPS watch handed off to native service');
+          }
+        } catch (e) {}
+      }
       window._gotNativeFix = true;   // confirms the native service has delivered at least one fix
       window._onGpsFix({ coords: {
         latitude: location.latitude,
@@ -3806,8 +3832,10 @@ function startLocationSharing() {
     try {
       if (window._wasNoGps) { window._wasNoGps = false; window._evt('GPS recovered (' + Math.round(accuracy || 0) + ' m)'); }
       var _accM = accuracy || 0;
+      // Hysteresis so accuracy hovering around the threshold doesn't spam low/recovered:
+      // go "low" only above the limit, and "recovered" only once it's a clear margin below.
       if (_accM > TRAIL_MAX_ACC_M && !window._wasLowAcc) { window._wasLowAcc = true; window._evt('GPS accuracy went low (' + Math.round(_accM) + ' m)'); }
-      else if (_accM > 0 && _accM <= TRAIL_MAX_ACC_M && window._wasLowAcc) { window._wasLowAcc = false; window._evt('GPS accuracy recovered (' + Math.round(_accM) + ' m)'); }
+      else if (_accM > 0 && _accM <= (TRAIL_MAX_ACC_M - 15) && window._wasLowAcc) { window._wasLowAcc = false; window._evt('GPS accuracy recovered (' + Math.round(_accM) + ' m)'); }
     } catch (e) {}
 
     // Instantaneous speed in mph — from the GPS Doppler reading when present, else from
@@ -3918,6 +3946,36 @@ function startLocationSharing() {
   // users actually grant "Allow all the time" + battery-unrestricted (native only).
   setTimeout(function(){ try { window._maybeShowBgSetup(); } catch(e){} }, 6000);
 
+  // ── Native background-GPS watchdog ──────────────────────────────────────
+  // On the native app, a working background service emits a fix within seconds of
+  // starting. If we STILL haven't seen a native fix after a grace period, the service
+  // isn't really running (didn't start, or the OS/battery-optimization suspended it) and
+  // the web layer is masking it — exactly the "my phone drops out" case. Retry once, then
+  // log it for the admin panel and nudge the user to fix permissions/battery.
+  if (_isNativeApp()) {
+    // T+40s: if nothing native yet and the service never started, try starting it again.
+    setTimeout(function() {
+      if (window._roomClosed || window._gotNativeFix) return;
+      if (!window._bgGeoStarted) {
+        try { window._evt('native background GPS not started — retrying'); } catch (e) {}
+        try { startNativeBackgroundTracking(); } catch (e) {}
+      }
+    }, 40000);
+    // T+80s: still no native fix → surface it (event log + guided fix card + toast).
+    setTimeout(function() {
+      if (window._roomClosed || window._gotNativeFix) return;
+      var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
+      try {
+        window._evt('⚠ native background GPS not confirmed after 80s — source=' + (window._lastFixSrc || '?')
+          + ' · bgStarted=' + (!!window._bgGeoStarted) + (window._bgGeoError ? ' · err: ' + window._bgGeoError : ''));
+      } catch (e) {}
+      try {
+        if (permProblem && typeof window._openBgSetup === 'function') window._openBgSetup();
+        else toast('Background GPS isn’t running — your location may drop when the screen is off. Open Settings → Battery → Unrestricted for GroundLink.', 7000);
+      } catch (e) {}
+    }, 80000);
+  }
+
   const markNoGps = () => {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
     if (!window._wasNoGps) { window._wasNoGps = true; try { window._evt('GPS lost / no fix'); } catch (e) {} }
@@ -3956,7 +4014,9 @@ function startLocationSharing() {
   // permission between the WebView and the plugin, so this does not double-prompt.
   // 1) Fast one-shot LOW-accuracy fix first — quick + reliable, gets them on the map
   //    right away.
-  var _webFix = function(p) { window._lastFixSrc = 'web'; onGpsFix(p); };
+  // Don't relabel the source as "web" once the native service has taken over (a late or
+  // one-shot web fix shouldn't make the diagnostics flip back to web).
+  var _webFix = function(p) { if (!window._gotNativeFix) window._lastFixSrc = 'web'; onGpsFix(p); };
   navigator.geolocation.getCurrentPosition(_webFix, onGpsErr,
     { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
 
@@ -4006,6 +4066,10 @@ function startLocationSharing() {
     } else if (!window._lastGPS) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
+    } else if (window._batterySaver && window._bsIdle) {
+      // Battery-saver "resting": stay intentionally quiet so the member shows RESTING and we
+      // actually save the writes. Presence (conn flag) keeps them visible; movement wakes us.
+      return;
     } else {
       // Stationary but still tracking — bump only our timestamp (keep position/accuracy)
       // so we stay "Live" for the group instead of flipping to "Paused" while sitting still.
@@ -4220,13 +4284,17 @@ function listenUsers() {
         userMarkers[uid]._el = el;
         // Tap marker → fly to user, open popup, start following
         el.addEventListener('click', function() {
+          if (window._pauseFollow) window._pauseFollow(9000); // keep the popup reachable (Navigate button)
           if (isMine) {
             window._followUser(userId, 'you');
             return;
           }
           map.flyTo({ center: [data.lng, data.lat], zoom: Math.max(map.getZoom(), 16), duration: 800 });
           setTimeout(function() {
-            if (userMarkers[uid]) userMarkers[uid].togglePopup();
+            // Mapbox already toggles the popup on marker click — only open it if it isn't
+            // already, so we never double-toggle it shut (that was making it flash and vanish).
+            try { var pop = userMarkers[uid] && userMarkers[uid].getPopup();
+                  if (pop && !pop.isOpen()) userMarkers[uid].togglePopup(); } catch (e) {}
             if (isLive) window._followUser(uid, data.name);
           }, 850);
         });
@@ -6459,6 +6527,7 @@ window._followUser = function(uid, name) {
   btn.style.boxShadow   = isSelf ? '0 0 15px rgba(240,165,0,0.5)' : '0 0 15px rgba(57,255,138,0.4)';
   if (!isSelf) toast('Following ' + name + ' — tap to stop', 2500);
   function doFollow(initial) {
+    if (!initial && Date.now() < (window._followPausedUntil || 0)) return; // user is interacting
     var target = null;
     if (isSelf) {
       if (window._lastGPS) target = [window._lastGPS.lng, window._lastGPS.lat];
@@ -6596,7 +6665,12 @@ function _stopFitAll() {
 // enough — keeping the view steady the rest of the time. `force` does a full re-fit (used
 // on start). Linear easing matches the marker glide so the map and dots move together.
 var _linEase = function(t) { return t; };
+// Follow modes yield to the user: any gesture or marker tap pauses auto-recenter for a
+// few seconds so it stops fighting a pinch-zoom or closing an open popup, then resumes.
+window._followPausedUntil = 0;
+window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 7000); };
 function _groupFollowTick(force) {
+  if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
   Object.keys(userMarkers).forEach(function(uid) {
     try { var ll = userMarkers[uid].getLngLat(); pts.push([ll.lng, ll.lat]); } catch (e) {}
