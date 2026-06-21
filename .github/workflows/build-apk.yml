@@ -1,0 +1,61 @@
+name: Build Android APK
+
+# Builds the GroundLink debug APK on GitHub's runners (which have the full Android
+# toolchain + network), then uploads it as a downloadable artifact. Use this when the
+# Cowork sandbox can't reach Google's build servers to compile locally.
+#
+# Run it two ways:
+#   • Manually: GitHub → Actions tab → "Build Android APK" → "Run workflow".
+#   • Automatically: any push that touches native-app/** (native changes only — web-only
+#     pushes to public/ won't trigger a build).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'native-app/**'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor + plugin deps
+        working-directory: native-app
+        run: npm install
+
+      # webDir ("www") is empty (the app loads the live site via server.url), and git does
+      # not carry empty folders — recreate it so `cap sync` doesn't error on a missing dir.
+      - name: Ensure web assets dir exists
+        working-directory: native-app
+        run: mkdir -p www && touch www/.keep
+
+      - name: Capacitor sync (refresh native config + plugins)
+        working-directory: native-app
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: native-app/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: groundlink-debug-apk
+          path: native-app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
