@@ -100,6 +100,7 @@
   }
   #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; transition: height .22s ease; }
   #join-pager::-webkit-scrollbar { display: none; }
+  body.solo-mode #chat-toggle-btn, body.solo-mode #sos-btn { display: none !important; }
   .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 9px; padding: 0 2px; align-self: flex-start; }
   #room-list { max-height: 30vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -961,6 +962,11 @@
 
         <!-- ══ ACCOUNT EXTRAS (stats · color · your groups · quick settings) ════ -->
         <div id="acct-extras" style="display:flex;flex-direction:column;gap:10px;margin-top:2px">
+
+          <!-- My Map: solo map of your saved pins, no room needed -->
+          <button onclick="window._enterSoloMap()" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:var(--radius);color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">
+            <svg class="licon licon-sm"><use href="#ic-pin"/></svg> Open My Map
+          </button>
 
           <!-- Your stats -->
           <div style="display:flex;gap:8px">
@@ -2524,7 +2530,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 94;
+var APP_BUILD = 95;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3358,6 +3364,7 @@ function initMap() {
     if (map.getLayer('pins-layer')) {
       var _pinHit = map.queryRenderedFeatures(e.point, { layers: ['pins-layer'] });
       if (_pinHit.length) {
+        if (window._soloMode) { window._soloPinPopup(_pinHit[0], e.lngLat); return; }
         window._showPinPopup(_pinHit[0].properties.pid, e.lngLat);
         return; // don't also open a parcel popup underneath
       }
@@ -5505,6 +5512,21 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   }
 
   if (!pendingCoords) return;
+  if (window._soloMode) {
+    // Personal map: save the new pin to your library instead of pushing it to a room.
+    try {
+      var _arr = getSavedPins();
+      var _pid = 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      _arr.push({ pid: _pid, lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, savedAt: Date.now() });
+      setSavedPins(_arr);
+      lastPins[_pid] = { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, name: userName || 'Me', droppedBy: userId, ts: Date.now() };
+      updatePinSource(lastPins);
+      try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {}
+      toast('Saved to your map');
+    } catch (e) {}
+    _closePinModal();
+    return;
+  }
   const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
   fbSet(pinRef, {
     lat: pendingCoords.lat, lng: pendingCoords.lng,
@@ -5565,6 +5587,7 @@ document.getElementById('map').addEventListener('click', () => {
 
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
 document.getElementById('switch-group-btn').addEventListener('click', () => {
+  if (window._soloMode) { window._exitSoloMap(); return; } // personal map: just close it, no room teardown
   // Immediate exit — no confirm dialog needed
   if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
   try { clearInterval(window._diagTimer); } catch(_) {} // stop diagnostics reporting
@@ -6506,6 +6529,96 @@ function getSavedPins() {
 function setSavedPins(arr) {
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
 }
+
+// ── Personal "My Map" — your saved pins on a solo map, no room, no Firebase ──────
+window._soloMode = false;
+window._enterSoloMap = function() {
+  window._soloMode = true;
+  window._roomClosed = false;
+  groupName = '';
+  // Build the map's pin set from your saved library so taps + rendering reuse existing code.
+  var saved = getSavedPins();
+  lastPins = {};
+  saved.forEach(function(p, i) {
+    var pid = p.pid || ('saved_' + i);
+    lastPins[pid] = { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', name: userName || 'Me', droppedBy: userId, ts: p.savedAt || Date.now() };
+  });
+  var js = document.getElementById('join-screen'); if (js) js.style.display = 'none';
+  document.getElementById('topbar').style.display = 'flex';
+  var lm = document.getElementById('locate-me'); if (lm) lm.style.display = 'flex';
+  var gl2 = document.getElementById('group-name-label'); if (gl2) gl2.textContent = 'My Map';
+  var lock = document.getElementById('group-lock-icon'); if (lock) lock.style.display = 'none';
+  document.body.classList.add('solo-mode');
+  if (!window._mapStarted) initMap();
+  var apply = function() {
+    updatePinSource(lastPins);
+    var keys = Object.keys(lastPins);
+    try {
+      if (keys.length === 1) { var k0 = keys[0]; map.jumpTo({ center: [lastPins[k0].lng, lastPins[k0].lat], zoom: 15 }); }
+      else if (keys.length) {
+        var b = new mapboxgl.LngLatBounds();
+        keys.forEach(function(k) { b.extend([lastPins[k].lng, lastPins[k].lat]); });
+        map.fitBounds(b, { padding: 80, maxZoom: 15, duration: 0 });
+      } else if (window._lastGPS) { map.jumpTo({ center: [window._lastGPS.lng, window._lastGPS.lat], zoom: 13 }); }
+    } catch (e) {}
+    try {
+      if (!window._soloGeo) {
+        window._soloGeo = new mapboxgl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true });
+        map.addControl(window._soloGeo, 'top-right');
+      }
+      setTimeout(function() { try { window._soloGeo.trigger(); } catch (e) {} }, 700);
+    } catch (e) {}
+    setTimeout(function() { try { map.resize(); } catch (e) {} }, 120);
+    toast('Your map — tap a pin for info, long-press to add', 2600);
+  };
+  if (window._mapReady) apply();
+  else { var t = setInterval(function() { if (window._mapReady) { clearInterval(t); apply(); } }, 150); }
+};
+window._exitSoloMap = function() {
+  window._soloMode = false;
+  document.body.classList.remove('solo-mode');
+  try { if (window._soloPop) { window._soloPop.remove(); window._soloPop = null; } } catch (e) {}
+  try { if (map && map.getSource('pins')) map.getSource('pins').setData({ type: 'FeatureCollection', features: [] }); } catch (e) {}
+  lastPins = {};
+  document.getElementById('topbar').style.display = 'none';
+  var lm = document.getElementById('locate-me'); if (lm) lm.style.display = 'none';
+  var js = document.getElementById('join-screen'); if (js) js.style.display = '';
+  try { window._goPanel(1); } catch (e) {}
+};
+window._soloPinPopup = function(feature, lngLat) {
+  var pid = feature.properties.pid;
+  var p = lastPins[pid]; if (!p) return;
+  var def = PIN_DEFS[p.cat] || PIN_DEFS['Waypoint'];
+  if (window._soloPop) { window._soloPop.remove(); window._soloPop = null; }
+  var gps = window._lastGPS;
+  var dist = gps ? (distanceMiles(gps.lat, gps.lng, p.lat, p.lng) + ' ' + getBearing(gps.lat, gps.lng, p.lat, p.lng)) : '';
+  var _lbl = (p.label || '').replace(/'/g, '');
+  window._soloPop = new mapboxgl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '260px' })
+    .setLngLat(lngLat || [p.lng, p.lat])
+    .setHTML(
+      '<div style="padding:2px">' +
+      '<div style="font-size:12px;font-weight:700;color:' + def.color + ';margin-bottom:3px">' + (def.emoji || '') + ' ' + p.cat + '</div>' +
+      (p.label ? '<div style="font-size:13px;color:#e6edf3;margin-bottom:3px">' + p.label + '</div>' : '') +
+      (dist ? '<div style="font-size:11px;color:#8b949e;margin-bottom:8px">&#128205; ' + dist + '</div>' : '<div style="margin-bottom:8px"></div>') +
+      '<div style="display:flex;gap:6px">' +
+        '<button onclick="window._navigateTo(' + p.lat + ',' + p.lng + ',\'' + _lbl + '\')" style="flex:1;background:#f0a500;border:none;border-radius:7px;color:#000;font-size:12px;font-weight:700;padding:7px;cursor:pointer">Navigate</button>' +
+        '<button onclick="window._soloRemovePin(\'' + pid + '\')" style="background:none;border:1px solid #444c56;border-radius:7px;color:#e74c3c;font-size:12px;padding:7px 10px;cursor:pointer">Remove</button>' +
+      '</div></div>'
+    ).addTo(map);
+};
+window._soloRemovePin = function(pid) {
+  var p = lastPins[pid]; if (!p) return;
+  var arr = getSavedPins().filter(function(s) {
+    if (s.pid && s.pid === pid) return false;
+    if (s.lat === p.lat && s.lng === p.lng && s.cat === p.cat) return false;
+    return true;
+  });
+  setSavedPins(arr);
+  delete lastPins[pid];
+  if (window._soloPop) { window._soloPop.remove(); window._soloPop = null; }
+  updatePinSource(lastPins);
+  toast('Removed from your map');
+};
 function _isPinSaved(pid) {
   return getSavedPins().some(function(p) { return p.pid === pid; });
 }
