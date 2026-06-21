@@ -936,9 +936,9 @@
         <button class="btn-primary" id="join-btn">Open Map →</button>
 
         <!-- Share + Install, on the front screen for quick access -->
-        <div style="display:flex;gap:8px">
-          <button type="button" onclick="window._shareApp()" style="flex:1;padding:8px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share</button>
-          <button type="button" onclick="window._installApp()" style="flex:1;padding:8px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Install</button>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:2px">
+          <button type="button" onclick="window._installApp()" style="width:100%;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:var(--radius);color:var(--accent);font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Install GroundLink</button>
+          <button type="button" onclick="window._shareApp()" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-share"/></svg>Share GroundLink</button>
         </div>
       </section>
 
@@ -1684,6 +1684,11 @@ let deferredInstallPrompt = null;
 
 const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e67e22','#2ecc71','#e74c3c','#9b59b6','#1abc9c','#e91e63','#00bcd4','#ff5722','#4caf50'];
 
+// Single source of truth for the build number. Bump this AND public/version.json on every
+// deploy. The service worker is registered with this as a ?v= query, so every deploy forces
+// a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
+var APP_BUILD = 99;
+
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
   // If a worker is already controlling us, a controllerchange later means a NEW worker took
@@ -1696,7 +1701,7 @@ if ('serviceWorker' in navigator) {
     _swReloaded = true;
     location.reload();
   });
-  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+  navigator.serviceWorker.register('/sw.js?v=' + APP_BUILD).then(function(reg) {
     try { reg.update(); } catch (e) {}
     // Re-check for a new worker periodically and whenever the app regains focus, so an
     // installed home-screen PWA doesn't sit on a stale worker for up to a day.
@@ -2551,10 +2556,9 @@ function renderRoomList(all) {
 loadRoomList();
 
 const APP_VERSION = '1.7-test';
-// Single source of truth for the build number. Bump this AND public/version.json on every
-// deploy; the running app polls version.json and shows an "update available" banner when
-// the deployed build is newer than the one currently loaded.
-var APP_BUILD = 98;
+// APP_BUILD is defined near the top (before the service-worker registration). The running
+// app polls version.json and shows an "update available" banner when the deployed build is
+// newer than the one currently loaded.
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
