@@ -959,6 +959,61 @@
           </div>
         </div>
 
+        <!-- ══ ACCOUNT EXTRAS (stats · color · your groups · quick settings) ════ -->
+        <div id="acct-extras" style="display:flex;flex-direction:column;gap:10px;margin-top:2px">
+
+          <!-- Your stats -->
+          <div style="display:flex;gap:8px">
+            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+              <div id="acct-stat-groups" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">Groups</div>
+            </div>
+            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+              <div id="acct-stat-pins" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">Pins dropped</div>
+            </div>
+            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+              <div id="acct-stat-saved" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">Saved spots</div>
+            </div>
+          </div>
+
+          <!-- Your map color -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+            <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px">
+              <span id="acct-color-dot" style="width:24px;height:24px;border-radius:50%;border:2px solid #fff;flex-shrink:0;background:#f0a500;box-shadow:0 1px 5px rgba(0,0,0,.5)"></span>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:700;color:var(--text)">Your map color</div>
+                <div style="font-size:11px;color:var(--muted)">How your dot looks to the group</div>
+              </div>
+            </div>
+            <div id="acct-color-swatches" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+          </div>
+
+          <!-- Your groups -->
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--muted);margin:0 2px 5px">Your groups</div>
+            <div id="acct-groups-list"></div>
+          </div>
+
+          <!-- Quick settings -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+            <div onclick="_setToggleBatterySaver();_renderAccountPage()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;cursor:pointer;border-bottom:1px solid var(--border);-webkit-tap-highlight-color:transparent">
+              <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text)"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-rain"/></svg>Battery saver</span>
+              <span id="acct-pill-battsaver" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span>
+            </div>
+            <div onclick="_setToggleAlerts();setTimeout(_renderAccountPage,400)" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;cursor:pointer;border-bottom:1px solid var(--border);-webkit-tap-highlight-color:transparent">
+              <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text)"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-bell"/></svg>Alerts (chat, pins, SOS)</span>
+              <span id="acct-pill-alerts" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">OFF</span>
+            </div>
+            <div onclick="_setToggleSpeed();_renderAccountPage()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+              <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text)"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-compass"/></svg>Share my speed</span>
+              <span id="acct-pill-speed" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span>
+            </div>
+          </div>
+
+        </div>
+
         <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
           <svg class="licon licon-sm"><use href="#ic-share"/></svg>
           Share GroundLink
@@ -2199,6 +2254,82 @@ function waitForFirebase(cb) {
 function _getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) { return []; } }
 function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
+
+// ── Account page: stats · map color · your groups · quick settings ──────────
+window._myColor = (function(){ try { return localStorage.getItem('gl_mycolor') || ''; } catch (e) { return ''; } })();
+var ACCT_COLORS = ['#f0a500','#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#e74c3c','#1abc9c','#e91e63','#00bcd4'];
+function _acctPill(id, on) {
+  var el = document.getElementById(id); if (!el) return;
+  el.textContent = on ? 'ON' : 'OFF';
+  el.style.background = on ? '#13361f' : 'var(--border)';
+  el.style.color = on ? '#3fb950' : 'var(--muted)';
+}
+function _setMyColor(c) {
+  window._myColor = c;
+  try { localStorage.setItem('gl_mycolor', c); } catch (e) {}
+  // If we're in a room right now, push it so the group sees the new color immediately.
+  try { if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/color'), c); } catch (e) {}
+  _renderAccountPage();
+}
+function _rejoinSavedGroup(key, disp) {
+  var gi = document.getElementById('inp-group'); if (gi) gi.value = disp;
+  var name = ((document.getElementById('inp-name') || {}).value || '').trim();
+  if (!name) {
+    if (window._goPanel) window._goPanel(0);
+    var ni = document.getElementById('inp-name'); if (ni) { ni.style.borderColor = 'var(--danger)'; ni.focus(); }
+    try { toast('Enter your name first, then tap Rejoin', 2800); } catch (e) {}
+    return;
+  }
+  var existing = getSavedSession();
+  var uid = existing.uid || genUid();
+  checkGroupPasscode(name, key, uid);
+}
+function _renderAccountPage() {
+  var favs = _getFavs();
+  var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
+  var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
+  var sg = document.getElementById('acct-stat-groups'); if (sg) sg.textContent = favs.length;
+  var sp = document.getElementById('acct-stat-pins');   if (sp) sp.textContent = pinsDropped;
+  var ss = document.getElementById('acct-stat-saved');  if (ss) ss.textContent = saved.length;
+
+  var dot = document.getElementById('acct-color-dot'); if (dot) dot.style.background = window._myColor || '#f0a500';
+  var sw = document.getElementById('acct-color-swatches');
+  if (sw) {
+    sw.innerHTML = '';
+    ACCT_COLORS.forEach(function(c) {
+      var b = document.createElement('button');
+      var sel = (window._myColor || '#f0a500') === c;
+      b.type = 'button';
+      b.style.cssText = 'width:30px;height:30px;border-radius:50%;background:' + c + ';cursor:pointer;flex-shrink:0;padding:0;border:' + (sel ? '3px solid #fff' : '2px solid rgba(255,255,255,.25)');
+      b.onclick = function() { _setMyColor(c); };
+      sw.appendChild(b);
+    });
+  }
+
+  var gl = document.getElementById('acct-groups-list');
+  if (gl) {
+    if (!favs.length) {
+      gl.innerHTML = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No saved groups yet — tap the &#9734; on a group to keep it here.</div>';
+    } else {
+      gl.innerHTML = '';
+      favs.forEach(function(key) {
+        var disp = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-bottom:6px';
+        row.innerHTML = '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + disp + '</div></div>' +
+          '<button type="button" class="acct-rejoin" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;padding:6px 13px;cursor:pointer">Rejoin</button>' +
+          '<button type="button" class="acct-unfav" title="Remove from your groups" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:13px;padding:5px 9px;cursor:pointer">&#9733;</button>';
+        row.querySelector('.acct-rejoin').onclick = function() { _rejoinSavedGroup(key, disp); };
+        row.querySelector('.acct-unfav').onclick = function(e) { try { window._toggleFav(key, disp, e); } catch (_) {} _renderAccountPage(); };
+        gl.appendChild(row);
+      });
+    }
+  }
+
+  _acctPill('acct-pill-battsaver', window._batterySaver !== false);
+  _acctPill('acct-pill-alerts', !!(typeof alertsOn !== 'undefined' && alertsOn));
+  _acctPill('acct-pill-speed', (typeof _shareSpeed === 'function') ? _shareSpeed() : true);
+}
 window._toggleFav = function(key, name, ev) {
   if (ev) ev.stopPropagation();
   var f = _getFavs(); var i = f.indexOf(key);
@@ -2408,7 +2539,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 91;
+var APP_BUILD = 93;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -2586,6 +2717,9 @@ function enterMap(name, group, uid) {
     window._isRoomOwner = false;
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/owner'), function(snap) {
+        // Never re-claim/recreate a room that's being closed or deleted — otherwise an
+        // admin "delete" instantly resurrects the room (and its persistent flag) here.
+        if (window._roomClosed) return;
         var owner = snap.val();
         if (!owner) {
           try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (e) {}
@@ -3899,7 +4033,8 @@ function startLocationSharing() {
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
       lat, lng, name: userName, accuracy: Math.round(accuracy * 3.28084), ts: now,
-      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0
+      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
+      color: window._myColor || ''
     });
     window._bsLastWrite = now; // heartbeat clock for the battery saver
 
@@ -4253,7 +4388,8 @@ function listenUsers() {
       const timeLabel = data.hidden ? 'Hidden' : data.noGps ? 'No GPS' : isLive ? formatTime(data.ts) : isResting ? ('Resting · ' + _ago) : _ago;
 
       // Color scheme: gold=me, green=live teammate, teal=resting (battery saver), gray=last known
-      const fillColor   = isMine ? '#f0a500' : userColor(uid);
+      // Members can pick their own dot color (Account page); fall back to the auto color.
+      const fillColor   = isMine ? '#f0a500' : (data.color || userColor(uid));
       const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
@@ -5306,6 +5442,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     droppedBy: userId, ts: Date.now()
   });
   toast('Pin dropped');
+  try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {} // lifetime "pins dropped" stat
   pushNotify('pin', groupName + ' — new pin', userName + ' dropped a ' + finalCat + ' pin');
   try { window._evt('dropped a pin — ' + finalCat + (label ? ' (' + label + ')' : '')); } catch (e) {}
   _closePinModal();
@@ -7171,6 +7308,7 @@ document.addEventListener('click', function(e) {
     for (var k = 0; k < tabs.length; k++) {
       if (k === i) tabs[k].classList.add('active'); else tabs[k].classList.remove('active');
     }
+    if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // keep the Account page fresh on tap or swipe
   }
   window._goPanel = function (i) {
     var p = document.getElementById('join-pager');
@@ -7178,6 +7316,7 @@ document.addEventListener('click', function(e) {
     var x = i * p.clientWidth;
     try { p.scrollTo({ left: x, behavior: 'smooth' }); } catch (e) { p.scrollLeft = x; }
     setActive(i);
+    if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // refresh the Account page on open
   };
   window._joinPagerReset = function () {
     var p = document.getElementById('join-pager');
