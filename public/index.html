@@ -98,7 +98,7 @@
     display: flex; flex-direction: column; gap: 9px;
     margin: auto;
   }
-  #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; }
+  #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; transition: height .22s ease; }
   #join-pager::-webkit-scrollbar { display: none; }
   .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 9px; padding: 0 2px; align-self: flex-start; }
   #room-list { max-height: 30vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -1617,23 +1617,7 @@
       <div class="pin-sheet-title">Drop a Pin</div>
       <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
     </div>
-    <div class="pin-cats" id="pin-cats">
-      <button class="cat-btn active" data-cat="Waypoint" style="border-color:#f0a50020"><span class="pin-preview" style="background:#f0a500">WP</span>Waypoint</button>
-      <button class="cat-btn" data-cat="Deer Stand" style="border-color:#8B5E3C20"><span class="pin-preview" style="background:#8B5E3C">DS</span>Deer Stand</button>
-      <button class="cat-btn" data-cat="Game Trail" style="border-color:#5a8a3c20"><span class="pin-preview" style="background:#5a8a3c">GT</span>Game Trail</button>
-      <button class="cat-btn" data-cat="Harvest" style="border-color:#c0392b20"><span class="pin-preview" style="background:#c0392b">HV</span>Harvest</button>
-      <button class="cat-btn" data-cat="Gobbler" style="border-color:#8e44ad20"><span class="pin-preview" style="background:#8e44ad">GB</span>Gobbler</button>
-      <button class="cat-btn" data-cat="Feeder" style="border-color:#27ae6020"><span class="pin-preview" style="background:#27ae60">FD</span>Feeder</button>
-      <button class="cat-btn" data-cat="Water" style="border-color:#2980b920"><span class="pin-preview" style="background:#2980b9">WA</span>Water</button>
-      <button class="cat-btn" data-cat="Hog" style="border-color:#7f600020"><span class="pin-preview" style="background:#7f6000">HG</span>Hog</button>
-      <button class="cat-btn" data-cat="Bear" style="border-color:#4a235a20"><span class="pin-preview" style="background:#4a235a">BR</span>Bear</button>
-      <button class="cat-btn" data-cat="Camp" style="border-color:#e67e2220"><span class="pin-preview" style="background:#e67e22">CP</span>Camp</button>
-      <button class="cat-btn" data-cat="Vehicle" style="border-color:#56657320"><span class="pin-preview" style="background:#566573">VH</span>Vehicle</button>
-      <button class="cat-btn" data-cat="Boundary" style="border-color:#922b2120"><span class="pin-preview" style="background:#922b21">BN</span>Boundary</button>
-      <button class="cat-btn" data-cat="Hazard" style="border-color:#e74c3c20"><span class="pin-preview" style="background:#e74c3c">HZ</span>Hazard</button>
-      <button class="cat-btn" data-cat="Urgent" style="border-color:#ff000020"><span class="pin-preview" style="background:#ff0000">!!</span>Urgent</button>
-      <button class="cat-btn" data-cat="Custom" style="border-color:#00bcd420"><span class="pin-preview" style="background:#00bcd4">CT</span>Custom</button>
-    </div>
+    <div class="pin-cats" id="pin-cats" style="display:block;max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
     <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
     <div id="custom-cat-row" style="display:none;margin-top:6px">
       <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
@@ -2329,6 +2313,7 @@ function _renderAccountPage() {
   _acctPill('acct-pill-battsaver', window._batterySaver !== false);
   _acctPill('acct-pill-alerts', !!(typeof alertsOn !== 'undefined' && alertsOn));
   _acctPill('acct-pill-speed', (typeof _shareSpeed === 'function') ? _shareSpeed() : true);
+  try { if (window._sizePager) requestAnimationFrame(window._sizePager); } catch (e) {}
 }
 window._toggleFav = function(key, name, ev) {
   if (ev) ev.stopPropagation();
@@ -2539,7 +2524,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 93;
+var APP_BUILD = 94;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3134,44 +3119,125 @@ let measurePoints = [], measureMarkers = [], longPressTimer = null;
 let measureMode = false;
 let _measureSuppressClick = false, _measureTouchStart = null;
 
+// Themed pin library. Each entry: color (teardrop fill), emoji (glyph), theme, label
+// (legacy 2-letter fallback). PIN_THEMES sets the order of sections in the picker.
+const PIN_THEMES = ['General', 'Hunting', 'Fishing', 'Outdoors', 'Working', 'Family'];
 const PIN_DEFS = {
-  'Waypoint':   { color: '#f0a500', label: 'WP' },
-  'Deer Stand': { color: '#8B5E3C', label: 'DS' },
-  'Game Trail': { color: '#5a8a3c', label: 'GT' },
-  'Harvest':    { color: '#c0392b', label: 'HV' },
-  'Gobbler':    { color: '#8e44ad', label: 'GB' },
-  'Feeder':     { color: '#27ae60', label: 'FD' },
-  'Water':      { color: '#2980b9', label: 'WA' },
-  'Hog':        { color: '#7f6000', label: 'HG' },
-  'Bear':       { color: '#4a235a', label: 'BR' },
-  'Camp':       { color: '#e67e22', label: 'CP' },
-  'Vehicle':    { color: '#566573', label: 'VH' },
-  'Boundary':   { color: '#922b21', label: 'BN' },
-  'Hazard':     { color: '#e74c3c', label: 'HZ' },
-  'Urgent':     { color: '#ff0000', label: '!!' },
-  'Custom':     { color: '#00bcd4', label: 'CT' },
+  // ── General ──
+  'Waypoint':     { color: '#f0a500', emoji: '📍', theme: 'General', label: 'WP' },
+  'Urgent':       { color: '#ff0000', emoji: '‼️', theme: 'General', label: '!!' },
+  'Hazard':       { color: '#e74c3c', emoji: '⚠️', theme: 'General', label: 'HZ' },
+  'Boundary':     { color: '#922b21', emoji: '🚧', theme: 'General', label: 'BN' },
+  'Vehicle':      { color: '#566573', emoji: '🚙', theme: 'General', label: 'VH' },
+  'Parking':      { color: '#607d8b', emoji: '🅿️', theme: 'General', label: 'PK' },
+  'Gate':         { color: '#795548', emoji: '🚪', theme: 'General', label: 'GA' },
+  'Photo':        { color: '#90a4ae', emoji: '📸', theme: 'General', label: 'PH' },
+  // ── Hunting ──
+  'Deer Stand':   { color: '#8B5E3C', emoji: '🪜', theme: 'Hunting', label: 'DS' },
+  'Ground Blind': { color: '#6d4c41', emoji: '🛖', theme: 'Hunting', label: 'GB' },
+  'Trail Camera': { color: '#455a64', emoji: '📷', theme: 'Hunting', label: 'TC' },
+  'Game Trail':   { color: '#5a8a3c', emoji: '🐾', theme: 'Hunting', label: 'GT' },
+  'Deer':         { color: '#8d6e63', emoji: '🦌', theme: 'Hunting', label: 'DR' },
+  'Hog':          { color: '#7f6000', emoji: '🐗', theme: 'Hunting', label: 'HG' },
+  'Gobbler':      { color: '#8e44ad', emoji: '🦃', theme: 'Hunting', label: 'GB' },
+  'Bear':         { color: '#4a235a', emoji: '🐻', theme: 'Hunting', label: 'BR' },
+  'Duck':         { color: '#1565c0', emoji: '🦆', theme: 'Hunting', label: 'DK' },
+  'Dove':         { color: '#b0bec5', emoji: '🕊️', theme: 'Hunting', label: 'DV' },
+  'Feeder':       { color: '#27ae60', emoji: '🌽', theme: 'Hunting', label: 'FD' },
+  'Food Plot':    { color: '#558b2f', emoji: '🌱', theme: 'Hunting', label: 'FP' },
+  'Scrape':       { color: '#6d4c41', emoji: '🍂', theme: 'Hunting', label: 'SC' },
+  'Rub':          { color: '#795548', emoji: '🪵', theme: 'Hunting', label: 'RB' },
+  'Bedding':      { color: '#5d4037', emoji: '🛏️', theme: 'Hunting', label: 'BD' },
+  'Harvest':      { color: '#c0392b', emoji: '🏆', theme: 'Hunting', label: 'HV' },
+  'Blood Trail':  { color: '#b71c1c', emoji: '🩸', theme: 'Hunting', label: 'BT' },
+  'Shooting Lane':{ color: '#d84315', emoji: '🎯', theme: 'Hunting', label: 'SL' },
+  // ── Fishing ──
+  'Fishing Spot': { color: '#0277bd', emoji: '🎣', theme: 'Fishing', label: 'FS' },
+  'Boat Ramp':    { color: '#0288d1', emoji: '🚤', theme: 'Fishing', label: 'BR' },
+  'Dock':         { color: '#00838f', emoji: '🛶', theme: 'Fishing', label: 'DK' },
+  'Brush Pile':   { color: '#5d4037', emoji: '🪵', theme: 'Fishing', label: 'BP' },
+  'Structure':    { color: '#455a64', emoji: '🪨', theme: 'Fishing', label: 'ST' },
+  'Catch':        { color: '#0097a7', emoji: '🐟', theme: 'Fishing', label: 'CA' },
+  'Honey Hole':   { color: '#00acc1', emoji: '💧', theme: 'Fishing', label: 'HH' },
+  // ── Outdoors ──
+  'Camp':         { color: '#e67e22', emoji: '⛺', theme: 'Outdoors', label: 'CP' },
+  'Trailhead':    { color: '#2e7d32', emoji: '🥾', theme: 'Outdoors', label: 'TH' },
+  'Water':        { color: '#2980b9', emoji: '💧', theme: 'Outdoors', label: 'WA' },
+  'Overlook':     { color: '#5d4037', emoji: '🌄', theme: 'Outdoors', label: 'OL' },
+  'Cave':         { color: '#424242', emoji: '🕳️', theme: 'Outdoors', label: 'CV' },
+  'Firewood':     { color: '#8d6e63', emoji: '🪵', theme: 'Outdoors', label: 'FW' },
+  'Mushrooms':    { color: '#c62828', emoji: '🍄', theme: 'Outdoors', label: 'MU' },
+  // ── Working ──
+  'Property Corner': { color: '#795548', emoji: '📐', theme: 'Working', label: 'PC' },
+  'Equipment':    { color: '#f9a825', emoji: '🚜', theme: 'Working', label: 'EQ' },
+  'Well':         { color: '#0277bd', emoji: '🚰', theme: 'Working', label: 'WL' },
+  'Repair':       { color: '#607d8b', emoji: '🔧', theme: 'Working', label: 'RP' },
+  'Trap':         { color: '#5d4037', emoji: '🪤', theme: 'Working', label: 'TR' },
+  'No Trespassing':{ color: '#c62828', emoji: '🚫', theme: 'Working', label: 'NT' },
+  // ── Family ──
+  'Home':         { color: '#00897b', emoji: '🏠', theme: 'Family', label: 'HM' },
+  'Meeting Point':{ color: '#43a047', emoji: '🤝', theme: 'Family', label: 'MP' },
+  'Pet':          { color: '#6d4c41', emoji: '🐕', theme: 'Family', label: 'PT' },
+  'Picnic':       { color: '#8bc34a', emoji: '🧺', theme: 'Family', label: 'PN' },
+  'First Aid':    { color: '#e53935', emoji: '🏥', theme: 'Family', label: 'FA' },
+  'Rally Point':  { color: '#d32f2f', emoji: '🚩', theme: 'Family', label: 'RP' },
+  // ── Custom (user names it) ──
+  'Custom':       { color: '#00bcd4', emoji: '⭐', theme: 'General', label: 'CT' },
 };
 
-function makePinImage(catColor, ringColor, labelText) {
-  var SIZE = 64;
+// Build the pin-drop category picker grouped into themed sections from PIN_DEFS.
+function buildPinCats() {
+  var host = document.getElementById('pin-cats'); if (!host) return;
+  var byTheme = {};
+  Object.keys(PIN_DEFS).forEach(function(name) {
+    var d = PIN_DEFS[name], t = d.theme || 'General';
+    (byTheme[t] = byTheme[t] || []).push(name);
+  });
+  var html = '';
+  PIN_THEMES.forEach(function(theme) {
+    var names = byTheme[theme]; if (!names || !names.length) return;
+    html += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:11px 2px 6px">' + theme + '</div>';
+    html += '<div style="display:flex;gap:7px;flex-wrap:wrap">';
+    names.forEach(function(name) {
+      var d = PIN_DEFS[name];
+      html += '<button type="button" class="cat-btn' + (name === selectedCat ? ' active' : '') + '" data-cat="' + name + '" style="border-color:' + d.color + '40">' +
+              '<span class="pin-preview" style="background:' + d.color + ';font-size:14px;line-height:1">' + (d.emoji || d.label) + '</span>' + name + '</button>';
+    });
+    html += '</div>';
+  });
+  host.innerHTML = html;
+}
+
+// Teardrop map pin: colored teardrop body (ringColor outline) with a white inset disc
+// holding the category emoji. `glyph` is an emoji; falls back to a short text label.
+function makePinImage(catColor, ringColor, glyph) {
+  var SIZE = 72;
   var cv = document.createElement('canvas');
   cv.width = SIZE; cv.height = SIZE;
   var ctx = cv.getContext('2d');
-  var cx = SIZE / 2, cy = SIZE * 0.40, R = SIZE * 0.32;
-  ctx.beginPath(); ctx.arc(cx, cy, R + 6, 0, Math.PI * 2);
-  ctx.fillStyle = ringColor; ctx.fill();
-  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fillStyle = catColor; ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(cx - R*0.4, cy + R*0.7);
-  ctx.lineTo(cx, cy + R*1.6);
-  ctx.lineTo(cx + R*0.4, cy + R*0.7);
-  ctx.fillStyle = catColor; ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold ' + Math.round(R*0.85) + 'px system-ui,sans-serif';
+  var cx = SIZE / 2, cy = SIZE * 0.38, R = SIZE * 0.30;
+  function teardrop(rad) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.moveTo(cx - rad * 0.62, cy + rad * 0.52);
+    ctx.lineTo(cx, cy + rad * 1.95);
+    ctx.lineTo(cx + rad * 0.62, cy + rad * 0.52);
+    ctx.closePath();
+  }
+  teardrop(R + 3); ctx.fillStyle = ringColor; ctx.fill();   // outline / ring
+  teardrop(R);     ctx.fillStyle = catColor;  ctx.fill();   // colored body
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.66, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); // inset disc
+  var isEmoji = glyph && !/^[A-Za-z!]{1,3}$/.test(glyph); // anything that isn't a 2-letter fallback
+  if (isEmoji) {
+    ctx.font = Math.round(R * 0.95) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif';
+    ctx.fillStyle = '#000';
+  } else {
+    ctx.font = 'bold ' + Math.round(R * 0.7) + 'px system-ui,sans-serif';
+    ctx.fillStyle = catColor;
+  }
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(labelText, cx, cy);
-  return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0,0,SIZE,SIZE).data.buffer) };
+  ctx.fillText(glyph || '', cx, cy + 1);
+  return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
 }
 
 function initMap() {
@@ -3201,8 +3267,8 @@ function initMap() {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
       if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.label), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.label), { pixelRatio: 2 });
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label), { pixelRatio: 2 });
       }
     }
     // Add pin source and layer
@@ -3462,7 +3528,7 @@ function updatePinSource(pins) {
     var id = f.properties.imageId;
     if (!map.hasImage(id)) {
       var def = PIN_DEFS['Custom'];
-      map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', 'CT'), { pixelRatio: 2 });
+      map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', def.emoji || 'CT'), { pixelRatio: 2 });
     }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
@@ -5395,11 +5461,15 @@ function disablePinMode() {
 // pin-hub-btn handled by openPinHub() wired below
 document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
 
+buildPinCats(); // populate the themed category library
 document.getElementById('pin-cats').addEventListener('click', e => {
-  if (!e.target.classList.contains('cat-btn')) return;
+  var btn = e.target.closest && e.target.closest('.cat-btn');
+  if (!btn) return;
   document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-  e.target.classList.add('active');
-  selectedCat = e.target.dataset.cat;
+  btn.classList.add('active');
+  selectedCat = btn.dataset.cat;
+  var cr = document.getElementById('custom-cat-row');
+  if (cr) cr.style.display = (selectedCat === 'Custom') ? 'block' : 'none';
 });
 
 document.getElementById('pin-cancel').addEventListener('click', _closePinModal);
@@ -5829,8 +5899,8 @@ function setBaseLayer(btn) {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
       if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.label), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.label), { pixelRatio: 2 });
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label), { pixelRatio: 2 });
       }
     }
     if (!map.getSource('pins')) {
@@ -7303,12 +7373,22 @@ document.addEventListener('click', function(e) {
 <!-- ══ Home-screen swipe pager (Quick join ⇄ Account) ══════════════════ -->
 <script>
 (function () {
+  // Size the pager to the panel currently in view so the short Quick-join panel doesn't
+  // inherit the tall Account panel's height (which forced empty-space scrolling).
+  window._sizePager = function () {
+    var p = document.getElementById('join-pager'); if (!p) return;
+    var panels = p.querySelectorAll('.join-panel');
+    var idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
+    var active = panels[idx] || panels[0];
+    if (active) p.style.height = active.offsetHeight + 'px';
+  };
   function setActive(i) {
     var tabs = document.querySelectorAll('#join-tabs .jtab');
     for (var k = 0; k < tabs.length; k++) {
       if (k === i) tabs[k].classList.add('active'); else tabs[k].classList.remove('active');
     }
     if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // keep the Account page fresh on tap or swipe
+    requestAnimationFrame(window._sizePager);
   }
   window._goPanel = function (i) {
     var p = document.getElementById('join-pager');
@@ -7316,7 +7396,6 @@ document.addEventListener('click', function(e) {
     var x = i * p.clientWidth;
     try { p.scrollTo({ left: x, behavior: 'smooth' }); } catch (e) { p.scrollLeft = x; }
     setActive(i);
-    if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // refresh the Account page on open
   };
   window._joinPagerReset = function () {
     var p = document.getElementById('join-pager');
@@ -7330,9 +7409,12 @@ document.addEventListener('click', function(e) {
       if (raf) return;
       raf = requestAnimationFrame(function () {
         raf = null;
-        setActive(Math.round(p.scrollLeft / Math.max(1, p.clientWidth)));
+        var idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
+        setActive(idx);
       });
     });
+    window.addEventListener('resize', function () { window._sizePager(); });
+    setTimeout(window._sizePager, 300); // initial size once content has laid out
   }
 })();
 </script>
