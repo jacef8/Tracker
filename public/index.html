@@ -2408,7 +2408,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 90;
+var APP_BUILD = 91;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3687,6 +3687,9 @@ async function startNativeBackgroundTracking() {
       window._bgGeoError = '';
       if (!location || typeof window._onGpsFix !== 'function') return;
       window._lastFixSrc = 'native'; // diagnostics: this fix came from the background service
+      // A delivered native fix IS proof the background service is running — make the flag
+      // reflect reality (it could read false if the start path's flag drifted).
+      window._bgGeoStarted = true;
       if (!window._gotNativeFix) {
         window._gotNativeFix = true;
         try { window._evt('background GPS confirmed — first native fix'); } catch (e) {}

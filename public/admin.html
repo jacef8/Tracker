@@ -479,6 +479,34 @@ function renderDeviceDebug() {
         row('App build', d.build || '?') +
       '</div></div>';
   }).join('');
+  // Each card is one DEVICE (keyed by its unique id), not one person — so the same person on
+  // two devices/browsers shows as two cards. Old sessions linger until cleared; offer a
+  // one-tap sweep of anything that hasn't reported in over 30 minutes.
+  var STALE_DEV_MS = 30 * 60 * 1000;
+  var staleCount = rows.filter(function(r) { return (now - (r.d.ts || 0)) >= STALE_DEV_MS; }).length;
+  if (staleCount) {
+    el.innerHTML = '<div style="margin-bottom:10px"><button class="btn btn-warn" onclick="clearStaleDevices()" style="font-size:12px;padding:8px 14px">&#129529; Clear ' + staleCount + ' stale device' + (staleCount > 1 ? 's' : '') + ' (no report &gt;30m)</button></div>' + el.innerHTML;
+  }
+}
+
+// Remove every device diagnostic that hasn't reported in over 30 minutes (old sessions /
+// duplicate devices). The live ones re-appear on their next report.
+function clearStaleDevices() {
+  var fb = window._fb;
+  if (!fb || !fb.remove) return;
+  var all = window._allDataSnapshot || {};
+  var now = Date.now(), n = 0;
+  Object.keys(all).forEach(function(gk) {
+    var diag = all[gk] && all[gk].diag; if (!diag) return;
+    Object.keys(diag).forEach(function(uid) {
+      if ((now - ((diag[uid] || {}).ts || 0)) >= 30 * 60 * 1000) {
+        try { fb.remove(fb.ref(fb.db, 'gl/' + gk + '/diag/' + uid)); } catch (e) {}
+        delete diag[uid]; n++;
+      }
+    });
+  });
+  renderDeviceDebug();
+  alert('Cleared ' + n + ' stale device report' + (n !== 1 ? 's' : '') + '.');
 }
 
 // Clear one device's diagnostics (the per-device version of the Clear-all button).
@@ -1305,6 +1333,33 @@ function clearInactiveRooms() {
   });
 }
 
+// Nuke EVERY listed inactive room, including permanent (signed-in owner) ones that the
+// normal "Clear inactive" deliberately protects. Two-step confirm because it's destructive.
+window.nukeAllInactiveRooms = function() {
+  var keys = (window._allInactiveKeys || []).slice();
+  if (!keys.length) { alert('No inactive rooms to nuke.'); return; }
+  if (!confirm('CLOSE & NUKE all ' + keys.length + ' inactive room' + (keys.length > 1 ? 's' : '') +
+               ' — INCLUDING your permanent owner rooms?\n\nThis deletes their pins, chat, trails and logs. Cannot be undone.')) return;
+  if (!confirm('Are you absolutely sure? This permanently deletes ' + keys.length + ' room' + (keys.length > 1 ? 's' : '') + '.')) return;
+  var fb = window._fb;
+  if (!fb || !fb.remove) { alert('Not connected to the database yet — try again in a moment.'); return; }
+  var done = 0, fail = 0, errMsg = '', pending = keys.length;
+  function finish() {
+    alert('Nuked ' + done + ' of ' + keys.length + ' room' + (keys.length !== 1 ? 's' : '') +
+          (fail ? '\n' + fail + ' failed: ' + errMsg : '') +
+          (done && fail === 0 ? '' : '\n\nIf any reappear, a device is still in them and recreating them.'));
+  }
+  keys.forEach(function(k) {
+    try {
+      var p = fb.remove(fb.ref(fb.db, 'gl/' + k));
+      if (p && typeof p.then === 'function') {
+        p.then(function() { done++; if (--pending === 0) finish(); },
+               function(e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); });
+      } else { done++; if (--pending === 0) finish(); }
+    } catch (e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); }
+  });
+};
+
 function loadAllDebugLogs(allData) {
   // Unsubscribe previous listeners
   _debugUnsubs.forEach(function(u) { try { u(); } catch(_) {} });
@@ -1408,7 +1463,8 @@ function loadAdmin() {
       var activeFrag = document.createDocumentFragment();
       var inactiveFrag = document.createDocumentFragment();
       var activeCount = 0, inactiveCount = 0;
-      var retiredKeys = [];
+      var retiredKeys = [];      // non-permanent inactive rooms (safe to bulk-clear)
+      var allInactiveKeys = [];  // every inactive room incl. permanent (for Nuke ALL)
 
       entries.forEach(function(entry) {
         var key = entry[0], group = entry[1];
@@ -1554,6 +1610,7 @@ function loadAdmin() {
           card.style.border = '1px solid rgba(192,57,43,0.7)';
           inactiveFrag.appendChild(card);
           inactiveCount++;
+          allInactiveKeys.push(key);
           if (!persistent) retiredKeys.push(key); // permanent rooms never get bulk-cleared
         }
         // else: empty AND idle >24h (and not permanent) -> skip (falls out of panel; data stays in Firebase)
@@ -1569,12 +1626,25 @@ function loadAdmin() {
 
       // Empty / Retired sub-tab \u2014 rooms that emptied out but still have recent activity.
       window._retiredKeys = retiredKeys;
+      window._allInactiveKeys = allInactiveKeys;
       var retiredContainer = document.getElementById('admin-list-retired');
       retiredContainer.innerHTML = '';
       if (inactiveCount) {
         var clearBar = document.createElement('div');
-        clearBar.style.cssText = 'margin-bottom:12px';
-        clearBar.innerHTML = '<button class="btn btn-danger" onclick="clearInactiveRooms()" style="font-size:12px;padding:8px 14px">&#128465; Clear ' + inactiveCount + ' inactive room' + (inactiveCount > 1 ? 's' : '') + '</button>';
+        clearBar.style.cssText = 'margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+        var barHtml = '';
+        // Only non-permanent rooms are bulk-clearable — show the REAL clearable count so the
+        // button never disagrees with what actually happens.
+        if (retiredKeys.length) {
+          barHtml += '<button class="btn btn-danger" onclick="clearInactiveRooms()" style="font-size:12px;padding:8px 14px">&#128465; Clear ' + retiredKeys.length + ' inactive room' + (retiredKeys.length > 1 ? 's' : '') + '</button>';
+        }
+        // Permanent (signed-in owner) rooms can't be bulk-cleared by the above — give an
+        // explicit "Nuke ALL" that deletes every listed inactive room, permanent included.
+        var permCount = allInactiveKeys.length - retiredKeys.length;
+        if (permCount > 0) {
+          barHtml += '<button class="btn btn-danger" onclick="nukeAllInactiveRooms()" style="font-size:12px;padding:8px 14px;background:#7a1f1f;border-color:#a33">&#128165; Close &amp; Nuke ALL ' + allInactiveKeys.length + ' (incl. ' + permCount + ' permanent)</button>';
+        }
+        clearBar.innerHTML = barHtml;
         retiredContainer.appendChild(clearBar);
         retiredContainer.appendChild(inactiveFrag);
       } else {
