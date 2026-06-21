@@ -2530,7 +2530,7 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 95;
+var APP_BUILD = 96;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
@@ -3394,6 +3394,7 @@ function initMap() {
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
+        _keepPopupInView(window._activeParcelPopup);
         window._activeParcelPopup.on('close', function() {
           map.setFilter('fl-parcels-hover', ['==', ['id'], -1]);
           if (map.getLayer('fl-parcels-hover-line')) map.setFilter('fl-parcels-hover-line', ['==', ['id'], -1]);
@@ -3429,6 +3430,7 @@ function initMap() {
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
+        _keepPopupInView(window._activeParcelPopup);
         window._activeParcelPopup.on('close', function() {
           map.setFilter('parcels-hover', ['==', ['id'], -1]);
           if (map.getLayer('parcels-hover-line')) map.setFilter('parcels-hover-line', ['==', ['id'], -1]);
@@ -3539,6 +3541,24 @@ function updatePinSource(pins) {
     }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
+}
+
+// After a popup opens, nudge the map so the whole popup is on-screen (fixes popups that
+// spill off the edge when you tap a feature near the screen boundary).
+function _keepPopupInView(popup) {
+  if (!popup) return;
+  setTimeout(function() {
+    try {
+      var el = popup.getElement(); if (!el || typeof map === 'undefined') return;
+      var r = el.getBoundingClientRect(); if (!r.width) return;
+      var pad = 14, dx = 0, dy = 0;
+      if (r.left < pad) dx = r.left - pad;
+      else if (r.right > window.innerWidth - pad) dx = r.right - (window.innerWidth - pad);
+      if (r.top < pad) dy = r.top - pad;
+      else if (r.bottom > window.innerHeight - pad) dy = r.bottom - (window.innerHeight - pad);
+      if (dx || dy) map.panBy([dx, dy], { duration: 260 });
+    } catch (e) {}
+  }, 40);
 }
 
 // ── Measure mode ──────────────────────────────────────────────
@@ -5031,6 +5051,7 @@ window._showPinPopup = function(pid, lngLat) {
   window._closePinPopup();
   window._pinInfoPopup = new mapboxgl.Popup({ offset: 18, closeButton: true, maxWidth: '250px' })
     .setLngLat([pin.lng, pin.lat]).setHTML(html).addTo(map);
+  _keepPopupInView(window._pinInfoPopup);
 };
 
 // Open the pin sheet pre-filled to edit an existing pin's type + description.
@@ -6605,6 +6626,7 @@ window._soloPinPopup = function(feature, lngLat) {
         '<button onclick="window._soloRemovePin(\'' + pid + '\')" style="background:none;border:1px solid #444c56;border-radius:7px;color:#e74c3c;font-size:12px;padding:7px 10px;cursor:pointer">Remove</button>' +
       '</div></div>'
     ).addTo(map);
+  _keepPopupInView(window._soloPop);
 };
 window._soloRemovePin = function(pid) {
   var p = lastPins[pid]; if (!p) return;
