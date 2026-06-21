@@ -1380,7 +1380,10 @@
 <div id="saved-pins-drawer">
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-star"/></svg>My Saved Pins</span>
-    <button class="panel-close" id="close-saved-pins"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="sv-select-toggle" onclick="window._svToggleSelect()" style="background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Select</button>
+      <button class="panel-close" id="close-saved-pins"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+    </div>
   </div>
   <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">
     Saved here across all groups and sessions. Tap to fly there. Filter by type, then add just those to a room.
@@ -1687,7 +1690,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 100;
+var APP_BUILD = 101;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5868,8 +5871,21 @@ function _renderInviteInbox() {
   try { var js = document.getElementById('join-screen'); joinVisible = js && js.style.display !== 'none'; } catch (e) {}
   if (!list.length || !joinVisible) { box.style.display = 'none'; box.innerHTML = ''; return; }
   var inv = list[0];
-  var more = list.length > 1 ? '<div style="font-size:11px;color:var(--muted);margin-top:7px">+' + (list.length - 1) + ' more invite' + (list.length - 1 > 1 ? 's' : '') + '</div>' : '';
+  var more = list.length > 1 ? '<div style="font-size:11px;color:var(--muted);margin-top:7px">+' + (list.length - 1) + ' more in your inbox</div>' : '';
   box.style.display = 'block';
+  if (inv.type === 'pins') {
+    // Someone shared a set of pins with you → save them to your library.
+    var nPins = (inv.pins && inv.pins.length) || 0;
+    box.innerHTML =
+      '<div style="background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
+        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:var(--accent);margin-right:4px;vertical-align:middle"><use href="#ic-pin"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> shared <strong style="color:var(--accent)">' + nPins + ' pin' + (nPins !== 1 ? 's' : '') + '</strong> with you</div>' +
+        '<div style="display:flex;gap:8px;margin-top:9px">' +
+          '<button onclick="window._acceptPinShare(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Save to my pins</button>' +
+          '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
+        '</div>' + more +
+      '</div>';
+    return;
+  }
   box.innerHTML =
     '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
       '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#00e676;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to <strong style="color:#00e676">' + _escHtml(inv.room || 'a room') + '</strong>' + (inv.pin ? ' · one-tap join' : '') + '</div>' +
@@ -6607,6 +6623,93 @@ function setSavedPins(arr) {
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
 }
 
+// ── Multi-select + share a group of saved pins (to rooms and/or people) ─────────
+window._svSelect = false;
+window._svSel = {};
+window._svToggleSelect = function() {
+  window._svSelect = !window._svSelect;
+  window._svSel = {};
+  var b = document.getElementById('sv-select-toggle');
+  if (b) { b.textContent = window._svSelect ? 'Cancel' : 'Select'; }
+  renderSavedPins();
+};
+window._svSelectedPins = function() {
+  var all = getSavedPins();
+  return Object.keys(window._svSel).map(function(i) { return all[+i]; }).filter(Boolean);
+};
+function _svTargetRow(val, label) {
+  return '<label style="display:flex;align-items:center;gap:11px;padding:11px 6px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer">' +
+    '<input type="checkbox" class="_sv-target" value="' + val + '" style="width:18px;height:18px;flex-shrink:0">' +
+    '<span style="font-size:14px;color:var(--text)">' + label + '</span></label>';
+}
+window._svOpenShareTargets = function() {
+  var pins = window._svSelectedPins();
+  if (!pins.length) return;
+  var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var rows = '';
+  if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + groupName.replace(/_/g, ' ') + ' — current room');
+  favs.forEach(function(k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + k.replace(/^test_/, '').replace(/_/g, ' ')); });
+  Object.keys(friends).forEach(function(uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + (friends[uid] || 'Friend')); });
+  if (!rows) rows = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;line-height:1.5">No destinations yet.<br>Favorite a group, or star people inside a room, to share to them.</div>';
+  var ov = document.createElement('div');
+  ov.id = '_sv-share-modal';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML =
+    '<div style="width:100%;max-width:480px;background:#0d1117;border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:78vh;display:flex;flex-direction:column">' +
+      '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
+        '<span style="font-weight:800;font-size:15px;color:var(--accent)">Share ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to…</span>' +
+        '<button onclick="var m=document.getElementById(\'_sv-share-modal\');if(m)m.remove();" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
+      '</div>' +
+      '<div style="overflow-y:auto;padding:6px 14px;flex:1">' + rows + '</div>' +
+      '<div style="padding:12px 16px;border-top:1px solid var(--border)">' +
+        '<button onclick="window._svSendPins()" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#000;font-weight:800;font-size:14px;cursor:pointer">Send</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+};
+window._svSendPins = function() {
+  var pins = window._svSelectedPins();
+  var targets = Array.prototype.slice.call(document.querySelectorAll('._sv-target:checked')).map(function(c) { return c.value; });
+  if (!pins.length || !targets.length) { toast('Pick at least one destination'); return; }
+  var fb = window._fb, dest = 0;
+  targets.forEach(function(t) {
+    if (t.indexOf('room:') === 0) {
+      var rk = t.slice(5);
+      pins.forEach(function(p) {
+        try { var r = fbPush(fbRef(db, 'gl/' + rk + '/pins')); fbSet(r, { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || (p.cat + ' pin'), name: userName, droppedBy: userId, ts: Date.now() }); } catch (e) {}
+      });
+      dest++;
+    } else if (t.indexOf('person:') === 0) {
+      var uid = t.slice(7);
+      try {
+        var rec = { type: 'pins', fromName: userName || 'A friend', ts: Date.now(),
+          pins: pins.map(function(p) { return { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '' }; }) };
+        var ir = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(ir, rec);
+      } catch (e) {}
+      dest++;
+    }
+  });
+  var m = document.getElementById('_sv-share-modal'); if (m) m.remove();
+  window._svToggleSelect();
+  toast('Shared ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to ' + dest + ' destination' + (dest > 1 ? 's' : ''), 3000);
+};
+// Save a batch of pins someone shared to you (from the invite inbox) into your library.
+window._acceptPinShare = function(key) {
+  var inv = (window._pendingInvites || []).filter(function(i) { return i._key === key; })[0];
+  if (!inv || !inv.pins) return;
+  var arr = getSavedPins();
+  inv.pins.forEach(function(p) {
+    arr.push({ pid: 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 10000), lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', savedAt: Date.now() });
+  });
+  setSavedPins(arr);
+  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  try { if (window._fb && uid) window._fb.remove(window._fb.ref(window._fb.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { renderSavedPins(); } catch (e) {}
+  toast('Saved ' + inv.pins.length + ' pin' + (inv.pins.length > 1 ? 's' : '') + ' to your library', 3000);
+};
+
 // ── Personal "My Map" — your saved pins on a solo map, no room, no Firebase ──────
 window._soloMode = false;
 window._enterSoloMap = function() {
@@ -6758,6 +6861,16 @@ function _updateSavedFoot(shownCount) {
   var foot = document.getElementById('saved-pins-foot');
   var btn = document.getElementById('saved-pins-add-all');
   if (!foot || !btn) return;
+  // Selection mode: the footer becomes "Share N selected".
+  if (window._svSelect) {
+    foot.classList.remove('hidden');
+    var n = Object.keys(window._svSel || {}).length;
+    btn.disabled = (n === 0);
+    btn.textContent = n ? ('Share ' + n + ' selected pin' + (n > 1 ? 's' : '') + ' →') : 'Tap pins to select';
+    btn.onclick = function() { if (Object.keys(window._svSel || {}).length) window._svOpenShareTargets(); };
+    return;
+  }
+  btn.onclick = function() { window.addAllShownToRoom(); };
   var inRoom = !!(groupName && db);
   if (!shownCount) { foot.classList.add('hidden'); return; }
   foot.classList.remove('hidden');
@@ -6810,20 +6923,30 @@ function renderSavedPins() {
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
     var card = document.createElement('div');
     card.className = 'sv-card';
+    var selMode = !!window._svSelect;
+    var isSel = selMode && !!window._svSel[idx];
+    if (isSel) { card.style.borderColor = 'var(--accent)'; card.style.background = 'rgba(240,165,0,.10)'; }
     card.innerHTML =
-      '<div class="sv-dot" style="background:' + def.color + '">' + def.label + '</div>' +
+      (selMode ? '<div style="flex-shrink:0;width:22px;height:22px;border-radius:50%;border:2px solid ' + (isSel ? 'var(--accent)' : 'var(--border)') + ';background:' + (isSel ? 'var(--accent)' : 'transparent') + ';display:flex;align-items:center;justify-content:center;color:#000;font-weight:800;font-size:13px">' + (isSel ? '&#10003;' : '') + '</div>' : '') +
+      '<div class="sv-dot" style="background:' + def.color + '">' + (def.emoji || def.label) + '</div>' +
       '<div class="sv-body">' +
         '<div class="sv-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
         (pin.label ? '<div class="sv-label">' + pin.label + '</div>' : '') +
         (dist ? '<div class="sv-meta">&#128205; ' + dist + '</div>' : '') +
         '<div class="sv-meta">Saved ' + (typeof timeAgo === 'function' ? timeAgo(pin.savedAt) : '') + '</div>' +
       '</div>' +
+      (selMode ? '' :
       '<div class="sv-btns">' +
         '<button class="sv-share" onclick="window.shareSavedPin(' + idx + ')">Share</button>' +
         '<button class="sv-del" onclick="window.removeSavedPin(' + idx + ')" style="display:flex;align-items:center;justify-content:center"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
-      '</div>';
+      '</div>');
     card.addEventListener('click', function(e) {
       if (e.target.tagName === 'BUTTON') return;
+      if (window._svSelect) {
+        if (window._svSel[idx]) delete window._svSel[idx]; else window._svSel[idx] = true;
+        renderSavedPins();
+        return;
+      }
       if (typeof map !== 'undefined') map.flyTo({ center:[pin.lng,pin.lat], zoom:17, duration:1200 });
       document.getElementById('saved-pins-drawer').classList.remove('open');
     });
@@ -6863,6 +6986,9 @@ function openPinFeed() {
   clearUnreadPins();
 }
 function openSavedPins() {
+  // Always open in normal (non-select) mode.
+  window._svSelect = false; window._svSel = {};
+  var stb = document.getElementById('sv-select-toggle'); if (stb) stb.textContent = 'Select';
   document.getElementById('saved-pins-drawer').classList.add('open');
   setLocateMeVisible(false);
   renderSavedPins();
