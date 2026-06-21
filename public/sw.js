@@ -3,7 +3,7 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v9';
+const CACHE = 'groundlink-v10';
 const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -35,6 +35,11 @@ self.addEventListener('activate', e => {
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+// Let the page tell a waiting worker to take over immediately (used by the in-app updater).
+self.addEventListener('message', e => {
+  if (e.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', e => {
