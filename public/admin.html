@@ -10,7 +10,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, onValue, remove, push }
+  import { getDatabase, ref, onValue, remove, push, set }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
   const firebaseConfig = {
@@ -24,7 +24,7 @@
     measurementId:     "G-EH3FZ2CZWJ"
   };
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, onValue, remove, push };
+  window._fb = { db: getDatabase(app), ref, onValue, remove, push, set };
 </script>
 
 <style>
@@ -1310,26 +1310,42 @@ function clearAllDebugLogs() {
 
 // Delete every room currently listed under the Inactive sub-tab (empty rooms that
 // still had activity in the last 24h). Active rooms with live members are untouched.
+// Tell every live client in these rooms to stop writing and leave, so they can't recreate
+// the room (heartbeat / owner re-claim) the instant we delete it. The app listens on
+// gl/<room>/closed and shuts down its writers when it sees this.
+function _signalClosed(keys) {
+  var fb = window._fb; if (!fb || !fb.set) return;
+  keys.forEach(function(k) { try { fb.set(fb.ref(fb.db, 'gl/' + k + '/closed'), { ts: Date.now(), by: 'admin' }); } catch (e) {} });
+}
+// Signal closed, wait a beat for clients to stand down, then remove the rooms for good.
+function _closeThenRemove(keys, doneCb) {
+  var fb = window._fb;
+  _signalClosed(keys);
+  var done = 0, fail = 0, errMsg = '', pending = keys.length;
+  function finish() { doneCb(done, fail, errMsg); }
+  setTimeout(function() {
+    keys.forEach(function(k) {
+      try {
+        var p = fb.remove(fb.ref(fb.db, 'gl/' + k));
+        if (p && typeof p.then === 'function') {
+          p.then(function() { done++; if (--pending === 0) finish(); },
+                 function(e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); });
+        } else { done++; if (--pending === 0) finish(); }
+      } catch (e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); }
+    });
+  }, 1600);
+}
+
 function clearInactiveRooms() {
   var keys = (window._retiredKeys || []).slice();
   if (!keys.length) { alert('No inactive rooms to clear.'); return; }
   if (!confirm('Delete ' + keys.length + ' inactive room' + (keys.length > 1 ? 's' : '') + '? This removes their pins, chat, trails and activity logs. Cannot be undone.')) return;
   var fb = window._fb;
   if (!fb || !fb.remove) { alert('Not connected to the database yet — try again in a moment.'); return; }
-  var done = 0, fail = 0, errMsg = '', pending = keys.length;
-  function finish() {
+  _closeThenRemove(keys, function(done, fail, errMsg) {
     alert('Cleared ' + done + ' of ' + keys.length + ' room' + (keys.length !== 1 ? 's' : '') +
           (fail ? '\n' + fail + ' failed: ' + errMsg : '') +
-          (done ? '' : '\n\nIf rooms reappear, a device is still in them and recreating them.'));
-  }
-  keys.forEach(function(k) {
-    try {
-      var p = fb.remove(fb.ref(fb.db, 'gl/' + k));
-      if (p && typeof p.then === 'function') {
-        p.then(function() { done++; if (--pending === 0) finish(); },
-               function(e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); });
-      } else { done++; if (--pending === 0) finish(); }
-    } catch (e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); }
+          (done && !fail ? '' : '\n\nIf rooms reappear, a device on an old build is still in them and recreating them.'));
   });
 }
 
@@ -1343,20 +1359,10 @@ window.nukeAllInactiveRooms = function() {
   if (!confirm('Are you absolutely sure? This permanently deletes ' + keys.length + ' room' + (keys.length > 1 ? 's' : '') + '.')) return;
   var fb = window._fb;
   if (!fb || !fb.remove) { alert('Not connected to the database yet — try again in a moment.'); return; }
-  var done = 0, fail = 0, errMsg = '', pending = keys.length;
-  function finish() {
+  _closeThenRemove(keys, function(done, fail, errMsg) {
     alert('Nuked ' + done + ' of ' + keys.length + ' room' + (keys.length !== 1 ? 's' : '') +
           (fail ? '\n' + fail + ' failed: ' + errMsg : '') +
-          (done && fail === 0 ? '' : '\n\nIf any reappear, a device is still in them and recreating them.'));
-  }
-  keys.forEach(function(k) {
-    try {
-      var p = fb.remove(fb.ref(fb.db, 'gl/' + k));
-      if (p && typeof p.then === 'function') {
-        p.then(function() { done++; if (--pending === 0) finish(); },
-               function(e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); });
-      } else { done++; if (--pending === 0) finish(); }
-    } catch (e) { fail++; errMsg = (e && e.message) || String(e); if (--pending === 0) finish(); }
+          (done && fail === 0 ? '' : '\n\nIf any reappear, a device on an old build is still in them and recreating them.'));
   });
 };
 
