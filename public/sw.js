@@ -3,7 +3,11 @@
 // Mapbox libraries: cache-first (they never change)
 // Firebase + map tiles: always network
 
-const CACHE = 'groundlink-v10';
+// Cache name auto-versions from the ?v=<build> query the page registers us with, so every
+// deploy gets a brand-new cache and the activate handler purges all the old ones. This is
+// what stops an installed PWA from getting stuck on an old build.
+const SW_V = (function(){ try { return new URL(self.location).searchParams.get('v') || '11'; } catch (e) { return '11'; } })();
+const CACHE = 'groundlink-' + SW_V;
 const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
