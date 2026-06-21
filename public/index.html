@@ -934,6 +934,12 @@
         </div>
 
         <button class="btn-primary" id="join-btn">Open Map →</button>
+
+        <!-- Share + Install, on the front screen for quick access -->
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <button type="button" onclick="window._shareApp()" style="flex:1;padding:10px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share</button>
+          <button type="button" onclick="window._installApp()" style="flex:1;padding:10px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Install</button>
+        </div>
       </section>
 
       <!-- ░░ PANEL 1 — ACCOUNT & EXTRAS ░░ -->
@@ -1680,7 +1686,35 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(console.warn);
+  // If a worker is already controlling us, a controllerchange later means a NEW worker took
+  // over (a fresh deploy) — reload once to pick up the new build. This is what stops the
+  // PWA getting stuck on an old version without an uninstall.
+  var _hadController = !!navigator.serviceWorker.controller;
+  var _swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    if (_swReloaded || !_hadController) return;
+    _swReloaded = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+    try { reg.update(); } catch (e) {}
+    // Re-check for a new worker periodically and whenever the app regains focus, so an
+    // installed home-screen PWA doesn't sit on a stale worker for up to a day.
+    setInterval(function() { try { reg.update(); } catch (e) {} }, 30 * 60 * 1000);
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') { try { reg.update(); } catch (e) {} }
+    });
+    // A waiting worker means an update is downloaded and ready — activate it now.
+    function _promote(w) { if (w) try { w.postMessage('SKIP_WAITING'); } catch (e) {} }
+    if (reg.waiting) _promote(reg.waiting);
+    reg.addEventListener('updatefound', function() {
+      var nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', function() {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) _promote(nw);
+      });
+    });
+  }).catch(console.warn);
 }
 
 // ══ PWA INSTALL PROMPT (Android Chrome) ══════════════════════════
@@ -1694,50 +1728,40 @@ window.addEventListener('beforeinstallprompt', e => {
   if (tip) tip.style.display = 'none';
 });
 
-// Share button — uses native share sheet, falls back to clipboard
-document.getElementById('share-app-btn').addEventListener('click', async () => {
+// Share — native share sheet, falls back to clipboard. Callable from any button.
+window._shareApp = async function() {
   const shareData = {
     title: 'GroundLink',
     text: 'Live satellite map for your group — real-time positions, shared pins, and chat. No account needed. Join or create a group instantly.',
     url: 'https://tracker-production-3b03.up.railway.app/'
   };
   try {
-    // Native app first: the Android web view doesn't expose the Web Share API, so use the
-    // Capacitor Share plugin to open the real system share sheet (Messages, etc.).
     var _cap = window.Capacitor || {};
     var _SharePlugin = _cap.Plugins && _cap.Plugins.Share;
     if (_isNativeApp() && _SharePlugin && _SharePlugin.share) {
       await _SharePlugin.share({ title: shareData.title, text: shareData.text + ' ' + shareData.url, url: shareData.url, dialogTitle: 'Share GroundLink' });
       return;
     }
-    if (navigator.share) {
-      await navigator.share(shareData);
-    } else {
-      // Fallback — copy URL to clipboard
-      await navigator.clipboard.writeText(shareData.url);
-      // Show temp feedback on the button
-      const btn = document.getElementById('share-app-btn');
-      const orig = btn.innerHTML;
-      btn.innerHTML = '&#10003; Link copied!';
-      btn.style.borderColor = 'var(--accent)';
-      btn.style.color = 'var(--accent)';
-      setTimeout(() => { btn.innerHTML = orig; btn.style.borderColor = ''; btn.style.color = ''; }, 2000);
-    }
-  } catch(e) {
-    // User cancelled share — that's fine
-  }
-});
+    if (navigator.share) { await navigator.share(shareData); }
+    else { await navigator.clipboard.writeText(shareData.url); toast('Link copied — paste it to share'); }
+  } catch (e) {}
+};
+document.getElementById('share-app-btn').addEventListener('click', function() { window._shareApp(); });
 
-document.getElementById('install-btn').addEventListener('click', async () => {
-  if (!deferredInstallPrompt) return;
-  deferredInstallPrompt.prompt();
-  const { outcome } = await deferredInstallPrompt.userChoice;
-  if (outcome === 'accepted') {
-    document.getElementById('install-banner').classList.remove('show');
-    toast('GroundLink installed');
+// Install — fire the Android prompt if we have it, else show platform instructions.
+window._installApp = async function() {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    try { var c = await deferredInstallPrompt.userChoice; if (c && c.outcome === 'accepted') { document.getElementById('install-banner').classList.remove('show'); toast('GroundLink installed'); } } catch (e) {}
+    deferredInstallPrompt = null;
+    return;
   }
-  deferredInstallPrompt = null;
-});
+  if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) { toast('GroundLink is already installed', 2600); return; }
+  var ua = navigator.userAgent || '';
+  if (/iphone|ipad|ipod/i.test(ua)) toast('In Safari: tap Share, then "Add to Home Screen"', 5000);
+  else toast('Open your browser menu, then "Install app" / "Add to Home screen"', 5000);
+};
+document.getElementById('install-btn').addEventListener('click', function() { window._installApp(); });
 
 window.addEventListener('appinstalled', () => {
   document.getElementById('install-banner').classList.remove('show');
@@ -2530,20 +2554,32 @@ const APP_VERSION = '1.7-test';
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy; the running app polls version.json and shows an "update available" banner when
 // the deployed build is newer than the one currently loaded.
-var APP_BUILD = 96;
+var APP_BUILD = 97;
 try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textContent = 'build ' + APP_BUILD; } catch (e) {}
 
 // Poll for a newer deployed build and show the "update available" banner. Reads
 // version.json with no-store so it always sees the live value, never a cached one.
 (function _versionWatch() {
+  // True while the home/join screen is showing (not in a room or the solo map) — the safe
+  // moment to silently self-update without interrupting anything.
+  function _atHome() {
+    var js = document.getElementById('join-screen');
+    var tb = document.getElementById('topbar');
+    return js && js.style.display !== 'none' && (!tb || tb.style.display === 'none') && !window._soloMode;
+  }
+  function _maybeAutoUpdate() {
+    if (window._updatePending && _atHome() && typeof window._applyUpdate === 'function') window._applyUpdate();
+  }
   function check() {
     try {
       fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
         .then(function(r) { return r && r.ok ? r.json() : null; })
         .then(function(j) {
           if (j && typeof j.build === 'number' && j.build > APP_BUILD) {
+            window._updatePending = true;
             var b = document.getElementById('update-banner');
             if (b) b.style.display = 'flex';
+            _maybeAutoUpdate(); // if we're sitting on the home screen, just refresh now
           }
         })
         .catch(function() {});
@@ -2552,7 +2588,7 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
   setTimeout(check, 15000);                 // shortly after load
   setInterval(check, 5 * 60 * 1000);        // every 5 minutes
   document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') check(); // and whenever the app regains focus
+    if (document.visibilityState === 'visible') { check(); _maybeAutoUpdate(); } // whenever the app regains focus
   });
 })();
 
