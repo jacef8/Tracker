@@ -1329,7 +1329,7 @@
         &#8201;2.&nbsp; Tap <b style="color:var(--accent)">Location</b><br>
         &#8201;3.&nbsp; Choose <b style="color:var(--accent)">Allow all the time</b> <span style="color:var(--muted)">— not "While using the app"</span>
       </div>
-      <button onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Settings for Location</button>
+      <button id="bg-step1-btn" onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Settings for Location</button>
     </div>
 
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:16px">
@@ -1343,7 +1343,7 @@
         &#8201;2.&nbsp; Choose <b style="color:var(--accent)">Unrestricted</b> <span style="color:var(--muted)">(or "Don't optimize")</span><br>
         &#8201;3.&nbsp; <b>Samsung phones:</b> also turn off <b style="color:var(--accent)">Pause app activity if unused</b>
       </div>
-      <button onclick="window._bgOpenBatterySettings()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">Open Settings for Battery</button>
+      <button id="bg-step2-btn" onclick="window._bgOpenBatterySettings()" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">Open Settings for Battery</button>
     </div>
 
     <div style="display:flex;gap:8px">
@@ -1423,11 +1423,35 @@
   <div id="track-detail-body" style="overflow-y:auto;flex:1"></div>
 </div>
 
-<!-- ══ RECORDING CHIP ════════════════════════════════════════════════ -->
-<div id="rec-chip" onclick="window._stopTrackRec()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:360;background:rgba(13,17,23,.88);border:1px solid #ff3b30;border-radius:999px;padding:7px 14px;align-items:center;gap:10px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer">
-  <span style="width:9px;height:9px;border-radius:50%;background:#ff3b30;box-shadow:0 0 8px #ff3b30;animation:recpulse 1.2s infinite;flex-shrink:0"></span>
-  <span id="rec-chip-text" style="color:#fff;font-size:12px;font-weight:700;white-space:nowrap">REC 0:00 · 0 ft</span>
-  <span style="color:#ff7a73;font-size:11px;font-weight:800">STOP</span>
+<!-- ══ RECORD-TRACK LIGHT (bottom-right) ═════════════════════════════ -->
+<div id="rec-fab" style="position:fixed;right:14px;bottom:calc(var(--safe-bot) + 12px);z-index:158;display:flex;flex-direction:column;align-items:center;gap:5px">
+  <div id="rec-fab-stat" style="display:none;font-size:11px;font-weight:800;color:#fff;background:rgba(13,17,23,.82);border-radius:8px;padding:3px 9px;white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.5)">0:00 · 0 ft</div>
+  <button id="rec-fab-btn" type="button" title="Record track — tap to start, tap to pause, hold to stop"
+    style="width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,.9);background:rgba(255,59,48,.85);box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent">
+    <span id="rec-fab-glyph" style="width:20px;height:20px;border-radius:50%;background:#fff;display:block"></span>
+  </button>
+</div>
+
+<!-- ══ TRACK VIEW BAR (shown while viewing a saved track on the map) ══ -->
+<div id="track-view-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:160;max-width:94vw;background:rgba(13,17,23,.85);border:1px solid #00b0ff;border-radius:12px;padding:8px 10px 8px 13px;box-shadow:0 4px 18px rgba(0,0,0,.55);align-items:center;gap:10px">
+  <span style="width:9px;height:9px;border-radius:50%;background:#00b0ff;box-shadow:0 0 8px #00b0ff;flex-shrink:0"></span>
+  <div style="min-width:0">
+    <div id="tvb-name" style="font-size:13px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:58vw">Track</div>
+    <div id="tvb-stats" style="font-size:11px;color:#9fb3c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:58vw"></div>
+  </div>
+  <button onclick="window._clearShownTrack()" title="Stop viewing" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:5px 10px;cursor:pointer;margin-left:2px">&#10005;</button>
+</div>
+
+<!-- ══ TRACK NAME MODAL (on-brand, replaces OS prompt) ══════════════ -->
+<div id="trk-name-modal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(22,27,34,0.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-top:2px solid rgba(240,165,0,0.6);border-radius:16px;padding:20px;width:100%;max-width:340px;box-shadow:0 12px 48px rgba(0,0,0,.6)">
+    <div id="trk-name-title" style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:12px">Name this track</div>
+    <input id="trk-name-input" type="text" maxlength="60" placeholder="Track name" style="width:100%;box-sizing:border-box;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none" />
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="trk-name-cancel" type="button" style="flex:1;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer">Cancel</button>
+      <button id="trk-name-save" type="button" style="flex:1;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══ LAYER PICKER SHEET ════════════════════════════════════════════ -->
@@ -1735,7 +1759,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 105;
+var APP_BUILD = 108;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2242,7 +2266,8 @@ function _syncSettings() {
       bgRow.style.display = 'flex';
       var bp = document.getElementById('set-bgtrack-pill');
       var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
-      var healthy = !!window._bgGeoStarted && !permProblem && !!window._gotNativeFix;
+      var setupDone = false; try { setupDone = localStorage.getItem('gl_bg_setup') === 'done'; } catch (e) {}
+      var healthy = !permProblem && (!!window._bgGeoStarted || setupDone);
       if (bp) {
         if (healthy) { bp.textContent = 'ON'; bp.style.background = '#13361f'; bp.style.color = '#3fb950'; }
         else if (window._bgGeoStarted && !permProblem) { bp.textContent = 'STARTING'; bp.style.background = 'var(--border)'; bp.style.color = 'var(--muted)'; }
@@ -4154,17 +4179,25 @@ function _resolveBgPlugin() {
       || (typeof cap.registerPlugin === 'function' && cap.registerPlugin('BackgroundGeolocation'))
       || null;
 }
-function _bgOpenAppSettings(checkId) {
+function _bgMarkStep(n, persist) {
+  var c = document.getElementById('bg-step'+n+'-check');
+  if (c) { c.style.background = '#3fb950'; c.style.color = '#0d1117'; c.innerHTML = '&#10003;'; }
+  var b = document.getElementById('bg-step'+n+'-btn');
+  if (b) { b.style.background = '#13361f'; b.style.borderColor = '#3fb950'; b.style.color = '#3fb950'; b.style.fontWeight = '800'; b.textContent = (n===1?'Location':'Battery') + ' set \u2713  (tap again to reopen)'; }
+  if (persist) { try { localStorage.setItem('gl_bg_step'+n, '1'); } catch (e) {} }
+}
+function _bgRefreshSteps() { [1,2].forEach(function(n){ var done=false; try { done = localStorage.getItem('gl_bg_step'+n)==='1'; } catch(e){} if (done) _bgMarkStep(n, false); }); }
+function _bgOpenAppSettings(n) {
   var BG = _resolveBgPlugin();
   try { if (BG && BG.openSettings) BG.openSettings(); else toast('Open Settings → Apps → GroundLink'); } catch (e) { toast('Open Settings → Apps → GroundLink'); }
-  var c = document.getElementById(checkId);
-  if (c) { c.style.background = '#3fb950'; c.innerHTML = '&#10003;'; }
+  _bgMarkStep(n, true);
 }
-window._bgOpenLocationSettings = function() { _bgOpenAppSettings('bg-step1-check'); };
-window._bgOpenBatterySettings  = function() { _bgOpenAppSettings('bg-step2-check'); };
+window._bgOpenLocationSettings = function() { _bgOpenAppSettings(1); };
+window._bgOpenBatterySettings  = function() { _bgOpenAppSettings(2); };
 window._openBgSetup = function() {
   var m = document.getElementById('bg-setup-modal');
   if (m) m.style.display = 'flex';
+  try { _bgRefreshSteps(); } catch (e) {}
 };
 window._dismissBgSetup = function(done) {
   var m = document.getElementById('bg-setup-modal');
@@ -4173,6 +4206,19 @@ window._dismissBgSetup = function(done) {
     localStorage.setItem('gl_bg_setup', done ? 'done' : 'snooze');
     localStorage.setItem('gl_bg_setup_ts', String(Date.now()));
   } catch (e) {}
+  if (done) {
+    // Actually start the background service now and verify it's really running, then reflect it.
+    try { if (typeof startNativeBackgroundTracking === 'function') startNativeBackgroundTracking(); } catch (e) {}
+    try { if (typeof _syncSettings === 'function') _syncSettings(); } catch (e) {}
+    setTimeout(function(){
+      var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
+      try { if (typeof _syncSettings === 'function') _syncSettings(); } catch (e) {}
+      try {
+        if (permProblem) toast('Location is still "While using" — open Location and pick "Allow all the time".', 6500);
+        else if (window._bgGeoStarted) toast('Background tracking is on \u2713', 2600);
+      } catch (e) {}
+    }, 4000);
+  }
 };
 // Show the setup card on the native app: first time in a room, or whenever the OS has
 // since had a background-permission problem. Snoozes for 12h if dismissed with "Not now".
@@ -6785,7 +6831,7 @@ window._startTrackRec = function(){
   try { acquireWakeLock(); } catch (e) {}
   try { window._trackRecTick = setInterval(_refreshRecChip, 1000); } catch (e) {}
   _showRecChip(); _syncRecHubBtn();
-  try { toast('Recording track — go!'); } catch (e) {}
+  try { toast('Recording — tap the light to pause, hold to stop', 3200); } catch (e) {}
 };
 window._stopTrackRec = function(){
   var r=window._trackRec; if (!r) return;
@@ -6794,23 +6840,34 @@ window._stopTrackRec = function(){
   try { clearInterval(window._trackRecTick); } catch (e) {}
   window._trackRec=null; _hideRecChip(); _clearRecLine(); _syncRecHubBtn();
   if (r.pts.length<2){ try{ toast('Track too short — discarded'); }catch(e){} return; }
-  var stats=_trackStats(r.pts);
+  var pts=r.pts, stats=_trackStats(pts);
   var def='Track '+_trkFmtDate(Date.now());
-  var name; try { name=prompt('Name this track:', def); } catch(e){ name=def; }
-  if (name===null){ try { if (!confirm('Discard this recording?')) name=def; else return; } catch(e){ name=def; } }
-  if (!name) name=def;
-  var t={ id:'t_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:name, ts:Date.now(), pts:r.pts, stats:stats };
-  var arr=getSavedTracks(); arr.unshift(t); setSavedTracks(arr);
-  try { toast('Track saved'); } catch(e){}
-  _openTrackDetail(t.id);
+  _trkPrompt('Name this track', def, function(name){
+    if (!name) name=def;
+    var t={ id:'t_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:name, ts:Date.now(), pts:pts, stats:stats };
+    var arr=getSavedTracks(); arr.unshift(t); setSavedTracks(arr);
+    try { toast('Track saved'); } catch(e){}
+    _openTrackDetail(t.id);
+  }, function(){ try { toast('Recording discarded'); } catch(e){} });
 };
 window._toggleTrackRec = function(){ if (window._trackRec) window._stopTrackRec(); else window._startTrackRec(); };
 window._recTrackHubTap = function(){ closePinHub(); window._toggleTrackRec(); };
 window._pauseTrackRec = function(){ var r=window._trackRec; if(!r) return; r.paused=!r.paused; _refreshRecChip(); };
 
-function _showRecChip(){ var c=document.getElementById('rec-chip'); if(c) c.style.display='flex'; _refreshRecChip(); }
-function _hideRecChip(){ var c=document.getElementById('rec-chip'); if(c) c.style.display='none'; }
-function _refreshRecChip(){ var r=window._trackRec; var el=document.getElementById('rec-chip-text'); if(!r||!el) return; var st=_trackStats(r.pts); el.textContent=(r.paused?'PAUSED ':'REC ')+_trkFmtDur(Date.now()-r.startTs)+' · '+_trkFmtDist(st.distM); }
+function _showRecChip(){ _syncRecFab(); _refreshRecChip(); }
+function _hideRecChip(){ _syncRecFab(); }
+function _refreshRecChip(){
+  var r=window._trackRec, el=document.getElementById('rec-fab-stat');
+  if(el){ if(r){ var st=_trackStats(r.pts); el.style.display='block'; el.textContent=(r.paused?'PAUSED · ':'')+_trkFmtDur(Date.now()-r.startTs)+' · '+_trkFmtDist(st.distM); } else { el.style.display='none'; } }
+  _syncRecFab();
+}
+function _syncRecFab(){
+  var fb=document.getElementById('rec-fab-btn'), gl=document.getElementById('rec-fab-glyph'); if(!fb) return;
+  var r=window._trackRec;
+  if(!r){ fb.style.background='rgba(255,59,48,.85)'; fb.style.animation='none'; fb.style.borderColor='rgba(255,255,255,.9)'; if(gl){ gl.innerHTML=''; gl.style.cssText='width:20px;height:20px;border-radius:50%;background:#fff;display:block'; } }
+  else if(r.paused){ fb.style.background='#f0a500'; fb.style.animation='none'; fb.style.borderColor='rgba(255,255,255,.9)'; if(gl){ gl.style.cssText='display:flex;align-items:center;justify-content:center;gap:4px'; gl.innerHTML='<span style=\'width:5px;height:18px;background:#1a1a1a;border-radius:1px;display:block\'></span><span style=\'width:5px;height:18px;background:#1a1a1a;border-radius:1px;display:block\'></span>'; } }
+  else { fb.style.background='#ff3b30'; fb.style.animation='recpulse 1.1s infinite'; fb.style.borderColor='#fff'; if(gl){ gl.innerHTML=''; gl.style.cssText='width:20px;height:20px;border-radius:4px;background:#fff;display:block'; } }
+}
 function _syncRecHubBtn(){
   var on=!!window._trackRec;
   var t=document.getElementById('rec-track-hub-title'), s=document.getElementById('rec-track-hub-sub'), ic=document.getElementById('rec-track-hub-icon');
@@ -6832,9 +6889,10 @@ function _drawSavedTrack(t, fit){
     map.addLayer({id:'saved-track',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':3.5,'line-opacity':0.95}});
     window._shownTrackId=t.id;
     if (fit && coords.length){ var b=coords.reduce(function(bb,c){return bb.extend(c);}, new mapboxgl.LngLatBounds(coords[0],coords[0])); map.fitBounds(b,{padding:60,maxZoom:16,duration:800}); }
+    _showTrackViewBar(t, t.stats||_trackStats(t.pts||[]));
   } catch(e){}
 }
-function _clearSavedTrack(){ try { ['saved-track','saved-track-glow'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); if (map.getSource('saved-track')) map.removeSource('saved-track'); } catch(e){} window._shownTrackId=null; }
+function _clearSavedTrack(){ try { ['saved-track','saved-track-glow'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); if (map.getSource('saved-track')) map.removeSource('saved-track'); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
 
 // — tracks library list —
 function openTracks(){ document.getElementById('tracks-drawer').classList.add('open'); try { setLocateMeVisible(false); } catch(e){} renderTracks(); }
@@ -6909,10 +6967,11 @@ window._showTrackOnMap = function(id){
 window._renameTrack = function(id){
   var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
   if (!t) return;
-  var nm; try { nm=prompt('Rename track:', t.name); } catch(e){ return; }
-  if (nm===null) return; if(!nm) nm=t.name;
-  t.name=nm; setSavedTracks(arr);
-  document.getElementById('trk-d-title').textContent=nm; renderTracks();
+  _trkPrompt('Rename track', t.name, function(nm){
+    if (!nm) nm=t.name;
+    t.name=nm; setSavedTracks(arr);
+    var el=document.getElementById('trk-d-title'); if(el) el.textContent=nm; renderTracks();
+  });
 };
 window._deleteTrack = function(id){
   try { if (!confirm('Delete this track? This cannot be undone.')) return; } catch(e){}
@@ -6924,6 +6983,49 @@ window._deleteTrack = function(id){
 };
 window._closeTrackDetail = function(){ document.getElementById('track-detail-drawer').classList.remove('open'); };
 window._shareTrack = function(id){ try { toast('Track sharing is coming in the next update'); } catch(e){} };
+// Bottom-right record light: tap = start / pause-resume, hold = stop & save.
+(function(){
+  var btn=document.getElementById('rec-fab-btn'); if(!btn) return;
+  var lpTimer=null, lp=false;
+  function down(){ lp=false; if(!window._trackRec) return; lpTimer=setTimeout(function(){ lp=true; try{ if(navigator.vibrate) navigator.vibrate(40); }catch(e){} window._stopTrackRec(); }, 650); }
+  function up(){ if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } }
+  btn.addEventListener('touchstart', down, {passive:true});
+  btn.addEventListener('touchend', up); btn.addEventListener('touchcancel', up);
+  btn.addEventListener('mousedown', down); btn.addEventListener('mouseup', up); btn.addEventListener('mouseleave', up);
+  btn.addEventListener('click', function(){ if(lp){ lp=false; return; } if(!window._trackRec) window._startTrackRec(); else window._pauseTrackRec(); });
+  try { _syncRecFab(); } catch(e){}
+})();
+// — track-view bar + on-brand name modal —
+function _showTrackViewBar(t, st){
+  var bar=document.getElementById('track-view-bar'); if(!bar) return;
+  var nm=document.getElementById('tvb-name'), s=document.getElementById('tvb-stats');
+  if(nm) nm.textContent=t.name;
+  if(s){ var net=st.netAlt!=null?((st.netAlt>=0?'+':'-')+Math.round(_trkFt(Math.abs(st.netAlt)))+' ft'):''; s.textContent=_trkFmtDist(st.distM)+' · '+_trkFmtDur(st.durMs)+' · '+st.avgMph.toFixed(1)+' mph avg'+(net?(' · '+net):''); }
+  bar.style.display='flex';
+}
+function _hideTrackViewBar(){ var bar=document.getElementById('track-view-bar'); if(bar) bar.style.display='none'; }
+window._clearShownTrack=function(){ _clearSavedTrack(); };
+window._trkPrompt=function(title, defVal, onSave, onCancel){
+  var m=document.getElementById('trk-name-modal'), inp=document.getElementById('trk-name-input'), ti=document.getElementById('trk-name-title');
+  if(!m||!inp){ var v=null; try{ v=prompt(title, defVal); }catch(e){} if(v!=null){ if(onSave) onSave((''+v).trim()); } else if(onCancel) onCancel(); return; }
+  if(ti) ti.textContent=title||'Name this track';
+  inp.value=defVal||'';
+  window._trkPromptCb=onSave||null; window._trkPromptCancel=onCancel||null;
+  m.style.display='flex';
+  setTimeout(function(){ try{ inp.focus(); inp.select(); }catch(e){} }, 60);
+};
+(function(){
+  var m=document.getElementById('trk-name-modal'); if(!m) return;
+  var inp=document.getElementById('trk-name-input');
+  var save=document.getElementById('trk-name-save'), cancel=document.getElementById('trk-name-cancel');
+  function close(){ m.style.display='none'; }
+  function doSave(){ var v=(inp.value||'').trim(); close(); var cb=window._trkPromptCb; window._trkPromptCb=null; window._trkPromptCancel=null; if(cb) cb(v); }
+  function doCancel(){ close(); var cb=window._trkPromptCancel; window._trkPromptCb=null; window._trkPromptCancel=null; if(cb) cb(); }
+  if(save) save.addEventListener('click', doSave);
+  if(cancel) cancel.addEventListener('click', doCancel);
+  if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); doSave(); } });
+  m.addEventListener('click', function(e){ if(e.target===m) doCancel(); });
+})();
 
 
 // ── Multi-select + share a group of saved pins (to rooms and/or people) ─────────
