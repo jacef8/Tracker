@@ -494,12 +494,6 @@
     display: none; align-items: flex-end; justify-content: center;
   }
   #pin-modal.show { display: flex; }
-  /* Collapsed "peek" state: dim/clear the backdrop and hide the picker so the map shows. */
-  #pin-modal.collapsed { background: transparent; pointer-events: none; }
-  #pin-modal.collapsed .pin-sheet { pointer-events: auto; }
-  #pin-modal.collapsed .pin-cats,
-  #pin-modal.collapsed #pin-label-input,
-  #pin-modal.collapsed #custom-cat-row { display: none !important; }
   .pin-sheet {
     width: min(480px, 100%);
     background: rgba(22,27,34,0.66);
@@ -1714,22 +1708,18 @@
 <!-- ══ PIN MODAL ═════════════════════════════════════════════════════ -->
 <div id="pin-modal">
   <div class="pin-sheet">
-    <div id="pin-sheet-handle" onclick="window._togglePinSheet()" style="align-self:center;width:46px;height:5px;border-radius:3px;background:rgba(255,255,255,.4);margin:-8px 0 2px;cursor:pointer"></div>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
-      <div>
-        <div class="pin-sheet-title">Drop a Pin</div>
-        <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
-      </div>
-      <button type="button" id="pin-sheet-toggle" onclick="window._togglePinSheet()" style="flex-shrink:0;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer">Peek map</button>
+    <div>
+      <div class="pin-sheet-title">Drop a Pin</div>
+      <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
     </div>
-    <div class="pin-cats" id="pin-cats" style="display:block;max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+    <div class="pin-cats" id="pin-cats" style="display:block;max-height:30vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
     <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
     <div id="custom-cat-row" style="display:none;margin-top:6px">
       <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
     </div>
     <div class="pin-actions">
       <button class="btn-cancel" id="pin-cancel">Cancel</button>
-      <button class="btn-drop" id="pin-confirm">Drop Pin → Chat</button>
+      <button class="btn-drop" id="pin-confirm">Drop Pin</button>
     </div>
   </div>
 </div>
@@ -1787,7 +1777,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 114;
+var APP_BUILD = 115;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5312,8 +5302,6 @@ window.editPin = function(pid) {
 // Reset + close the pin sheet (shared by drop, edit, cancel, backdrop-tap).
 function _closePinModal() {
   document.getElementById('pin-modal').classList.remove('show');
-  document.getElementById('pin-modal').classList.remove('collapsed');
-  var _tg=document.getElementById('pin-sheet-toggle'); if(_tg) _tg.textContent='Peek map';
   _clearPendingMarker();
   document.getElementById('pin-label-input').value = '';
   var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
@@ -5321,7 +5309,7 @@ function _closePinModal() {
   pendingCoords = null;
   _editingPid = null;
   var title = document.querySelector('#pin-modal .pin-sheet-title'); if (title) title.textContent = 'Drop a Pin';
-  document.getElementById('pin-confirm').textContent = 'Drop Pin → Chat';
+  document.getElementById('pin-confirm').textContent = 'Drop Pin';
 }
 // Provisional marker the instant you start a pin, so you can see the spot before naming it.
 window._pendingMarker = null;
@@ -5361,11 +5349,6 @@ window._saveMovedPin = function(){
   try { toast('Pin moved'); } catch(e){}
 };
 window._cancelMovePin = function(){ _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none'; };
-window._togglePinSheet = function(){
-  var m=document.getElementById('pin-modal'); if(!m) return;
-  var collapsed = m.classList.toggle('collapsed');
-  var b=document.getElementById('pin-sheet-toggle'); if(b) b.textContent = collapsed ? 'Finish' : 'Peek map';
-};
 
 // Clear pins buttons
 document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
