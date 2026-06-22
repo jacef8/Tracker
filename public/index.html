@@ -1529,6 +1529,22 @@
             <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
         </div>
+        <!-- Custom geoPDF overlay: Dade Battlefield -->
+        <div onclick="var cb=document.getElementById('toggle-ov-dade');cb.checked=!cb.checked;toggleOverlay('dade',cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#00b0ff"><use href="#ic-map"/></svg>Dade Battlefield</div>
+            <div style="font-size:11px;color:var(--muted)">Park geoPDF overlay &middot; slide for transparency</div>
+          </div>
+          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-ov-dade" onchange="toggleOverlay('dade',this.checked)" style="opacity:0;width:0;height:0">
+            <span id="ov-dade-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="ov-dade-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
+        <div id="ov-dade-opacity-row" style="display:none;align-items:center;gap:10px;padding:0 14px 6px">
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Transparency</span>
+          <input type="range" min="0.2" max="1" step="0.05" value="0.85" oninput="setOverlayOpacity('dade',this.value)" style="flex:1;accent-color:var(--accent)">
+        </div>
 
       </div>
     </div>
@@ -1783,7 +1799,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 117;
+var APP_BUILD = 118;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7677,6 +7693,41 @@ function setLocateMeVisible(visible) {
   }
 }
 // Open the device's navigation app routed to a point (a member's location).
+// ── Georeferenced image overlays (e.g. gov geoPDFs converted to image + corner coords) ──
+window.GL_OVERLAYS = [
+  { id:'dade', name:'Dade Battlefield', url:'/overlays/dade-battlefield.png', opacity:0.85,
+    coords:[[-82.13343,28.65561],[-82.12277,28.65547],[-82.12288,28.6493],[-82.13354,28.64944]] }
+];
+function _ovById(id){ var a=window.GL_OVERLAYS||[]; for(var i=0;i<a.length;i++){ if(a[i].id===id) return a[i]; } return null; }
+function _setOverlayToggleUI(id,on){
+  var cb=document.getElementById('toggle-ov-'+id), tr=document.getElementById('ov-'+id+'-track'), th=document.getElementById('ov-'+id+'-thumb');
+  if(cb) cb.checked=on;
+  if(tr) tr.style.background = on?'var(--accent)':'var(--border)';
+  if(th) th.style.transform = on?'translateX(20px)':'translateX(0)';
+  var row=document.getElementById('ov-'+id+'-opacity-row'); if(row) row.style.display = on?'flex':'none';
+}
+window.toggleOverlay = function(id, on){
+  var o=_ovById(id); if(!o || typeof map==='undefined' || !map) return;
+  var sid='ov-'+id, lid='ov-'+id;
+  if(on){
+    try {
+      if(!map.getSource(sid)) map.addSource(sid, { type:'image', url:o.url, coordinates:o.coords });
+      if(!map.getLayer(lid)){
+        var before = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+        map.addLayer({ id:lid, type:'raster', source:sid, paint:{ 'raster-opacity': (o.opacity!=null?o.opacity:0.85), 'raster-fade-duration':0 } }, before);
+      }
+      var b=new mapboxgl.LngLatBounds(); o.coords.forEach(function(c){ b.extend(c); });
+      map.fitBounds(b, { padding:40, duration:900 });
+    } catch(e){}
+  } else {
+    try { if(map.getLayer(lid)) map.removeLayer(lid); if(map.getSource(sid)) map.removeSource(sid); } catch(e){}
+  }
+  _setOverlayToggleUI(id, on);
+};
+window.setOverlayOpacity = function(id, val){
+  var o=_ovById(id); if(o) o.opacity=parseFloat(val);
+  try { if(map.getLayer('ov-'+id)) map.setPaintProperty('ov-'+id,'raster-opacity', parseFloat(val)); } catch(e){}
+};
 window._navigateTo = function(lat, lng, name) {
   var ua = navigator.userAgent || '';
   var label = encodeURIComponent(name || 'Member');
