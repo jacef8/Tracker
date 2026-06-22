@@ -147,4 +147,16 @@ self.addEventListener('notificationclick', function(e) {
   e.notification.close();
   var url = (e.notification.data && e.notification.data.url) || '/';
   e.waitUntil(
-    self.client
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if ('focus' in c) {
+          c.focus();
+          if (url && url !== '/' && 'navigate' in c) { try { c.navigate(url); } catch (e2) {} }
+          return;
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
+  );
+});
