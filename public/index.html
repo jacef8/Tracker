@@ -1609,11 +1609,6 @@
         <svg class="licon licon-lg" style="color:#00b0ff"><use href="#ic-compass"/></svg>
         <div><div style="font-size:15px;font-weight:700;color:var(--text)">My Tracks</div><div style="font-size:12px;color:var(--muted)">Your recorded routes</div></div>
       </button>
-      <!-- Clear pins -->
-      <button onclick="closePinHub();document.getElementById('pin-list-drawer').classList.add('open');renderPinList(lastPins);" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
-        <svg class="licon licon-lg" style="color:var(--accent)"><use href="#ic-clipboard"/></svg>
-        <div><div style="font-size:15px;font-weight:700;color:var(--text)">Manage Pins</div><div style="font-size:12px;color:var(--muted)">Clear my pins or all group pins</div></div>
-      </button>
     </div>
   </div>
 </div>
@@ -1625,6 +1620,10 @@
     <button class="panel-close" id="close-pin-feed"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
   <div id="pin-feed-items"></div>
+  <div id="pin-feed-foot" style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--border)">
+    <button id="pf-clear-mine" type="button" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Clear my pins</button>
+    <button id="pf-clear-all" type="button" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-size:12px;font-weight:700;cursor:pointer">Clear all</button>
+  </div>
 </div>
 
 <!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
@@ -1771,7 +1770,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 109;
+var APP_BUILD = 110;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5314,6 +5313,24 @@ document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
   fbRemove(fbRef(db, `gl/${groupName}/pins`));
   toast('All pins cleared');
 });
+(function(){
+  var cm=document.getElementById('pf-clear-mine'), ca=document.getElementById('pf-clear-all');
+  if(cm) cm.addEventListener('click', function(){
+    var mine=Object.entries(lastPins).filter(function(e){return e[1].droppedBy===userId;});
+    if(!mine.length){ toast('You have no pins to clear'); return; }
+    if(!confirm('Remove your '+mine.length+' pin'+(mine.length>1?'s':'')+'?')) return;
+    mine.forEach(function(e){ fbRemove(fbRef(db, 'gl/'+groupName+'/pins/'+e[0])); });
+    toast('Cleared '+mine.length+' pin'+(mine.length>1?'s':''));
+  });
+  if(ca) ca.addEventListener('click', function(){
+    var count=Object.keys(lastPins).length;
+    if(!count){ toast('No pins to clear'); return; }
+    if(!confirm('Delete ALL '+count+' pins for everyone in this group? This cannot be undone.')) return;
+    if(!confirm('Are you sure? This clears the map for everyone.')) return;
+    fbRemove(fbRef(db, 'gl/'+groupName+'/pins'));
+    toast('All pins cleared');
+  });
+})();
 
 // ══ PIN FEED ══════════════════════════════════════════════════════
 let pinFeedOpen = false;
@@ -5363,6 +5380,7 @@ function renderPinFeed(pins) {
         distHTML +
         '<div class="pin-feed-meta">' + pin.name + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
       '</div>' +
+      '<button class="pin-feed-star" onclick="event.stopPropagation();window._feedToggleSave(\'' + pid + '\')" title="Save to My Pins" style="background:none;border:none;cursor:pointer;padding:6px 4px;display:flex;align-items:center;align-self:center"><svg class="licon" style="color:' + (_isPinSaved(pid) ? '#f0a500' : 'rgba(255,255,255,.4)') + '"><use href="#ic-star"/></svg></button>' +
       '<div class="pin-feed-arrow">\u203a</div>';
 
     card.addEventListener('click', function() {
@@ -6932,14 +6950,12 @@ function _openTrackDetail(id){
   var st=t.stats||_trackStats(t.pts||[]);
   document.getElementById('trk-d-title').textContent=t.name;
   function stat(v,l){ return '<div class="trk-stat"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
-  var net = st.netAlt!=null ? ((st.netAlt>=0?'+':'-')+Math.round(_trkFt(Math.abs(st.netAlt))).toLocaleString()+' ft') : '—';
   var html='<div class="trk-stat-grid">'+
     stat(_trkFmtDist(st.distM),'Distance')+
     stat(_trkFmtDur(st.durMs),'Total time')+
     stat(_trkFmtDur(st.movMs),'Moving time')+
     stat(st.avgMph.toFixed(1)+' mph','Avg speed')+
     stat(st.maxMph.toFixed(1)+' mph','Max speed')+
-    stat(net,'Net elevation')+
     stat(st.gainM!=null?_trkFmtElev(st.gainM):'—','Elev gain')+
     stat(st.lossM!=null?_trkFmtElev(st.lossM):'—','Elev loss')+
   '</div>';
@@ -7279,6 +7295,14 @@ window.savePin = function(pid) {
   toast('Saved to My Pins');
   renderSavedPins();
   _refreshPinListIfOpen();
+};
+window._feedToggleSave = function(pid){
+  var saved = getSavedPins();
+  var idx=-1; for(var k=0;k<saved.length;k++){ if(saved[k].pid===pid){ idx=k; break; } }
+  if(idx>=0){ saved.splice(idx,1); setSavedPins(saved); try{ toast('Removed from My Pins'); }catch(e){} }
+  else { var pin=lastPins[pid]; if(!pin){ try{ toast('Pin not found'); }catch(e){} return; } saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name, lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() }); setSavedPins(saved); try{ toast('Saved to My Pins'); }catch(e){} }
+  try { renderSavedPins(); } catch(e){}
+  if (typeof pinFeedOpen!=='undefined' && pinFeedOpen) renderPinFeed(lastPins);
 };
 window.removeSavedPin = function(idx) {
   var pins = getSavedPins(); pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
