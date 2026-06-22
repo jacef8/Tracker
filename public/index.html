@@ -1724,6 +1724,13 @@
   </div>
 </div>
 
+<!-- ══ MOVE-PIN BAR (reposition an existing pin) ══════════════════════ -->
+<div id="pin-move-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot) + 14px);z-index:360;align-items:center;gap:8px;background:rgba(13,17,23,.9);border:1px solid var(--accent);border-radius:12px;padding:8px 10px 8px 14px;box-shadow:0 4px 18px rgba(0,0,0,.55)">
+  <span style="font-size:12px;font-weight:700;color:#fff;white-space:nowrap">Drag the pin, then</span>
+  <button onclick="window._cancelMovePin()" style="background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;padding:6px 11px;cursor:pointer">Cancel</button>
+  <button onclick="window._saveMovedPin()" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:6px 13px;cursor:pointer">Save</button>
+</div>
+
 <!-- ══ NEW PIN ALERT ════════════════════════════════════════════════ -->
 <div id="pin-alert">
   <div id="pin-alert-inner">
@@ -1770,7 +1777,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 110;
+var APP_BUILD = 112;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3522,6 +3529,8 @@ function initMap() {
 
   // ONE unified map click handler — measure > pin > parcels, no conflicts
   map.on('click', function(e) {
+    // While the pin sheet is open, ignore stray map taps behind it.
+    if (document.getElementById('pin-modal') && document.getElementById('pin-modal').classList.contains('show')) return;
     // ── 1. Measure mode — always first priority ───────────────────
     if (measureMode) {
       if (_measureSuppressClick) { _measureSuppressClick = false; return; }
@@ -3533,6 +3542,8 @@ function initMap() {
       pendingCoords = e.lngLat;
       document.getElementById('pin-coords-label').textContent =
         e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
+      try { window._releaseCamera(); } catch(_e){}
+      _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
       // Do NOT auto-focus the description — it's optional and auto-focusing pops
       // up the keyboard on every pin drop. User can tap the field to type.
@@ -3637,6 +3648,8 @@ function initMap() {
       pendingCoords = lngLat;
       document.getElementById('pin-coords-label').textContent =
         lngLat.lat.toFixed(5) + ', ' + lngLat.lng.toFixed(5);
+      try { window._releaseCamera(); } catch(_e){}
+      _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
       // Do NOT auto-focus the description — auto-focus pops the keyboard on every
       // long-press pin drop. Optional field; user can tap it to type.
@@ -5250,6 +5263,7 @@ window._showPinPopup = function(pid, lngLat) {
     '<div class="pop-actions">' +
       '<button class="pop-btn pop-edit" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
       '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
+      (isMine ? '<button class="pop-btn pop-edit" onclick="window._movePin(\'' + pid + '\')">Move</button>' : '') +
       (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
     '</div>';
   window._closePinPopup();
@@ -5287,6 +5301,7 @@ window.editPin = function(pid) {
 // Reset + close the pin sheet (shared by drop, edit, cancel, backdrop-tap).
 function _closePinModal() {
   document.getElementById('pin-modal').classList.remove('show');
+  _clearPendingMarker();
   document.getElementById('pin-label-input').value = '';
   var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
   var cr = document.getElementById('custom-cat-row'); if (cr) cr.style.display = 'none';
@@ -5295,6 +5310,44 @@ function _closePinModal() {
   var title = document.querySelector('#pin-modal .pin-sheet-title'); if (title) title.textContent = 'Drop a Pin';
   document.getElementById('pin-confirm').textContent = 'Drop Pin → Chat';
 }
+// Provisional marker the instant you start a pin, so you can see the spot before naming it.
+window._pendingMarker = null;
+function _showPendingMarker(lngLat){
+  _clearPendingMarker();
+  try {
+    window._pendingMarker = new mapboxgl.Marker({ color:'#f0a500' }).setLngLat(lngLat).addTo(map);
+    try { map.easeTo({ center: lngLat, offset: [0, -110], duration: 400 }); } catch(e){}
+  } catch(e){}
+}
+function _clearPendingMarker(){ try { if(window._pendingMarker){ window._pendingMarker.remove(); window._pendingMarker=null; } } catch(e){} }
+// Move / reposition an existing pin (yours).
+function _clearMoveMarker(){ try { if(window._moveMarker){ window._moveMarker.remove(); window._moveMarker=null; } } catch(e){} window._movePinId=null; }
+window._movePin = function(pid){
+  var pin = lastPins[pid]; if(!pin) return;
+  try { window._closePinPopup(); } catch(e){}
+  try { if(window._soloPop){ window._soloPop.remove(); window._soloPop=null; } } catch(e){}
+  try { window._releaseCamera(); } catch(e){}
+  _clearMoveMarker();
+  window._movePinId = pid;
+  try { window._moveMarker = new mapboxgl.Marker({ color:'#f0a500', draggable:true }).setLngLat([pin.lng,pin.lat]).addTo(map); } catch(e){}
+  try { map.easeTo({ center:[pin.lng,pin.lat], offset:[0,-90], duration:400 }); } catch(e){}
+  var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='flex';
+  try { toast('Drag the pin to its new spot, then Save'); } catch(e){}
+};
+window._saveMovedPin = function(){
+  var pid=window._movePinId, mk=window._moveMarker; if(!pid||!mk){ window._cancelMovePin(); return; }
+  var ll=mk.getLngLat();
+  if (window._soloMode){
+    try { var arr=getSavedPins(); for(var i=0;i<arr.length;i++){ if(arr[i].pid===pid){ arr[i].lat=ll.lat; arr[i].lng=ll.lng; break; } } setSavedPins(arr); } catch(e){}
+    if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; } try{ updatePinSource(lastPins); }catch(e){}
+  } else {
+    try { fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
+    if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; }
+  }
+  _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none';
+  try { toast('Pin moved'); } catch(e){}
+};
+window._cancelMovePin = function(){ _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none'; };
 
 // Clear pins buttons
 document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
@@ -5378,12 +5431,13 @@ function renderPinFeed(pins) {
         '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
         (pin.label ? '<div class="pin-feed-label">' + pin.label + '</div>' : '') +
         distHTML +
-        '<div class="pin-feed-meta">' + pin.name + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+        '<div class="pin-feed-meta">' + (isMine ? 'You' : pin.name) + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
       '</div>' +
       '<button class="pin-feed-star" onclick="event.stopPropagation();window._feedToggleSave(\'' + pid + '\')" title="Save to My Pins" style="background:none;border:none;cursor:pointer;padding:6px 4px;display:flex;align-items:center;align-self:center"><svg class="licon" style="color:' + (_isPinSaved(pid) ? '#f0a500' : 'rgba(255,255,255,.4)') + '"><use href="#ic-star"/></svg></button>' +
       '<div class="pin-feed-arrow">\u203a</div>';
 
     card.addEventListener('click', function() {
+      window._releaseCamera();
       map.flyTo({ center: [pin.lng, pin.lat], zoom: 17, duration: 1200 });
       document.getElementById('pin-feed-panel').classList.remove('open');
       pinFeedOpen = false;
@@ -5755,6 +5809,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     return;
   }
 
+  if (window._pendingMarker) { try { pendingCoords = window._pendingMarker.getLngLat(); } catch(_e){} }
   if (!pendingCoords) return;
   if (window._soloMode) {
     // Personal map: save the new pin to your library instead of pushing it to a room.
@@ -6989,6 +7044,7 @@ window._showTrackOnMap = function(id){
   if (!t) return;
   document.getElementById('track-detail-drawer').classList.remove('open');
   document.getElementById('tracks-drawer').classList.remove('open');
+  try { window._releaseCamera(); } catch(e){}
   _drawSavedTrack(t, true);
   try { toast('Showing "'+t.name+'"'); } catch(e){}
 };
@@ -7259,6 +7315,7 @@ window._soloPinPopup = function(feature, lngLat) {
       (dist ? '<div style="font-size:11px;color:#8b949e;margin-bottom:8px">&#128205; ' + dist + '</div>' : '<div style="margin-bottom:8px"></div>') +
       '<div style="display:flex;gap:6px">' +
         '<button onclick="window._navigateTo(' + p.lat + ',' + p.lng + ',\'' + _lbl + '\')" style="flex:1;background:#f0a500;border:none;border-radius:7px;color:#000;font-size:12px;font-weight:700;padding:7px;cursor:pointer">Navigate</button>' +
+        '<button onclick="window._movePin(\'' + pid + '\')" style="background:none;border:1px solid #444c56;border-radius:7px;color:#f0a500;font-size:12px;padding:7px 10px;cursor:pointer">Move</button>' +
         '<button onclick="window._soloRemovePin(\'' + pid + '\')" style="background:none;border:1px solid #444c56;border-radius:7px;color:#e74c3c;font-size:12px;padding:7px 10px;cursor:pointer">Remove</button>' +
       '</div></div>'
     ).addTo(map);
@@ -7450,6 +7507,7 @@ function renderSavedPins() {
         renderSavedPins();
         return;
       }
+      window._releaseCamera();
       if (typeof map !== 'undefined') map.flyTo({ center:[pin.lng,pin.lat], zoom:17, duration:1200 });
       document.getElementById('saved-pins-drawer').classList.remove('open');
     });
@@ -7616,6 +7674,10 @@ window._navigateTo = function(lat, lng, name) {
   }
 };
 
+window._releaseCamera = function(){
+  try { if (typeof followUid!=='undefined' && followUid && typeof stopFollowing==='function') stopFollowing(); } catch(e){}
+  try { if (typeof fitAllInterval!=='undefined' && fitAllInterval && typeof _stopFitAll==='function') _stopFitAll(); } catch(e){}
+};
 function stopFollowing() {
   followUid = null;
   clearInterval(followInterval);
