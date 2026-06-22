@@ -494,6 +494,10 @@
     display: none; align-items: flex-end; justify-content: center;
   }
   #pin-modal.show { display: flex; }
+  /* While placing a new pin: clear the backdrop and let map taps reposition the pin. */
+  #pin-modal.placing { background: transparent; pointer-events: none; }
+  #pin-modal.placing .pin-sheet { pointer-events: auto; }
+  #pin-modal.placing #pin-move-hint { display: block !important; }
   .pin-sheet {
     width: min(480px, 100%);
     background: rgba(22,27,34,0.66);
@@ -1711,6 +1715,7 @@
     <div>
       <div class="pin-sheet-title">Drop a Pin</div>
       <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
+      <div id="pin-move-hint" style="font-size:11px;color:var(--muted);margin-top:2px;display:none">Tap the map to move the pin</div>
     </div>
     <div class="pin-cats" id="pin-cats" style="display:block;max-height:30vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
     <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
@@ -1730,6 +1735,7 @@
   <button onclick="window._cancelMovePin()" style="background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;padding:6px 11px;cursor:pointer">Cancel</button>
   <button onclick="window._saveMovedPin()" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:6px 13px;cursor:pointer">Save</button>
 </div>
+
 
 <!-- ══ NEW PIN ALERT ════════════════════════════════════════════════ -->
 <div id="pin-alert">
@@ -1777,7 +1783,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 115;
+var APP_BUILD = 117;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3529,8 +3535,15 @@ function initMap() {
 
   // ONE unified map click handler — measure > pin > parcels, no conflicts
   map.on('click', function(e) {
-    // While the pin sheet is open, ignore stray map taps behind it.
-    if (document.getElementById('pin-modal') && document.getElementById('pin-modal').classList.contains('show')) return;
+    // While placing a new pin, a map tap just repositions the pending pin (no button needed).
+    var _pm = document.getElementById('pin-modal');
+    if (_pm && _pm.classList.contains('placing')) {
+      pendingCoords = e.lngLat;
+      if (window._pendingMarker) window._pendingMarker.setLngLat(e.lngLat); else _showPendingMarker(e.lngLat);
+      var _cl = document.getElementById('pin-coords-label'); if (_cl) _cl.textContent = e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
+      return;
+    }
+    if (_pm && _pm.classList.contains('show')) return;
     // ── 1. Measure mode — always first priority ───────────────────
     if (measureMode) {
       if (_measureSuppressClick) { _measureSuppressClick = false; return; }
@@ -3545,6 +3558,7 @@ function initMap() {
       try { window._releaseCamera(); } catch(_e){}
       _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
+      document.getElementById('pin-modal').classList.add('placing');
       // Do NOT auto-focus the description — it's optional and auto-focusing pops
       // up the keyboard on every pin drop. User can tap the field to type.
       disablePinMode();
@@ -3642,6 +3656,7 @@ function initMap() {
     longPressTimer = setTimeout(function() {
       longPressTimer = null;
       if (measureMode) return; // don't drop a pin while measuring
+      if (document.getElementById('pin-modal').classList.contains('show')) return; // already placing
       if (navigator.vibrate) navigator.vibrate(40);
       var rect = canvas.getBoundingClientRect();
       var lngLat = map.unproject(new mapboxgl.Point(touch.clientX - rect.left, touch.clientY - rect.top));
@@ -3651,6 +3666,7 @@ function initMap() {
       try { window._releaseCamera(); } catch(_e){}
       _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
+      document.getElementById('pin-modal').classList.add('placing');
       // Do NOT auto-focus the description — auto-focus pops the keyboard on every
       // long-press pin drop. Optional field; user can tap it to type.
       disablePinMode();
@@ -5302,6 +5318,7 @@ window.editPin = function(pid) {
 // Reset + close the pin sheet (shared by drop, edit, cancel, backdrop-tap).
 function _closePinModal() {
   document.getElementById('pin-modal').classList.remove('show');
+  document.getElementById('pin-modal').classList.remove('placing');
   _clearPendingMarker();
   document.getElementById('pin-label-input').value = '';
   var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
