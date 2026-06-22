@@ -1470,6 +1470,37 @@
   </div>
 </div>
 
+<!-- ══ WHERE TO FIND MAPS ══════════════════════════════════════════ -->
+<div id="map-sources-modal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:rgba(22,27,34,0.96);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-top:2px solid rgba(240,165,0,0.6);border-radius:16px;padding:18px;width:100%;max-width:390px;max-height:84vh;overflow-y:auto;box-shadow:0 12px 48px rgba(0,0,0,.6)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:16px;font-weight:800;color:var(--text)">Where to find maps</div>
+      <button onclick="document.getElementById('map-sources-modal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">&#10005;</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px">Download a georeferenced <b>geoPDF</b>, then tap <b>Import a map</b> to overlay it. USGS &amp; USFS PDFs are georeferenced; most park/WMA brochure PDFs are <i>not</i> (they won't auto-align).</div>
+    <a href="https://ngmdb.usgs.gov/topoview/" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
+      <div style="font-size:14px;font-weight:700;color:var(--accent)">USGS topoView</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Browse the map, tap any quad, download the geoPDF. Best all-around source.</div>
+    </a>
+    <a href="https://apps.nationalmap.gov/downloader/" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
+      <div style="font-size:14px;font-weight:700;color:var(--accent)">The National Map &mdash; Downloader</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">USGS US Topo geoPDFs for the whole country, filter by area.</div>
+    </a>
+    <a href="https://www.fs.usda.gov/main/florida/maps-pubs" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
+      <div style="font-size:14px;font-weight:700;color:var(--accent)">U.S. Forest Service &mdash; FL forests</div>
+      <div style="font-size:11px;color:var(--muted)">Apalachicola, Ocala &amp; Osceola National Forest maps (georeferenced).</div>
+    </a>
+    <a href="https://myfwc.com/hunting/wma-brochures/" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
+      <div style="font-size:14px;font-weight:700;color:var(--accent)">FWC WMA brochures</div>
+      <div style="font-size:11px;color:var(--muted)">Florida hunting-area maps (note: mostly plain PDFs, not georeferenced).</div>
+    </a>
+    <a href="https://geodata.myfwc.com/" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-decoration:none">
+      <div style="font-size:14px;font-weight:700;color:var(--accent)">FWC GeoData portal</div>
+      <div style="font-size:11px;color:var(--muted)">WMA boundaries &amp; layers (GeoJSON/KML/GeoTIFF).</div>
+    </a>
+  </div>
+</div>
+
 <!-- ══ LAYER PICKER SHEET ════════════════════════════════════════════ -->
 <div id="layer-sheet" style="display:none;position:fixed;inset:0;z-index:400">
   <div id="layer-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeLayerSheet()"></div>
@@ -1545,6 +1576,10 @@
           <span style="font-size:11px;color:var(--muted);white-space:nowrap">Transparency</span>
           <input type="range" min="0.2" max="1" step="0.05" value="0.85" oninput="setOverlayOpacity('dade',this.value)" style="flex:1;accent-color:var(--accent)">
         </div>
+        <div id="user-overlays"></div>
+        <button type="button" onclick="window._importGeoPdf()" style="width:100%;padding:11px;background:transparent;border:1px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">+ Import a map (geoPDF)</button>
+        <input type="file" id="geopdf-file" accept=".pdf,application/pdf" style="display:none" onchange="window._onGeoPdfPicked(this)">
+        <button type="button" onclick="window._openMapSources()" style="width:100%;padding:8px;background:transparent;border:none;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline">Where to find free maps &#8594;</button>
 
       </div>
     </div>
@@ -1799,7 +1834,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 118;
+var APP_BUILD = 120;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7728,6 +7763,105 @@ window.setOverlayOpacity = function(id, val){
   var o=_ovById(id); if(o) o.opacity=parseFloat(val);
   try { if(map.getLayer('ov-'+id)) map.setPaintProperty('ov-'+id,'raster-opacity', parseFloat(val)); } catch(e){}
 };
+
+// ── In-app geoPDF importer: read a georeferenced PDF, render it, overlay it. ──
+function _ovDB(){ return new Promise(function(res,rej){ var r=indexedDB.open('gl_overlays',1); r.onupgradeneeded=function(e){ try{e.target.result.createObjectStore('ov',{keyPath:'id'});}catch(_){} }; r.onsuccess=function(){res(r.result);}; r.onerror=function(){rej(r.error);}; }); }
+function _ovSave(rec){ return _ovDB().then(function(db){ return new Promise(function(res,rej){ var t=db.transaction('ov','readwrite'); t.objectStore('ov').put(rec); t.oncomplete=res; t.onerror=function(){rej(t.error);}; }); }); }
+function _ovGetAll(){ return _ovDB().then(function(db){ return new Promise(function(res){ var t=db.transaction('ov','readonly'); var rq=t.objectStore('ov').getAll(); rq.onsuccess=function(){res(rq.result||[]);}; rq.onerror=function(){res([]);}; }); }); }
+function _ovDeleteRec(id){ return _ovDB().then(function(db){ return new Promise(function(res){ var t=db.transaction('ov','readwrite'); t.objectStore('ov').delete(id); t.oncomplete=res; t.onerror=res; }); }); }
+
+function _findBytes(u8,str,from){ from=from||0; var n=str.length; var c0=str.charCodeAt(0); for(var i=from;i<=u8.length-n;i++){ if(u8[i]!==c0) continue; var ok=true; for(var j=1;j<n;j++){ if(u8[i+j]!==str.charCodeAt(j)){ok=false;break;} } if(ok) return i; } return -1; }
+function _win(u8,a,b){ a=Math.max(0,a); b=Math.min(u8.length,b); var s=''; for(var i=a;i<b;i+=32768){ s+=String.fromCharCode.apply(null,u8.subarray(i,Math.min(b,i+32768))); } return s; }
+// Parse the geospatial viewport (ISO-32000 /VP) straight from the PDF bytes.
+function _parseGeoFromPdf(u8){
+  var gi=_findBytes(u8,'/GPTS'); if(gi<0) return null;
+  var after=_win(u8,gi,gi+1400);
+  var gm=/\/GPTS\s*\[([^\]]+)\]/.exec(after); if(!gm) return null;
+  var gpts=gm[1].trim().split(/\s+/).map(parseFloat);
+  var lm=/\/LPTS\s*\[([^\]]+)\]/.exec(after); var lpts=lm?lm[1].trim().split(/\s+/).map(parseFloat):[0,0,0,1,1,1,1,0];
+  var pre=_win(u8,gi-4000,gi); var bi=pre.lastIndexOf('/BBox'); if(bi<0) return null;
+  var bm=/\/BBox\s*\[([^\]]+)\]/.exec(pre.slice(bi)); if(!bm) return null;
+  var bb=bm[1].trim().split(/\s+/).map(parseFloat);
+  if(gpts.length<8||bb.length<4) return null;
+  var corner={};
+  for(var k=0;k<4;k++){ var lx=lpts[k*2],ly=lpts[k*2+1],lat=gpts[k*2],lng=gpts[k*2+1]; corner[(ly>=0.5?'T':'B')+(lx>=0.5?'R':'L')]=[lng,lat]; }
+  if(!(corner.TL&&corner.TR&&corner.BR&&corner.BL)) return null;
+  return { coords:[corner.TL,corner.TR,corner.BR,corner.BL], bbox:bb };
+}
+function _loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  return new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=function(){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){} res(); };
+    s.onerror=function(){ rej(new Error('pdfjs load failed')); };
+    document.head.appendChild(s);
+  });
+}
+async function _renderPdfCrop(u8, bbox){
+  var pdf=await pdfjsLib.getDocument({data:u8}).promise;
+  var page=await pdf.getPage(1);
+  var x0=bbox[0],y0=bbox[1],x1=bbox[2],y1=bbox[3], wpt=x1-x0, hpt=y1-y0;
+  var S=Math.min(3, 2200/wpt); if(!(S>0)) S=2;
+  var vp=page.getViewport({scale:S});
+  var full=document.createElement('canvas'); full.width=Math.ceil(vp.width); full.height=Math.ceil(vp.height);
+  await page.render({canvasContext:full.getContext('2d'), viewport:vp}).promise;
+  var sx=Math.round(x0*S), sy=Math.round(vp.height - y1*S), sw=Math.round(wpt*S), sh=Math.round(hpt*S);
+  var crop=document.createElement('canvas'); crop.width=sw; crop.height=sh;
+  crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0,0, sw, sh);
+  return crop.toDataURL('image/png');
+}
+window._importGeoPdf = function(){ var inp=document.getElementById('geopdf-file'); if(inp){ inp.value=''; inp.click(); } };
+window._onGeoPdfPicked = async function(inp){
+  var f=inp.files && inp.files[0]; if(!f) return;
+  try { toast('Reading map…', 4000); } catch(e){}
+  try {
+    var buf=await f.arrayBuffer(); var u8=new Uint8Array(buf);
+    var geo=_parseGeoFromPdf(u8);
+    if(!geo){ try{toast('No geo data in this PDF — it isn\'t a georeferenced geoPDF.',5500);}catch(e){} return; }
+    await _loadPdfJs();
+    var img=await _renderPdfCrop(u8, geo.bbox);
+    var id='u'+Date.now().toString(36);
+    var name=(f.name||'Imported map').replace(/\.pdf$/i,'');
+    var rec={ id:id, name:name, coords:geo.coords, img:img, opacity:0.85, user:true };
+    await _ovSave(rec);
+    window.GL_OVERLAYS.push({ id:id, name:name, coords:geo.coords, url:img, opacity:0.85, user:true });
+    _renderUserOverlays();
+    try{ toast('Map imported ✓', 2500); }catch(e){}
+    toggleOverlay(id, true);
+  } catch(e){ try{ toast('Could not import this PDF', 4000); }catch(_){} }
+};
+window._deleteOverlay = function(id){
+  try{ if(!confirm('Delete this imported map?')) return; }catch(e){}
+  try{ toggleOverlay(id,false); }catch(e){}
+  window.GL_OVERLAYS=(window.GL_OVERLAYS||[]).filter(function(o){return o.id!==id;});
+  _ovDeleteRec(id).then(function(){ _renderUserOverlays(); });
+  try{ toast('Map deleted'); }catch(e){}
+};
+function _ovRow(o){
+  return '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">'+
+    '<div onclick="var cb=document.getElementById(\'toggle-ov-'+o.id+'\');cb.checked=!cb.checked;toggleOverlay(\''+o.id+'\',cb.checked);" style="flex:1;cursor:pointer;min-width:0">'+
+      '<div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#00b0ff"><use href="#ic-map"/></svg><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_escHtml(o.name)+'</span></div>'+
+      '<div style="font-size:11px;color:var(--muted)">Imported geoPDF</div>'+
+    '</div>'+
+    '<button onclick="window._deleteOverlay(\''+o.id+'\')" title="Delete" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:12px;padding:5px 9px;margin-right:8px;cursor:pointer;flex-shrink:0">&#10005;</button>'+
+    '<label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">'+
+      '<input type="checkbox" id="toggle-ov-'+o.id+'" onchange="toggleOverlay(\''+o.id+'\',this.checked)" style="opacity:0;width:0;height:0">'+
+      '<span id="ov-'+o.id+'-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>'+
+      '<span id="ov-'+o.id+'-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>'+
+    '</label></div>'+
+    '<div id="ov-'+o.id+'-opacity-row" style="display:none;align-items:center;gap:10px;padding:0 14px 6px"><span style="font-size:11px;color:var(--muted);white-space:nowrap">Transparency</span><input type="range" min="0.2" max="1" step="0.05" value="'+(o.opacity||0.85)+'" oninput="setOverlayOpacity(\''+o.id+'\',this.value)" style="flex:1;accent-color:var(--accent)"></div>';
+}
+function _renderUserOverlays(){
+  var box=document.getElementById('user-overlays'); if(!box) return;
+  var us=(window.GL_OVERLAYS||[]).filter(function(o){return o.user;});
+  box.innerHTML=us.map(_ovRow).join('');
+  us.forEach(function(o){ var on=!!(typeof map!=='undefined'&&map&&map.getLayer&&map.getLayer('ov-'+o.id)); _setOverlayToggleUI(o.id,on); });
+}
+function _initUserOverlays(){ _ovGetAll().then(function(list){ list.forEach(function(r){ if(!_ovById(r.id)) window.GL_OVERLAYS.push({id:r.id,name:r.name,coords:r.coords,url:r.img,opacity:r.opacity||0.85,user:true}); }); _renderUserOverlays(); }).catch(function(){}); }
+window.addEventListener('load', function(){ try{ _initUserOverlays(); }catch(e){} });
+window._openMapSources = function(){ var m=document.getElementById('map-sources-modal'); if(m) m.style.display='flex'; };
+
 window._navigateTo = function(lat, lng, name) {
   var ua = navigator.userAgent || '';
   var label = encodeURIComponent(name || 'Member');
