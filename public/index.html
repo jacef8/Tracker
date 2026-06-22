@@ -1381,6 +1381,7 @@
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-star"/></svg>My Saved Pins</span>
     <div style="display:flex;align-items:center;gap:8px">
+      <button id="sv-select-all" onclick="window._svSelectAllShown()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">All</button>
       <button id="sv-select-toggle" onclick="window._svToggleSelect()" style="background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Select</button>
       <button class="panel-close" id="close-saved-pins"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
@@ -1391,6 +1392,7 @@
   <div id="saved-pins-filter"></div>
   <div id="saved-pins-list"></div>
   <div id="saved-pins-foot">
+    <button id="saved-pins-collect" onclick="window._svAddToCollection()" style="display:none;width:100%;margin-bottom:8px;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">Add to collection</button>
     <button id="saved-pins-add-all" onclick="window.addAllShownToRoom()">Add all shown to this room</button>
   </div>
 </div>
@@ -1690,7 +1692,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 101;
+var APP_BUILD = 102;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -1965,6 +1967,9 @@ let alertsOn = false;
 // Preference persists across sessions; defaults to ON
 function _alertsPref() { try { var v = localStorage.getItem('gl_alerts_pref'); return v === null ? true : v === '1'; } catch (e) { return true; } }
 function _setAlertsPref(on) { try { localStorage.setItem('gl_alerts_pref', on ? '1' : '0'); } catch (e) {} }
+// Default notifications ON: reflect the (default-true) preference immediately so the toggle
+// reads ON from launch. In-app alerts need no OS permission; push is added on room entry.
+alertsOn = _alertsPref();
 
 function _urlB64ToUint8(base64) {
   const padding = '='.repeat((4 - base64.length % 4) % 4);
@@ -6631,11 +6636,38 @@ window._svToggleSelect = function() {
   window._svSel = {};
   var b = document.getElementById('sv-select-toggle');
   if (b) { b.textContent = window._svSelect ? 'Cancel' : 'Select'; }
+  var sa = document.getElementById('sv-select-all');
+  if (sa) sa.style.display = window._svSelect ? 'inline-flex' : 'none';
   renderSavedPins();
 };
 window._svSelectedPins = function() {
   var all = getSavedPins();
   return Object.keys(window._svSel).map(function(i) { return all[+i]; }).filter(Boolean);
+};
+// Select every pin currently shown (respects the active type/collection filter) — handy for
+// grabbing a whole collection to share at once.
+window._svSelectAllShown = function() {
+  window._svSel = {};
+  getSavedPins().forEach(function(p, i) { if (_savedMatch(p)) window._svSel[i] = true; });
+  renderSavedPins();
+};
+// Tag the selected pins with a self-named collection (creates it if new).
+window._svAddToCollection = function() {
+  var sel = Object.keys(window._svSel);
+  if (!sel.length) return;
+  var existing = {};
+  getSavedPins().forEach(function(p) { if (p.coll) existing[p.coll] = 1; });
+  var names = Object.keys(existing);
+  var name = prompt('Add ' + sel.length + ' pin' + (sel.length > 1 ? 's' : '') + ' to which collection?' + (names.length ? '\n\nExisting: ' + names.join(', ') : ''));
+  if (name == null) return;
+  name = String(name).trim().slice(0, 30);
+  if (!name) return;
+  var all = getSavedPins();
+  sel.forEach(function(i) { if (all[+i]) all[+i].coll = name; });
+  setSavedPins(all);
+  window._svToggleSelect();
+  setSavedFilter('coll:' + name);
+  toast('Added to "' + name + '"', 2600);
 };
 function _svTargetRow(val, label) {
   return '<label style="display:flex;align-items:center;gap:11px;padding:11px 6px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer">' +
@@ -6685,7 +6717,7 @@ window._svSendPins = function() {
       var uid = t.slice(7);
       try {
         var rec = { type: 'pins', fromName: userName || 'A friend', ts: Date.now(),
-          pins: pins.map(function(p) { return { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '' }; }) };
+          pins: pins.map(function(p) { return { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', coll: p.coll || '' }; }) };
         var ir = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(ir, rec);
       } catch (e) {}
       dest++;
@@ -6701,7 +6733,7 @@ window._acceptPinShare = function(key) {
   if (!inv || !inv.pins) return;
   var arr = getSavedPins();
   inv.pins.forEach(function(p) {
-    arr.push({ pid: 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 10000), lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', savedAt: Date.now() });
+    arr.push({ pid: 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 10000), lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', coll: p.coll || '', savedAt: Date.now() });
   });
   setSavedPins(arr);
   var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
@@ -6835,20 +6867,34 @@ window.shareSavedPin = function(idx) {
 var _savedFilter = 'all';
 window.setSavedFilter = function(cat) { _savedFilter = cat; renderSavedPins(); };
 
+// Does a saved pin match the active filter? Filter is 'all', a pin type, or 'coll:<name>'.
+function _savedMatch(p) {
+  if (_savedFilter === 'all') return true;
+  if (_savedFilter.indexOf('coll:') === 0) return (p.coll || '') === _savedFilter.slice(5);
+  return p.cat === _savedFilter;
+}
 function _renderSavedFilterChips(pins) {
   var bar = document.getElementById('saved-pins-filter');
   if (!bar) return;
-  // Only categories that actually have saved pins, in PIN_DEFS order
+  if (!pins.length) { bar.innerHTML = ''; return; }
+  // Type categories present
   var present = {};
   pins.forEach(function(p) { present[p.cat] = (present[p.cat] || 0) + 1; });
   var cats = Object.keys(PIN_DEFS).filter(function(c) { return present[c]; });
-  // Any saved pins whose cat isn't in PIN_DEFS (legacy/custom) still get a chip
   pins.forEach(function(p) { if (cats.indexOf(p.cat) === -1 && p.cat) cats.push(p.cat); });
-  if (!pins.length) { bar.innerHTML = ''; return; }
-  // Reset to 'all' if the active filter no longer has any pins
-  if (_savedFilter !== 'all' && !present[_savedFilter]) _savedFilter = 'all';
+  // User collections present
+  var colls = {};
+  pins.forEach(function(p) { if (p.coll) colls[p.coll] = (colls[p.coll] || 0) + 1; });
+  var collNames = Object.keys(colls).sort();
+  // Reset to 'all' if the active filter no longer matches anything
+  if (_savedFilter !== 'all' && !pins.some(_savedMatch)) _savedFilter = 'all';
   var html = '<button class="sv-chip' + (_savedFilter === 'all' ? ' active' : '') +
              '" onclick="window.setSavedFilter(\'all\')">All (' + pins.length + ')</button>';
+  collNames.forEach(function(cn) {
+    var fv = 'coll:' + cn;
+    html += '<button class="sv-chip' + (_savedFilter === fv ? ' active' : '') +
+            '" onclick="window.setSavedFilter(\'' + fv.replace(/'/g, "\\'") + '\')">&#128193; ' + cn + ' (' + colls[cn] + ')</button>';
+  });
   cats.forEach(function(c) {
     html += '<button class="sv-chip' + (_savedFilter === c ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + c.replace(/'/g, "\\'") + '\')">' +
@@ -6861,15 +6907,21 @@ function _updateSavedFoot(shownCount) {
   var foot = document.getElementById('saved-pins-foot');
   var btn = document.getElementById('saved-pins-add-all');
   if (!foot || !btn) return;
-  // Selection mode: the footer becomes "Share N selected".
+  var collectBtn = document.getElementById('saved-pins-collect');
+  // Selection mode: the footer becomes "Add to collection" + "Share N selected".
   if (window._svSelect) {
     foot.classList.remove('hidden');
     var n = Object.keys(window._svSel || {}).length;
     btn.disabled = (n === 0);
     btn.textContent = n ? ('Share ' + n + ' selected pin' + (n > 1 ? 's' : '') + ' →') : 'Tap pins to select';
     btn.onclick = function() { if (Object.keys(window._svSel || {}).length) window._svOpenShareTargets(); };
+    if (collectBtn) {
+      collectBtn.style.display = n ? 'block' : 'none';
+      collectBtn.textContent = 'Add ' + n + ' to a collection';
+    }
     return;
   }
+  if (collectBtn) collectBtn.style.display = 'none';
   btn.onclick = function() { window.addAllShownToRoom(); };
   var inRoom = !!(groupName && db);
   if (!shownCount) { foot.classList.add('hidden'); return; }
@@ -6887,9 +6939,7 @@ function _updateSavedFoot(shownCount) {
 // Share every saved pin matching the current filter into the active room at once.
 window.addAllShownToRoom = function() {
   if (!groupName || !db) { toast('Join a room first'); return; }
-  var pins = getSavedPins().filter(function(p) {
-    return _savedFilter === 'all' || p.cat === _savedFilter;
-  });
+  var pins = getSavedPins().filter(_savedMatch);
   if (!pins.length) { toast('Nothing to add'); return; }
   pins.forEach(function(pin) {
     var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
@@ -6917,7 +6967,7 @@ function renderSavedPins() {
   pins.forEach(function(pin, idx) {
     // Filter by the active category chip — keep idx aligned to the full array so the
     // per-card Share/Delete buttons still target the right saved pin.
-    if (_savedFilter !== 'all' && pin.cat !== _savedFilter) return;
+    if (!_savedMatch(pin)) return;
     shown++;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
@@ -6989,6 +7039,7 @@ function openSavedPins() {
   // Always open in normal (non-select) mode.
   window._svSelect = false; window._svSel = {};
   var stb = document.getElementById('sv-select-toggle'); if (stb) stb.textContent = 'Select';
+  var sab = document.getElementById('sv-select-all'); if (sab) sab.style.display = 'none';
   document.getElementById('saved-pins-drawer').classList.add('open');
   setLocateMeVisible(false);
   renderSavedPins();
