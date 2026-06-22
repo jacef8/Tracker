@@ -696,7 +696,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   #drawer-backdrop.show { display: block; }
-  #saved-pins-drawer {
+  #saved-pins-drawer, #tracks-drawer, #track-detail-drawer {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); right: 0; bottom: 0; z-index: 302;
     width: min(320px, 92vw);
     background: rgba(13,17,23,0.55);
@@ -706,7 +706,14 @@
     transform: translateX(100%); transition: transform .22s ease;
     display: flex; flex-direction: column;
   }
-  #saved-pins-drawer.open { transform: translateX(0); }
+  #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open { transform: translateX(0); }
+  @keyframes recpulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+  .trk-row { display:flex; align-items:center; gap:10px; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin:6px 12px; cursor:pointer; }
+  .trk-row:active { background:rgba(255,255,255,.05); }
+  .trk-stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px 12px; }
+  .trk-stat { background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:9px 11px; }
+  .trk-stat .v { font-size:17px; font-weight:800; color:var(--text); line-height:1.1; }
+  .trk-stat .l { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
   #saved-pins-list { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
   #saved-pins-filter { display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); }
   #saved-pins-filter:empty { display:none; padding:0; border:none; }
@@ -1397,6 +1404,32 @@
   </div>
 </div>
 
+<!-- ══ MY TRACKS DRAWER ══════════════════════════════════════════════ -->
+<div id="tracks-drawer">
+  <div class="panel-header">
+    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-compass"/></svg>My Tracks</span>
+    <button class="panel-close" onclick="document.getElementById('tracks-drawer').classList.remove('open')"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+  </div>
+  <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</div>
+  <div id="tracks-list" style="overflow-y:auto;flex:1"></div>
+</div>
+
+<!-- ══ TRACK DETAIL DRAWER ═══════════════════════════════════════════ -->
+<div id="track-detail-drawer">
+  <div class="panel-header">
+    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-compass"/></svg><span id="trk-d-title">Track</span></span>
+    <button class="panel-close" onclick="window._closeTrackDetail()"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+  </div>
+  <div id="track-detail-body" style="overflow-y:auto;flex:1"></div>
+</div>
+
+<!-- ══ RECORDING CHIP ════════════════════════════════════════════════ -->
+<div id="rec-chip" onclick="window._stopTrackRec()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:360;background:rgba(13,17,23,.88);border:1px solid #ff3b30;border-radius:999px;padding:7px 14px;align-items:center;gap:10px;box-shadow:0 4px 18px rgba(0,0,0,.55);cursor:pointer">
+  <span style="width:9px;height:9px;border-radius:50%;background:#ff3b30;box-shadow:0 0 8px #ff3b30;animation:recpulse 1.2s infinite;flex-shrink:0"></span>
+  <span id="rec-chip-text" style="color:#fff;font-size:12px;font-weight:700;white-space:nowrap">REC 0:00 · 0 ft</span>
+  <span style="color:#ff7a73;font-size:11px;font-weight:800">STOP</span>
+</div>
+
 <!-- ══ LAYER PICKER SHEET ════════════════════════════════════════════ -->
 <div id="layer-sheet" style="display:none;position:fixed;inset:0;z-index:400">
   <div id="layer-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeLayerSheet()"></div>
@@ -1529,6 +1562,16 @@
       <button onclick="closePinHub();openSavedPins();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
         <svg class="licon licon-lg" style="color:var(--accent)"><use href="#ic-star"/></svg>
         <div><div style="font-size:15px;font-weight:700;color:var(--text)">My Saved Pins</div><div style="font-size:12px;color:var(--muted)">Your personal pin library</div></div>
+      </button>
+      <!-- Record track -->
+      <button id="rec-track-hub-btn" onclick="window._recTrackHubTap()" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <svg class="licon licon-lg" id="rec-track-hub-icon" style="color:#ff3b30"><use href="#ic-play"/></svg>
+        <div><div id="rec-track-hub-title" style="font-size:15px;font-weight:700;color:var(--text)">Record Track</div><div id="rec-track-hub-sub" style="font-size:12px;color:var(--muted)">Save your path with stats</div></div>
+      </button>
+      <!-- My tracks -->
+      <button onclick="closePinHub();openTracks();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <svg class="licon licon-lg" style="color:#00b0ff"><use href="#ic-compass"/></svg>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">My Tracks</div><div style="font-size:12px;color:var(--muted)">Your recorded routes</div></div>
       </button>
       <!-- Clear pins -->
       <button onclick="closePinHub();document.getElementById('pin-list-drawer').classList.add('open');renderPinList(lastPins);" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
@@ -1692,7 +1735,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 104;
+var APP_BUILD = 105;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4038,6 +4081,7 @@ async function startNativeBackgroundTracking() {
         latitude: location.latitude,
         longitude: location.longitude,
         accuracy: location.accuracy || 0,
+        altitude: (location.altitude != null ? location.altitude : null), // m, for elevation in recorded tracks
         speed: (location.speed != null ? location.speed : null),  // m/s, for accurate speed
         heading: (location.bearing != null ? location.bearing : null) // degrees, for heading-up
       }});
@@ -4194,6 +4238,8 @@ function startLocationSharing() {
     }
     // One combined camera update: recenter (if following self) + rotate (if Heading Up).
     _applyCameraOnSelfFix(lng, lat);
+    // Track recorder: capture this fix into the active recording (works even if location hidden / in background).
+    try { if (window._trackRec) window._trackRecOnFix(pos, now); } catch (e) {}
 
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
@@ -6666,6 +6712,220 @@ function setSavedPins(arr) {
   try { if (window._glSync) window._glSync(); } catch (e) {}
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// PERSONAL TRACKS — record your path with full stats, saved like pins.
+// Separate library, follows you across rooms, backed up to your account.
+// ═══════════════════════════════════════════════════════════════════
+function getSavedTracks() { try { return JSON.parse(localStorage.getItem('gl_saved_tracks') || '[]'); } catch (e) { return []; } }
+function setSavedTracks(arr) {
+  try { localStorage.setItem('gl_saved_tracks', JSON.stringify(arr)); } catch (e) {}
+  try { if (window._glSync) window._glSync(); } catch (e) {}
+}
+function _trkMi(m){ return m/1609.344; }
+function _trkFt(m){ return m*3.28084; }
+function _trkFmtDist(m){ return m < 1609.344 ? Math.round(_trkFt(m)) + ' ft' : _trkMi(m).toFixed(2) + ' mi'; }
+function _trkFmtElev(m){ return Math.round(_trkFt(m)).toLocaleString() + ' ft'; }
+function _trkFmtDur(ms){ var s=Math.max(0,Math.round(ms/1000)); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60; return (h>0? h+':'+(m<10?'0':'')+m : ''+m) + ':' + (ss<10?'0':'') + ss; }
+function _trkFmtDate(ts){ try { return new Date(ts).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}); } catch(e){ return ''; } }
+function _trkFmtTime(ts){ try { return new Date(ts).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); } catch(e){ return ''; } }
+
+function _trackStats(pts){
+  var s={distM:0,durMs:0,movMs:0,avgMph:0,maxMph:0,gainM:0,lossM:0,minAlt:null,maxAlt:null,netAlt:null,n:(pts||[]).length,startTs:(pts&&pts.length)?pts[0].t:0,endTs:(pts&&pts.length)?pts[pts.length-1].t:0};
+  var lastAlt=null, firstAlt=null, finalAlt=null;
+  for (var i=0;i<(pts||[]).length;i++){
+    var p=pts[i];
+    if (p.alt!=null && !isNaN(p.alt)){
+      if (s.minAlt==null||p.alt<s.minAlt) s.minAlt=p.alt;
+      if (s.maxAlt==null||p.alt>s.maxAlt) s.maxAlt=p.alt;
+      if (firstAlt==null) firstAlt=p.alt; finalAlt=p.alt;
+      if (lastAlt==null) lastAlt=p.alt;
+      else { var da=p.alt-lastAlt; if (Math.abs(da)>=1.5){ if(da>0) s.gainM+=da; else s.lossM+=-da; lastAlt=p.alt; } }
+    }
+    if (i>0){
+      var pr=pts[i-1];
+      var dM=metersApart(pr.lat,pr.lng,p.lat,p.lng); s.distM+=dM;
+      var dt=p.t-pr.t;
+      if (dt>0 && dt<60000){ if ((dM/(dt/1000))*2.23694>=1) s.movMs+=dt; }
+      var sp=(p.sp!=null&&p.sp>=0)?p.sp:(dt>0?dM/(dt/1000):0);
+      var mph=sp*2.23694; if (mph<200 && mph>s.maxMph) s.maxMph=mph;
+    }
+  }
+  s.durMs=s.endTs-s.startTs;
+  if (firstAlt!=null && finalAlt!=null) s.netAlt=finalAlt-firstAlt;
+  var movHr=s.movMs/3600000; s.avgMph = movHr>0 ? _trkMi(s.distM)/movHr : 0;
+  return s;
+}
+
+// — live recording —
+window._trackRec = null;
+window._trackRecOnFix = function(pos, now){
+  var r=window._trackRec; if (!r || r.paused) return;
+  var c=(pos && pos.coords) || {};
+  if (c.latitude==null || c.longitude==null) return;
+  now = now || Date.now();
+  var pt={ lat:c.latitude, lng:c.longitude, alt:(c.altitude!=null && !isNaN(c.altitude)?c.altitude:null), t:now, sp:(c.speed!=null && c.speed>=0?c.speed:null), ac:(c.accuracy||0) };
+  var last=r.pts[r.pts.length-1];
+  if (last){ var d=metersApart(last.lat,last.lng,pt.lat,pt.lng); if (d<3 && (pt.t-last.t)<5000) return; }
+  r.pts.push(pt); _drawRecLine(r.pts);
+};
+function _drawRecLine(pts){
+  try {
+    if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    var gj={type:'Feature',geometry:{type:'LineString',coordinates:pts.map(function(p){return [p.lng,p.lat];})}};
+    if (map.getSource('rec-track')) map.getSource('rec-track').setData(gj);
+    else { map.addSource('rec-track',{type:'geojson',data:gj}); map.addLayer({id:'rec-track',type:'line',source:'rec-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#ff3b30','line-width':4,'line-opacity':0.9}}); }
+  } catch (e) {}
+}
+function _clearRecLine(){ try { if (map.getLayer('rec-track')) map.removeLayer('rec-track'); if (map.getSource('rec-track')) map.removeSource('rec-track'); } catch (e) {} }
+window._startTrackRec = function(){
+  if (window._trackRec) return;
+  window._trackRec={ pts:[], startTs:Date.now(), paused:false };
+  try { window._trackRecWatch = navigator.geolocation.watchPosition(function(pp){ window._trackRecOnFix(pp, Date.now()); }, function(){}, {enableHighAccuracy:true,maximumAge:1000,timeout:25000}); } catch (e) {}
+  try { if (typeof _isNativeApp==='function' && _isNativeApp() && !window._bgGeoStarted && typeof startNativeBackgroundTracking==='function') startNativeBackgroundTracking(); } catch (e) {}
+  try { acquireWakeLock(); } catch (e) {}
+  try { window._trackRecTick = setInterval(_refreshRecChip, 1000); } catch (e) {}
+  _showRecChip(); _syncRecHubBtn();
+  try { toast('Recording track — go!'); } catch (e) {}
+};
+window._stopTrackRec = function(){
+  var r=window._trackRec; if (!r) return;
+  try { if (window._trackRecWatch!=null) navigator.geolocation.clearWatch(window._trackRecWatch); } catch (e) {}
+  window._trackRecWatch=null;
+  try { clearInterval(window._trackRecTick); } catch (e) {}
+  window._trackRec=null; _hideRecChip(); _clearRecLine(); _syncRecHubBtn();
+  if (r.pts.length<2){ try{ toast('Track too short — discarded'); }catch(e){} return; }
+  var stats=_trackStats(r.pts);
+  var def='Track '+_trkFmtDate(Date.now());
+  var name; try { name=prompt('Name this track:', def); } catch(e){ name=def; }
+  if (name===null){ try { if (!confirm('Discard this recording?')) name=def; else return; } catch(e){ name=def; } }
+  if (!name) name=def;
+  var t={ id:'t_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:name, ts:Date.now(), pts:r.pts, stats:stats };
+  var arr=getSavedTracks(); arr.unshift(t); setSavedTracks(arr);
+  try { toast('Track saved'); } catch(e){}
+  _openTrackDetail(t.id);
+};
+window._toggleTrackRec = function(){ if (window._trackRec) window._stopTrackRec(); else window._startTrackRec(); };
+window._recTrackHubTap = function(){ closePinHub(); window._toggleTrackRec(); };
+window._pauseTrackRec = function(){ var r=window._trackRec; if(!r) return; r.paused=!r.paused; _refreshRecChip(); };
+
+function _showRecChip(){ var c=document.getElementById('rec-chip'); if(c) c.style.display='flex'; _refreshRecChip(); }
+function _hideRecChip(){ var c=document.getElementById('rec-chip'); if(c) c.style.display='none'; }
+function _refreshRecChip(){ var r=window._trackRec; var el=document.getElementById('rec-chip-text'); if(!r||!el) return; var st=_trackStats(r.pts); el.textContent=(r.paused?'PAUSED ':'REC ')+_trkFmtDur(Date.now()-r.startTs)+' · '+_trkFmtDist(st.distM); }
+function _syncRecHubBtn(){
+  var on=!!window._trackRec;
+  var t=document.getElementById('rec-track-hub-title'), s=document.getElementById('rec-track-hub-sub'), ic=document.getElementById('rec-track-hub-icon');
+  if (t) t.textContent = on?'Stop Recording':'Record Track';
+  if (s) s.textContent = on?'Tap to stop & save your track':'Save your path with stats';
+  if (ic){ var u=ic.querySelector('use'); if(u) u.setAttribute('href', on?'#ic-pause':'#ic-play'); }
+}
+
+// — saved track on map —
+window._shownTrackId=null;
+function _drawSavedTrack(t, fit){
+  try {
+    if (!map || !map.isStyleLoaded()) return;
+    _clearSavedTrack();
+    var coords=t.pts.map(function(p){return [p.lng,p.lat];});
+    var gj={type:'Feature',geometry:{type:'LineString',coordinates:coords}};
+    map.addSource('saved-track',{type:'geojson',data:gj});
+    map.addLayer({id:'saved-track-glow',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':8,'line-opacity':0.25}});
+    map.addLayer({id:'saved-track',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':3.5,'line-opacity':0.95}});
+    window._shownTrackId=t.id;
+    if (fit && coords.length){ var b=coords.reduce(function(bb,c){return bb.extend(c);}, new mapboxgl.LngLatBounds(coords[0],coords[0])); map.fitBounds(b,{padding:60,maxZoom:16,duration:800}); }
+  } catch(e){}
+}
+function _clearSavedTrack(){ try { ['saved-track','saved-track-glow'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); if (map.getSource('saved-track')) map.removeSource('saved-track'); } catch(e){} window._shownTrackId=null; }
+
+// — tracks library list —
+function openTracks(){ document.getElementById('tracks-drawer').classList.add('open'); try { setLocateMeVisible(false); } catch(e){} renderTracks(); }
+function renderTracks(){
+  var list=document.getElementById('tracks-list'); if(!list) return;
+  var arr=getSavedTracks();
+  if (!arr.length){ list.innerHTML='<div style="padding:22px 16px;text-align:center;color:var(--muted);font-size:13px">No tracks yet.<br>Open the Pins menu → <b>Record Track</b> to save your first route.</div>'; return; }
+  list.innerHTML='';
+  arr.forEach(function(t){
+    var st=t.stats||_trackStats(t.pts||[]);
+    var row=document.createElement('div'); row.className='trk-row';
+    row.innerHTML='<svg class="licon" style="color:#00b0ff;flex-shrink:0"><use href="#ic-compass"/></svg>'+
+      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_escHtml(t.name)+'</div>'+
+      '<div style="font-size:11px;color:var(--muted)">'+_trkFmtDate(t.ts)+' · '+_trkFmtDist(st.distM)+' · '+_trkFmtDur(st.durMs)+'</div></div>'+
+      '<svg class="licon licon-sm" style="color:var(--muted);flex-shrink:0"><use href="#ic-play"/></svg>';
+    row.onclick=function(){ _openTrackDetail(t.id); };
+    list.appendChild(row);
+  });
+}
+
+// — polished detail view + elevation profile —
+function _openTrackDetail(id){
+  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){ t=arr[i]; break; } }
+  if (!t) return;
+  var st=t.stats||_trackStats(t.pts||[]);
+  document.getElementById('trk-d-title').textContent=t.name;
+  function stat(v,l){ return '<div class="trk-stat"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
+  var net = st.netAlt!=null ? ((st.netAlt>=0?'+':'-')+Math.round(_trkFt(Math.abs(st.netAlt))).toLocaleString()+' ft') : '—';
+  var html='<div class="trk-stat-grid">'+
+    stat(_trkFmtDist(st.distM),'Distance')+
+    stat(_trkFmtDur(st.durMs),'Total time')+
+    stat(_trkFmtDur(st.movMs),'Moving time')+
+    stat(st.avgMph.toFixed(1)+' mph','Avg speed')+
+    stat(st.maxMph.toFixed(1)+' mph','Max speed')+
+    stat(net,'Net elevation')+
+    stat(st.gainM!=null?_trkFmtElev(st.gainM):'—','Elev gain')+
+    stat(st.lossM!=null?_trkFmtElev(st.lossM):'—','Elev loss')+
+  '</div>';
+  html += _trackElevSvg(t.pts);
+  html += '<div style="padding:4px 12px 6px;font-size:11px;color:var(--muted)">Recorded '+_trkFmtDate(t.ts)+' at '+_trkFmtTime(st.startTs||t.ts)+' · '+st.n+' points · min '+(st.minAlt!=null?_trkFmtElev(st.minAlt):'—')+' / max '+(st.maxAlt!=null?_trkFmtElev(st.maxAlt):'—')+'</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px 18px">'+
+    '<button onclick="window._showTrackOnMap(\''+t.id+'\')" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button>'+
+    '<button onclick="window._renameTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Rename</button>'+
+    '<button onclick="window._shareTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">Share</button>'+
+    '<button onclick="window._deleteTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--danger);border-radius:10px;color:var(--danger);font-size:13px;font-weight:700;cursor:pointer">Delete</button>'+
+  '</div>';
+  document.getElementById('track-detail-body').innerHTML=html;
+  document.getElementById('track-detail-drawer').classList.add('open');
+}
+function _trackElevSvg(pts){
+  var a=(pts||[]).filter(function(p){ return p.alt!=null && !isNaN(p.alt); });
+  if (a.length<2) return '<div style="padding:6px 12px 2px;font-size:11px;color:var(--muted)">No elevation data for this track.</div>';
+  var W=296,H=90,pad=4, alts=a.map(function(p){return p.alt;});
+  var mn=Math.min.apply(null,alts), mx=Math.max.apply(null,alts), rng=(mx-mn)||1;
+  var pd=[0]; for(var i=1;i<a.length;i++){ pd[i]=pd[i-1]+metersApart(a[i-1].lat,a[i-1].lng,a[i].lat,a[i].lng); }
+  var total=pd[pd.length-1]||1;
+  var pp=a.map(function(p,i){ var x=pad+(pd[i]/total)*(W-2*pad), y=pad+(1-(p.alt-mn)/rng)*(H-2*pad); return x.toFixed(1)+','+y.toFixed(1); });
+  var area='M'+pad+','+(H-pad)+' L'+pp.join(' L')+' L'+(W-pad)+','+(H-pad)+' Z';
+  return '<div style="padding:4px 12px 2px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Elevation profile</div>'+
+    '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:74px;background:var(--bg);border:1px solid var(--border);border-radius:8px">'+
+    '<path d="'+area+'" fill="rgba(0,176,255,.15)"/>'+
+    '<polyline points="'+pp.join(' ')+'" fill="none" stroke="#00b0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg></div>';
+}
+window._showTrackOnMap = function(id){
+  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
+  if (!t) return;
+  document.getElementById('track-detail-drawer').classList.remove('open');
+  document.getElementById('tracks-drawer').classList.remove('open');
+  _drawSavedTrack(t, true);
+  try { toast('Showing "'+t.name+'"'); } catch(e){}
+};
+window._renameTrack = function(id){
+  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
+  if (!t) return;
+  var nm; try { nm=prompt('Rename track:', t.name); } catch(e){ return; }
+  if (nm===null) return; if(!nm) nm=t.name;
+  t.name=nm; setSavedTracks(arr);
+  document.getElementById('trk-d-title').textContent=nm; renderTracks();
+};
+window._deleteTrack = function(id){
+  try { if (!confirm('Delete this track? This cannot be undone.')) return; } catch(e){}
+  var arr=getSavedTracks().filter(function(t){ return t.id!==id; }); setSavedTracks(arr);
+  if (window._shownTrackId===id) _clearSavedTrack();
+  document.getElementById('track-detail-drawer').classList.remove('open');
+  renderTracks();
+  try { toast('Track deleted'); } catch(e){}
+};
+window._closeTrackDetail = function(){ document.getElementById('track-detail-drawer').classList.remove('open'); };
+window._shareTrack = function(id){ try { toast('Track sharing is coming in the next update'); } catch(e){} };
+
+
 // ── Multi-select + share a group of saved pins (to rooms and/or people) ─────────
 window._svSelect = false;
 window._svSel = {};
@@ -7567,6 +7827,7 @@ document.addEventListener('click', function(e) {
       favs:       LS.get('gl_favs') || '[]',
       colors:     LS.get('gl_user_colors') || '{}',
       pins:       LS.get('gl_saved_pins') || '[]',
+      tracks:     LS.get('gl_saved_tracks') || '[]',
       mycolor:    LS.get('gl_mycolor') || '',
       updated:    Date.now()
     };
@@ -7578,6 +7839,7 @@ document.addEventListener('click', function(e) {
       var prof = localProfile();
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
+      try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
       if (f.update) f.update(f.ref(f.db, 'gl/_users/' + u), prof);
       else f.set(f.ref(f.db, 'gl/_users/' + u), prof);
     } catch (e) {}
@@ -7608,6 +7870,15 @@ document.addEventListener('click', function(e) {
           var seen = {}, merged = [];
           localPins.concat(cloud).forEach(function(pn){ if(!pn) return; var k = pn.pid || (pn.lat+','+pn.lng+','+(pn.cat||'')); if(!seen[k]){seen[k]=1;merged.push(pn);} });
           LS.set('gl_saved_pins', JSON.stringify(merged));
+        }
+      }
+      if (p.tracks) {
+        var cloudT = typeof p.tracks === 'string' ? JSON.parse(p.tracks || '[]') : p.tracks;
+        var localT = []; try { localT = JSON.parse(LS.get('gl_saved_tracks') || '[]'); } catch (e3) {}
+        if (cloudT && cloudT.length) {
+          var seenT = {}, mergedT = [];
+          localT.concat(cloudT).forEach(function(tk){ if(!tk) return; var k = tk.id || (tk.ts+'_'+(tk.name||'')); if(!seenT[k]){seenT[k]=1;mergedT.push(tk);} });
+          LS.set('gl_saved_tracks', JSON.stringify(mergedT));
         }
       }
     } catch (e) {}
