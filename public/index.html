@@ -85,7 +85,7 @@
     background: var(--bg) url('/icons/splash.png') center/cover no-repeat;
     display: flex; align-items: flex-start; justify-content: center;
     padding: calc(var(--safe-top) + 20px) 0 calc(var(--safe-bot) + 20px);
-    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   }
   .join-card {
     width: min(420px, 92vw);
@@ -1486,10 +1486,6 @@
       <div style="font-size:14px;font-weight:700;color:var(--accent)">The National Map &mdash; Downloader</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px">USGS US Topo geoPDFs for the whole country, filter by area.</div>
     </a>
-    <a href="https://www.fs.usda.gov/main/florida/maps-pubs" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
-      <div style="font-size:14px;font-weight:700;color:var(--accent)">U.S. Forest Service &mdash; FL forests</div>
-      <div style="font-size:11px;color:var(--muted)">Apalachicola, Ocala &amp; Osceola National Forest maps (georeferenced).</div>
-    </a>
     <a href="https://myfwc.com/hunting/wma-brochures/" target="_blank" rel="noopener" style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;text-decoration:none">
       <div style="font-size:14px;font-weight:700;color:var(--accent)">FWC WMA brochures</div>
       <div style="font-size:11px;color:var(--muted)">Florida hunting-area maps (note: mostly plain PDFs, not georeferenced).</div>
@@ -1559,22 +1555,6 @@
             <span id="fl-parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
             <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
-        </div>
-        <!-- Custom geoPDF overlay: Dade Battlefield -->
-        <div onclick="var cb=document.getElementById('toggle-ov-dade');cb.checked=!cb.checked;toggleOverlay('dade',cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#00b0ff"><use href="#ic-map"/></svg>Dade Battlefield</div>
-            <div style="font-size:11px;color:var(--muted)">Park geoPDF overlay &middot; slide for transparency</div>
-          </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-ov-dade" onchange="toggleOverlay('dade',this.checked)" style="opacity:0;width:0;height:0">
-            <span id="ov-dade-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="ov-dade-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
-        </div>
-        <div id="ov-dade-opacity-row" style="display:none;align-items:center;gap:10px;padding:0 14px 6px">
-          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Transparency</span>
-          <input type="range" min="0.2" max="1" step="0.05" value="0.85" oninput="setOverlayOpacity('dade',this.value)" style="flex:1;accent-color:var(--accent)">
         </div>
         <div id="user-overlays"></div>
         <button type="button" onclick="window._importGeoPdf()" style="width:100%;padding:11px;background:transparent;border:1px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">+ Import a map (geoPDF)</button>
@@ -1834,7 +1814,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 120;
+var APP_BUILD = 122;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -1874,7 +1854,7 @@ window.addEventListener('beforeinstallprompt', e => {
   if (_isNativeApp()) return; // inside the native app — never prompt to "install"
   e.preventDefault();
   deferredInstallPrompt = e;
-  document.getElementById('install-banner').classList.add('show');
+  // top install banner intentionally not shown — the front-screen Install button covers it
   // Hide the manual install tip — native prompt is available, no need for both
   var tip = document.getElementById('install-tip');
   if (tip) tip.style.display = 'none';
@@ -7729,10 +7709,7 @@ function setLocateMeVisible(visible) {
 }
 // Open the device's navigation app routed to a point (a member's location).
 // ── Georeferenced image overlays (e.g. gov geoPDFs converted to image + corner coords) ──
-window.GL_OVERLAYS = [
-  { id:'dade', name:'Dade Battlefield', url:'/overlays/dade-battlefield.png', opacity:0.85,
-    coords:[[-82.13343,28.65561],[-82.12277,28.65547],[-82.12288,28.6493],[-82.13354,28.64944]] }
-];
+window.GL_OVERLAYS = [];
 function _ovById(id){ var a=window.GL_OVERLAYS||[]; for(var i=0;i<a.length;i++){ if(a[i].id===id) return a[i]; } return null; }
 function _setOverlayToggleUI(id,on){
   var cb=document.getElementById('toggle-ov-'+id), tr=document.getElementById('ov-'+id+'-track'), th=document.getElementById('ov-'+id+'-thumb');
@@ -8489,13 +8466,13 @@ document.addEventListener('click', function(e) {
 (function () {
   // Size the pager to the panel currently in view so the short Quick-join panel doesn't
   // inherit the tall Account panel's height (which forced empty-space scrolling).
-  window._sizePager = function () {
+  window._sizePager = function (idx) {
     var p = document.getElementById('join-pager'); if (!p) return;
-    // Don't measure while the join screen is hidden / zero-width — a bad measurement here is
-    // what left the front page stuck at the taller Account height (phantom scroll).
     if (!p.clientWidth || !p.offsetParent) return;
     var panels = p.querySelectorAll('.join-panel');
-    var idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
+    // Prefer the explicit target panel; only fall back to scroll position when not given,
+    // so returning to page 1 sizes to page 1 (not the mid-scroll/taller page).
+    if (idx == null) idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
     var active = panels[idx] || panels[0];
     if (active && active.offsetHeight) p.style.height = active.offsetHeight + 'px';
   };
@@ -8511,7 +8488,7 @@ document.addEventListener('click', function(e) {
       if (k === i) tabs[k].classList.add('active'); else tabs[k].classList.remove('active');
     }
     if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // keep the Account page fresh on tap or swipe
-    requestAnimationFrame(window._sizePager);
+    requestAnimationFrame(function(){ window._sizePager(i); });
   }
   window._goPanel = function (i) {
     var p = document.getElementById('join-pager');
