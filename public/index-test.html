@@ -110,6 +110,7 @@
   #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; transition: height .22s ease; }
   #join-pager::-webkit-scrollbar { display: none; }
   body.solo-mode #chat-toggle-btn, body.solo-mode #sos-btn { display: none !important; }
+  body.voice-off .utalk-btn { display: none !important; }
   .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 7px; padding: 0 2px; align-self: flex-start; }
   #room-list { max-height: 30vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -1739,6 +1740,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-rain"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Battery saver</div><div style="font-size:11px;color:var(--muted);margin-top:2px">When you sit still a while, ease off GPS &amp; send a slow heartbeat. Moving wakes it instantly.</div></div></div>
       <span id="set-battsaver-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div onclick="_setToggleVoice()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
+      <span id="set-voice-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
       <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
@@ -2214,6 +2219,27 @@ function autoEnableAlerts() {
 function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); }
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
+// ── Voice (push-to-talk) on/off — a per-device user setting ───────
+// Default ON. When OFF: hide the 🎙 Talk buttons (via body.voice-off) and tear
+// down any open voice bar/connection.
+function _voiceEnabled() { try { return localStorage.getItem('gltest_voice_off') !== '1'; } catch (e) { return true; } }
+function _applyVoicePref() {
+  var on = _voiceEnabled();
+  document.body.classList.toggle('voice-off', !on);
+  try { _setPill('set-voice-pill', on); } catch (e) {}
+  // If voice was switched off during an active call, end it.
+  if (!on && document.getElementById('gv-bar')) {
+    try { import('./voice.js').then(function (m) { if (m.leaveVoice) m.leaveVoice(); }); } catch (e) {}
+  }
+}
+window._setToggleVoice = function () {
+  var on = !_voiceEnabled();
+  try { localStorage.setItem('gltest_voice_off', on ? '0' : '1'); } catch (e) {}
+  _applyVoicePref();
+  toast(on ? 'Voice on' : 'Voice off');
+};
+try { _applyVoicePref(); } catch (e) {}
+
 // ── Room info (tap the room name) ─────────────────────────────────
 function openRoomInfo() {
   if (!groupName) return;
@@ -2315,6 +2341,7 @@ function _syncSettings() {
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
+  _setPill('set-voice-pill', _voiceEnabled());
   var cb = document.getElementById('toggle-parcels');
   _setPill('set-parcels-pill', !!(cb && cb.checked));
   var lp = document.getElementById('set-location-pill');
@@ -8537,6 +8564,7 @@ document.addEventListener('click', function(e) {
 // Classic script: shares global scope with the main app, so it can read
 // userId / userName / groupName. Dynamically imports the shared voice module.
 window._openVoiceTo = async function (uid, name) {
+  if (document.body.classList.contains('voice-off')) return; // voice disabled in Settings
   var cfg = window.VOICE_CONFIG || {};
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) {
     alert('Voice isn\'t configured yet.\n\nSet window.VOICE_CONFIG.livekitUrl and .tokenEndpoint near the top of index-test.html after the LiveKit + token deploys.');
