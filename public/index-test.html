@@ -1435,6 +1435,7 @@ function enterMap(name, group, uid) {
     listenPins();
     listenChat();
     listenTrails();
+    listenRoomClosed();
   });
 }
 
@@ -2067,7 +2068,8 @@ function metersApart(lat1, lng1, lat2, lng2) {
 function startLocationSharing() {
   if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
 
-  navigator.geolocation.watchPosition(pos => {
+  window._gpsWatchId = navigator.geolocation.watchPosition(pos => {
+    if (window._roomClosed) return; // room closed by an admin — stop writing presence
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     const now = Date.now();
     window._lastGPS = { lat, lng };
@@ -2114,6 +2116,7 @@ function startLocationSharing() {
   // When the app comes back to foreground, re-stamp timestamp immediately
   // so we don't get pruned while the screen was off.
   document.addEventListener('visibilitychange', () => {
+    if (window._roomClosed) return; // room closed by an admin — don't recreate presence
     if (document.visibilityState === 'visible' && db && window._lastGPS) {
       try {
         fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now());
@@ -2383,6 +2386,37 @@ document.getElementById('pin-alert-close').addEventListener('click', () => {
   document.getElementById('pin-alert').classList.remove('show');
   clearTimeout(_pinAlertTimer);
 });
+
+// ══ ROOM CLOSED (admin) ══════════════════════════════════════════════
+// Admin "Close & Nuke" sets gl/<group>/closed before deleting the room. Honor
+// it: stop writing presence and drop our own record, so our GPS heartbeat can't
+// resurrect the room the instant the admin's delete lands. (Production index.html
+// already does this; the test page was missing it, which is why a room a live
+// test device was in almost always reappeared after a nuke.)
+function listenRoomClosed() {
+  try {
+    fbOnValue(fbRef(db, `gl/${groupName}/closed`), snap => {
+      if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
+    });
+  } catch (e) {}
+}
+
+function _roomClosedByAdmin() {
+  if (window._roomClosed) return;
+  window._roomClosed = true;
+  // Stop GPS writes and drop our presence so nothing recreates the room.
+  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
+  try { if (db && groupName && userId) fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); } catch (_) {}
+  // Don't auto-rejoin the same (deleted) group on reload — go to the join screen.
+  try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); } catch (_) {}
+  // Notice, then return to the home screen.
+  var o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;z-index:5000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3;font-family:system-ui,sans-serif';
+  o.innerHTML = '<div style="font-size:19px;font-weight:800;margin-bottom:8px">Room closed</div>' +
+    '<div style="font-size:14px;color:#8b949e;max-width:300px;line-height:1.5">This room was closed by an admin. Returning to the home screen…</div>';
+  document.body.appendChild(o);
+  setTimeout(function () { location.reload(); }, 2600);
+}
 
 // ══ PINS ═════════════════════════════════════════════════════════════
 // Native Mapbox symbol layer — zero drift during pan/zoom
