@@ -1883,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 137;
+var APP_BUILD = 138;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8393,6 +8393,13 @@ document.addEventListener('click', function(e) {
   function uid()  { return LS.get('gltest_uid'); }
   function name() { return LS.get('gltest_name') || ''; }
 
+  // Identity is SPLIT: the device keeps its own permanent id (gltest_uid) = its own
+  // map dot, never overwritten by sign-in. The ACCOUNT (or a restored backup code)
+  // keys the synced profile. So two devices on one Google account are two distinct
+  // dots that still share name / friends / favorites.
+  function accountId()  { return LS.get('gltest_account_uid') || ''; }
+  function profileKey() { return accountId() || LS.get('gltest_profile_key') || uid() || ''; }
+
   function setIdentity(u, nm, account) {
     if (u)  LS.set('gltest_uid', u);
     if (nm) LS.set('gltest_name', nm);
@@ -8416,7 +8423,7 @@ document.addEventListener('click', function(e) {
   function pushProfile() {
     try {
       var f = window._fb; if (!f || !f.db) return;
-      var u = uid(); if (!u) return;
+      var u = profileKey(); if (!u) return;
       var prof = localProfile();
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
@@ -8516,7 +8523,10 @@ document.addEventListener('click', function(e) {
   function afterFirebaseUser(user) {
     if (!user) return;
     var googleName = (user.displayName || '').trim();
-    setIdentity(user.uid, googleName || name(), 'google');
+    ensureUid();                              // keep THIS device's own id (its own dot)
+    LS.set('gltest_account_uid', user.uid);   // account identity → profile sync key
+    LS.set('gl_account', 'google');
+    if (googleName && LS.get('gltest_name_custom') !== '1') LS.set('gltest_name', googleName);
     if (user.email) LS.set('gl_email', user.email);
     pullProfile(user.uid, function (p) {
       if (p) applyProfile(p);
@@ -8581,7 +8591,8 @@ document.addEventListener('click', function(e) {
     } catch (e) {}
     LS.set('gl_account', '');
     LS.set('gl_email', '');
-    refreshUI(); // keep gl_uid/name so they remain the same identity as a guest
+    LS.set('gltest_account_uid', '');  // detach the account; keep this device's own id + name
+    refreshUI(); // device keeps its own id/name; profile reverts to this device's local copy
     if (typeof toast === 'function') toast('Signed out — still here as a guest', 2600);
   }
 
@@ -8593,7 +8604,8 @@ document.addEventListener('click', function(e) {
   function openBackup() {
     document.getElementById('backup-show').style.display = 'block';
     document.getElementById('backup-restore').style.display = 'none';
-    document.getElementById('backup-code-val').textContent = ensureUid();
+    ensureUid();
+    document.getElementById('backup-code-val').textContent = profileKey();
     pushProfile();
     document.getElementById('backup-modal').style.display = 'flex';
   }
@@ -8618,7 +8630,8 @@ document.addEventListener('click', function(e) {
     show('Looking up…', true);
     pullProfile(code, function (p) {
       if (!p) { show('No data found for that code', false); return; }
-      LS.set('gltest_uid', code);
+      ensureUid();                          // keep this device's own id (its own dot)
+      LS.set('gltest_profile_key', code);   // adopt the shared profile, not the identity
       applyProfile(p);
       refreshUI();
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
