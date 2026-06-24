@@ -1216,6 +1216,17 @@
   <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
 </div>
 
+<!-- ══ OFFLINE DOWNLOAD MODE BAR (map stays visible; frame the area) ════ -->
+<div id="offline-mode-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot, 0px) + 16px);z-index:360;flex-direction:column;gap:8px;background:rgba(13,17,23,.93);border:1px solid var(--accent);border-radius:14px;padding:11px 13px;box-shadow:0 6px 26px rgba(0,0,0,.6);width:min(360px,92vw)">
+  <div style="font-size:12px;color:#fff;text-align:center;font-weight:600;line-height:1.4">Everything on screen gets saved — pan &amp; zoom to frame your area</div>
+  <div id="offline-est" style="font-size:14px;font-weight:800;text-align:center;color:var(--accent)">~0&nbsp;MB · 0 tiles</div>
+  <div style="display:flex;gap:8px">
+    <button onclick="window._cancelOfflineMode && window._cancelOfflineMode()" style="flex:1;padding:9px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Done</button>
+    <button id="offline-dl-btn" onclick="window._confirmOfflineDownload && window._confirmOfflineDownload()" style="flex:2;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:13px;font-weight:800;cursor:pointer">Download this area</button>
+  </div>
+  <div id="offline-status" style="font-size:11px;color:var(--muted);text-align:center;min-height:14px"></div>
+</div>
+
 <!-- ══ MEASURE BAR ══════════════════════════════════════════════════ -->
 <!-- Measure mode selector -->
 <div id="measure-mode-picker" style="display:none;position:fixed;top:calc(var(--topbar-h) + var(--safe-top) + 4px);left:50%;transform:translateX(-50%);z-index:400;background:rgba(13,17,23,0.92);border:1px solid rgba(240,165,0,0.45);border-radius:12px;padding:8px 10px;display:none;gap:8px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.5)">
@@ -1567,9 +1578,8 @@
       </div>
       <div class="section-title">Offline maps</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-        <div style="font-size:11px;color:var(--muted);line-height:1.5">Pick <b style="color:var(--text)">Aerial</b> above, pan/zoom to your hunting area, then download it to use with no signal. USGS imagery, ~200&nbsp;MB cap.</div>
-        <button onclick="window._downloadOfflineArea && window._downloadOfflineArea()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download this view for offline</button>
-        <div id="offline-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5">Save aerial imagery for an area to use with no signal. USGS imagery, ~200&nbsp;MB cap.</div>
+        <button onclick="window._startOfflineMode && window._startOfflineMode()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download an area for offline</button>
         <button onclick="window._clearOfflineTiles && window._clearOfflineTiles()" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);cursor:pointer">Clear offline tiles</button>
       </div>
       <div class="section-title">Overlays</div>
@@ -1873,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 135;
+var APP_BUILD = 136;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6356,15 +6366,42 @@ function _offlineTileIds(minZ, maxZ) {
   return out;
 }
 function _setOfflineStatus(t) { var el = document.getElementById('offline-status'); if (el) el.textContent = t; }
-window._downloadOfflineArea = async function () {
-  if (!map || !window.caches) { alert('Offline caching isn\'t supported in this browser.'); return; }
-  var minZ = 11, maxZ = 17;                          // area = current view; z11–17 detail
-  var ids = _offlineTileIds(minZ, maxZ);
+var _offlineMoveHandler = null;
+function _offlineCurrentIds() { return _offlineTileIds(11, 17); }   // area = current view, z11–17
+function _updateOfflineEst() {
+  var ids = _offlineCurrentIds();
+  var mb = ids.length * 18 / 1024;
   var capMB = Math.round(GL_TILE_CAP_BYTES / 1048576);
-  var estMB = Math.round(ids.length * 18 / 1024);     // ~18 KB/tile estimate
-  if (ids.length * 18 * 1024 > GL_TILE_CAP_BYTES) {
-    if (!confirm('This view is ~' + estMB + ' MB (' + ids.length + ' tiles) — over the ' + capMB + ' MB cap. Zoom IN to a tighter area for full coverage, or download up to the cap now?')) return;
-  } else if (!confirm('Download ~' + estMB + ' MB (' + ids.length + ' tiles) of aerial imagery for offline use?')) return;
+  var over = mb > capMB;
+  var est = document.getElementById('offline-est');
+  if (est) { est.textContent = '~' + mb.toFixed(0) + ' MB · ' + ids.length + ' tiles'; est.style.color = over ? '#f85149' : 'var(--accent)'; }
+  var dl = document.getElementById('offline-dl-btn');
+  if (dl) dl.textContent = over ? 'Zoom in — over ' + capMB + ' MB cap' : 'Download this area';
+}
+// Enter "frame the area" mode: close the layers sheet so the map is fully visible,
+// switch to Aerial, and float a small bar with a LIVE size estimate as you pan/zoom.
+window._startOfflineMode = function () {
+  if (!map || !window.caches) { alert('Offline caching isn\'t supported in this browser.'); return; }
+  if (typeof closeLayerSheet === 'function') closeLayerSheet();
+  var btn = document.querySelector('.layer-base-btn[data-style="usgs-aerial"]');
+  if (btn && !btn.classList.contains('active')) setBaseLayer(btn);
+  var bar = document.getElementById('offline-mode-bar');
+  if (bar) bar.style.display = 'flex';
+  _setOfflineStatus('');
+  _updateOfflineEst();
+  _offlineMoveHandler = function () { _updateOfflineEst(); };
+  map.on('moveend', _offlineMoveHandler);
+};
+window._cancelOfflineMode = function () {
+  var bar = document.getElementById('offline-mode-bar');
+  if (bar) bar.style.display = 'none';
+  if (_offlineMoveHandler) { try { map.off('moveend', _offlineMoveHandler); } catch (e) {} _offlineMoveHandler = null; }
+};
+window._confirmOfflineDownload = async function () {
+  var ids = _offlineCurrentIds();
+  var capMB = Math.round(GL_TILE_CAP_BYTES / 1048576);
+  var dl = document.getElementById('offline-dl-btn');
+  if (dl) { dl.disabled = true; dl.style.opacity = '.6'; }
   var cache = await caches.open(GL_TILE_CACHE);
   var done = 0, bytes = 0, failed = 0, capped = false;
   for (var i = 0; i < ids.length; i++) {
@@ -6373,15 +6410,13 @@ window._downloadOfflineArea = async function () {
     var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
     try {
       var resp = await fetch(url, { mode: 'cors' });
-      if (resp.ok) {
-        bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000;
-        await cache.put(url, resp);
-        done++;
-      } else failed++;
+      if (resp.ok) { bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); done++; }
+      else failed++;
     } catch (e) { failed++; }
-    if (i % 20 === 0) _setOfflineStatus('Downloading… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)');
+    if (i % 15 === 0) _setOfflineStatus('Downloading… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)');
   }
-  _setOfflineStatus('Saved ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB) offline' + (capped ? ' — hit the ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Turn on Airplane mode and pan this area to test.');
+  if (dl) { dl.disabled = false; dl.style.opacity = '1'; }
+  _setOfflineStatus('Saved ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
   if (window._evt) window._evt('offline area saved: ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB');
 };
 window._clearOfflineTiles = async function () {
