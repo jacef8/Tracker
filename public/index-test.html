@@ -4844,10 +4844,6 @@ function listenUsers() {
         var _navBtn = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="margin-top:6px;width:100%;padding:7px;background:transparent;border:1px solid var(--accent);border-radius:8px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
-        // 🎙 Talk — opens the docked PTT voice bar to this member (M1, voice spec §4)
-        var _talkBtn = !isMine
-          ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:6px;width:100%;padding:7px;background:#f0a500;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#1a1200;cursor:pointer">🎙 Talk</button>'
-          : '';
         userMarkers[uid].getPopup().setHTML(
           '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
           '<div class="pop-label">' + data.name + '</div>' +
@@ -4855,8 +4851,7 @@ function listenUsers() {
           _speedHTML +
           '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
           _followBtn +
-          _navBtn +
-          _talkBtn
+          _navBtn
         );
       }
 
@@ -4886,6 +4881,7 @@ function listenUsers() {
           '</div>' +
         '</div>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+          (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;font-size:17px;line-height:1;padding:0 2px">🎙</button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
           ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
@@ -4896,6 +4892,8 @@ function listenUsers() {
       if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       var _frb = row.querySelector('.ufriend-btn');
       if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
+      var _tb = row.querySelector('.utalk-btn');
+      if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
       var _ob = row.querySelector('.uowner-btn');
       if (_ob) _ob.addEventListener('click', function(e) { e.stopPropagation(); window._ownerMemberMenu(uid, data.name); });
       row.addEventListener('click', function() {
