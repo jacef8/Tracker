@@ -4,7 +4,6 @@ const webpush = require('web-push');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
 const CURRENT_VERSION = '1.7';
-const TEST_PASSWORD   = process.env.TEST_PASSWORD || 'gltest';
 
 app.use(express.json({ limit: '64kb' }));
 
@@ -103,13 +102,9 @@ app.get('/777', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
-// Test environment — password protected
-// Access: /test?pw=gltest  (or set TEST_PASSWORD env var in Railway)
-app.get('/test', function(req, res) {
-  var provided = req.query.pw;
-  if (provided !== TEST_PASSWORD) {
-    return res.status(404).sendFile(path.join(__dirname, 'public', 'index.html'));
-  }
+// Test environment — secret path (same style as the /777 admin route)
+// Access: /test888
+app.get('/test888', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index-test.html'));
 });
