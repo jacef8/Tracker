@@ -82,17 +82,24 @@ self.addEventListener('fetch', e => {
   // app still opens on poor service; live data fills in once signal returns).
   if (e.request.mode === 'navigate') {
     e.respondWith((async function() {
-      var cached = await caches.match('/');
       try {
         var resp = await Promise.race([
           fetch(e.request, { cache: 'no-store' }),
           new Promise(function(_, reject) { setTimeout(function() { reject(new Error('slow-network')); }, NAV_TIMEOUT_MS); })
         ]);
-        try { var clone = resp.clone(); caches.open(CACHE).then(function(c) { c.put('/', clone); }).catch(function(){}); } catch (e2) {}
+        // Cache under THIS page's own URL (not always '/'), so /test888 and / can't
+        // overwrite each other. The old code served the cached home for ANY page,
+        // which bounced /test888 back to the production home screen when its fetch
+        // got interrupted (e.g. right as a new build's worker took over).
+        try { var clone = resp.clone(); caches.open(CACHE).then(function(c) { c.put(e.request, clone); }).catch(function(){}); } catch (e2) {}
         return resp;
       } catch (err) {
-        // Slow or no network — use the cached page if we have one, else a last-ditch fetch.
-        return cached || fetch(e.request);
+        // Slow/offline — serve the cached copy of THIS page; only fall back to the
+        // home page if we have nothing cached for this exact URL.
+        var here = await caches.match(e.request);
+        if (here) return here;
+        var home = await caches.match('/');
+        return home || fetch(e.request);
       }
     })());
     return;
