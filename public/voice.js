@@ -117,8 +117,10 @@ async function joinAndConnect() {
     if (remote) {
       const who = (remote.name || remote.identity);
       setTalker('◉ ' + who + ' talking', '#00e676');
+      setRx(true);
       emit({ type: 'talking', who, identity: remote.identity });
     } else {
+      setRx(false);
       updatePresence();
       emit({ type: 'talking', who: null });
     }
@@ -162,6 +164,7 @@ function updatePttButton() {
   if (!btn) return;
   if (micOn) { btn.classList.add('gv-keyed');    btn.innerHTML = '● ON<br>AIR'; }
   else       { btn.classList.remove('gv-keyed'); btn.innerHTML = 'TAP TO<br>TALK'; }
+  setTx(micOn);
 }
 
 // Show who else is in the room when nobody is actively talking, so it's obvious
@@ -196,15 +199,25 @@ function injectStylesOnce() {
     #gv-bar .gv-meta { flex: 1; min-width: 0; }
     #gv-bar .gv-to { font-size: 11px; color: #8b949e; letter-spacing: .04em; text-transform: uppercase; }
     #gv-bar .gv-name { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #gv-bar .gv-talker { font-size: 12px; font-weight: 700; color: #00e676; height: 15px; }
+    #gv-bar .gv-talker { font-size: 12px; font-weight: 700; color: #8b949e; height: 15px; }
     #gv-bar .gv-status { font-size: 12px; color: #8b949e; }
+    /* TX / RX indicators — dim when idle, glow when active */
+    #gv-bar .gv-leds { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+    #gv-bar .gv-ind { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800;
+      letter-spacing: .06em; padding: 4px 9px; border-radius: 7px; background: #0d1117;
+      color: #3a4150; border: 1px solid #23272e; }
+    #gv-bar .gv-ind .gv-led { width: 9px; height: 9px; border-radius: 50%; background: #3a4150; transition: all .1s; }
+    #gv-bar .gv-ind.tx-on { color: #ff8a8a; border-color: #5a1f1f; background: #241012; }
+    #gv-bar .gv-ind.tx-on .gv-led { background: #ff5252; box-shadow: 0 0 8px #ff5252; }
+    #gv-bar .gv-ind.rx-on { color: #5ef0a0; border-color: #1d5236; background: #0f2418; }
+    #gv-bar .gv-ind.rx-on .gv-led { background: #00e676; box-shadow: 0 0 8px #00e676; }
     #gv-join { background: #00e676; color: #00210f; border: none; border-radius: 10px;
       font-weight: 800; font-size: 14px; padding: 12px 18px; cursor: pointer; }
-    #gv-ptt { width: 76px; height: 76px; border-radius: 50%; border: none; flex: 0 0 auto;
-      background: #f0a500; color: #1a1200; font-weight: 900; font-size: 13px; cursor: pointer;
-      touch-action: none; user-select: none; -webkit-user-select: none;
-      box-shadow: 0 3px 0 #b87d00; transition: transform .05s, box-shadow .05s; }
-    #gv-ptt.gv-keyed { background: #ff5252; color: #fff; transform: translateY(2px); box-shadow: 0 1px 0 #a30000; }
+    #gv-ptt { min-width: 108px; height: 46px; border-radius: 23px; border: none; flex: 0 0 auto;
+      background: #f0a500; color: #1a1200; font-weight: 900; font-size: 13px; line-height: 1.05; cursor: pointer;
+      user-select: none; -webkit-user-select: none; box-shadow: 0 2px 0 #b87d00;
+      transition: transform .05s, box-shadow .05s; }
+    #gv-ptt.gv-keyed { background: #ff5252; color: #fff; transform: translateY(1px); box-shadow: 0 1px 0 #a30000; }
     #gv-bar .gv-icon { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 6px; }
     #gv-bar .gv-icon:active { color: #e6edf3; }
   `;
@@ -234,8 +247,11 @@ function renderBar(mode) {
 
   // mode === 'live'
   barEl.innerHTML = `
+    <div class="gv-leds">
+      <div class="gv-ind" id="gv-tx"><span class="gv-led"></span>TX</div>
+      <div class="gv-ind" id="gv-rx"><span class="gv-led"></span>RX</div>
+    </div>
     <div class="gv-meta">
-      <div class="gv-to">Talking to</div>
       <div class="gv-name">${escapeHtml(session.partnerName)}</div>
       <div class="gv-talker" id="gv-talker"></div>
     </div>
@@ -253,6 +269,8 @@ function showBar() { if (barEl) barEl.style.display = 'flex'; }
 function removeBar() { if (barEl) { barEl.remove(); barEl = null; } }
 function setBarStatus(txt) { const el = barEl && barEl.querySelector('#gv-status'); if (el) el.textContent = txt; }
 function setTalker(txt, color) { const el = barEl && barEl.querySelector('#gv-talker'); if (el) { el.textContent = txt; if (color) el.style.color = color; } }
+function setTx(on) { const el = barEl && barEl.querySelector('#gv-tx'); if (el) el.classList.toggle('tx-on', !!on); }
+function setRx(on) { const el = barEl && barEl.querySelector('#gv-rx'); if (el) el.classList.toggle('rx-on', !!on); }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
