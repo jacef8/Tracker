@@ -110,7 +110,7 @@
   #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; transition: height .22s ease; }
   #join-pager::-webkit-scrollbar { display: none; }
   body.solo-mode #chat-toggle-btn, body.solo-mode #sos-btn { display: none !important; }
-  body.voice-off .utalk-btn { display: none !important; }
+  body.voice-off .utalk-btn, body.voice-off #group-talk-btn { display: none !important; }
   .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 7px; padding: 0 2px; align-self: flex-start; }
   #room-list { max-height: 30vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -1710,6 +1710,7 @@
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-users"/></svg>On the Map</span>
     <button class="panel-close" id="close-user-drawer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
+  <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="margin:8px 12px;padding:11px;background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">🎙 Talk to group</button>
   <div id="user-list"></div>
 </div>
 
@@ -1861,7 +1862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 129;
+var APP_BUILD = 130;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8626,8 +8627,31 @@ window._openVoiceTo = async function (uid, name) {
   } catch (e) { console.error('[voice] open failed', e); alert('Voice failed to load: ' + e.message); }
 };
 
+// ── Group all-call (M2): one shared room for the whole group ───
+// Broadcast to gl/<group>/voiceAll; every member's listener auto-joins the same
+// room. Works for 3 or 20 — the SFU fans out, the talker uploads once.
+window._openVoiceToGroup = async function () {
+  if (document.body.classList.contains('voice-off')) return;
+  var cfg = window.VOICE_CONFIG || {};
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
+  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  var roomId = 'gv_' + groupName + '_ALL';
+  try {
+    fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'), {
+      from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
+    });
+  } catch (e) {}
+  if (window._evt) window._evt('🎙 started GROUP voice');
+  try {
+    var mod = await window._voiceMod();
+    mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
+      partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+  } catch (e) { console.error('[voice] group open failed', e); alert('Voice failed to load: ' + e.message); }
+};
+
 // ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
 var _gvLastPingTs = 0;
+var _gvLastGroupTs = 0;
 window._listenVoiceInvites = function () {
   if (!db || !groupName || !userId) return;
   try {
@@ -8648,6 +8672,25 @@ window._listenVoiceInvites = function () {
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined voice from ' + (inv.fromName || 'member'));
       } catch (e) { console.error('[voice] auto-join failed', e); }
+    });
+    // Group all-call broadcast — every member auto-joins the one shared group room.
+    fbOnValue(fbRef(db, 'gl/' + groupName + '/voiceAll'), async function (snap) {
+      var inv = snap.val();
+      if (!inv || !inv.room) return;
+      if (document.body.classList.contains('voice-off')) return;
+      if (Date.now() - (inv.ts || 0) > 25000) return;
+      if (inv.ts <= _gvLastGroupTs) return;
+      _gvLastGroupTs = inv.ts;
+      var cfg = window.VOICE_CONFIG || {};
+      if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+      try {
+        var mod = await window._voiceMod();
+        if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in (incl. the starter)
+        mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
+          partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl,
+          tokenEndpoint: cfg.tokenEndpoint, listen: true });
+        if (window._evt) window._evt('🎙 auto-joined GROUP voice from ' + (inv.fromName || 'member'));
+      } catch (e) { console.error('[voice] group auto-join failed', e); }
     });
   } catch (e) {}
 };
