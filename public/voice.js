@@ -138,17 +138,9 @@ async function connectVoice() {
 
   try {
     await room.connect(session.livekitUrl, token);
-    // Initiator (came from a tap): pre-acquire the mic, then mute. Receiver waits
-    // and grabs the mic on the user's first PTT tap (that tap is the gesture).
-    if (!session.listen) {
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true);
-        await room.localParticipant.setMicrophoneEnabled(false);
-      } catch (e) {
-        console.warn('[voice] mic prime failed (can still listen)', e);
-        emit({ type: 'error', message: 'mic prime: ' + ((e && e.message) || e) });
-      }
-    }
+    // Don't grab the mic here — connect() is several awaits past the original tap,
+    // so the user gesture is gone and getUserMedia would be blocked with no prompt.
+    // The mic is acquired on the user's first PTT tap instead (a live gesture).
     try { await room.startAudio(); } catch (e) {}
     updatePresence();
     updatePttButton();
@@ -165,16 +157,23 @@ async function connectVoice() {
 // receivers) and unblocks audio playback, since the tap is a user gesture.
 async function togglePtt() {
   if (!room) { setTalker('not connected', '#f85149'); return; }
-  try { await room.startAudio(); } catch (e) {}
   const next = !micOn;
+  // IMPORTANT: kick off setMicrophoneEnabled SYNCHRONOUSLY inside the tap, before
+  // any await. getUserMedia's permission prompt only appears while the user
+  // gesture is "active"; an await first (e.g. startAudio, a fetch) consumes that
+  // activation and the prompt is silently blocked → "mic blocked, no prompt".
+  let micPromise;
+  try { micPromise = room.localParticipant.setMicrophoneEnabled(next); }
+  catch (e) { micPromise = Promise.reject(e); }
   try {
-    await room.localParticipant.setMicrophoneEnabled(next);
+    await micPromise;
   } catch (e) {
     console.error('[voice] mic toggle failed', e);
-    setTalker('⚠ mic blocked — allow mic', '#f85149');
+    setTalker('⚠ mic blocked — allow it in browser/app settings', '#f85149');
     emit({ type: 'error', message: 'mic: ' + ((e && e.message) || e) });
     return;
   }
+  try { await room.startAudio(); } catch (e) {}
   micOn = next;
   updatePttButton();
   emit({ type: 'ptt', on: micOn, room: session && session.room });
