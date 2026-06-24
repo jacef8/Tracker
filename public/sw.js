@@ -50,6 +50,18 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   const href = e.request.url;
 
+  // Offline-downloaded map tiles (USGS National Map) — serve from the offline-tiles
+  // cache first so a downloaded hunting area works with NO signal; otherwise fall
+  // through to the network (un-downloaded areas still load online).
+  if (url.hostname.indexOf('basemap.nationalmap.gov') !== -1) {
+    e.respondWith(
+      caches.open('gl-offline-tiles').then(function(c) {
+        return c.match(e.request).then(function(hit) { return hit || fetch(e.request); });
+      })
+    );
+    return;
+  }
+
   // Mapbox libraries — cache forever, they never change
   if (CACHE_FOREVER.includes(href)) {
     e.respondWith(
