@@ -1862,7 +1862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 130;
+var APP_BUILD = 131;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8701,9 +8701,23 @@ window._voiceMod().then(function (m) {
     if (ev.type === 'ptt' && window._evt) window._evt('🎙 PTT ' + (ev.on ? 'keyed (talking)' : 'released'));
     if (ev.type === 'joined' && window._evt) window._evt('🎙 voice connected (room ' + (ev.room || '') + ')');
     if (ev.type === 'error' && window._evt) window._evt('🎙 voice error: ' + (ev.message || ''));
-    if (ev.type === 'left' && window._gvPingedUid) {
-      try { fbRemove(fbRef(db, 'gl/' + groupName + '/voice/' + window._gvPingedUid)); } catch (e) {}
-      window._gvPingedUid = null;
+    // Group call: keep the broadcast fresh while we're in it, so members who join
+    // the group LATER still auto-join the ongoing call. When the last person
+    // leaves, the heartbeat stops and the broadcast goes stale.
+    if (ev.type === 'joined' && ev.room && /_ALL$/.test(ev.room)) {
+      try { clearInterval(window._gvGroupBeat); } catch (e) {}
+      window._gvGroupBeat = setInterval(function () {
+        try { fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'),
+          { from: userId, fromName: userName || 'Member', room: ev.room, ts: Date.now() }); } catch (e) {}
+      }, 12000);
+    }
+    if (ev.type === 'left') {
+      try { clearInterval(window._gvGroupBeat); } catch (e) {}
+      window._gvGroupBeat = null;
+      if (window._gvPingedUid) {
+        try { fbRemove(fbRef(db, 'gl/' + groupName + '/voice/' + window._gvPingedUid)); } catch (e) {}
+        window._gvPingedUid = null;
+      }
     }
   });
 }).catch(function () {});
