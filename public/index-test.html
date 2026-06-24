@@ -41,6 +41,15 @@
   window.MAPBOX_TOKEN = "pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg";
   // ───────────────────────────────────────────────────────────────────
 
+  // ─── VOICE (M1 — fill in after the Railway LiveKit + token deploys) ──
+  // livekitUrl    = your LiveKit server's wss URL  (Railway LiveKit template domain)
+  // tokenEndpoint = GROUNDWAVE /voice-token URL     (Phone-Talkie Railway domain)
+  window.VOICE_CONFIG = {
+    livekitUrl:    "",   // e.g. "wss://livekit-production-xxxx.up.railway.app"
+    tokenEndpoint: "",   // e.g. "https://breaker-production.up.railway.app/voice-token"
+  };
+  // ───────────────────────────────────────────────────────────────────
+
   const app = initializeApp(firebaseConfig);
   window._fb = { db: getDatabase(app), ref, set, push, onValue, remove };
 </script>
@@ -2279,12 +2288,17 @@ function listenUsers() {
       var _followBtn = !isMine
         ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
         : '';
+      // 🎙 Talk — opens the docked PTT voice bar to this member (M1, voice spec §4)
+      var _talkBtn = !isMine
+        ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:6px;width:100%;padding:7px;background:#f0a500;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#1a1200;cursor:pointer">🎙 Talk</button>'
+        : '';
       userMarkers[uid].getPopup().setHTML(
         '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
         '<div class="pop-label">' + data.name + '</div>' +
         _distHTML +
         '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
-        _followBtn
+        _followBtn +
+        _talkBtn
       );
 
       const row = document.createElement('div');
@@ -3503,5 +3517,37 @@ document.addEventListener('click', function(e) {
   <span style="pointer-events:none">⚗ TEST ENVIRONMENT</span>
   <a href="/" style="color:#fff;font-size:10px;font-weight:700;background:rgba(0,0,0,.3);border-radius:4px;padding:2px 8px;text-decoration:none;pointer-events:all">← Production</a>
 </div>
+
+<!-- ══ VOICE (M1) — member tap → docked PTT bar (voice spec §4) ═════════ -->
+<script>
+// Classic script: shares global scope with the main app, so it can read
+// userId / userName / groupName. Dynamically imports the shared voice module.
+window._openVoiceTo = async function (uid, name) {
+  var cfg = window.VOICE_CONFIG || {};
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) {
+    alert('Voice isn\'t configured yet.\n\nSet window.VOICE_CONFIG.livekitUrl and .tokenEndpoint near the top of index-test.html after the LiveKit + token deploys.');
+    return;
+  }
+  if (!userId || !groupName) { alert('Join a group first, then tap a member to talk.'); return; }
+  // Deterministic 2-person room id: same string whether A taps B or B taps A,
+  // so both land in the SAME LiveKit room (M1 has no ring/invite — both tap).
+  var pair = [userId, uid].sort().join('~');
+  var roomId = 'gv_' + groupName + '_' + pair;
+  try {
+    var mod = await import('./voice.js');
+    mod.openVoice({
+      room:          roomId,
+      identity:      userId,
+      name:          userName || 'Member',
+      partnerName:   name,
+      livekitUrl:    cfg.livekitUrl,
+      tokenEndpoint: cfg.tokenEndpoint,
+    });
+  } catch (e) {
+    console.error('[voice] failed to open', e);
+    alert('Voice failed to load: ' + e.message);
+  }
+};
+</script>
 </body>
 </html>
