@@ -1557,9 +1557,19 @@
         <button class="seg-btn layer-base-btn" data-style="usgs-topo" onclick="setBaseLayer(this)" style="flex-direction:column;gap:4px;min-height:56px;font-size:12px">
           <svg class="licon"><use href="#ic-mountain"/></svg>Topo
         </button>
+        <button class="seg-btn layer-base-btn" data-style="usgs-aerial" onclick="setBaseLayer(this)" style="flex-direction:column;gap:4px;min-height:56px;font-size:12px" title="USGS aerial imagery (public domain, works offline once downloaded)">
+          <svg class="licon"><use href="#ic-satellite"/></svg>Aerial
+        </button>
         <button class="seg-btn layer-base-btn" data-style="mapbox://styles/mapbox/streets-v12" onclick="setBaseLayer(this)" style="flex-direction:column;gap:4px;min-height:56px;font-size:12px">
           <svg class="licon"><use href="#ic-map"/></svg>Streets
         </button>
+      </div>
+      <div class="section-title">Offline maps</div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
+        <div style="font-size:11px;color:var(--muted);line-height:1.5">Pick <b style="color:var(--text)">Aerial</b> above, pan/zoom to your hunting area, then download it to use with no signal. USGS imagery, ~200&nbsp;MB cap.</div>
+        <button onclick="window._downloadOfflineArea && window._downloadOfflineArea()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download this view for offline</button>
+        <div id="offline-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
+        <button onclick="window._clearOfflineTiles && window._clearOfflineTiles()" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);cursor:pointer">Clear offline tiles</button>
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
@@ -1862,7 +1872,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 132;
+var APP_BUILD = 133;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6330,6 +6340,56 @@ function closeLayerSheet() {
   setLocateMeVisible(true);
 }
 
+// ── Offline aerial tiles (Phase 1: download a view → serve it with no signal) ──
+var GL_TILE_CACHE = 'gl-offline-tiles';
+var GL_TILE_CAP_BYTES = 200 * 1024 * 1024;  // 200 MB
+var GL_AERIAL_TPL = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}';
+function _lon2tx(lon, z) { return Math.floor((lon + 180) / 360 * Math.pow(2, z)); }
+function _lat2ty(lat, z) { var r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z)); }
+function _offlineTileIds(minZ, maxZ) {
+  var b = map.getBounds(), W = b.getWest(), E = b.getEast(), S = b.getSouth(), N = b.getNorth(), out = [];
+  for (var z = minZ; z <= maxZ; z++) {
+    var x0 = _lon2tx(W, z), x1 = _lon2tx(E, z), y0 = _lat2ty(N, z), y1 = _lat2ty(S, z);
+    for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) out.push(z + '/' + y + '/' + x);
+  }
+  return out;
+}
+function _setOfflineStatus(t) { var el = document.getElementById('offline-status'); if (el) el.textContent = t; }
+window._downloadOfflineArea = async function () {
+  if (!map || !window.caches) { alert('Offline caching isn\'t supported in this browser.'); return; }
+  var minZ = 11, maxZ = 17;                          // area = current view; z11–17 detail
+  var ids = _offlineTileIds(minZ, maxZ);
+  var capMB = Math.round(GL_TILE_CAP_BYTES / 1048576);
+  var estMB = Math.round(ids.length * 18 / 1024);     // ~18 KB/tile estimate
+  if (ids.length * 18 * 1024 > GL_TILE_CAP_BYTES) {
+    if (!confirm('This view is ~' + estMB + ' MB (' + ids.length + ' tiles) — over the ' + capMB + ' MB cap. Zoom IN to a tighter area for full coverage, or download up to the cap now?')) return;
+  } else if (!confirm('Download ~' + estMB + ' MB (' + ids.length + ' tiles) of aerial imagery for offline use?')) return;
+  var cache = await caches.open(GL_TILE_CACHE);
+  var done = 0, bytes = 0, failed = 0, capped = false;
+  for (var i = 0; i < ids.length; i++) {
+    if (bytes >= GL_TILE_CAP_BYTES) { capped = true; break; }
+    var p = ids[i].split('/');                          // z/y/x
+    var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
+    try {
+      var resp = await fetch(url, { mode: 'cors' });
+      if (resp.ok) {
+        bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000;
+        await cache.put(url, resp);
+        done++;
+      } else failed++;
+    } catch (e) { failed++; }
+    if (i % 20 === 0) _setOfflineStatus('Downloading… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)');
+  }
+  _setOfflineStatus('Saved ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB) offline' + (capped ? ' — hit the ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Turn on Airplane mode and pan this area to test.');
+  if (window._evt) window._evt('offline area saved: ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB');
+};
+window._clearOfflineTiles = async function () {
+  if (!window.caches) return;
+  if (!confirm('Delete all downloaded offline tiles?')) return;
+  await caches.delete(GL_TILE_CACHE);
+  _setOfflineStatus('Offline tiles cleared.');
+};
+
 function setBaseLayer(btn) {
   document.querySelectorAll('.layer-base-btn').forEach(function(b) {
     b.classList.remove('active');
@@ -6349,6 +6409,21 @@ function setBaseLayer(btn) {
         }
       },
       layers: [{ id: 'usgs-topo-layer', type: 'raster', source: 'usgs-topo' }]
+    });
+  } else if (style === 'usgs-aerial') {
+    // USGS National Map orthoimagery (USDA/USGS, public domain → cacheable offline).
+    map.setStyle({
+      version: 8,
+      sources: {
+        'usgs-aerial': {
+          type: 'raster',
+          tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          maxzoom: 17,
+          attribution: 'USDA/USGS The National Map: Orthoimagery'
+        }
+      },
+      layers: [{ id: 'usgs-aerial-layer', type: 'raster', source: 'usgs-aerial' }]
     });
   } else {
     map.setStyle(style);
