@@ -1883,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 139;
+var APP_BUILD = 140;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2643,6 +2643,8 @@ window._toggleFav = function(key, name, ev) {
   var f = _getFavs(); var i = f.indexOf(key);
   if (i === -1) {
     f.push(key); _setFavs(f);
+    // Favoriting keeps the room alive server-side, so a starred room never auto-deletes.
+    try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gl/' + key + '/config/persistent'), true); } catch (e) {}
     toast('★ ' + (name || 'Group') + ' favorited');
     _registerFavSub(key, name).then(function(ok) {
       toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
@@ -2745,13 +2747,16 @@ function renderRoomList(all) {
     var hasChat = group.chat && Object.keys(group.chat).length;
     var hasTrails = group.trails && Object.keys(group.trails).length;
     var config = group.config || {};
-    var persistent = !!config.persistent;   // rooms owned by a signed-in user never auto-expire
+    // Kept alive indefinitely if: owned by a signed-in user, OR private (recurring
+    // groups), OR favorited by anyone (favoriting writes config.persistent). Public,
+    // never-favorited rooms keep the casual lifecycle below.
+    var persistent = !!config.persistent || config.visibility === 'private';
     var isFav = favs.indexOf(key) !== -1;
-    // Empty husk with no data at all — safe to remove (unless it's a claimed persistent room).
+    // Empty husk with no data at all — safe to remove (unless it's a kept-alive room).
     if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
-    // Nobody in it for 24h — auto-retire, EXCEPT persistent rooms (kept until a year of total silence).
+    // Nobody in it for 24h — auto-retire, EXCEPT kept-alive rooms (persistent/private/favorited live forever).
     if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
-      if (!(persistent && (now - lastSeen) < YEAR_MS)) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+      if (!persistent) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
     }
 
     var liveUsers = realUsers.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
@@ -3060,6 +3065,16 @@ function enterMap(name, group, uid) {
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/visibility'), function(snap) {
         window._roomVisibility = snap.val() || 'public';
+        // Joining a PRIVATE room auto-favorites it (silently) so a recurring group always
+        // keeps it in their list to rejoin — and that also keeps it alive server-side.
+        try {
+          if (window._roomVisibility === 'private' && typeof _getFavs === 'function' && _getFavs().indexOf(groupName) === -1) {
+            var ff = _getFavs(); ff.push(groupName); _setFavs(ff);
+            try { var fbV = window._fb; if (fbV && fbV.set) fbV.set(fbV.ref(fbV.db, 'gl/' + groupName + '/config/persistent'), true); } catch (e) {}
+            try { _registerFavSub(groupName, userName); } catch (e) {}
+            try { if (window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
+          }
+        } catch (e) {}
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
