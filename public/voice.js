@@ -27,6 +27,7 @@ let session = null;       // { room, identity, name, partnerName } of current vo
 let listeners = [];       // onVoiceEvent subscribers
 let barEl = null;         // docked bar DOM root
 let audioSink = null;     // hidden container that holds remote <audio> elements
+let micOn = false;        // toggle PTT state: true = transmitting (open mic)
 
 function emit(evt) {
   listeners.forEach((cb) => { try { cb(evt); } catch (e) { /* ignore */ } });
@@ -65,6 +66,7 @@ export function leaveVoice() {
   if (room) { try { room.disconnect(); } catch (e) {} }
   room = null;
   session = null;
+  micOn = false;
   removeBar();
   emit({ type: 'left' });
 }
@@ -107,18 +109,22 @@ async function joinAndConnect() {
     if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
   });
 
-  // Talker indicator (spec §5): who is actively speaking.
+  // Talker indicator (spec §5): who is actively speaking. When nobody's talking,
+  // fall back to a presence line so you can SEE the other side has joined — M1 has
+  // no incoming ring, so both people must open voice to the same room themselves.
   room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
     const remote = speakers.find((p) => p.identity !== session.identity);
     if (remote) {
       const who = (remote.name || remote.identity);
-      setTalker('◉ ' + who + ' talking');
+      setTalker('◉ ' + who + ' talking', '#00e676');
       emit({ type: 'talking', who, identity: remote.identity });
     } else {
-      setTalker('');
+      updatePresence();
       emit({ type: 'talking', who: null });
     }
   });
+  room.on(RoomEvent.ParticipantConnected, updatePresence);
+  room.on(RoomEvent.ParticipantDisconnected, updatePresence);
 
   room.on(RoomEvent.Disconnected, () => { setBarStatus('Disconnected'); });
 
@@ -129,9 +135,11 @@ async function joinAndConnect() {
     // re-acquire. Half-duplex talking rule is enforced socially (spec §3).
     await room.localParticipant.setMicrophoneEnabled(true);
     await room.localParticipant.setMicrophoneEnabled(false);
+    micOn = false;
     // Unblock autoplay of incoming audio (the whole reason for the join tap, §6).
     try { await room.startAudio(); } catch (e) {}
     renderBar('live');
+    updatePresence();
     emit({ type: 'joined', room: session.room });
   } catch (e) {
     console.error('[voice] connect failed', e);
@@ -140,18 +148,29 @@ async function joinAndConnect() {
   }
 }
 
-// PTT key-up / key-down — toggles the published mic mute state.
-async function pttDown() {
+// PTT — push ON / push OFF. Tap once to start transmitting (open mic), tap again
+// to stop. (Replaces hold-to-talk per operator request.)
+async function togglePtt() {
   if (!room) return;
-  try { await room.localParticipant.setMicrophoneEnabled(true); } catch (e) {}
-  const btn = barEl && barEl.querySelector('#gv-ptt');
-  if (btn) btn.classList.add('gv-keyed');
+  const next = !micOn;
+  try { await room.localParticipant.setMicrophoneEnabled(next); } catch (e) { return; }
+  micOn = next;
+  updatePttButton();
 }
-async function pttUp() {
-  if (!room) return;
-  try { await room.localParticipant.setMicrophoneEnabled(false); } catch (e) {}
+function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
-  if (btn) btn.classList.remove('gv-keyed');
+  if (!btn) return;
+  if (micOn) { btn.classList.add('gv-keyed');    btn.innerHTML = '● ON<br>AIR'; }
+  else       { btn.classList.remove('gv-keyed'); btn.innerHTML = 'TAP TO<br>TALK'; }
+}
+
+// Show who else is in the room when nobody is actively talking, so it's obvious
+// the other person has joined (M1 has no incoming-call ring).
+function updatePresence() {
+  const remotes = room && room.remoteParticipants ? Array.from(room.remoteParticipants.values()) : [];
+  const names = remotes.map((p) => p.name || p.identity);
+  if (names.length === 0) setTalker('waiting for others to join…', '#8b949e');
+  else setTalker('✓ ' + names.join(', ') + ' in room', '#8b949e');
 }
 
 // ───────────────────────────── docked bar UI ──────────────────────────────
@@ -220,23 +239,20 @@ function renderBar(mode) {
       <div class="gv-name">${escapeHtml(session.partnerName)}</div>
       <div class="gv-talker" id="gv-talker"></div>
     </div>
-    <button id="gv-ptt">HOLD<br>TO TALK</button>
+    <button id="gv-ptt">TAP TO<br>TALK</button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
 
   const ptt = barEl.querySelector('#gv-ptt');
-  // Pointer events cover mouse + touch + pen with one path.
-  ptt.addEventListener('pointerdown', (e) => { e.preventDefault(); ptt.setPointerCapture(e.pointerId); pttDown(); });
-  ptt.addEventListener('pointerup', (e) => { e.preventDefault(); pttUp(); });
-  ptt.addEventListener('pointercancel', () => pttUp());
-  ptt.addEventListener('lostpointercapture', () => pttUp());
+  ptt.addEventListener('click', togglePtt);   // push ON / push OFF
+  updatePttButton();
   barEl.querySelector('#gv-leave').addEventListener('click', leaveVoice);
 }
 
 function showBar() { if (barEl) barEl.style.display = 'flex'; }
 function removeBar() { if (barEl) { barEl.remove(); barEl = null; } }
 function setBarStatus(txt) { const el = barEl && barEl.querySelector('#gv-status'); if (el) el.textContent = txt; }
-function setTalker(txt) { const el = barEl && barEl.querySelector('#gv-talker'); if (el) el.textContent = txt; }
+function setTalker(txt, color) { const el = barEl && barEl.querySelector('#gv-talker'); if (el) { el.textContent = txt; if (color) el.style.color = color; } }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
