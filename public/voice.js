@@ -144,7 +144,10 @@ async function connectVoice() {
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
         await room.localParticipant.setMicrophoneEnabled(false);
-      } catch (e) { /* mic perm denied — can still listen */ }
+      } catch (e) {
+        console.warn('[voice] mic prime failed (can still listen)', e);
+        emit({ type: 'error', message: 'mic prime: ' + ((e && e.message) || e) });
+      }
     }
     try { await room.startAudio(); } catch (e) {}
     updatePresence();
@@ -161,10 +164,17 @@ async function connectVoice() {
 // PTT — push ON / push OFF. First tap also acquires the mic (for auto-join
 // receivers) and unblocks audio playback, since the tap is a user gesture.
 async function togglePtt() {
-  if (!room) return;
+  if (!room) { setTalker('not connected', '#f85149'); return; }
   try { await room.startAudio(); } catch (e) {}
   const next = !micOn;
-  try { await room.localParticipant.setMicrophoneEnabled(next); } catch (e) { return; }
+  try {
+    await room.localParticipant.setMicrophoneEnabled(next);
+  } catch (e) {
+    console.error('[voice] mic toggle failed', e);
+    setTalker('⚠ mic blocked — allow mic', '#f85149');
+    emit({ type: 'error', message: 'mic: ' + ((e && e.message) || e) });
+    return;
+  }
   micOn = next;
   updatePttButton();
   emit({ type: 'ptt', on: micOn, room: session && session.room });
