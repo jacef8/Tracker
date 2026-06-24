@@ -167,6 +167,7 @@ async function togglePtt() {
   try { await room.localParticipant.setMicrophoneEnabled(next); } catch (e) { return; }
   micOn = next;
   updatePttButton();
+  emit({ type: 'ptt', on: micOn, room: session && session.room });
 }
 function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
