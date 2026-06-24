@@ -162,8 +162,9 @@ async function togglePtt() {
 function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
   if (!btn) return;
-  if (micOn) { btn.classList.add('gv-keyed');    btn.innerHTML = '● ON<br>AIR'; }
-  else       { btn.classList.remove('gv-keyed'); btn.innerHTML = 'TAP TO<br>TALK'; }
+  // Icon stays put; only the color/glow changes (amber idle → red ON AIR).
+  btn.classList.toggle('gv-keyed', micOn);
+  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk';
   setTx(micOn);
 }
 
@@ -213,11 +214,13 @@ function injectStylesOnce() {
     #gv-bar .gv-ind.rx-on .gv-led { background: #00e676; box-shadow: 0 0 8px #00e676; }
     #gv-join { background: #00e676; color: #00210f; border: none; border-radius: 10px;
       font-weight: 800; font-size: 14px; padding: 12px 18px; cursor: pointer; }
-    #gv-ptt { min-width: 108px; height: 46px; border-radius: 23px; border: none; flex: 0 0 auto;
-      background: #f0a500; color: #1a1200; font-weight: 900; font-size: 13px; line-height: 1.05; cursor: pointer;
+    #gv-ptt { width: 64px; height: 64px; border-radius: 50%; border: none; flex: 0 0 auto;
+      background: #f0a500; color: #1a1200; cursor: pointer; display: flex; align-items: center; justify-content: center;
       user-select: none; -webkit-user-select: none; box-shadow: 0 2px 0 #b87d00;
-      transition: transform .05s, box-shadow .05s; }
-    #gv-ptt.gv-keyed { background: #ff5252; color: #fff; transform: translateY(1px); box-shadow: 0 1px 0 #a30000; }
+      transition: transform .08s, box-shadow .12s, background .12s; }
+    #gv-ptt svg { width: 28px; height: 28px; }
+    #gv-ptt:active { transform: scale(.95); }
+    #gv-ptt.gv-keyed { background: #ff5252; color: #fff; box-shadow: 0 0 0 4px rgba(255,82,82,.25), 0 2px 0 #a30000; }
     #gv-bar .gv-icon { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 6px; }
     #gv-bar .gv-icon:active { color: #e6edf3; }
   `;
@@ -255,7 +258,7 @@ function renderBar(mode) {
       <div class="gv-name">${escapeHtml(session.partnerName)}</div>
       <div class="gv-talker" id="gv-talker"></div>
     </div>
-    <button id="gv-ptt">TAP TO<br>TALK</button>
+    <button id="gv-ptt" title="Tap to talk" aria-label="Push to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
 
