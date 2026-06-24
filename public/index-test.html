@@ -1829,7 +1829,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 123;
+var APP_BUILD = 124;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3074,6 +3074,7 @@ function enterMap(name, group, uid) {
     listenPins();
     listenChat();
     listenTrails();
+    if (window._listenVoiceInvites) window._listenVoiceInvites();
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
@@ -8562,34 +8563,70 @@ document.addEventListener('click', function(e) {
 <!-- ══ VOICE (M1) — member tap → docked PTT bar (voice spec §4) ═════════ -->
 <script>
 // Classic script: shares global scope with the main app, so it can read
-// userId / userName / groupName. Dynamically imports the shared voice module.
+// userId / userName / groupName / fb* and the shared voice module.
+//
+// Auto-receive model: tapping 🎙 pings the target via Firebase; the target's
+// device auto-joins the same room (if its voice is on) and hears you with no
+// "accept" step. The room id is deterministic so both sides converge on it.
+
+window._voiceMod = function () { return import('./voice.js'); };
+function _gvRoomId(uid) { return 'gv_' + groupName + '_' + [userId, uid].sort().join('~'); }
+
+// ── Initiator: tap 🎙 → ping the target + open voice (mic ready) ───
 window._openVoiceTo = async function (uid, name) {
-  if (document.body.classList.contains('voice-off')) return; // voice disabled in Settings
+  if (document.body.classList.contains('voice-off')) return; // voice disabled here
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) {
-    alert('Voice isn\'t configured yet.\n\nSet window.VOICE_CONFIG.livekitUrl and .tokenEndpoint near the top of index-test.html after the LiveKit + token deploys.');
-    return;
-  }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) { alert('Join a group first, then tap a member to talk.'); return; }
-  // Deterministic 2-person room id: same string whether A taps B or B taps A,
-  // so both land in the SAME LiveKit room (M1 has no ring/invite — both tap).
-  var pair = [userId, uid].sort().join('~');
-  var roomId = 'gv_' + groupName + '_' + pair;
+  var roomId = _gvRoomId(uid);
+  // Ping the other device so it auto-joins (if it has voice on).
   try {
-    var mod = await import('./voice.js');
-    mod.openVoice({
-      room:          roomId,
-      identity:      userId,
-      name:          userName || 'Member',
-      partnerName:   name,
-      livekitUrl:    cfg.livekitUrl,
-      tokenEndpoint: cfg.tokenEndpoint,
+    fbSet(fbRef(db, 'gl/' + groupName + '/voice/' + uid), {
+      from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
     });
-  } catch (e) {
-    console.error('[voice] failed to open', e);
-    alert('Voice failed to load: ' + e.message);
-  }
+    window._gvPingedUid = uid; // remember so we can clear the ping when we leave
+  } catch (e) {}
+  try {
+    var mod = await window._voiceMod();
+    mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
+      partnerName: name, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+  } catch (e) { console.error('[voice] open failed', e); alert('Voice failed to load: ' + e.message); }
 };
+
+// ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
+var _gvLastPingTs = 0;
+window._listenVoiceInvites = function () {
+  if (!db || !groupName || !userId) return;
+  try {
+    fbOnValue(fbRef(db, 'gl/' + groupName + '/voice/' + userId), async function (snap) {
+      var inv = snap.val();
+      if (!inv || !inv.room) return;
+      if (document.body.classList.contains('voice-off')) return;     // voice off here
+      if (Date.now() - (inv.ts || 0) > 25000) return;                // stale ping
+      if (inv.ts <= _gvLastPingTs) return;                           // already handled
+      _gvLastPingTs = inv.ts;
+      var cfg = window.VOICE_CONFIG || {};
+      if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+      try {
+        var mod = await window._voiceMod();
+        if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in it
+        mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
+          partnerName: inv.fromName || 'member', livekitUrl: cfg.livekitUrl,
+          tokenEndpoint: cfg.tokenEndpoint, listen: true });
+      } catch (e) { console.error('[voice] auto-join failed', e); }
+    });
+  } catch (e) {}
+};
+
+// Clear our outgoing ping when we leave voice, so it doesn't linger.
+window._voiceMod().then(function (m) {
+  if (m.onVoiceEvent) m.onVoiceEvent(function (ev) {
+    if (ev.type === 'left' && window._gvPingedUid) {
+      try { fbRemove(fbRef(db, 'gl/' + groupName + '/voice/' + window._gvPingedUid)); } catch (e) {}
+      window._gvPingedUid = null;
+    }
+  });
+}).catch(function () {});
 </script>
 
 <!-- ══ TEST ENVIRONMENT banner ═════════════════════════════════════════ -->
