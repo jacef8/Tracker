@@ -1090,6 +1090,12 @@
 
         </div>
 
+        <!-- Your people — see where favorites are, even before you join a group -->
+        <div style="margin-top:4px">
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">★ Your people</div>
+          <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
+        </div>
+
         <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
           <svg class="licon licon-sm"><use href="#ic-share"/></svg>
           Share GroundLink
@@ -1747,13 +1753,20 @@
 <!-- ══ USER DRAWER ════════════════════════════════════════════════════ -->
 <div id="user-drawer">
   <div class="panel-header">
-    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-users"/></svg>On the Map</span>
+    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-users"/></svg>People</span>
     <button class="panel-close" id="close-user-drawer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
-  <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="margin:8px 12px;padding:11px;background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">🎙 Talk to group</button>
-  <!-- Favorites who are online in OTHER rooms (or offline) — tap to jump to their room. -->
-  <div id="people-elsewhere"></div>
-  <div id="user-list"></div>
+  <div style="display:flex;gap:6px;padding:0 12px 8px">
+    <button id="ptab-inroom" onclick="window._peopleTab('inroom')" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:9px;font-size:13px;font-weight:800;color:#1a1200;cursor:pointer">In room</button>
+    <button id="ptab-friends" onclick="window._peopleTab('friends')" style="flex:1;padding:9px;background:var(--bg);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer">★ Friends</button>
+  </div>
+  <div id="tab-inroom">
+    <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="margin:0 12px 8px;padding:11px;width:calc(100% - 24px);background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">🎙 Talk to group</button>
+    <div id="user-list"></div>
+  </div>
+  <div id="tab-friends" style="display:none">
+    <div id="friends-list"></div>
+  </div>
 </div>
 
 <!-- ══ ROOM INFO SHEET ══════════════════════════════════════════════ -->
@@ -1810,6 +1823,10 @@
     <div onclick="_setToggleSpeed()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-compass"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my speed</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Let the group see your speed while driving (over 25 mph)</div></div></div>
       <span id="set-speed-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
+    <div onclick="window._setToggleAnnounceJoin && window._setToggleAnnounceJoin()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-users"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Announce when I join</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Notify members &amp; your favorites when you enter this room. Off = join quietly.</div></div></div>
+      <span id="set-announce-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
     <div onclick="_setToggleBatterySaver()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-rain"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Battery saver</div><div style="font-size:11px;color:var(--muted);margin-top:2px">When you sit still a while, ease off GPS &amp; send a slow heartbeat. Moving wakes it instantly.</div></div></div>
@@ -1913,7 +1930,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 156;
+var APP_BUILD = 157;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2141,30 +2158,74 @@ window._toggleFriend = function(uid, name, ev) {
 // ── "My People": favorites who are online in OTHER rooms (or offline) ──────────────
 // Uses the global presence index (window._presenceAll, kept live by a /gl/_presence sub).
 function _presenceOnline(p) { return !!(p && p.room && (!p.ts || (Date.now() - p.ts) < 6 * 60 * 1000)); }
-function _renderMyPeople() {
-  var el = document.getElementById('people-elsewhere'); if (!el) return;
-  var friends = _getFriends(), pres = window._presenceAll || {}, rows = '';
-  Object.keys(friends).forEach(function(fid) {
-    if (fid === userId) return;                       // not yourself
+// Build the FULL favorites list (in your room / in another room / offline) with a Join
+// button for ones online elsewhere and an ✕ to remove. Shared by the People drawer's
+// Friends tab and the Account page.
+function _friendsRowsHTML() {
+  var friends = _getFriends(), pres = window._presenceAll || {};
+  var ids = Object.keys(friends).filter(function (f) { return f !== userId; });
+  if (!ids.length) return '<div style="padding:18px 14px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7">No favorites yet.<br>Tap the ☆ star next to someone in a room to add them.</div>';
+  function rank(fid) { var p = pres[fid]; if (_presenceOnline(p)) { return (typeof groupName !== 'undefined' && p.room === groupName) ? 1 : 0; } return 2; }
+  ids.sort(function (a, b) { return rank(a) - rank(b); });   // online-elsewhere, then in-room, then offline
+  return ids.map(function (fid) {
     var p = pres[fid];
-    if (p && p.room === groupName) return;            // already in your room → shown in the list below
     var nm = (p && p.name) || friends[fid] || 'Friend';
     var online = _presenceOnline(p);
+    var inMyRoom = online && (typeof groupName !== 'undefined') && p.room === groupName;
     var roomDisp = online ? _prettyGroup(p.room) : '';
+    var statusTxt = inMyRoom ? 'In your room' : online ? 'In “' + roomDisp + '”' : 'Offline';
+    var statusCol = inMyRoom ? '#f0a500' : online ? '#3fb950' : 'var(--muted)';
     var safeRoom = online ? String(p.room).replace(/'/g, '') : '';
     var safeDisp = roomDisp.replace(/'/g, '');
-    rows +=
-      '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+    var joinBtn = (online && !inMyRoom) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
+    var rmBtn = '<button onclick="window._removeFriend(\'' + fid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">✕</button>';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
         '<div style="width:34px;height:34px;border-radius:50%;background:' + (online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + initials(nm) + '</div>' +
         '<div style="min-width:0;flex:1">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm + '</div>' +
-          '<div style="font-size:12px;color:' + (online ? '#3fb950' : 'var(--muted)') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (online ? 'In “' + roomDisp + '”' : 'Offline') + '</div>' +
-        '</div>' +
-        (online ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:8px 13px;background:#00e676;border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '') +
+          '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
+        '</div>' + joinBtn + rmBtn +
       '</div>';
-  });
-  el.innerHTML = rows ? ('<div style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 12px 4px">Your people elsewhere</div>' + rows) : '';
+  }).join('');
 }
+function _renderFriends() {
+  var html = _friendsRowsHTML();
+  var a = document.getElementById('friends-list'); if (a) a.innerHTML = html;
+  var b = document.getElementById('account-friends'); if (b) b.innerHTML = html;
+}
+function _renderMyPeople() { _renderFriends(); }   // back-compat alias for existing callers
+window._removeFriend = function (fid) {
+  var m = _getFriends(); var nm = m[fid];
+  if (!confirm('Remove ' + (nm || 'this person') + ' from your favorites?')) return;
+  delete m[fid]; _setFriends(m);
+  _renderFriends();
+  try { toast('Removed from favorites'); } catch (e) {}
+};
+window._peopleTab = function (which) {
+  var friends = which === 'friends';
+  var ti = document.getElementById('tab-inroom'), tf = document.getElementById('tab-friends');
+  if (ti) ti.style.display = friends ? 'none' : '';
+  if (tf) tf.style.display = friends ? '' : 'none';
+  var bi = document.getElementById('ptab-inroom'), bf = document.getElementById('ptab-friends');
+  function on(b) { if (b) { b.style.background = 'var(--accent)'; b.style.color = '#1a1200'; b.style.border = 'none'; } }
+  function off(b) { if (b) { b.style.background = 'var(--bg)'; b.style.color = 'var(--muted)'; b.style.border = '1px solid var(--border)'; } }
+  if (friends) { on(bf); off(bi); _renderFriends(); } else { on(bi); off(bf); }
+};
+// Subscribe once to the global presence index → drives the friends lists + alerts. Called
+// both on app load (so the Account page shows friends before you join) and after joining.
+window._ensurePresenceSub = function (fb) {
+  if (window._presenceSubbed) return;
+  fb = fb || window._fb; if (!fb) return;
+  window._presenceSubbed = true;
+  try {
+    fb.onValue(fb.ref(fb.db, 'gl/_presence'), function (ps) {
+      window._presenceAll = ps.val() || {};
+      try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
+      try { _renderFriends(); } catch (e) {}
+    });
+  } catch (e) {}
+};
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} }); } catch (e) {}
 // Toast when a favorite enters a room (skips the first snapshot so we don't flood on join).
 function _checkPresenceAlerts(newPres) {
   var friends = _getFriends(), prev = window._prevPresence || {};
@@ -2530,6 +2591,7 @@ function _syncSettings() {
   _setPill('set-alerts-pill', !!alertsOn);
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
   _setPill('set-speed-pill', _shareSpeed());
+  _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
   _setPill('set-voice-pill', _voiceEnabled());
   var cb = document.getElementById('toggle-parcels');
@@ -2576,6 +2638,14 @@ function _setToggleSpeed() {
     if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
   } catch (e) {}
 }
+// "Announce when I join" — whether entering a room notifies other members + your favorites.
+function _announceJoinOn() { try { return localStorage.getItem('gl_announce_join') !== '0'; } catch (e) { return true; } }
+window._setToggleAnnounceJoin = function () {
+  var on = !_announceJoinOn();
+  try { localStorage.setItem('gl_announce_join', on ? '1' : '0'); } catch (e) {}
+  _syncSettings();
+  toast(on ? 'Members get notified when you join a room' : 'You’ll join quietly — no arrival notification sent', 3400);
+};
 window._setToggleBgLocation = function () {
   var on = !_bgLocationOn();
   try { localStorage.setItem('gl_bg_location', on ? '1' : '0'); } catch (e) {}
@@ -2736,6 +2806,8 @@ window._acctDeleteGroup = function(key, disp) {
   });
 };
 function _renderAccountPage() {
+  try { if (window._ensurePresenceSub) window._ensurePresenceSub(); } catch (e) {}  // so friends show before joining
+  try { _renderFriends(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -3272,15 +3344,8 @@ function enterMap(name, group, uid) {
         } catch (_) {}
       });
     } catch (_) {}
-    // Subscribe once to the global presence index → drives the "My People" list + friend alerts.
-    if (!window._presenceSubbed) {
-      window._presenceSubbed = true;
-      try { fb.onValue(fb.ref(fb.db, 'gl/_presence'), function(ps) {
-        window._presenceAll = ps.val() || {};
-        try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
-        try { _renderMyPeople(); } catch (e) {}
-      }); } catch (_) {}
-    }
+    // Drive the friends lists + alerts off the global presence index (subscribes once).
+    try { if (window._ensurePresenceSub) window._ensurePresenceSub(fb); } catch (_) {}
 
     // Smooth transition — no black flash
     document.getElementById('join-screen').style.opacity = '0';
@@ -3332,7 +3397,7 @@ function enterMap(name, group, uid) {
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
     }); } catch (e) {}
-    pushNotify('join', groupName, userName + ' joined the group', { toFavs: true });
+    if (_announceJoinOn()) pushNotify('join', groupName, userName + ' joined the group', { toFavs: true });
     // Notifications default ON — silently re-subscribe to this room if permission is already granted
     setTimeout(autoEnableAlerts, 800);
     // Load this room's cached passcode (so invites can build a direct-join link)
