@@ -183,6 +183,9 @@
     padding: 5px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.45);
   }
+  body.gv-active #map-controls { bottom: calc(var(--safe-bot) + 100px); }
+  body.gv-active #member-sheet { bottom: calc(var(--safe-bot) + 100px); }
+  body.member-open #map-controls { display: none !important; }
   #map-controls button {
     width: 42px;
     height: 42px;
@@ -336,7 +339,7 @@
     border-top: 1px solid rgba(240,165,0,0.45);
     box-shadow: 0 -6px 24px rgba(0,0,0,0.5);
     display: flex; flex-direction: column;
-    transform: translateY(100%);
+    transform: translateY(110%);
     transition: transform .25s cubic-bezier(.4,0,.2,1);
   }
   #chat-panel.open { transform: translateY(0); }
@@ -350,7 +353,7 @@
     border-top: 1px solid rgba(240,165,0,0.45);
     box-shadow: 0 -6px 24px rgba(0,0,0,0.5);
     display: flex; flex-direction: column;
-    transform: translateY(100%);
+    transform: translateY(110%);
     transition: transform .25s cubic-bezier(.4,0,.2,1);
   }
   #pin-feed-panel.open { transform: translateY(0); }
@@ -1214,6 +1217,11 @@
   </div>
 </div>
 
+<!-- ══ MEMBER INFO CARD — full-width bottom bar shown when you tap a person on the map. ══ -->
+<div id="member-sheet" style="display:none;position:fixed;left:8px;right:8px;bottom:calc(var(--safe-bot) + 12px);z-index:300;background:rgba(13,17,23,0.94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(240,165,0,0.45);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,0.55);padding:12px 14px">
+  <div id="member-sheet-body"></div>
+</div>
+
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
 <div id="pin-mode-bar">
   <svg class="licon licon-sm"><use href="#ic-pin"/></svg>Tap the map to place a pin
@@ -1896,7 +1904,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 151;
+var APP_BUILD = 152;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4962,27 +4970,16 @@ function listenUsers() {
         el.appendChild(_spdEl);
         _updateMarkerSpeed(el, data);
 
-        const popup = new mapboxgl.Popup({ offset: 26, closeButton: false, anchor: 'top' }); // sits BELOW the dot, out of the path ahead
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
-          .setPopup(popup)
           .addTo(map);
         userMarkers[uid]._el = el;
-        // Tap marker → fly to user, open popup, start following
+        // Tap marker → open the bottom info card (a full-width bar that never covers the
+        // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
         el.addEventListener('click', function() {
-          if (window._pauseFollow) window._pauseFollow(9000); // keep the popup reachable (Navigate button)
-          if (isMine) {
-            window._followUser(userId, 'you');
-            return;
-          }
-          map.flyTo({ center: [data.lng, data.lat], zoom: Math.max(map.getZoom(), 16), duration: 800 });
-          setTimeout(function() {
-            // Mapbox already toggles the popup on marker click — only open it if it isn't
-            // already, so we never double-toggle it shut (that was making it flash and vanish).
-            try { var pop = userMarkers[uid] && userMarkers[uid].getPopup();
-                  if (pop && !pop.isOpen()) userMarkers[uid].togglePopup(); } catch (e) {}
-            if (isLive) window._followUser(uid, data.name);
-          }, 850);
+          if (window._pauseFollow) window._pauseFollow(9000);
+          if (isMine) { window._followUser(userId, 'you'); return; }
+          window._showMemberSheet(uid);
         });
       } else if (hasGps && userMarkers[uid]) {
         // Update position only if live — keep last known position if not. Glide instead
@@ -5002,37 +4999,44 @@ function listenUsers() {
         }
       }
 
-      // Popup content — only for users with GPS markers
+      // Bottom info-card content — built for users with GPS markers and stashed on the
+      // marker, so a tap (or a live update while the card is open) renders it instantly.
       if (hasGps && userMarkers[uid]) {
         const _gps = window._lastGPS;
-        let _distHTML = '';
+        var _distLine = '';
         if (!isMine && _gps) {
           const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
           const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
-          _distHTML = `<div class="pop-dist" style="display:flex;align-items:center;gap:5px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg>${_d} from you &middot; ${_b}</div>`;
+          _distLine = _d + ' from you · ' + _b;
         }
         const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : isResting ? 'RESTING' : 'LAST KNOWN';
         const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#888ea0';
         var _safeName = data.name.replace(/'/g, '');
-        // Speed — only when sharing is on, there's GPS, and they're driving (>25 mph).
-        var _speedHTML = (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps)
-          ? '<div class="pop-dist" style="color:#ffa657;display:flex;align-items:center;gap:5px">&#128663; ' + data.spd + ' mph</div>' : '';
-        var _followBtn = !isMine
-          ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="margin-top:8px;width:100%;padding:7px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:8px;font-size:12px;font-weight:700;color:#000;cursor:pointer">' + (isLive ? 'Follow Live' : 'Go to Last Location') + '</button>'
+        var _driving = (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps);
+        var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
+        var _sub = (_distLine ? _distLine + ' · ' : '') + _meta;
+        var _msFollow = !isMine
+          ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>'
           : '';
-        // Open the phone's navigation app routed to this person's location.
-        var _navBtn = (!isMine && hasGps)
-          ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="margin-top:6px;width:100%;padding:7px;background:transparent;border:1px solid var(--accent);border-radius:8px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
+        var _msNav = (!isMine && hasGps)
+          ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
-        userMarkers[uid].getPopup().setHTML(
-          '<div class="pop-cat" style="color:' + statusColor + '">' + statusLabel + '</div>' +
-          '<div class="pop-label">' + _withDev(data) + '</div>' +
-          _distHTML +
-          _speedHTML +
-          '<div class="pop-meta">' + (isLive ? '&plusmn;' + (data.accuracy||'?') + 'ft &middot; ' : 'Last seen: ') + timeLabel + '</div>' +
-          _followBtn +
-          _navBtn
-        );
+        userMarkers[uid]._ll = [data.lng, data.lat];
+        userMarkers[uid]._isLive = isLive;
+        userMarkers[uid]._sheetHTML =
+          '<button onclick="window._closeMemberSheet()" aria-label="Close" style="position:absolute;top:6px;right:8px;background:none;border:none;color:#8b949e;font-size:18px;line-height:1;cursor:pointer;padding:4px 6px;z-index:2">✕</button>' +
+          '<div style="display:flex;align-items:center;gap:12px">' +
+            '<div style="min-width:0;flex:1">' +
+              '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>' : '') + '</div>' +
+              '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px">' + _withDev(data) + '</div>' +
+              '<div style="font-size:12px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _sub + '</div>' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">' + _msFollow + _msNav + '</div>' +
+          '</div>';
+        if (window._openMemberUid === uid) {
+          var _msb = document.getElementById('member-sheet-body');
+          if (_msb) _msb.innerHTML = userMarkers[uid]._sheetHTML;
+        }
       }
 
       const statusColor = data.noGps ? '#888ea0' : isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
@@ -8452,6 +8456,28 @@ var _linEase = function(t) { return t; };
 // few seconds so it stops fighting a pinch-zoom or closing an open popup, then resumes.
 window._followPausedUntil = 0;
 window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 7000); };
+
+// Member info card (full-width bottom bar) — opened by tapping a person's dot. Flies to
+// the dot keeping it visible ABOVE the card (map bottom-padding), and follows if they're live.
+window._showMemberSheet = function(uid) {
+  var mk = userMarkers[uid]; if (!mk) return;
+  window._openMemberUid = uid;
+  var sheet = document.getElementById('member-sheet');
+  var body = document.getElementById('member-sheet-body');
+  if (body) body.innerHTML = mk._sheetHTML || '';
+  if (sheet) sheet.style.display = 'block';
+  document.body.classList.add('member-open');
+  if (mk._ll) {
+    try { map.flyTo({ center: mk._ll, zoom: Math.max(map.getZoom(), 16), duration: 700, padding: { top: 0, left: 0, right: 0, bottom: 240 } }); } catch (e) {}
+  }
+  if (mk._isLive) { try { window._followUser(uid, ''); } catch (e) {} }
+};
+window._closeMemberSheet = function() {
+  window._openMemberUid = null;
+  var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
+  document.body.classList.remove('member-open');
+  try { map.flyTo({ padding: { top: 0, left: 0, right: 0, bottom: 0 }, duration: 400 }); } catch (e) {}
+};
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
@@ -9192,11 +9218,12 @@ window._voiceMod().then(function (m) {
   // Overlays needing a real close fn (cleanup); everything else is hidden generically.
   var SPECIAL = {
     'layer-sheet': function () { if (typeof closeLayerSheet === 'function') closeLayerSheet(); else hide('layer-sheet'); },
-    'offline-mode-bar': function () { if (window._cancelOfflineMode) window._cancelOfflineMode(); else hide('offline-mode-bar'); }
+    'offline-mode-bar': function () { if (window._cancelOfflineMode) window._cancelOfflineMode(); else hide('offline-mode-bar'); },
+    'member-sheet': function () { if (window._closeMemberSheet) window._closeMemberSheet(); else hide('member-sheet'); }
   };
   // Least-modal first → most-modal last; on a z-index tie the later (more modal) wins.
   var IDS = ['user-drawer','track-detail-drawer','tracks-drawer','pin-list-drawer','saved-pins-drawer','pin-feed-panel',
-    'chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','layer-sheet','offline-mode-bar',
+    'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
     'pin-modal','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
     'delete-confirm-modal','color-picker-modal','invite-join-popup','cancelled-popup','member-popup'];
