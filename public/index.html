@@ -1930,7 +1930,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 159;
+var APP_BUILD = 160;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9038,7 +9038,7 @@ document.addEventListener('click', function(e) {
         statusEl.innerHTML =
           '<div style="display:flex;align-items:center;gap:9px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:8px 12px">' +
             '<span style="width:8px;height:8px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>' +
-            '<div style="font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(name() || 'you') + ' <span style="color:#a7b0bd;font-weight:400">· saved</span></div>' +
+            '<div style="font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(LS.get('gl_email') || name() || 'you') + ' <span style="color:#a7b0bd;font-weight:400">· synced</span></div>' +
           '</div>';
       } else {
         statusEl.innerHTML =
@@ -9189,7 +9189,7 @@ document.addEventListener('click', function(e) {
     if (!f || !f.auth || !f.authApi) return;
     var A = f.authApi;
     try { A.getRedirectResult(f.auth).then(function (uc) { if (uc && uc.user) afterFirebaseUser(uc.user); }).catch(function () {}); } catch (e) {}
-    try { A.onAuthStateChanged(f.auth, function (user) { if (user) { if (LS.get('gl_account') !== 'google') afterFirebaseUser(user); else refreshUI(); } }); } catch (e) {}
+    try { A.onAuthStateChanged(f.auth, function (user) { if (user) { if (user.email) LS.set('gl_email', user.email); if (LS.get('gl_account') !== 'google') afterFirebaseUser(user); else refreshUI(); } }); } catch (e) {}
   }
   if (window._fb && window._fb.auth) wireAuth();
   else window.addEventListener('gl-auth-ready', wireAuth);
