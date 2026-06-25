@@ -1930,7 +1930,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 157;
+var APP_BUILD = 158;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2157,7 +2157,10 @@ window._toggleFriend = function(uid, name, ev) {
 
 // ── "My People": favorites who are online in OTHER rooms (or offline) ──────────────
 // Uses the global presence index (window._presenceAll, kept live by a /gl/_presence sub).
-function _presenceOnline(p) { return !!(p && p.room && (!p.ts || (Date.now() - p.ts) < 6 * 60 * 1000)); }
+// A presence entry only exists while connected (onDisconnect removes it on leave/close),
+// so existence + a room == in that room. No timestamp gate — that wrongly marked
+// long-running sessions "offline" after 6 minutes.
+function _presenceOnline(p) { return !!(p && p.room); }
 // Build the FULL favorites list (in your room / in another room / offline) with a Join
 // button for ones online elsewhere and an ✕ to remove. Shared by the People drawer's
 // Friends tab and the Account page.
@@ -3341,6 +3344,10 @@ function enterMap(name, group, uid) {
           var _presRef = fb.ref(fb.db, 'gl/_presence/' + userId);
           fb.onDisconnect(_presRef).remove();
           fb.set(_presRef, { room: groupName, name: userName, ts: fb.serverTimestamp() });
+          // Re-assert every 2 min so a transient drop can't orphan us as "offline" to friends.
+          if (!window._presenceTimer) window._presenceTimer = setInterval(function () {
+            try { if (groupName && userId) fb.set(fb.ref(fb.db, 'gl/_presence/' + userId), { room: groupName, name: userName, ts: fb.serverTimestamp() }); } catch (e) {}
+          }, 120000);
         } catch (_) {}
       });
     } catch (_) {}
