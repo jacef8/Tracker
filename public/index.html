@@ -1886,7 +1886,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 148;
+var APP_BUILD = 149;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9213,12 +9213,13 @@ window._voiceMod().then(function (m) {
   window.addEventListener('popstate', function () { handleBack(); guard(); });
   guard();
 
-  // If @capacitor/app is ever added, use it too — minimize instead of exit on the map.
+  // Native app: @capacitor/app routes the hardware back here. Close a screen if open;
+  // on the bare map do nothing (never exit). This is the reliable path on Android.
   try {
     var Cap = window.Capacitor;
     if (Cap && Cap.Plugins && Cap.Plugins.App && Cap.Plugins.App.addListener) {
       Cap.Plugins.App.addListener('backButton', function () {
-        if (!handleBack() && Cap.Plugins.App.minimizeApp) Cap.Plugins.App.minimizeApp();
+        handleBack();   // close a screen if one's open; on the bare map do nothing
       });
     }
   } catch (e) {}
