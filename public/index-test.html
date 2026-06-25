@@ -1927,7 +1927,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 160;
+var APP_BUILD = 161;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2164,6 +2164,16 @@ function _friendStatus(fid) {
   var p = (window._presenceAll || {})[fid];
   if (_presenceOnline(p)) return { online: true, inMyRoom: (typeof groupName !== 'undefined') && p.room === groupName, roomKey: p.room, name: p.name };
   if ((typeof groupName !== 'undefined') && groupName && typeof userMarkers !== 'undefined' && userMarkers[fid]) return { online: true, inMyRoom: true, roomKey: groupName, name: null };
+  // Fallback (works without the presence index): find the friend in any room's member list
+  // from the loaded room-list snapshot. Catches no-GPS members (no map dot) too.
+  var snap = window._lastGlSnap;
+  if (snap) {
+    for (var g in snap) {
+      if (!g || g.charAt(0) === '_') continue;
+      var u = snap[g] && snap[g].users && snap[g].users[fid];
+      if (u && u.conn !== false) return { online: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
+    }
+  }
   return { online: false, inMyRoom: false, roomKey: '', name: null };
 }
 function _friendsRowsHTML() {
@@ -2215,6 +2225,9 @@ window._peopleTab = function (which) {
   if (friends) { on(bf); off(bi); _renderFriends(); } else { on(bi); off(bf); }
 };
 window._ensurePresenceSub = function (fb) {
+  // Keep the room-list snapshot loaded — friend statuses are derived from room membership
+  // (works under the current DB rules, which block the dedicated _presence index).
+  try { if (typeof loadRoomList === 'function') loadRoomList(); } catch (e) {}
   if (window._presenceSubbed) return;
   fb = fb || window._fb; if (!fb) return;
   window._presenceSubbed = true;
@@ -2917,10 +2930,13 @@ window._setHomeFilter = function(f) {
 };
 
 function loadRoomList() {
+  if (window._roomListSubbed) { if (window._lastGlSnap) { try { renderRoomList(window._lastGlSnap); } catch (e) {} } return; }
+  window._roomListSubbed = true;
   waitForFirebase(fb => {
     fb.onValue(fb.ref(fb.db, 'gltest'), snap => {
       window._lastGlSnap = snap.val() || {};
-      renderRoomList(window._lastGlSnap);
+      try { renderRoomList(window._lastGlSnap); } catch (e) {}
+      try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
     });
   });
 }
