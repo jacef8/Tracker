@@ -153,40 +153,39 @@ async function connectVoice() {
   }
 }
 
-// PTT — push ON / push OFF. First tap also acquires the mic (for auto-join
-// receivers) and unblocks audio playback, since the tap is a user gesture.
-async function togglePtt() {
+// Push-to-talk: HOLD to transmit, release to stop. The press is a user gesture, so the
+// mic (getUserMedia) is acquired SYNCHRONOUSLY on press — required for the permission
+// prompt to appear and for auto-join receivers to unblock audio playback.
+async function setPtt(on) {
   if (!room) { setTalker('not connected', '#f85149'); return; }
-  const next = !micOn;
-  // IMPORTANT: kick off setMicrophoneEnabled SYNCHRONOUSLY inside the tap, before
-  // any await. getUserMedia's permission prompt only appears while the user
-  // gesture is "active"; an await first (e.g. startAudio, a fetch) consumes that
-  // activation and the prompt is silently blocked → "mic blocked, no prompt".
+  if (on === micOn) return;                      // already in the requested state
+  // Kick off setMicrophoneEnabled BEFORE any await so the gesture is still active.
   let micPromise;
-  try { micPromise = room.localParticipant.setMicrophoneEnabled(next); }
+  try { micPromise = room.localParticipant.setMicrophoneEnabled(on); }
   catch (e) { micPromise = Promise.reject(e); }
+  micOn = on;                                    // reflect keyed state immediately (snappy)
+  updatePttButton();
+  // Ping the room so members with the app backgrounded get a "someone's talking"
+  // notification (they can't hear live audio when the app is closed). Page debounces.
+  if (on) { try { if (window._onVoiceTx) window._onVoiceTx(); } catch (e) {} }
   try {
     await micPromise;
   } catch (e) {
-    console.error('[voice] mic toggle failed', e);
+    console.error('[voice] mic set failed', e);
     setTalker('⚠ mic blocked — allow it in browser/app settings', '#f85149');
     emit({ type: 'error', message: 'mic: ' + ((e && e.message) || e) });
+    micOn = false; updatePttButton();
     return;
   }
-  try { await room.startAudio(); } catch (e) {}
-  micOn = next;
-  // Ping the room so members with the app backgrounded get a "someone's talking"
-  // notification (they can't hear live audio when the app is closed). Page debounces.
-  if (micOn) { try { if (window._onVoiceTx) window._onVoiceTx(); } catch (e) {} }
-  updatePttButton();
+  if (on) { try { await room.startAudio(); } catch (e) {} }
   emit({ type: 'ptt', on: micOn, room: session && session.room });
 }
 function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
   if (!btn) return;
   btn.classList.toggle('gv-keyed', micOn);
-  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk (don\'t hold)';
-  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'STOP' : 'TAP';
+  btn.title = micOn ? 'On air — release to stop' : 'Hold to talk';
+  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'HOLD';
   setTx(micOn);
 }
 
@@ -249,7 +248,7 @@ function injectStylesOnce() {
     #gv-bar .gv-ind.rx-on .gv-led { background: #00e676; box-shadow: 0 0 8px #00e676; }
     #gv-ptt { width: 66px; height: 66px; border-radius: 50%; border: none; flex: 0 0 auto;
       background: #f0a500; color: #1a1200; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-      user-select: none; -webkit-user-select: none; box-shadow: 0 2px 0 #b87d00;
+      user-select: none; -webkit-user-select: none; touch-action: none; box-shadow: 0 2px 0 #b87d00;
       transition: transform .08s, box-shadow .12s, background .12s; }
     #gv-ptt svg { width: 22px; height: 22px; }
     #gv-ptt .gv-ptt-hint { font-size: 10px; font-weight: 900; letter-spacing: .06em; line-height: 1; }
@@ -284,7 +283,13 @@ function renderBar() {
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
 
   const ptt = barEl.querySelector('#gv-ptt');
-  ptt.addEventListener('click', (e) => { e.stopPropagation(); togglePtt(); });
+  const _pttDown = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(true); };
+  const _pttUp = (e) => { e.stopPropagation(); setPtt(false); };
+  ptt.addEventListener('pointerdown', _pttDown);
+  ptt.addEventListener('pointerup', _pttUp);
+  ptt.addEventListener('pointerleave', _pttUp);   // slide finger off = release
+  ptt.addEventListener('pointercancel', _pttUp);
+  ptt.addEventListener('contextmenu', (e) => e.preventDefault());  // no long-press menu on mobile
   updatePttButton();
   barEl.querySelector('#gv-leave').addEventListener('click', (e) => { e.stopPropagation(); leaveVoice(); });
 }
