@@ -1883,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 140;
+var APP_BUILD = 141;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3028,6 +3028,17 @@ function enterMap(name, group, uid) {
 
     // Log join event
     writeDebugLog(groupName, userName + ' joined');
+    // Session log for the admin Users tab — persistent history (joined / where / how long).
+    // One record per join; its `l` (last-active) is touched as you move, so duration = l - j.
+    try {
+      window._sessionJoinTs = Date.now();
+      window._sessionId = userId + '_' + window._sessionJoinTs;
+      window._sessionTouch = 0;
+      fbSet(fbRef(db, 'gl/_sessions/' + window._sessionId), {
+        g: groupName, u: userId, n: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''),
+        j: window._sessionJoinTs, l: window._sessionJoinTs
+      });
+    } catch (e) {}
     // Creator picked a visibility for this brand-new group — record it on the config.
     if (window._pendingVisibility) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
@@ -4514,6 +4525,15 @@ function startLocationSharing() {
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
     });
+    // Touch the session log (throttled to 60s) so the admin Users tab tracks movement + duration.
+    try {
+      if (window._sessionId && (now - (window._sessionTouch || 0) > 60000)) {
+        window._sessionTouch = now;
+        fbSet(fbRef(db, 'gl/_sessions/' + window._sessionId), {
+          g: groupName, u: userId, n: userName, dev: _deviceLabel(), j: window._sessionJoinTs, l: now, lat: lat, lng: lng
+        });
+      }
+    } catch (e) {}
     window._bsLastWrite = now; // heartbeat clock for the battery saver
 
     // Write breadcrumb if enabled, moved enough, AND the fix is trustworthy. Low-accuracy

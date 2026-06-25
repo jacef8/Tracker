@@ -166,6 +166,7 @@
 
 <div class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('groups')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7a3 3 0 1 0 0-.01"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>Groups</button>
+  <button class="tab-btn" onclick="switchTab('users')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Users</button>
   <button class="tab-btn" onclick="switchTab('overview')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Map</button>
   <button class="tab-btn" onclick="switchTab('alldata')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>Data</button>
   <button class="tab-btn" onclick="switchTab('debug')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="8" height="14" rx="4"/><path d="M12 6V3"/><path d="M5 9H2"/><path d="M22 9h-3"/><path d="M5 14H2"/><path d="M22 14h-3"/><path d="M9 4 7 2"/><path d="m15 4 2-2"/></svg>Troubleshoot</button>
@@ -179,6 +180,18 @@
   </div>
   <div id="admin-list"><div class="loading">Connecting to Firebase…</div></div>
   <div id="admin-list-retired" style="display:none"></div>
+</div>
+
+<!-- USERS TAB — per-user history (joined / where / how long), independent of who's online now -->
+<div class="tab-panel" id="tab-users">
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <button class="gsub-btn ufilt active" data-win="86400000" onclick="setUserWindow(this)">24h</button>
+    <button class="gsub-btn ufilt" data-win="604800000" onclick="setUserWindow(this)">7 days</button>
+    <button class="gsub-btn ufilt" data-win="2592000000" onclick="setUserWindow(this)">30 days</button>
+    <button class="gsub-btn ufilt" data-win="0" onclick="setUserWindow(this)">All</button>
+  </div>
+  <div id="users-summary" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
+  <div id="users-list"><div class="loading">Loading user history…</div></div>
 </div>
 
 <!-- TROUBLESHOOT TAB — device diagnostics + activity event log -->
@@ -304,12 +317,13 @@ function setTroubleshootSub(which) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b,i) {
-    b.classList.toggle('active', ['groups','overview','alldata','debug'][i] === name);
+    b.classList.toggle('active', ['groups','users','overview','alldata','debug'][i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
   // Render tabs when switching
+  if (name === 'users') renderUsers();
   if (name === 'overview') renderOverview();
   if (name === 'debug') { renderDeviceDebug(); renderDebugLog(); }
   // Render alldata when switching to that tab
@@ -1365,6 +1379,89 @@ window.nukeAllInactiveRooms = function() {
           (done && fail === 0 ? '' : '\n\nIf any reappear, a device on an old build is still in them and recreating them.'));
   });
 };
+
+// ── USERS TAB — per-user history from gl/_sessions (written by the app on join) ──
+var _sessionsData = {};
+var _sessionsSub = null;
+var _userWindowMs = 86400000;                         // default 24h
+var _SESSION_KEEP_MS = 60 * 24 * 60 * 60 * 1000;      // purge sessions older than 60 days
+function _ensureSessionsSub() {
+  if (_sessionsSub) return;
+  var fb = window._fb; if (!fb) return;
+  _sessionsSub = fb.onValue(fb.ref(fb.db, 'gl/_sessions'), function(snap) {
+    _sessionsData = snap.val() || {};
+    var cutoff = Date.now() - _SESSION_KEEP_MS;
+    Object.entries(_sessionsData).forEach(function(kv) {
+      if (((kv[1] && kv[1].l) || 0) < cutoff) { try { fb.remove(fb.ref(fb.db, 'gl/_sessions/' + kv[0])); } catch (e) {} }
+    });
+    var p = document.getElementById('tab-users'); if (p && p.classList.contains('active')) renderUsers();
+  });
+}
+function setUserWindow(btn) {
+  document.querySelectorAll('.ufilt').forEach(function(b) { b.classList.toggle('active', b === btn); });
+  _userWindowMs = parseInt(btn.dataset.win, 10) || 0;
+  renderUsers();
+}
+function _fmtDur(ms) {
+  if (ms < 60000) return Math.round(ms / 1000) + 's';
+  var m = Math.round(ms / 60000);
+  if (m < 60) return m + 'm';
+  var h = Math.floor(m / 60); m = m % 60;
+  if (h < 24) return h + 'h' + (m ? ' ' + m + 'm' : '');
+  var d = Math.floor(h / 24); h = h % 24;
+  return d + 'd' + (h ? ' ' + h + 'h' : '');
+}
+function _ago(ts) {
+  var s = Date.now() - ts;
+  if (s < 60000) return 'just now';
+  var m = Math.round(s / 60000); if (m < 60) return m + 'm ago';
+  var h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+function renderUsers() {
+  _ensureSessionsSub();
+  var listEl = document.getElementById('users-list'); if (!listEl) return;
+  var now = Date.now();
+  var winStart = _userWindowMs ? (now - _userWindowMs) : 0;
+  var byUser = {};
+  Object.values(_sessionsData).forEach(function(s) {
+    if (!s || !s.u) return;
+    if (s.l && s.l < winStart) return;
+    var u = byUser[s.u] || (byUser[s.u] = { uid: s.u, name: s.n || s.u.slice(0, 6), dev: s.dev || '', sessions: [], groups: {}, lastSeen: 0, total: 0, lat: null, lng: null });
+    u.sessions.push(s);
+    if (s.n) u.name = s.n;
+    if (s.dev) u.dev = s.dev;
+    if (s.g) u.groups[s.g] = 1;
+    u.total += Math.max(0, (s.l || s.j || 0) - (s.j || 0));
+    if ((s.l || 0) > u.lastSeen) { u.lastSeen = s.l || 0; if (s.lat != null) { u.lat = s.lat; u.lng = s.lng; } }
+  });
+  var users = Object.values(byUser).sort(function(a, b) { return b.lastSeen - a.lastSeen; });
+  var totalSessions = Object.values(_sessionsData).filter(function(s) { return s && (!winStart || (s.l || 0) >= winStart); }).length;
+  var sm = document.getElementById('users-summary');
+  if (sm) sm.textContent = users.length + ' user' + (users.length !== 1 ? 's' : '') + ' · ' + totalSessions + ' session' + (totalSessions !== 1 ? 's' : '') + ' in range';
+  if (!users.length) { listEl.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No user activity in this range.</div>'; return; }
+  listEl.innerHTML = users.map(function(u) {
+    var online = (now - u.lastSeen) < 90000;
+    var grps = Object.keys(u.groups).map(_gname).join(', ');
+    var loc = (u.lat != null) ? '<a href="https://maps.google.com/?q=' + u.lat + ',' + u.lng + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">' + u.lat.toFixed(4) + ', ' + u.lng.toFixed(4) + '</a>' : '<span style="color:var(--muted)">—</span>';
+    var sess = u.sessions.slice().sort(function(a, b) { return (b.j || 0) - (a.j || 0); }).map(function(s) {
+      return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);padding:2px 0"><span>' + _esc(_gname(s.g || '?')) + ' · ' + new Date(s.j).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '</span><span>' + _fmtDur(Math.max(0, (s.l || s.j) - (s.j || 0))) + '</span></div>';
+    }).join('');
+    return '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:11px 13px;margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+        '<div style="font-weight:700;font-size:14px">' + _esc(u.name) + (u.dev ? ' <span style="font-size:11px;color:#8b949e;font-weight:500">· ' + _esc(u.dev) + '</span>' : '') + '</div>' +
+        '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;background:' + (online ? '#13361f' : '#30363d') + ';color:' + (online ? '#3fb950' : '#8b949e') + '">' + (online ? 'ONLINE' : _ago(u.lastSeen)) + '</span>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11px;color:#8b949e;margin-top:6px">' +
+        '<div>Sessions: <b style="color:#e6edf3">' + u.sessions.length + '</b></div>' +
+        '<div>Total time: <b style="color:#e6edf3">' + _fmtDur(u.total) + '</b></div>' +
+        '<div style="grid-column:1/3">Groups: <b style="color:#e6edf3">' + (_esc(grps) || '—') + '</b></div>' +
+        '<div style="grid-column:1/3">Last seen: ' + loc + '</div>' +
+      '</div>' +
+      '<details style="margin-top:6px"><summary style="font-size:11px;color:#f0a500;cursor:pointer">Session detail</summary>' + sess + '</details>' +
+    '</div>';
+  }).join('');
+}
 
 function loadAllDebugLogs(allData) {
   // Unsubscribe previous listeners
