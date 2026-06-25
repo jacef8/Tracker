@@ -1221,9 +1221,11 @@
   <div style="font-size:12px;color:#fff;text-align:center;font-weight:600;line-height:1.4">Everything on screen gets saved — pan &amp; zoom to frame your area</div>
   <input id="offline-name" type="text" placeholder="Name this area (e.g. Buck Camp)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:9px;color:#e6edf3;font-size:13px" />
   <div id="offline-est" style="font-size:14px;font-weight:800;text-align:center;color:var(--accent)">~0&nbsp;MB · 0 tiles</div>
+  <div id="offline-progress" style="display:none;height:7px;background:#21262d;border-radius:5px;overflow:hidden"><div id="offline-progress-fill" style="height:100%;width:0;background:var(--accent);transition:width .15s"></div></div>
   <div style="display:flex;gap:8px">
-    <button onclick="window._cancelOfflineMode && window._cancelOfflineMode()" style="flex:1;padding:9px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Done</button>
+    <button id="offline-done-btn" onclick="window._cancelOfflineMode && window._cancelOfflineMode()" style="flex:1;padding:9px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Done</button>
     <button id="offline-dl-btn" onclick="window._confirmOfflineDownload && window._confirmOfflineDownload()" style="flex:2;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:13px;font-weight:800;cursor:pointer">Download this area</button>
+    <button id="offline-cancel-btn" onclick="window._offlineCancel=true" style="display:none;flex:2;padding:9px;background:#5a1d1d;border:1px solid #f85149;border-radius:9px;color:#ffb3ab;font-size:13px;font-weight:800;cursor:pointer">Stop download</button>
   </div>
   <div id="offline-status" style="font-size:11px;color:var(--muted);text-align:center;min-height:14px"></div>
 </div>
@@ -1580,6 +1582,7 @@
       <div class="section-title">Offline maps</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
         <div style="font-size:11px;color:var(--muted);line-height:1.5">Save aerial imagery for an area to use with no signal. USGS imagery, ~200&nbsp;MB cap.</div>
+        <div id="offline-storage-meter"></div>
         <button onclick="window._startOfflineMode && window._startOfflineMode()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download an area for offline</button>
         <div id="offline-areas"></div>
       </div>
@@ -1884,7 +1887,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 146;
+var APP_BUILD = 147;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6487,6 +6490,20 @@ window._cancelOfflineMode = function () {
   if (bar) bar.style.display = 'none';
   if (_offlineMoveHandler) { try { map.off('moveend', _offlineMoveHandler); } catch (e) {} _offlineMoveHandler = null; }
 };
+function _offlineDlUI(on) {
+  var prog = document.getElementById('offline-progress');
+  var dl = document.getElementById('offline-dl-btn');
+  var doneB = document.getElementById('offline-done-btn');
+  var cancB = document.getElementById('offline-cancel-btn');
+  if (prog) prog.style.display = on ? 'block' : 'none';
+  if (dl) dl.style.display = on ? 'none' : 'block';
+  if (doneB) doneB.style.display = on ? 'none' : 'block';
+  if (cancB) cancB.style.display = on ? 'block' : 'none';
+}
+function _offlineProgress(frac) {
+  var f = document.getElementById('offline-progress-fill');
+  if (f) f.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + '%';
+}
 window._confirmOfflineDownload = async function () {
   var nameEl = document.getElementById('offline-name');
   var name = ((nameEl && nameEl.value) || '').trim();
@@ -6494,13 +6511,16 @@ window._confirmOfflineDownload = async function () {
   var ids = _offlineCurrentIds();
   var capMB = Math.round(GL_TILE_CAP_BYTES / 1048576);
   var c = (map && map.getCenter) ? map.getCenter() : { lat: 0, lng: 0 };
+  var bnds = (map && map.getBounds) ? map.getBounds() : null;
+  var bbox = bnds ? [bnds.getWest(), bnds.getSouth(), bnds.getEast(), bnds.getNorth()] : null;
   var id = 'a' + Date.now();
   var cacheName = 'gltiles_' + id;                       // one cache per area → clean per-area delete
-  var dl = document.getElementById('offline-dl-btn');
-  if (dl) { dl.disabled = true; dl.style.opacity = '.6'; }
+  window._offlineCancel = false;
+  _offlineDlUI(true); _offlineProgress(0);
   var cache = await caches.open(cacheName);
-  var done = 0, bytes = 0, failed = 0, capped = false;
+  var done = 0, bytes = 0, failed = 0, capped = false, stopped = false;
   for (var i = 0; i < ids.length; i++) {
+    if (window._offlineCancel) { stopped = true; break; }
     if (bytes >= GL_TILE_CAP_BYTES) { capped = true; break; }
     var p = ids[i].split('/');                          // z/y/x
     var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
@@ -6509,22 +6529,23 @@ window._confirmOfflineDownload = async function () {
       if (resp.ok) { bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); done++; }
       else failed++;
     } catch (e) { failed++; }
-    if (i % 15 === 0) _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)');
+    if (i % 5 === 0) { _offlineProgress((i + 1) / ids.length); _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)'); }
   }
-  if (dl) { dl.disabled = false; dl.style.opacity = '1'; }
   var parcelKeys = [];
   if (done > 0) {
-    try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(map && map.getBounds ? map.getBounds() : null); } catch (e) {}
+    if (!stopped) { try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(bnds); } catch (e) {} }
     var areas = _getAreas();
-    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng, parcelKeys: parcelKeys });
+    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng, bbox: bbox, parcelKeys: parcelKeys });
     _setAreas(areas);
     if (nameEl) nameEl.value = '';
     _renderOfflineAreas();
+    if (_offlineFpShown) _renderOfflineFootprints();
   } else {
     try { await caches.delete(cacheName); } catch (e) {}   // nothing saved → don't leave an empty cache
   }
-  _setOfflineStatus('Saved "' + name + '" — ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : '') + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
-  if (window._evt) window._evt('offline area "' + name + '" saved: ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : ''));
+  _offlineDlUI(false); _offlineProgress(0);
+  _setOfflineStatus((stopped ? 'Stopped — kept ' : 'Saved "' + name + '" — ') + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : '') + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
+  if (window._evt) window._evt('offline area "' + name + '" ' + (stopped ? 'stopped' : 'saved') + ': ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : ''));
 };
 window._deleteOfflineArea = async function (id) {
   var a = _getAreas().filter(function (x) { return x.id === id; })[0];
@@ -6538,25 +6559,102 @@ window._deleteOfflineArea = async function (id) {
   }
   _setAreas(_getAreas().filter(function (x) { return x.id !== id; }));
   _renderOfflineAreas();
+  if (_offlineFpShown) _renderOfflineFootprints();
   if (window._evt && a) window._evt('offline area "' + a.name + '" deleted');
 };
 function _renderOfflineAreas() {
+  _updateStorageMeter();
   var el = document.getElementById('offline-areas'); if (!el) return;
   var areas = _getAreas();
   if (!areas.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 2px">No offline areas saved yet. Tap “Download an area” above to save one.</div>'; return; }
   var total = areas.reduce(function (s, a) { return s + (a.bytes || 0); }, 0);
-  el.innerHTML = '<div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:8px 2px 5px">Saved areas · ' + _fmtMB(total) + '</div>' +
+  el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin:8px 2px 5px">' +
+      '<span style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Saved areas · ' + _fmtMB(total) + '</span>' +
+      '<button onclick="window._showAllOfflineAreas && window._showAllOfflineAreas()" style="background:none;border:none;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;padding:2px 4px">📍 Show all on map</button>' +
+    '</div>' +
     areas.slice().sort(function (a, b) { return b.ts - a.ts; }).map(function (a) {
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
-        '<div style="min-width:0">' +
-          '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (a.name || 'Area').replace(/</g, '&lt;') + '</div>' +
+        '<div onclick="window._goToOfflineArea && window._goToOfflineArea(\'' + a.id + '\')" style="min-width:0;flex:1;cursor:pointer" title="Show this area on the map">' +
+          '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📍 ' + (a.name || 'Area').replace(/</g, '&lt;') + '</div>' +
           '<div style="font-size:11px;color:var(--muted)">' + _fmtMB(a.bytes || 0) + ' · ' + (a.count || 0) + ' tiles' + (a.parcelKeys && a.parcelKeys.length ? ' · parcels ✓' : '') + '</div>' +
         '</div>' +
         '<button onclick="window._deleteOfflineArea(\'' + a.id + '\')" title="Delete this area" style="background:none;border:none;color:#f85149;font-size:17px;cursor:pointer;padding:4px 7px;flex-shrink:0;line-height:1">✕</button>' +
       '</div>';
     }).join('');
 }
+function _fmtGB(b) { return b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : _fmtMB(b); }
+async function _updateStorageMeter() {
+  var el = document.getElementById('offline-storage-meter'); if (!el) return;
+  var total = _getAreas().reduce(function (s, a) { return s + (a.bytes || 0); }, 0);
+  var quota = 0, usage = 0;
+  try { if (navigator.storage && navigator.storage.estimate) { var est = await navigator.storage.estimate(); quota = est.quota || 0; usage = est.usage || 0; } } catch (e) {}
+  if (!total && !quota) { el.innerHTML = ''; return; }
+  var pct = quota ? Math.min(100, Math.round(usage / quota * 100)) : 0;
+  el.innerHTML =
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:4px"><b style="color:var(--text)">' + _fmtMB(total) + '</b> saved offline' + (quota ? ' · ' + _fmtMB(usage) + ' of ' + _fmtGB(quota) + ' used on this device' : '') + '</div>' +
+    (quota ? '<div style="height:6px;background:#21262d;border-radius:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (pct > 90 ? '#f85149' : 'var(--accent)') + '"></div></div>' : '');
+}
 try { _renderOfflineAreas(); } catch (e) {}              // populate the manage list on load
+
+// ── "Where did I download to?" — draw saved-area footprints on the map ──────
+var _offlineFpShown = false, _fpStyleHooked = false;
+function _areaBox(a) {
+  var b = a.bbox;
+  if (!b || b.length < 4) { var d = 0.03; b = [a.lng - d, a.lat - d, a.lng + d, a.lat + d]; }  // legacy: ~box around center
+  return { W: b[0], S: b[1], E: b[2], N: b[3] };
+}
+function _areaFeature(a) {
+  var k = _areaBox(a);
+  return { type: 'Feature', properties: { name: a.name || 'Area' },
+    geometry: { type: 'Polygon', coordinates: [[[k.W, k.S], [k.E, k.S], [k.E, k.N], [k.W, k.N], [k.W, k.S]]] } };
+}
+function _ensureFootprintLayer() {
+  if (!window.map || !map.isStyleLoaded || !map.isStyleLoaded()) return false;
+  if (!map.getSource('offline-fp')) map.addSource('offline-fp', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  if (!map.getLayer('offline-fp-fill')) map.addLayer({ id: 'offline-fp-fill', type: 'fill', source: 'offline-fp', paint: { 'fill-color': '#3fb950', 'fill-opacity': 0.08 } });
+  if (!map.getLayer('offline-fp-line')) map.addLayer({ id: 'offline-fp-line', type: 'line', source: 'offline-fp', paint: { 'line-color': '#3fb950', 'line-width': 2, 'line-dasharray': [2, 1] } });
+  if (!map.getLayer('offline-fp-label')) map.addLayer({ id: 'offline-fp-label', type: 'symbol', source: 'offline-fp',
+    layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'], 'text-anchor': 'top', 'text-offset': [0, 0.4] },
+    paint: { 'text-color': '#3fb950', 'text-halo-color': 'rgba(0,0,0,.85)', 'text-halo-width': 1.5 } });
+  return true;
+}
+function _renderOfflineFootprints() {
+  if (!_offlineFpShown) return;
+  if (!_ensureFootprintLayer()) { setTimeout(_renderOfflineFootprints, 300); return; }
+  var s = map.getSource('offline-fp');
+  if (s) s.setData({ type: 'FeatureCollection', features: _getAreas().map(_areaFeature) });
+}
+function _hookFpStyle() {           // base-layer switch rebuilds the style → re-add our layer
+  if (_fpStyleHooked || !window.map || !map.on) return;
+  _fpStyleHooked = true;
+  map.on('styledata', function () { if (_offlineFpShown) { try { _ensureFootprintLayer(); _renderOfflineFootprints(); } catch (e) {} } });
+}
+function _fitToBoxes(boxes) {
+  if (!boxes.length || !window.map) return;
+  var W = 180, S = 90, E = -180, N = -90;
+  boxes.forEach(function (k) { W = Math.min(W, k.W); E = Math.max(E, k.E); S = Math.min(S, k.S); N = Math.max(N, k.N); });
+  try { map.fitBounds([[W, S], [E, N]], { padding: 60, maxZoom: 15, duration: 900 }); } catch (e) {}
+}
+window._showAllOfflineAreas = function () {
+  var areas = _getAreas();
+  if (!areas.length) { if (typeof toast === 'function') toast('No offline areas saved yet', 2500); return; }
+  _offlineFpShown = true; _hookFpStyle();
+  if (typeof closeLayerSheet === 'function') closeLayerSheet();
+  _renderOfflineFootprints();
+  _fitToBoxes(areas.map(_areaBox));
+  if (typeof toast === 'function') toast('Showing ' + areas.length + ' offline area' + (areas.length > 1 ? 's' : '') + ' — switch to Aerial to see the imagery', 4000);
+};
+window._goToOfflineArea = function (id) {
+  var a = _getAreas().filter(function (x) { return x.id === id; })[0]; if (!a) return;
+  _offlineFpShown = true; _hookFpStyle();
+  if (typeof closeLayerSheet === 'function') closeLayerSheet();
+  _renderOfflineFootprints();
+  _fitToBoxes([_areaBox(a)]);
+};
+window._hideOfflineFootprints = function () {
+  _offlineFpShown = false;
+  if (window.map && map.getSource && map.getSource('offline-fp')) { var s = map.getSource('offline-fp'); if (s) s.setData({ type: 'FeatureCollection', features: [] }); }
+};
 // Fetch + persist parcel GeoJSON tiles (z14) covering the given map bounds, for whatever
 // free parcel source covers the center. Best-effort and capped so a big area can't hammer
 // the FeatureServer; returns the list of saved tile keys (for per-area cleanup on delete).
