@@ -1913,7 +1913,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 154;
+var APP_BUILD = 155;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2620,6 +2620,15 @@ function pushNotify(type, title, body, opts) {
     }).catch(function(){});
   } catch (e) {}
 }
+// Voice key-up → notify the room so members with the app backgrounded know someone's
+// talking (they can't hear live audio when the app is closed). Debounced per device so a
+// burst of transmissions sends at most one ping every 25s. Called from voice.js.
+window._onVoiceTx = function () {
+  var now = Date.now();
+  if (now - (window._lastVoiceTxPush || 0) < 25000) return;
+  window._lastVoiceTxPush = now;
+  try { pushNotify('voice', (userName || 'Someone') + ' is talking 🔊', 'Tap to listen in ' + (groupName ? _prettyGroup(groupName) : 'your room')); } catch (e) {}
+};
 
 function sendSOS() {
   if (!groupName || !userId) { toast('Join a group first'); return; }

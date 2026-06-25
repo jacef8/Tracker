@@ -175,6 +175,9 @@ async function togglePtt() {
   }
   try { await room.startAudio(); } catch (e) {}
   micOn = next;
+  // Ping the room so members with the app backgrounded get a "someone's talking"
+  // notification (they can't hear live audio when the app is closed). Page debounces.
+  if (micOn) { try { if (window._onVoiceTx) window._onVoiceTx(); } catch (e) {} }
   updatePttButton();
   emit({ type: 'ptt', on: micOn, room: session && session.room });
 }
