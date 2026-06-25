@@ -44,6 +44,9 @@ app.post('/push', async function(req, res) {
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
+  // DB root namespace — the test page sends ns:'gltest' to isolate its data from
+  // production ('gl'). Sanitized + defaulted so existing prod callers are unchanged.
+  const ns = (typeof b.ns === 'string' && /^[a-z0-9_]{1,20}$/i.test(b.ns)) ? b.ns : 'gl';
   const payload = JSON.stringify({
     title: b.title || 'GroundLink',
     body:  b.body  || '',
@@ -51,7 +54,7 @@ app.post('/push', async function(req, res) {
     group: group,
     url:   b.url   || '/'
   });
-  const groupBase = DB_URL + '/gl/' + encodeURIComponent(group);
+  const groupBase = DB_URL + '/' + ns + '/' + encodeURIComponent(group);
   const base = groupBase + '/pushSubs';
   try {
     // Members currently in the room.
