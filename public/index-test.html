@@ -1983,7 +1983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 167;
+var APP_BUILD = 168;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3063,9 +3063,11 @@ function renderRoomList(all) {
       return u.rest && !u.noGps && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS;
     }).length;
     var presentCount = liveCount + restingCount;
-    // Hide rooms that have gone empty from the directory — but keep your favorites visible even
-    // when dormant, so a saved group is always one tap away to rejoin (Life360-style).
-    if (presentCount === 0 && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
+    // Hide a room from the directory only once it's truly empty — i.e. NOBODY is still
+    // connected (hasUsers respects the socket / disconnect grace), not merely "no GPS-live
+    // member." This keeps a room visible while someone is in it but backgrounded (GPS paused
+    // but still connected). Favorites stay visible even when dormant.
+    if (!hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
 
     var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
@@ -3077,7 +3079,7 @@ function renderRoomList(all) {
     if (_homeFilter === 'favorites') { if (!isFav) return; }
     else { if (vis !== 'public' && !isFav) return; }
 
-    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
+    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, hasUsers: hasUsers, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
   });
 
   if (rooms.length === 0) {
@@ -3106,7 +3108,9 @@ function renderRoomList(all) {
         + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0, 3).join(', ') + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
       : room.restingCount > 0
         ? '<span style="color:#2ec4b6;font-weight:700">' + room.restingCount + ' resting</span>'
-        : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
+        : room.hasUsers > 0
+          ? '<span style="color:#8b949e;font-weight:700">' + room.hasUsers + ' in room</span> &middot; <span style="color:#a7b0bd">idle</span>'
+          : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
     var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
     item.innerHTML =
       '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
