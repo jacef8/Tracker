@@ -1910,7 +1910,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 155;
+var APP_BUILD = 156;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4726,8 +4726,12 @@ function startLocationSharing() {
 
     if (!window._firstFix) {
       window._firstFix = true;
-      map.flyTo({ center: [lng, lat], zoom: 15 });
       writeDebugLog(groupName, userName + ' GPS active');
+      // Default to Follow Me on first entering the map — center on you and track your position.
+      try {
+        if (!followUid && typeof window._locateMeTapped === 'function') window._locateMeTapped();
+        else map.flyTo({ center: [lng, lat], zoom: 15 });
+      } catch (e) { try { map.flyTo({ center: [lng, lat], zoom: 15 }); } catch (e2) {} }
     }
   };
   window._onGpsFix = onGpsFix; // exposed so the Settings location toggle can refresh fast
