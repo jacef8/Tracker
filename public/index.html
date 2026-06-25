@@ -1835,6 +1835,17 @@
       <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
       <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen for quick rejoin</div></div>
     </div>
+    <!-- Keep the room alive (in the list, even when empty) until a set time -->
+    <div id="ri-expire-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:14px;font-weight:600;color:var(--text)">⏱ Keep active until…</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Keeps this room in the list even when it's empty, until the time you set.</div>
+      <div id="ri-expire-status" style="font-size:12px;color:#3fb950;font-weight:700;margin-top:8px;display:none"></div>
+      <div style="display:flex;gap:8px;margin-top:9px">
+        <input type="datetime-local" id="ri-expire-input" style="flex:1;min-width:0;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px 10px" />
+        <button onclick="window._setRoomExpire && window._setRoomExpire()" style="padding:8px 14px;background:var(--accent);border:none;border-radius:8px;color:#1a1200;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap">Set</button>
+      </div>
+      <button id="ri-expire-clear" onclick="window._clearRoomExpire && window._clearRoomExpire()" style="display:none;width:100%;margin-top:8px;padding:8px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer">Clear expiration</button>
+    </div>
     <div id="ri-pin-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px"></div>
     <div id="ri-vis-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:none"></div>
     <button onclick="closeRoomInfo();window._openInvitePicker();" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;width:100%;text-align:left">
@@ -1990,7 +2001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 168;
+var APP_BUILD = 169;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2631,8 +2642,46 @@ function openRoomInfo() {
   var ownerActions = document.getElementById('ri-owner-actions');
   if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
   try { _renderRiFav(); } catch (e) {}
+  try { _renderRoomExpire(); } catch (e) {}
   document.getElementById('room-info-sheet').style.display = 'block';
 }
+// ── "Keep active until…" expiration: a future timestamp at config/expires keeps the room
+// listed (even empty) and undeleteable until it passes. ──
+function _toLocalDatetime(ts) { var d = new Date(ts - new Date().getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); }
+function _roomExpiresTs() { try { return (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.expires) || 0; } catch (e) { return 0; } }
+function _renderRoomExpire() {
+  var ts = _roomExpiresTs();
+  var status = document.getElementById('ri-expire-status');
+  var clearBtn = document.getElementById('ri-expire-clear');
+  var inp = document.getElementById('ri-expire-input');
+  if (ts && ts > Date.now()) {
+    if (status) { status.style.display = 'block'; status.textContent = '✓ Active until ' + new Date(ts).toLocaleString(); }
+    if (clearBtn) clearBtn.style.display = 'block';
+    if (inp && !inp.value) { try { inp.value = _toLocalDatetime(ts); } catch (e) {} }
+  } else {
+    if (status) status.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+  }
+}
+window._setRoomExpire = function () {
+  var inp = document.getElementById('ri-expire-input');
+  if (!inp || !inp.value) { toast('Pick a date & time first'); return; }
+  var ts = new Date(inp.value).getTime();
+  if (isNaN(ts)) { toast('Invalid date'); return; }
+  if (ts <= Date.now()) { toast('Pick a time in the future'); return; }
+  try { if (db && groupName) fbSet(fbRef(db, 'gl/' + groupName + '/config/expires'), ts); } catch (e) {}
+  if (window._evt) window._evt('room kept active until ' + new Date(ts).toLocaleString());
+  toast('Room stays active until ' + new Date(ts).toLocaleString(), 3500);
+  try { if (window._lastGlSnap && window._lastGlSnap[groupName]) { window._lastGlSnap[groupName].config = window._lastGlSnap[groupName].config || {}; window._lastGlSnap[groupName].config.expires = ts; } } catch (e) {}
+  _renderRoomExpire();
+};
+window._clearRoomExpire = function () {
+  try { if (db && groupName) fbRemove(fbRef(db, 'gl/' + groupName + '/config/expires')); } catch (e) {}
+  toast('Expiration cleared');
+  try { if (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config) delete window._lastGlSnap[groupName].config.expires; } catch (e) {}
+  var inp = document.getElementById('ri-expire-input'); if (inp) inp.value = '';
+  _renderRoomExpire();
+};
 function _renderRiFav() {
   var on = (typeof _isFav === 'function') && groupName && _isFav(groupName);
   var star = document.getElementById('ri-fav-star');
@@ -3057,7 +3106,8 @@ function renderRoomList(all) {
     // Kept alive indefinitely if: owned by a signed-in user, OR private (recurring
     // groups), OR favorited by anyone (favoriting writes config.persistent). Public,
     // never-favorited rooms keep the casual lifecycle below.
-    var persistent = !!config.persistent || config.visibility === 'private';
+    var keptUntil = (config.expires && config.expires > now);   // explicit "keep active until" time
+    var persistent = !!config.persistent || config.visibility === 'private' || keptUntil;
     var isFav = favs.indexOf(key) !== -1;
     // Empty husk with no data at all — safe to remove (unless it's a kept-alive room).
     if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
@@ -3082,8 +3132,9 @@ function renderRoomList(all) {
     // Hide a room from the directory only once it's truly empty — i.e. NOBODY is still
     // connected (hasUsers respects the socket / disconnect grace), not merely "no GPS-live
     // member." This keeps a room visible while someone is in it but backgrounded (GPS paused
-    // but still connected). Favorites stay visible even when dormant.
-    if (!hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav) return;
+    // but still connected). Favorites — and rooms with a future "keep active until" — stay
+    // visible even when dormant.
+    if (!hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav && !keptUntil) return;
 
     var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
@@ -3095,7 +3146,7 @@ function renderRoomList(all) {
     if (_homeFilter === 'favorites') { if (!isFav) return; }
     else { if (vis !== 'public' && !isFav) return; }
 
-    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, hasUsers: hasUsers, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav });
+    rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, hasUsers: hasUsers, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav, keptUntil: keptUntil ? config.expires : 0 });
   });
 
   if (rooms.length === 0) {
@@ -3128,6 +3179,7 @@ function renderRoomList(all) {
           ? '<span style="color:#8b949e;font-weight:700">' + room.hasUsers + ' in room</span> &middot; <span style="color:#a7b0bd">idle</span>'
           : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
     var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
+    if (room.keptUntil) { try { pinText += ' &middot; <span style="color:#3fb950;font-weight:700">&#9201; until ' + new Date(room.keptUntil).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '</span>'; } catch (e) {} }
     item.innerHTML =
       '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
       '<div class="room-item-left">' +
