@@ -1,7 +1,11 @@
 package com.groundlink.app;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.webkit.WebSettings;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -16,6 +20,17 @@ public class MainActivity extends BridgeActivity {
             settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         } catch (Exception e) {
             // If anything is unavailable, fall back to default behavior.
+        }
+        // Push-to-talk voice uses the WebView's getUserMedia, which needs the RECORD_AUDIO
+        // *runtime* permission — declaring it in the manifest is not enough on Android 6+.
+        // Nothing was requesting it, so the mic was silently blocked with no system prompt.
+        // Ask for it up front; Android only shows the dialog if it isn't already granted.
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{ Manifest.permission.RECORD_AUDIO }, 4731);
+            }
+        } catch (Exception e) {
+            // Non-fatal — voice just won't have mic access until granted in app settings.
         }
     }
 }
