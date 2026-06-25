@@ -267,9 +267,13 @@
     border-radius: 20px; padding: 4px 11px;
     font-size: 12px; color: var(--text); font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    max-width: 150px; display: flex; align-items: center; gap: 6px;
+    max-width: min(46vw, 190px); display: flex; align-items: center; gap: 6px;
     text-shadow: 0 1px 2px rgba(0,0,0,0.8);
   }
+  /* Let a long room name truncate with “…” inside the flex chip instead of pushing
+     the chevron out. The label shrinks; dot + chevron stay put. Tap the chip for full name. */
+  #group-name-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .group-chip > .online-dot, .group-chip > span:last-child { flex-shrink: 0; }
   .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   .topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -1131,7 +1135,6 @@
       <span style="display:flex;color:var(--muted);margin-left:2px"><svg class="licon" style="width:12px;height:12px"><use href="#ic-chevron-down"/></svg></span>
     </div>
     <span id="group-lock-icon" style="display:none"></span>
-    <a href="/" title="Go to production" style="background:rgba(224,90,43,0.15);border:1px solid rgba(224,90,43,0.5);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;color:#e05a2b;white-space:nowrap;flex-shrink:0;text-decoration:none;-webkit-tap-highlight-color:transparent">⚗ PROD</a>
     <div id="switch-group-btn" title="Leave group" style="
       background:rgba(248,81,73,0.15);border:1px solid rgba(248,81,73,0.5);
       border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;
@@ -1872,6 +1875,11 @@
 // ══ STATE ════════════════════════════════════════════════════════
 let map, db, fbRef, fbSet, fbPush, fbOnValue, fbRemove;
 let groupName = '', userId = '', userName = '';
+// A room's stored key is sanitized (lowercased, spaces→underscores). For display, turn it
+// back into a friendly name: "buck_camp" → "Buck Camp". Safe on already-friendly input too.
+function _prettyGroup(g) {
+  return String(g == null ? '' : g).replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+}
 let pinMode = false, pendingCoords = null;
 let _editingPid = null; // set when the pin sheet is editing an existing pin instead of dropping a new one
 let userMarkers = {}, pinMarkers = {};
@@ -1886,7 +1894,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 149;
+var APP_BUILD = 150;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3170,7 +3178,7 @@ function enterMap(name, group, uid) {
       document.getElementById('topbar').style.display = 'flex';
     }, 150);
     document.getElementById('locate-me').style.display = 'flex';
-    document.getElementById('group-name-label').textContent = group;
+    document.getElementById('group-name-label').textContent = _prettyGroup(group);
     // Check if group has passcode set and update lock icon
     waitForFirebase(function(fb) {
       fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/config/pin'), function(snap) {
