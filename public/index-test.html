@@ -1883,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 141;
+var APP_BUILD = 142;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2196,7 +2196,43 @@ function _syncAlertsUI() {
 // CLOSED) needs Notification + serviceWorker + PushManager, which iOS only gives
 // to an installed home-screen PWA. So the toggle always turns ON for in-app
 // alerts; we add push on top only where it's available.
+// Native app push via FCM (the WebView can't do Web Push). Needs the
+// @capacitor-firebase/messaging plugin — a no-op until the APK is rebuilt with it.
+async function _registerFcm(silent) {
+  try {
+    var Cap = window.Capacitor;
+    var FM = Cap && Cap.Plugins && Cap.Plugins.FirebaseMessaging;
+    if (!FM) return false;
+    try { await FM.createChannel({ id: 'groundlink', name: 'GroundLink Alerts', importance: 5, visibility: 1 }); } catch (e) {}
+    var perm = await FM.checkPermissions();
+    if (perm.receive !== 'granted') {
+      if (silent) return false;
+      perm = await FM.requestPermissions();
+      if (perm.receive !== 'granted') return false;
+    }
+    var res = await FM.getToken();
+    var token = res && res.token;
+    if (!token) return false;
+    window._fcmToken = token;
+    if (db && groupName && userId) {
+      fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
+            { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), ts: Date.now() });
+    }
+    return true;
+  } catch (e) { console.warn('registerFcm', e); return false; }
+}
 async function enableAlerts(silent) {
+  // Native app → FCM (the WebView has no Web Push).
+  try {
+    var _cap = window.Capacitor;
+    if (_cap && _cap.isNativePlatform && _cap.isNativePlatform() && _cap.Plugins && _cap.Plugins.FirebaseMessaging) {
+      var okF = await _registerFcm(silent);
+      alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+      if (!silent) toast(okF ? 'Alerts on' : 'In-app alerts on — allow notifications for background alerts', okF ? 2500 : 4500);
+      return;
+    }
+  } catch (e) { console.warn('native alerts', e); }
+
   var pushSupported = ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
 
   // No push support (e.g. iPhone in a Safari tab): still enable in-app alerts.
