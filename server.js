@@ -19,13 +19,28 @@ if (VAPID_PRIVATE) {
   try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); pushReady = true; console.log('Web Push ready'); }
   catch (e) { console.warn('VAPID setup failed:', e.message); }
 } else {
-  console.warn('VAPID_PRIVATE not set — /push disabled (notifications will not send)');
+  console.warn('VAPID_PRIVATE not set — Web Push disabled');
 }
+
+// ─── FCM (native app push) via Firebase Admin ──────────────────────
+// Set FIREBASE_SERVICE_ACCOUNT (the whole service-account JSON) on the host.
+let fcmAdmin = null;
+try {
+  const svc = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (svc) {
+    const admin = require('firebase-admin');
+    admin.initializeApp({ credential: admin.credential.cert(JSON.parse(svc)) });
+    fcmAdmin = admin;
+    console.log('FCM (Firebase Admin) ready');
+  } else {
+    console.warn('FIREBASE_SERVICE_ACCOUNT not set — native FCM push disabled');
+  }
+} catch (e) { console.warn('FCM init failed:', e.message); }
 
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', async function(req, res) {
-  if (!pushReady) return res.json({ ok: false, reason: 'push-not-configured' });
+  if (!pushReady && !fcmAdmin) return res.json({ ok: false, reason: 'push-not-configured' });
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
@@ -55,15 +70,37 @@ app.post('/push', async function(req, res) {
     let sent = 0;
     await Promise.all(Object.entries(targets).map(async function(entry) {
       const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
-      if (uid === senderId || !rec || !rec.sub) return;
-      let subscription;
-      try { subscription = JSON.parse(rec.sub); } catch (e) { return; }
-      try {
-        await webpush.sendNotification(subscription, payload, { TTL: 3600, urgency: b.type === 'sos' ? 'high' : 'normal' });
-        sent++;
-      } catch (err) {
-        if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-          try { await fetch(from + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
+      if (uid === senderId || !rec) return;
+      // Web Push — installed PWA (browser-backed)
+      if (pushReady && rec.sub) {
+        let subscription = null;
+        try { subscription = JSON.parse(rec.sub); } catch (e) {}
+        if (subscription) {
+          try {
+            await webpush.sendNotification(subscription, payload, { TTL: 3600, urgency: b.type === 'sos' ? 'high' : 'normal' });
+            sent++;
+          } catch (err) {
+            if (err && (err.statusCode === 404 || err.statusCode === 410)) {
+              try { await fetch(from + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
+            }
+          }
+        }
+      }
+      // FCM — native app
+      if (fcmAdmin && rec.fcm) {
+        try {
+          await fcmAdmin.messaging().send({
+            token: rec.fcm,
+            notification: { title: b.title || 'GroundLink', body: b.body || '' },
+            data: { type: String(b.type || 'info'), group: String(group), url: String(b.url || '/') },
+            android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink', tag: (b.type || 'gl') + '-' + group } }
+          });
+          sent++;
+        } catch (err) {
+          const code = (err && err.errorInfo && err.errorInfo.code) || (err && err.code) || '';
+          if (/not-registered|invalid-registration-token|invalid-argument/i.test(code)) {
+            try { await fetch(from + '/' + uid + '/fcm.json', { method: 'DELETE' }); } catch (e2) {}
+          }
         }
       }
     }));
