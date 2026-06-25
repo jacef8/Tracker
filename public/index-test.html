@@ -1051,16 +1051,17 @@
             </div>
           </div>
 
-          <!-- Your map color -->
+          <!-- Your map color — single row that reveals the swatches on tap -->
           <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
-            <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px">
+            <div onclick="window._toggleColorSwatches && window._toggleColorSwatches()" style="display:flex;align-items:center;gap:9px;cursor:pointer;-webkit-tap-highlight-color:transparent">
               <span id="acct-color-dot" style="width:24px;height:24px;border-radius:50%;border:2px solid #fff;flex-shrink:0;background:#f0a500;box-shadow:0 1px 5px rgba(0,0,0,.5)"></span>
               <div style="flex:1">
-                <div style="font-size:13px;font-weight:700;color:var(--text)">Your map color</div>
+                <div style="font-size:13px;font-weight:700;color:var(--text)">Choose your color</div>
                 <div style="font-size:11px;color:var(--muted)">How your dot looks to the group</div>
               </div>
+              <span style="font-size:12px;font-weight:800;color:var(--accent);white-space:nowrap">Change ▾</span>
             </div>
-            <div id="acct-color-swatches" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+            <div id="acct-color-swatches" style="display:none;gap:7px;flex-wrap:wrap;margin-top:10px"></div>
           </div>
 
           <!-- Your groups -->
@@ -1927,7 +1928,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 161;
+var APP_BUILD = 162;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2766,7 +2767,12 @@ function _setMyColor(c) {
   // If we're in a room right now, push it so the group sees the new color immediately.
   try { if (db && groupName && userId) fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId + '/color'), c); } catch (e) {}
   _renderAccountPage();
+  var s = document.getElementById('acct-color-swatches'); if (s) s.style.display = 'none';   // collapse after choosing
 }
+window._toggleColorSwatches = function () {
+  var s = document.getElementById('acct-color-swatches'); if (!s) return;
+  s.style.display = (s.style.display === 'none' || !s.style.display) ? 'flex' : 'none';
+};
 function _rejoinSavedGroup(key, disp) {
   var gi = document.getElementById('inp-group'); if (gi) gi.value = disp;
   var name = ((document.getElementById('inp-name') || {}).value || '').trim();
