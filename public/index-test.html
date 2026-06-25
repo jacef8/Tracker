@@ -1884,7 +1884,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 145;
+var APP_BUILD = 146;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2216,7 +2216,7 @@ async function _registerFcm(silent) {
     if (!token) return false;
     window._fcmToken = token;
     if (db && groupName && userId) {
-      fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
+      fbSet(fbRef(db, `gltest/${groupName}/pushSubs/${userId}`),
             { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), ts: Date.now() });
     }
     return true;
@@ -2280,7 +2280,7 @@ async function enableAlerts(silent) {
       });
     }
     if (db && groupName && userId) {
-      fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
+      fbSet(fbRef(db, `gltest/${groupName}/pushSubs/${userId}`),
             { sub: JSON.stringify(sub), name: userName, ts: Date.now() });
     }
     alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
@@ -2298,7 +2298,7 @@ async function disableAlerts() {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) await sub.unsubscribe();
-    if (db && groupName && userId) fbRemove(fbRef(db, `gl/${groupName}/pushSubs/${userId}`));
+    if (db && groupName && userId) fbRemove(fbRef(db, `gltest/${groupName}/pushSubs/${userId}`));
   } catch (e) { console.warn('disableAlerts', e); }
   alertsOn = false; _setAlertsPref(false); _syncAlertsUI(); _syncSettings(); toast('Alerts off');
 }
@@ -2423,7 +2423,7 @@ function renderRoomInfoOwner() {
 }
 window._setRoomVisibility = function(v) {
   if (!window._isRoomOwner || !db || !groupName) return;
-  try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), v); } catch (e) {}
+  try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/visibility'), v); } catch (e) {}
   window._roomVisibility = v;
   try { window._evt('set room visibility to ' + v); } catch (e) {}
   toast(v === 'private' ? 'Room set to private' : 'Room set to public', 2200);
@@ -2485,7 +2485,7 @@ function _setToggleSpeed() {
   toast(_shareSpeed() ? 'Group can see your speed when driving' : 'Your speed is hidden from the group', 2300);
   // Update the room right away so peers reflect it without waiting for the next fix.
   try {
-    if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
+    if (db && groupName && userId) fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
   } catch (e) {}
 }
 function _setToggleBatterySaver() {
@@ -2518,7 +2518,7 @@ function pushNotify(type, title, body, opts) {
     fetch('/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group: groupName, senderId: userId, type, title, body, url: '/', toFavs: !!opts.toFavs })
+      body: JSON.stringify({ ns: 'gltest', group: groupName, senderId: userId, type, title, body, url: '/', toFavs: !!opts.toFavs })
     }).catch(function(){});
   } catch (e) {}
 }
@@ -2529,7 +2529,7 @@ function sendSOS() {
   try { if (typeof window._bsWake === 'function') window._bsWake(); } catch (e) {} // never let battery saver delay an SOS
   const loc = window._lastGPS;
   if (loc && db) {
-    const r = fbPush(fbRef(db, `gl/${groupName}/pins`));
+    const r = fbPush(fbRef(db, `gltest/${groupName}/pins`));
     fbSet(r, { lat: loc.lat, lng: loc.lng, cat: 'Urgent', label: userName + ' needs help — SOS',
                name: userName, droppedBy: userId, ts: Date.now(), sos: true });
   }
@@ -2537,7 +2537,7 @@ function sendSOS() {
     // The chat message is ALWAYS written (even with no GPS). Receivers raise the
     // SOS banner off this message, so SOS works for no-GPS devices too. Include
     // coords when we have them so the banner can still offer "Go".
-    const c = fbPush(fbRef(db, `gl/${groupName}/chat`));
+    const c = fbPush(fbRef(db, `gltest/${groupName}/chat`));
     const msg = { uid: userId, name: userName,
                   text: 'SOS — ' + userName + ' needs help' + (loc ? '' : ' (no GPS fix)'),
                   ts: Date.now(), isPin: false, sos: true };
@@ -2576,7 +2576,7 @@ function _setMyColor(c) {
   window._myColor = c;
   try { localStorage.setItem('gl_mycolor', c); } catch (e) {}
   // If we're in a room right now, push it so the group sees the new color immediately.
-  try { if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/color'), c); } catch (e) {}
+  try { if (db && groupName && userId) fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId + '/color'), c); } catch (e) {}
   _renderAccountPage();
 }
 function _rejoinSavedGroup(key, disp) {
@@ -2608,12 +2608,12 @@ window._acctDeleteGroup = function(key, disp) {
     if (confirm('Remove "' + disp + '" from your groups?')) { removeFromList(); try { toast('Removed from your groups'); } catch (e) {} }
     return;
   }
-  fb.get(fb.ref(fb.db, 'gl/' + key + '/config/owner')).then(function(snap) {
+  fb.get(fb.ref(fb.db, 'gltest/' + key + '/config/owner')).then(function(snap) {
     var owner = (snap && snap.exists && snap.exists()) ? snap.val() : null;
     if (owner && owner === myUid) {
       if (confirm('You own "' + disp + '". Delete the WHOLE room for everyone? This erases its pins, chat and trails.\n\n(Tap Cancel to just take it off your own list.)')) {
-        try { fb.set(fb.ref(fb.db, 'gl/' + key + '/closed'), { ts: Date.now(), by: myUid, byOwner: true }); } catch (e) {}
-        setTimeout(function() { try { fb.remove(fb.ref(fb.db, 'gl/' + key)); } catch (e) {} }, 3000);
+        try { fb.set(fb.ref(fb.db, 'gltest/' + key + '/closed'), { ts: Date.now(), by: myUid, byOwner: true }); } catch (e) {}
+        setTimeout(function() { try { fb.remove(fb.ref(fb.db, 'gltest/' + key)); } catch (e) {} }, 3000);
         removeFromList();
         try { toast('Room deleted for everyone'); } catch (e) {}
       } else if (confirm('Take "' + disp + '" off your groups list?')) {
@@ -2681,7 +2681,7 @@ window._toggleFav = function(key, name, ev) {
   if (i === -1) {
     f.push(key); _setFavs(f);
     // Favoriting keeps the room alive server-side, so a starred room never auto-deletes.
-    try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gl/' + key + '/config/persistent'), true); } catch (e) {}
+    try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gltest/' + key + '/config/persistent'), true); } catch (e) {}
     toast('★ ' + (name || 'Group') + ' favorited');
     _registerFavSub(key, name).then(function(ok) {
       toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
@@ -2717,7 +2717,7 @@ async function _registerFavSub(key, name) {
     if (!sub) return false; // no push here (native WebView / permission denied) — favorite still pins locally
     var fb = window._fb; var s = getSavedSession();
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
-    if (fb && uid) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
+    if (fb && uid) { fb.set(fb.ref(fb.db, 'gltest/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
     return false;
   } catch (e) { return false; }
 }
@@ -2725,7 +2725,7 @@ async function _unregisterFavSub(key) {
   try {
     var fb = window._fb; var s = getSavedSession();
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
-    if (fb && uid) fb.remove(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid));
+    if (fb && uid) fb.remove(fb.ref(fb.db, 'gltest/' + key + '/favSubs/' + uid));
   } catch (e) {}
 }
 
@@ -2741,7 +2741,7 @@ window._setHomeFilter = function(f) {
 
 function loadRoomList() {
   waitForFirebase(fb => {
-    fb.onValue(fb.ref(fb.db, 'gl'), snap => {
+    fb.onValue(fb.ref(fb.db, 'gltest'), snap => {
       window._lastGlSnap = snap.val() || {};
       renderRoomList(window._lastGlSnap);
     });
@@ -2790,10 +2790,10 @@ function renderRoomList(all) {
     var persistent = !!config.persistent || config.visibility === 'private';
     var isFav = favs.indexOf(key) !== -1;
     // Empty husk with no data at all — safe to remove (unless it's a kept-alive room).
-    if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+    if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gltest/' + key)); return; }
     // Nobody in it for 24h — auto-retire, EXCEPT kept-alive rooms (persistent/private/favorited live forever).
     if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
-      if (!persistent) { fb.remove(fb.ref(fb.db, 'gl/' + key)); return; }
+      if (!persistent) { fb.remove(fb.ref(fb.db, 'gltest/' + key)); return; }
     }
 
     var liveUsers = realUsers.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
@@ -2970,7 +2970,7 @@ window._pageLoadTs = Date.now();
 function writeDebugLog(grp, msg) {
   if (typeof db === 'undefined' || !db || !grp) return;
   try {
-    var ref = fbPush(fbRef(db, 'gl/' + grp + '/debug'));
+    var ref = fbPush(fbRef(db, 'gltest/' + grp + '/debug'));
     fbSet(ref, { msg: msg, ts: Date.now() });
   } catch(e) {}
 }
@@ -3042,12 +3042,12 @@ function enterMap(name, group, uid) {
     fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
 
     // Remove our own entry first (handles reload/rejoin cleanly)
-    try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch(_) {}
+    try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch(_) {}
 
     // Also scan for and remove any other ghost entries with same name + noGps
     // (handles duplicate tabs/windows on same device)
     waitForFirebase(function(fb) {
-      fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/users'), function(snap) {
+      fb.onValue(fb.ref(fb.db, 'gltest/' + groupName + '/users'), function(snap) {
         var all = snap.val() || {};
         Object.entries(all).forEach(function(entry) {
           var uid = entry[0], d = entry[1];
@@ -3056,7 +3056,7 @@ function enterMap(name, group, uid) {
             var age = Date.now() - (d.ts || 0);
             if ((d.claiming && age > 10000) ||
                 (d.noGps && d.name === userName && age > 60000)) {
-              fb.remove(fb.ref(fb.db, 'gl/' + groupName + '/users/' + uid));
+              fb.remove(fb.ref(fb.db, 'gltest/' + groupName + '/users/' + uid));
             }
           }
         });
@@ -3071,16 +3071,16 @@ function enterMap(name, group, uid) {
       window._sessionJoinTs = Date.now();
       window._sessionId = userId + '_' + window._sessionJoinTs;
       window._sessionTouch = 0;
-      fbSet(fbRef(db, 'gl/_sessions/' + window._sessionId), {
+      fbSet(fbRef(db, 'gltest/_sessions/' + window._sessionId), {
         g: groupName, u: userId, n: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''),
         j: window._sessionJoinTs, l: window._sessionJoinTs
       });
     } catch (e) {}
     // Creator picked a visibility for this brand-new group — record it on the config.
     if (window._pendingVisibility) {
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
+      try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
       // The creator of a brand-new group is its owner.
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (_) {}
+      try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/owner'), userId); } catch (_) {}
       window._pendingVisibility = null;
     }
     // ── Room ownership ────────────────────────────────────────────────
@@ -3088,13 +3088,13 @@ function enterMap(name, group, uid) {
     // rooms created before this feature), the first person to open it claims it.
     window._isRoomOwner = false;
     try {
-      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/owner'), function(snap) {
+      fbOnValue(fbRef(db, 'gltest/' + groupName + '/config/owner'), function(snap) {
         // Never re-claim/recreate a room that's being closed or deleted — otherwise an
         // admin "delete" instantly resurrects the room (and its persistent flag) here.
         if (window._roomClosed) return;
         var owner = snap.val();
         if (!owner) {
-          try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (e) {}
+          try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/owner'), userId); } catch (e) {}
           window._isRoomOwner = true;
         } else {
           window._isRoomOwner = (owner === userId);
@@ -3102,7 +3102,7 @@ function enterMap(name, group, uid) {
         // A room owned by a signed-in (Google) user becomes permanent — it won't auto-expire.
         try {
           if (window._isRoomOwner && localStorage.getItem('gl_account') === 'google') {
-            fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
+            fbSet(fbRef(db, 'gltest/' + groupName + '/config/persistent'), true);
           }
         } catch (e) {}
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
@@ -3111,14 +3111,14 @@ function enterMap(name, group, uid) {
     // Track visibility so the owner's Room Info toggle reflects the live value.
     window._roomVisibility = 'public';
     try {
-      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/visibility'), function(snap) {
+      fbOnValue(fbRef(db, 'gltest/' + groupName + '/config/visibility'), function(snap) {
         window._roomVisibility = snap.val() || 'public';
         // Joining a PRIVATE room auto-favorites it (silently) so a recurring group always
         // keeps it in their list to rejoin — and that also keeps it alive server-side.
         try {
           if (window._roomVisibility === 'private' && typeof _getFavs === 'function' && _getFavs().indexOf(groupName) === -1) {
             var ff = _getFavs(); ff.push(groupName); _setFavs(ff);
-            try { var fbV = window._fb; if (fbV && fbV.set) fbV.set(fbV.ref(fbV.db, 'gl/' + groupName + '/config/persistent'), true); } catch (e) {}
+            try { var fbV = window._fb; if (fbV && fbV.set) fbV.set(fbV.ref(fbV.db, 'gltest/' + groupName + '/config/persistent'), true); } catch (e) {}
             try { _registerFavSub(groupName, userName); } catch (e) {}
             try { if (window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
           }
@@ -3129,12 +3129,12 @@ function enterMap(name, group, uid) {
     // ── Ban enforcement ──────────────────────────────────────────────
     // If the owner removes me from the room, eject cleanly back to home.
     try {
-      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/banned/' + userId), function(snap) {
+      fbOnValue(fbRef(db, 'gltest/' + groupName + '/config/banned/' + userId), function(snap) {
         if (snap.val() && !window._roomClosed) _removedByOwner();
       });
     } catch (e) {}
     // Claim our slot
-    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+    fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), claiming: true
     });
     // Reliable presence cleanup: Firebase removes us server-side the instant this
@@ -3148,7 +3148,7 @@ function enterMap(name, group, uid) {
     //   • Native: keep the slot but flag conn:false — a short grace on the viewing side
     //     absorbs screen-sleep blips, while a genuine close clears within a minute or two.
     try {
-      var _meRef = fb.ref(fb.db, `gl/${groupName}/users/${userId}`);
+      var _meRef = fb.ref(fb.db, `gltest/${groupName}/users/${userId}`);
       fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
         if (s.val() !== true) return;
         try {
@@ -3171,7 +3171,7 @@ function enterMap(name, group, uid) {
     document.getElementById('group-name-label').textContent = group;
     // Check if group has passcode set and update lock icon
     waitForFirebase(function(fb) {
-      fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/config/pin'), function(snap) {
+      fb.onValue(fb.ref(fb.db, 'gltest/' + groupName + '/config/pin'), function(snap) {
         var lockIcon = document.getElementById('group-lock-icon');
         var lockStatus = document.getElementById('group-lock-status');
         var hasPin = !!snap.val();
@@ -3207,7 +3207,7 @@ function enterMap(name, group, uid) {
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
-    try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
+    try { fbOnValue(fbRef(db, 'gltest/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
     }); } catch (e) {}
     pushNotify('join', groupName, userName + ' joined the group', { toFavs: true });
@@ -3329,7 +3329,7 @@ function showJoinScreen() {
     var topbar = document.getElementById('topbar');
     var inMap = topbar && topbar.style.display === 'flex';
     if (inMap && typeof db !== 'undefined' && db && typeof groupName !== 'undefined' && groupName && typeof userId !== 'undefined' && userId) {
-      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
+      fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId));
     }
   } catch(_) {}
   document.getElementById('join-screen').style.display = 'flex';
@@ -3429,7 +3429,7 @@ function showJoinScreen() {
   // Check Firebase for group existence before deciding
   waitForFirebase(function(fb) {
     var groupKey = s.group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey), function(snap) {
+    fb.onValue(fb.ref(fb.db, 'gltest/' + groupKey), function(snap) {
       var groupExists = snap.exists();
 
       if (sessionFresh && groupExists) {
@@ -4255,7 +4255,7 @@ function toggleLocationShare(share) {
   if (!(db && groupName && userId && userName)) return;
   if (locationHidden) {
     // Hide now: broadcast a no-GPS/hidden record so the dot drops for everyone, and clear my own marker
-    try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
+    try { fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId),
       { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch (_) {}
     if (typeof followUid !== 'undefined' && followUid === userId && typeof stopFollowing === 'function') stopFollowing();
     if (userMarkers[userId]) { userMarkers[userId].remove(); delete userMarkers[userId]; }
@@ -4529,7 +4529,7 @@ function startLocationSharing() {
 
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
-      fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+      fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), {
         lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true
       });
       return;
@@ -4557,7 +4557,7 @@ function startLocationSharing() {
 
     // Write real GPS position — clears the claiming placeholder. Speed is always written
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
-    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+    fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), {
       lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(accuracy * 3.28084), ts: now,
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
@@ -4566,7 +4566,7 @@ function startLocationSharing() {
     try {
       if (window._sessionId && (now - (window._sessionTouch || 0) > 60000)) {
         window._sessionTouch = now;
-        fbSet(fbRef(db, 'gl/_sessions/' + window._sessionId), {
+        fbSet(fbRef(db, 'gltest/_sessions/' + window._sessionId), {
           g: groupName, u: userId, n: userName, dev: _deviceLabel(), j: window._sessionJoinTs, l: now, lat: lat, lng: lng
         });
       }
@@ -4592,15 +4592,15 @@ function startLocationSharing() {
       if (moved && goodAccuracy && plausible) {
         lastBreadcrumbPos = { lat, lng };
         lastBreadcrumbTs = now;
-        const crumbRef = fbPush(fbRef(db, `gl/${groupName}/trails/${userId}`));
+        const crumbRef = fbPush(fbRef(db, `gltest/${groupName}/trails/${userId}`));
         fbSet(crumbRef, { lat, lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' });
 
         // Prune points older than 10 min from Firebase
-        fbOnValue(fbRef(db, `gl/${groupName}/trails/${userId}`), snap => {
+        fbOnValue(fbRef(db, `gltest/${groupName}/trails/${userId}`), snap => {
           const trail = snap.val() || {};
           Object.entries(trail).forEach(([key, pt]) => {
             if (now - pt.ts > TRAIL_MAX_MS) {
-              fbRemove(fbRef(db, `gl/${groupName}/trails/${userId}/${key}`));
+              fbRemove(fbRef(db, `gltest/${groupName}/trails/${userId}/${key}`));
             }
           });
         }, { onlyOnce: true });
@@ -4652,7 +4652,7 @@ function startLocationSharing() {
   const markNoGps = () => {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
     if (!window._wasNoGps) { window._wasNoGps = true; try { window._evt('GPS lost / no fix'); } catch (e) {} }
-    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+    fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), {
       lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0,
       ts: Date.now(), claiming: false, noGps: true
     });
@@ -4703,7 +4703,7 @@ function startLocationSharing() {
     try {
       if (!(db && groupName && userId)) return;
       var now = Date.now();
-      fbSet(fbRef(db, 'gl/' + groupName + '/diag/' + userId), {
+      fbSet(fbRef(db, 'gltest/' + groupName + '/diag/' + userId), {
         name: userName || '',
         native: _isNativeApp(),
         uaTok: /GroundLinkNative/i.test(navigator.userAgent || ''),
@@ -4734,10 +4734,10 @@ function startLocationSharing() {
     if (window._roomClosed) return; // room closed by an admin — stop the heartbeat
     if (!(db && groupName && userId && userName)) return;
     if (locationHidden) {
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
+      try { fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
     } else if (!window._lastGPS) {
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
+      try { fbSet(fbRef(db, 'gltest/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
     } else if (window._batterySaver && window._bsIdle) {
       // Battery-saver "resting": stay intentionally quiet so the member shows RESTING and we
@@ -4746,7 +4746,7 @@ function startLocationSharing() {
     } else {
       // Stationary but still tracking — bump only our timestamp (keep position/accuracy)
       // so we stay "Live" for the group instead of flipping to "Paused" while sitting still.
-      try { fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now()); } catch(_) {}
+      try { fbSet(fbRef(db, `gltest/${groupName}/users/${userId}/ts`), Date.now()); } catch(_) {}
     }
   }, 30000);
 
@@ -4754,7 +4754,7 @@ function startLocationSharing() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && db && groupName && userId && userName) {
       try {
-        fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now());
+        fbSet(fbRef(db, `gltest/${groupName}/users/${userId}/ts`), Date.now());
       } catch(_) {}
     }
   });
@@ -4791,7 +4791,7 @@ function clearMyTrail() {
   if (!groupName || !userId || !db) { toast('Join a group first'); return; }
   try { if (navigator.vibrate) navigator.vibrate(40); } catch (e) {}
   if (!confirm('Clear your breadcrumb trail from the map now?')) return;
-  fbRemove(fbRef(db, 'gl/' + groupName + '/trails/' + userId));
+  fbRemove(fbRef(db, 'gltest/' + groupName + '/trails/' + userId));
   toast('Your breadcrumb trail cleared');
 }
 
@@ -4834,7 +4834,7 @@ var knownUsers = {};
 var usersInitialLoad = true;
 
 function listenUsers() {
-  fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+  fbOnValue(fbRef(db, `gltest/${groupName}/users`), snap => {
     const allUsers = snap.val() || {};
     const now = Date.now();
 
@@ -4864,7 +4864,7 @@ function listenUsers() {
       if (d.conn === false) stale = (now - (d.discTs || d.ts || 0)) >= DISC_GRACE_MS;
       else stale = (now - (d.ts || 0)) >= (d.noGps ? NO_GPS_STALE : (d.rest ? BS_REST_MAX_MS : STALE_MS));
       if (stale || (d.claiming && (now - (d.ts || 0)) > 30000)) {
-        fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
+        fbRemove(fbRef(db, `gltest/${groupName}/users/${uid}`));
       }
     });
 
@@ -5414,7 +5414,7 @@ function maybeShowIosInstallNudge() {
 }
 
 function listenPins() {
-  fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
+  fbOnValue(fbRef(db, `gltest/${groupName}/pins`), snap => {
     const pins = snap.val() || {};
 
     // Notify on new pins from others (not my own)
@@ -5459,7 +5459,7 @@ function listenPins() {
 }
 
 window.deletePin = pid => {
-  fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
+  fbRemove(fbRef(db, `gltest/${groupName}/pins/${pid}`));
   const pins = Object.fromEntries(Object.entries(lastPins).filter(([k]) => k !== pid));
   updatePinSource(pins);
   lastPins = pins;
@@ -5571,7 +5571,7 @@ window._saveMovedPin = function(){
     try { var arr=getSavedPins(); for(var i=0;i<arr.length;i++){ if(arr[i].pid===pid){ arr[i].lat=ll.lat; arr[i].lng=ll.lng; break; } } setSavedPins(arr); } catch(e){}
     if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; } try{ updatePinSource(lastPins); }catch(e){}
   } else {
-    try { fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
+    try { fbSet(fbRef(db,'gltest/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gltest/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
     if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; }
   }
   _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none';
@@ -5584,7 +5584,7 @@ document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
   const mine = Object.entries(lastPins).filter(([, p]) => p.droppedBy === userId);
   if (!mine.length) { toast('You have no pins to clear'); return; }
   if (!confirm(`Remove your ${mine.length} pin${mine.length > 1 ? 's' : ''}?`)) return;
-  mine.forEach(([pid]) => fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`)));
+  mine.forEach(([pid]) => fbRemove(fbRef(db, `gltest/${groupName}/pins/${pid}`)));
   toast(`Cleared ${mine.length} pin${mine.length > 1 ? 's' : ''}`);
 });
 
@@ -5593,7 +5593,7 @@ document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
   if (!count) { toast('No pins to clear'); return; }
   if (!confirm(`Delete ALL ${count} pins for everyone in this group? This cannot be undone.`)) return;
   if (!confirm('Are you sure? This clears the map for everyone.')) return;
-  fbRemove(fbRef(db, `gl/${groupName}/pins`));
+  fbRemove(fbRef(db, `gltest/${groupName}/pins`));
   toast('All pins cleared');
 });
 (function(){
@@ -5602,7 +5602,7 @@ document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
     var mine=Object.entries(lastPins).filter(function(e){return e[1].droppedBy===userId;});
     if(!mine.length){ toast('You have no pins to clear'); return; }
     if(!confirm('Remove your '+mine.length+' pin'+(mine.length>1?'s':'')+'?')) return;
-    mine.forEach(function(e){ fbRemove(fbRef(db, 'gl/'+groupName+'/pins/'+e[0])); });
+    mine.forEach(function(e){ fbRemove(fbRef(db, 'gltest/'+groupName+'/pins/'+e[0])); });
     toast('Cleared '+mine.length+' pin'+(mine.length>1?'s':''));
   });
   if(ca) ca.addEventListener('click', function(){
@@ -5610,7 +5610,7 @@ document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
     if(!count){ toast('No pins to clear'); return; }
     if(!confirm('Delete ALL '+count+' pins for everyone in this group? This cannot be undone.')) return;
     if(!confirm('Are you sure? This clears the map for everyone.')) return;
-    fbRemove(fbRef(db, 'gl/'+groupName+'/pins'));
+    fbRemove(fbRef(db, 'gltest/'+groupName+'/pins'));
     toast('All pins cleared');
   });
 })();
@@ -5810,7 +5810,7 @@ function clearTrailLayer(uid) {
 }
 
 function listenTrails() {
-  fbOnValue(fbRef(db, `gl/${groupName}/trails`), snap => {
+  fbOnValue(fbRef(db, `gltest/${groupName}/trails`), snap => {
     const allTrails = snap.val() || {};
     const now = Date.now();
 
@@ -5893,7 +5893,7 @@ function listenChat() {
   const joinedAt = Date.now(); // only count messages after this moment
   let initialLoad = true;
 
-  fbOnValue(fbRef(db, `gl/${groupName}/chat`), snap => {
+  fbOnValue(fbRef(db, `gltest/${groupName}/chat`), snap => {
     const msgs = snap.val() || {};
     const container = document.getElementById('chat-messages');
     const sorted = Object.entries(msgs).map(([k, v]) => Object.assign({ _key: k }, v)).sort((a, b) => a.ts - b.ts);
@@ -5949,7 +5949,7 @@ function listenChat() {
 
 function sendChat(text, isPin = false) {
   if (!text.trim()) return;
-  const r = fbPush(fbRef(db, `gl/${groupName}/chat`));
+  const r = fbPush(fbRef(db, `gltest/${groupName}/chat`));
   fbSet(r, { uid: userId, name: userName, text: text.trim(), ts: Date.now(), isPin });
   if (!isPin) pushNotify('chat', groupName + ' — new message', userName + ': ' + text.trim());
 }
@@ -5958,11 +5958,11 @@ function sendChat(text, isPin = false) {
 window._deleteMsg = function(key) {
   if (!key || !db || !groupName) return;
   try {
-    fbOnValue(fbRef(db, 'gl/' + groupName + '/chat/' + key), function(snap) {
+    fbOnValue(fbRef(db, 'gltest/' + groupName + '/chat/' + key), function(snap) {
       var m = snap.val();
       if (!m) return;
       if (m.uid === userId || window._isRoomOwner) {
-        fbRemove(fbRef(db, 'gl/' + groupName + '/chat/' + key));
+        fbRemove(fbRef(db, 'gltest/' + groupName + '/chat/' + key));
       } else {
         toast('Only the sender or room owner can delete this', 2500);
       }
@@ -6026,7 +6026,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   if (_editingPid) {
     var existing = lastPins[_editingPid];
     if (existing && db && groupName) {
-      fbSet(fbRef(db, `gl/${groupName}/pins/${_editingPid}`), {
+      fbSet(fbRef(db, `gltest/${groupName}/pins/${_editingPid}`), {
         lat: existing.lat, lng: existing.lng,
         cat: finalCat, label,
         name: existing.name || userName,
@@ -6056,7 +6056,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     _closePinModal();
     return;
   }
-  const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
+  const pinRef = fbPush(fbRef(db, `gltest/${groupName}/pins`));
   fbSet(pinRef, {
     lat: pendingCoords.lat, lng: pendingCoords.lng,
     cat: finalCat, label, name: userName,
@@ -6120,7 +6120,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   // Immediate exit — no confirm dialog needed
   if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
   try { clearInterval(window._diagTimer); } catch(_) {} // stop diagnostics reporting
-  try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch(_) {} // clear our debug entry
+  try { fbRemove(fbRef(db, 'gltest/' + groupName + '/diag/' + userId)); } catch(_) {} // clear our debug entry
   // Stop GPS updates so a late position write can't re-add us after we leave
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch(_) {}
   try { stopNativeBackgroundTracking(); } catch(_) {} // stop native foreground service if running
@@ -6141,8 +6141,8 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   try {
     if (db && groupName && userId) {
       // Cancel the queued conn:false disconnect write so the reload below doesn't resurrect a husk.
-      try { window._fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
-      var p = fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); // trails persist 2h
+      try { window._fb.onDisconnect(fbRef(db, `gltest/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
+      var p = fbRemove(fbRef(db, `gltest/${groupName}/users/${userId}`)); // trails persist 2h
       if (p && typeof p.then === 'function') { p.then(_go).catch(_go); } else { _go(); }
     } else { _go(); }
   } catch(_) { _go(); }
@@ -6162,8 +6162,8 @@ function _roomClosedByAdmin() {
   try { stopNativeBackgroundTracking(); } catch (_) {}
   try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
   try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
-  try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch (_) {}
-  try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gltest/' + groupName + '/diag/' + userId)); } catch (_) {}
   try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); _cookieSet('gltest_group', ''); } catch (_) {}
   var o = document.createElement('div');
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
@@ -6184,8 +6184,8 @@ function _removedByOwner() {
   try { stopNativeBackgroundTracking(); } catch (_) {}
   try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
   try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
-  try { fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch (_) {}
-  try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch (_) {}
+  try { fbRemove(fbRef(db, 'gltest/' + groupName + '/diag/' + userId)); } catch (_) {}
   try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); _cookieSet('gltest_group', ''); } catch (_) {}
   var o = document.createElement('div');
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
@@ -6209,9 +6209,9 @@ window._kickMember = function() {
   document.getElementById('owner-member-modal').style.display = 'none';
   if (!uid || !window._isRoomOwner || !db || !groupName) return;
   try {
-    fbSet(fbRef(db, 'gl/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
-    fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
-    fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
+    fbSet(fbRef(db, 'gltest/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
+    fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + uid));
+    fbRemove(fbRef(db, 'gltest/' + groupName + '/diag/' + uid));
   } catch (e) {}
   try { window._evt('removed ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member') + ' from the room'); } catch (e) {}
   toast('Removed from the room', 2500);
@@ -6220,7 +6220,7 @@ window._makeOwner = function() {
   var uid = _ownMemUid;
   document.getElementById('owner-member-modal').style.display = 'none';
   if (!uid || !window._isRoomOwner || !db || !groupName) return;
-  try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), uid); } catch (e) {}
+  try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/owner'), uid); } catch (e) {}
   window._isRoomOwner = false;
   try { window._evt('transferred room ownership to ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member')); } catch (e) {}
   toast('Ownership transferred', 2500);
@@ -6244,15 +6244,15 @@ window._confirmDeleteRoom = function() {
   var gk = groupName;
   window._ownerDeleting = true; // keep our own app alive through the close → delete sequence
   // 1) Flag the room closed so every member is ejected and stops writing presence.
-  try { fbSet(fbRef(db, 'gl/' + gk + '/closed'), { ts: Date.now(), by: userId, byOwner: true }); } catch (e) {}
+  try { fbSet(fbRef(db, 'gltest/' + gk + '/closed'), { ts: Date.now(), by: userId, byOwner: true }); } catch (e) {}
   // Stop our own location writes so we don't recreate presence during the delete.
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
   try { stopNativeBackgroundTracking(); } catch (e) {}
-  try { fbRemove(fbRef(db, 'gl/' + gk + '/users/' + userId)); } catch (e) {}
+  try { fbRemove(fbRef(db, 'gltest/' + gk + '/users/' + userId)); } catch (e) {}
   toast('Deleting group…', 4500);
   // 2) After members have had a few seconds to receive the close, remove everything.
   setTimeout(function() {
-    try { fbRemove(fbRef(db, 'gl/' + gk)); } catch (e) {}
+    try { fbRemove(fbRef(db, 'gltest/' + gk)); } catch (e) {}
     try { localStorage.removeItem('gltest_group'); sessionStorage.removeItem('gltest_group'); _cookieSet('gltest_group', ''); } catch (e) {}
     setTimeout(function() { location.reload(); }, 900);
   }, 4000);
@@ -6287,7 +6287,7 @@ window._sendRoomInvite = function(uid) {
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
   var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
   if (pin) rec.pin = pin;
-  try { var r = fbPush(fbRef(db, 'gl/_invites/' + uid)); fbSet(r, rec); } catch (e) {}
+  try { var r = fbPush(fbRef(db, 'gltest/_invites/' + uid)); fbSet(r, rec); } catch (e) {}
   toast('Invited ' + nm + (pin ? '' : '') , 2200);
 };
 
@@ -6300,7 +6300,7 @@ function _watchInvites() {
   if (window._inviteWatchUid === uid) return; // already watching this id
   window._inviteWatchUid = uid;
   try {
-    f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
+    f.onValue(f.ref(f.db, 'gltest/_invites/' + uid), function(snap) {
       var data = snap.val() || {};
       window._pendingInvites = Object.keys(data)
         .map(function(k) { var v = data[k] || {}; v._key = k; return v; })
@@ -6351,7 +6351,7 @@ window._acceptInvite = function(key) {
   if (!inv) return;
   var uid = null; try { uid = localStorage.getItem('gltest_uid'); } catch (e) {}
   var f = window._fb;
-  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { if (f && uid) f.remove(f.ref(f.db, 'gltest/_invites/' + uid + '/' + key)); } catch (e) {}
   window._inviteRoom = inv.room;
   window._invitePin = inv.pin || null;
   showInviteJoin(inv.room, inv.pin || null);
@@ -6359,7 +6359,7 @@ window._acceptInvite = function(key) {
 window._dismissInvite = function(key) {
   var uid = null; try { uid = localStorage.getItem('gltest_uid'); } catch (e) {}
   var f = window._fb;
-  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { if (f && uid) f.remove(f.ref(f.db, 'gltest/_invites/' + uid + '/' + key)); } catch (e) {}
 };
 
 // Start watching once Firebase is ready (and again if identity changes after sign-in).
@@ -6376,7 +6376,7 @@ window._dismissInvite = function(key) {
 window.addEventListener('beforeunload', function() {
   try {
     if (db && groupName && userId) {
-      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
+      fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId));
     }
   } catch(_) {}
 });
@@ -7662,7 +7662,7 @@ window._svSendPins = function() {
     if (t.indexOf('room:') === 0) {
       var rk = t.slice(5);
       pins.forEach(function(p) {
-        try { var r = fbPush(fbRef(db, 'gl/' + rk + '/pins')); fbSet(r, { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || (p.cat + ' pin'), name: userName, droppedBy: userId, ts: Date.now() }); } catch (e) {}
+        try { var r = fbPush(fbRef(db, 'gltest/' + rk + '/pins')); fbSet(r, { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || (p.cat + ' pin'), name: userName, droppedBy: userId, ts: Date.now() }); } catch (e) {}
       });
       dest++;
     } else if (t.indexOf('person:') === 0) {
@@ -7670,7 +7670,7 @@ window._svSendPins = function() {
       try {
         var rec = { type: 'pins', fromName: userName || 'A friend', ts: Date.now(),
           pins: pins.map(function(p) { return { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', coll: p.coll || '' }; }) };
-        var ir = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(ir, rec);
+        var ir = fb.push(fb.ref(fb.db, 'gltest/_invites/' + uid)); fb.set(ir, rec);
       } catch (e) {}
       dest++;
     }
@@ -7689,7 +7689,7 @@ window._acceptPinShare = function(key) {
   });
   setSavedPins(arr);
   var uid = null; try { uid = localStorage.getItem('gltest_uid'); } catch (e) {}
-  try { if (window._fb && uid) window._fb.remove(window._fb.ref(window._fb.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { if (window._fb && uid) window._fb.remove(window._fb.ref(window._fb.db, 'gltest/_invites/' + uid + '/' + key)); } catch (e) {}
   try { renderSavedPins(); } catch (e) {}
   toast('Saved ' + inv.pins.length + ' pin' + (inv.pins.length > 1 ? 's' : '') + ' to your library', 3000);
 };
@@ -7820,7 +7820,7 @@ window.shareSavedPin = function(idx) {
   var pin = getSavedPins()[idx];
   if (!pin) return;
   if (!groupName || !db) { toast('Join a group first'); return; }
-  var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
+  var ref = fbPush(fbRef(db, 'gltest/' + groupName + '/pins'));
   fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || 'Shared pin',
     name:userName, droppedBy:userId, ts:Date.now() });
   toast('Pin shared into ' + groupName);
@@ -7904,7 +7904,7 @@ window.addAllShownToRoom = function() {
   var pins = getSavedPins().filter(_savedMatch);
   if (!pins.length) { toast('Nothing to add'); return; }
   pins.forEach(function(pin) {
-    var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
+    var ref = fbPush(fbRef(db, 'gltest/' + groupName + '/pins'));
     fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || (pin.cat + ' pin'),
       name:userName, droppedBy:userId, ts:Date.now() });
   });
@@ -8461,7 +8461,7 @@ function shareRoomInvite() {
     };
     if (!window._fb) { done(); return; }
     var fb = window._fb;
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/config/pin'), function(snap) {
+    fb.onValue(fb.ref(fb.db, 'gltest/' + groupName + '/config/pin'), function(snap) {
       var storedHash = snap.val();
       hashPin(p).then(function(h) {
         if (!storedHash || h === storedHash) { done(); }
@@ -8490,14 +8490,14 @@ function checkGroupPasscode(name, group, uid, invitePin) {
 
     var fb = window._fb;
     // Blocked by the room owner? Refuse entry (covers invite links too).
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/banned/' + uid), function(bsnap) {
+    fb.onValue(fb.ref(fb.db, 'gltest/' + groupKey + '/config/banned/' + uid), function(bsnap) {
       if (bsnap.val()) { toast('The owner has removed you from this room.', 4000); return; }
       _continuePasscode();
     }, { onlyOnce: true });
     return;
 
     function _continuePasscode() {
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/pin'), function(snap) {
+    fb.onValue(fb.ref(fb.db, 'gltest/' + groupKey + '/config/pin'), function(snap) {
       var storedHash = snap.val();
       if (!storedHash) {
         enterMap(name, group, uid);
@@ -8570,7 +8570,7 @@ window._openSetPasscode = function() {
     // Use the global fbSet/fbRef/fbRemove assigned when we entered the map
     if (!fbSet || !fbRef || !db) { toast('Not connected'); return; }
     if (!pin) {
-      fbRemove(fbRef(db, 'gl/' + group + '/config/pin'));
+      fbRemove(fbRef(db, 'gltest/' + group + '/config/pin'));
       window._roomPlainPin = null;
       try { localStorage.removeItem('gl_pin_' + group); } catch (e) {}
       toast('Passcode removed');
@@ -8578,7 +8578,7 @@ window._openSetPasscode = function() {
       window._roomPlainPin = pin; // remember plaintext this session so invites can include it
       try { localStorage.setItem('gl_pin_' + group, pin); } catch (e) {}
       hashPin(pin).then(function(hash) {
-        fbSet(fbRef(db, 'gl/' + group + '/config'), { pin: hash });
+        fbSet(fbRef(db, 'gltest/' + group + '/config'), { pin: hash });
         toast('Passcode set for ' + group);
       });
     }
@@ -8646,15 +8646,15 @@ document.addEventListener('click', function(e) {
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
       try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
-      if (f.update) f.update(f.ref(f.db, 'gl/_users/' + u), prof);
-      else f.set(f.ref(f.db, 'gl/_users/' + u), prof);
+      if (f.update) f.update(f.ref(f.db, 'gltest/_users/' + u), prof);
+      else f.set(f.ref(f.db, 'gltest/_users/' + u), prof);
     } catch (e) {}
   }
   function pullProfile(u, cb) {
     try {
       var f = window._fb;
       if (!f || !f.db || !f.get) { cb && cb(null); return; }
-      f.get(f.ref(f.db, 'gl/_users/' + u))
+      f.get(f.ref(f.db, 'gltest/_users/' + u))
         .then(function (snap) { cb && cb(snap && snap.exists() ? snap.val() : null); })
         .catch(function () { cb && cb(null); });
     } catch (e) { cb && cb(null); }
@@ -8956,7 +8956,7 @@ window._openVoiceTo = async function (uid, name) {
   var roomId = _gvRoomId(uid);
   // Ping the other device so it auto-joins (if it has voice on).
   try {
-    fbSet(fbRef(db, 'gl/' + groupName + '/voice/' + uid), {
+    fbSet(fbRef(db, 'gltest/' + groupName + '/voice/' + uid), {
       from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
     });
     window._gvPingedUid = uid; // remember so we can clear the ping when we leave
@@ -8979,7 +8979,7 @@ window._openVoiceToGroup = async function () {
   if (!userId || !groupName) { alert('Join a group first.'); return; }
   var roomId = 'gv_' + groupName + '_ALL';
   try {
-    fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'), {
+    fbSet(fbRef(db, 'gltest/' + groupName + '/voiceAll'), {
       from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
     });
   } catch (e) {}
@@ -8997,7 +8997,7 @@ var _gvLastGroupTs = 0;
 window._listenVoiceInvites = function () {
   if (!db || !groupName || !userId) return;
   try {
-    fbOnValue(fbRef(db, 'gl/' + groupName + '/voice/' + userId), async function (snap) {
+    fbOnValue(fbRef(db, 'gltest/' + groupName + '/voice/' + userId), async function (snap) {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;     // voice off here
@@ -9016,7 +9016,7 @@ window._listenVoiceInvites = function () {
       } catch (e) { console.error('[voice] auto-join failed', e); }
     });
     // Group all-call broadcast — every member auto-joins the one shared group room.
-    fbOnValue(fbRef(db, 'gl/' + groupName + '/voiceAll'), async function (snap) {
+    fbOnValue(fbRef(db, 'gltest/' + groupName + '/voiceAll'), async function (snap) {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;
@@ -9049,7 +9049,7 @@ window._voiceMod().then(function (m) {
     if (ev.type === 'joined' && ev.room && /_ALL$/.test(ev.room)) {
       try { clearInterval(window._gvGroupBeat); } catch (e) {}
       window._gvGroupBeat = setInterval(function () {
-        try { fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'),
+        try { fbSet(fbRef(db, 'gltest/' + groupName + '/voiceAll'),
           { from: userId, fromName: userName || 'Member', room: ev.room, ts: Date.now() }); } catch (e) {}
       }, 12000);
     }
@@ -9057,7 +9057,7 @@ window._voiceMod().then(function (m) {
       try { clearInterval(window._gvGroupBeat); } catch (e) {}
       window._gvGroupBeat = null;
       if (window._gvPingedUid) {
-        try { fbRemove(fbRef(db, 'gl/' + groupName + '/voice/' + window._gvPingedUid)); } catch (e) {}
+        try { fbRemove(fbRef(db, 'gltest/' + groupName + '/voice/' + window._gvPingedUid)); } catch (e) {}
         window._gvPingedUid = null;
       }
     }
