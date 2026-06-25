@@ -1883,7 +1883,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 142;
+var APP_BUILD = 143;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4255,7 +4255,7 @@ function toggleLocationShare(share) {
   if (locationHidden) {
     // Hide now: broadcast a no-GPS/hidden record so the dot drops for everyone, and clear my own marker
     try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-      { lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch (_) {}
+      { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch (_) {}
     if (typeof followUid !== 'undefined' && followUid === userId && typeof stopFollowing === 'function') stopFollowing();
     if (userMarkers[userId]) { userMarkers[userId].remove(); delete userMarkers[userId]; }
     toast('Location hidden — you can still chat & view the map', 2600);
@@ -4529,7 +4529,7 @@ function startLocationSharing() {
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
       fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
-        lat: 0, lng: 0, name: userName, accuracy: 0, ts: now, noGps: true, hidden: true
+        lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true
       });
       return;
     }
@@ -4652,7 +4652,7 @@ function startLocationSharing() {
     if (window._lastGPS) return; // a fix arrived in the meantime — don't downgrade
     if (!window._wasNoGps) { window._wasNoGps = true; try { window._evt('GPS lost / no fix'); } catch (e) {} }
     fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
-      lat: 0, lng: 0, name: userName, accuracy: 0,
+      lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0,
       ts: Date.now(), claiming: false, noGps: true
     });
   };
@@ -4734,10 +4734,10 @@ function startLocationSharing() {
     if (!(db && groupName && userId && userName)) return;
     if (locationHidden) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-                  { lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
+                  { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
     } else if (!window._lastGPS) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-                  { lat: 0, lng: 0, name: userName, accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
+                  { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
     } else if (window._batterySaver && window._bsIdle) {
       // Battery-saver "resting": stay intentionally quiet so the member shows RESTING and we
       // actually save the writes. Presence (conn flag) keeps them visible; movement wakes us.
