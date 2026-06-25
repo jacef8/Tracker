@@ -185,7 +185,8 @@ function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
   if (!btn) return;
   btn.classList.toggle('gv-keyed', micOn);
-  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk';
+  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk (don\'t hold)';
+  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'STOP' : 'TAP';
   setTx(micOn);
 }
 
@@ -246,13 +247,17 @@ function injectStylesOnce() {
     #gv-bar .gv-ind.tx-on .gv-led { background: #ff5252; box-shadow: 0 0 8px #ff5252; }
     #gv-bar .gv-ind.rx-on { color: #5ef0a0; border-color: #1d5236; background: #0f2418; }
     #gv-bar .gv-ind.rx-on .gv-led { background: #00e676; box-shadow: 0 0 8px #00e676; }
-    #gv-ptt { width: 64px; height: 64px; border-radius: 50%; border: none; flex: 0 0 auto;
-      background: #f0a500; color: #1a1200; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    #gv-ptt { width: 66px; height: 66px; border-radius: 50%; border: none; flex: 0 0 auto;
+      background: #f0a500; color: #1a1200; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
       user-select: none; -webkit-user-select: none; box-shadow: 0 2px 0 #b87d00;
       transition: transform .08s, box-shadow .12s, background .12s; }
-    #gv-ptt svg { width: 28px; height: 28px; }
+    #gv-ptt svg { width: 22px; height: 22px; }
+    #gv-ptt .gv-ptt-hint { font-size: 10px; font-weight: 900; letter-spacing: .06em; line-height: 1; }
     #gv-ptt:active { transform: scale(.95); }
     #gv-ptt.gv-keyed { background: #ff5252; color: #fff; box-shadow: 0 0 0 4px rgba(255,82,82,.25), 0 2px 0 #a30000; }
+    /* Gentle pulse while idle to invite a TAP (people kept trying to hold it). */
+    #gv-ptt:not(.gv-keyed) { animation: gvPulse 2s ease-in-out infinite; }
+    @keyframes gvPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(240,165,0,.45), 0 2px 0 #b87d00; } 50% { box-shadow: 0 0 0 7px rgba(240,165,0,0), 0 2px 0 #b87d00; } }
     #gv-bar .gv-icon { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 6px; }
     #gv-bar .gv-icon:active { color: #e6edf3; }
   `;
@@ -273,7 +278,7 @@ function renderBar() {
       <div class="gv-name">${escapeHtml(session.partnerName)}</div>
       <div class="gv-talker" id="gv-talker"></div>
     </div>
-    <button id="gv-ptt" title="Tap to talk" aria-label="Push to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
+    <button id="gv-ptt" title="Tap to talk (don't hold)" aria-label="Tap to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">TAP</span></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
