@@ -36,7 +36,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(function(k){ return k !== CACHE && k.indexOf('gltiles_') !== 0 && k !== 'gl-offline-tiles'; }).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -54,11 +54,18 @@ self.addEventListener('fetch', e => {
   // cache first so a downloaded hunting area works with NO signal; otherwise fall
   // through to the network (un-downloaded areas still load online).
   if (url.hostname.indexOf('basemap.nationalmap.gov') !== -1) {
-    e.respondWith(
-      caches.open('gl-offline-tiles').then(function(c) {
-        return c.match(e.request).then(function(hit) { return hit || fetch(e.request); });
-      })
-    );
+    e.respondWith((async function() {
+      try {
+        var keys = await caches.keys();
+        for (var i = 0; i < keys.length; i++) {
+          if (keys[i].indexOf('gltiles_') === 0 || keys[i] === 'gl-offline-tiles') {
+            var hit = await (await caches.open(keys[i])).match(e.request);
+            if (hit) return hit;
+          }
+        }
+      } catch (e2) {}
+      return fetch(e.request);
+    })());
     return;
   }
 
