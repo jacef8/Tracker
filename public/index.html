@@ -672,6 +672,39 @@
     font-size: 16px; cursor: pointer; flex-shrink: 0; line-height: 1;
   }
 
+  /* Prominent JOIN banner — bigger/bolder than a toast so a new arrival is obvious. */
+  #join-alert {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 6px); left: 50%;
+    transform: translateX(-50%) translateY(-24px) scale(.96);
+    z-index: 602; width: min(380px, 94vw);
+    opacity: 0; pointer-events: none; display: none;
+    transition: opacity .25s ease, transform .35s cubic-bezier(.34,1.56,.64,1);
+  }
+  #join-alert.show { display: block; opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  #join-alert-inner {
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(135deg, rgba(19,54,31,.97), rgba(13,30,20,.97));
+    border: 1.5px solid #3fb950; border-radius: 16px; padding: 13px 16px;
+    box-shadow: 0 6px 26px rgba(0,0,0,.55), 0 0 0 4px rgba(63,185,80,.12);
+  }
+  #join-alert-av {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    background: #3fb950; color: #0d1117; font-weight: 800; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 12px rgba(63,185,80,.5);
+  }
+  #join-alert-name { font-size: 17px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #join-alert-sub  { font-size: 12px; font-weight: 700; color: #5ef0a0; letter-spacing: .04em; text-transform: uppercase; }
+
+  /* Member-count badge: bigger + a pop when the count changes so it's noticeable. */
+  #users-badge { box-shadow: 0 0 0 2px var(--bg); }
+  #users-badge.count-pop { animation: usersBadgePop .6s ease; }
+  @keyframes usersBadgePop {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.7); box-shadow: 0 0 0 2px var(--bg), 0 0 14px rgba(63,185,80,.9); }
+    100% { transform: scale(1); }
+  }
+
   #pin-alert {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%;
     transform: translateX(-50%);
@@ -1171,7 +1204,7 @@
     <div class="icon-btn" id="users-toggle-btn" title="Who&#39;s online">
       <span style="position:relative;display:inline-flex">
         <svg class="licon"><use href="#ic-users"/></svg>
-        <span id="users-badge" style="display:none;position:absolute;top:-6px;right:-7px;background:#3fb950;color:#000;font-size:9px;font-weight:800;border-radius:10px;padding:1px 4px;min-width:14px;text-align:center;line-height:14px">0</span>
+        <span id="users-badge" style="display:none;position:absolute;top:-7px;right:-9px;background:#3fb950;color:#000;font-size:11px;font-weight:800;border-radius:11px;padding:1px 5px;min-width:18px;text-align:center;line-height:16px">0</span>
       </span>
     </div>
     <!-- BREADCRUMBS -->
@@ -1922,6 +1955,16 @@
     <button id="chat-alert-close"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
 </div>
+<!-- Prominent join banner -->
+<div id="join-alert" onclick="this.classList.remove('show')">
+  <div id="join-alert-inner">
+    <div id="join-alert-av"></div>
+    <div style="min-width:0;flex:1">
+      <div id="join-alert-name"></div>
+      <div id="join-alert-sub">joined the group</div>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -1947,7 +1990,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 166;
+var APP_BUILD = 167;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5134,16 +5177,21 @@ function listenUsers() {
     const listEl = document.getElementById('user-list');
     listEl.innerHTML = '';
 
-    // Update member count badge on users button
+    // Update member count badge on users button — pop it when the number changes.
     var totalUsers = Object.keys(users).length;
     var badge = document.getElementById('users-badge');
     if (badge) {
       if (totalUsers > 0) {
+        var changed = badge.textContent !== String(totalUsers > 99 ? '99+' : totalUsers);
         badge.textContent = totalUsers > 99 ? '99+' : totalUsers;
         badge.style.display = 'block';
+        if (changed && window._lastUserCount != null && totalUsers !== window._lastUserCount) {
+          badge.classList.remove('count-pop'); void badge.offsetWidth; badge.classList.add('count-pop');
+        }
       } else {
         badge.style.display = 'none';
       }
+      window._lastUserCount = totalUsers;
     }
 
     // Remove markers for users fully gone from Firebase
@@ -5449,14 +5497,25 @@ function _notify(kind) {
 // ══ JOIN / LEAVE ALERTS ══════════════════════════════════
 function showJoinAlert(name) {
   _notify('join');
-  toast(name + ' joined the map', 3000);
-  // Flash the users button green
+  var el = document.getElementById('join-alert');
+  if (el) {
+    var av = document.getElementById('join-alert-av'); if (av) av.textContent = initials(name);
+    var nm = document.getElementById('join-alert-name'); if (nm) nm.textContent = name;
+    el.classList.add('show');
+    clearTimeout(window._joinAlertTimer);
+    window._joinAlertTimer = setTimeout(function () { el.classList.remove('show'); }, 5000);
+  } else {
+    toast(name + ' joined the map', 3000);   // fallback
+  }
+  // Flash the users button green + pop its count badge so the change is obvious.
   var btn = document.getElementById('users-toggle-btn');
   if (btn) {
     btn.style.borderColor = '#00e676';
     btn.style.color = '#00e676';
-    setTimeout(function() { btn.style.borderColor = ''; btn.style.color = ''; }, 2500);
+    setTimeout(function() { btn.style.borderColor = ''; btn.style.color = ''; }, 2800);
   }
+  var badge = document.getElementById('users-badge');
+  if (badge) { badge.classList.remove('count-pop'); void badge.offsetWidth; badge.classList.add('count-pop'); }
 }
 
 // ══ NEW PIN ALERT ════════════════════════════════════════════════
