@@ -1763,11 +1763,26 @@
     <button id="ptab-friends" onclick="window._peopleTab('friends')" style="flex:1;padding:9px;background:var(--bg);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer">★ Friends</button>
   </div>
   <div id="tab-inroom">
-    <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="margin:0 12px 8px;padding:11px;width:calc(100% - 24px);background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">🎙 Talk to group</button>
+    <div style="display:flex;gap:6px;padding:0 12px 8px">
+      <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="flex:2;padding:11px;background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">🎙 Whole group</button>
+      <button onclick="window._openVoicePicker && window._openVoicePicker()" style="flex:1;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:10px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap">🎙 Some…</button>
+    </div>
     <div id="user-list"></div>
   </div>
   <div id="tab-friends" style="display:none">
     <div id="friends-list"></div>
+  </div>
+</div>
+
+<!-- ══ VOICE PICKER — choose several members to talk to ══════════════ -->
+<div id="voice-pick" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
+  <div style="width:100%;max-width:360px;max-height:80vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.6)">
+    <div style="padding:14px 16px;font-size:15px;font-weight:800;color:var(--text);border-bottom:1px solid var(--border)">Talk to several</div>
+    <div id="voice-pick-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+    <div style="display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border)">
+      <button onclick="document.getElementById('voice-pick').style.display='none'" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--muted);font-weight:700;cursor:pointer">Cancel</button>
+      <button id="voice-pick-start" onclick="window._startVoicePick && window._startVoicePick()" style="flex:2;padding:11px;background:#f0a500;border:none;border-radius:10px;color:#1a1200;font-weight:800;cursor:pointer;opacity:.5">Select people</button>
+    </div>
   </div>
 </div>
 
@@ -1932,7 +1947,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 164;
+var APP_BUILD = 165;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9294,6 +9309,64 @@ document.addEventListener('click', function(e) {
 
 window._voiceMod = function () { return import('./voice.js'); };
 function _gvRoomId(uid) { return 'gv_' + groupName + '_' + [userId, uid].sort().join('~'); }
+function _closePeopleDrawer() { try { document.getElementById('user-drawer').classList.remove('open'); if (typeof setLocateMeVisible === 'function') setLocateMeVisible(true); } catch (e) {} }
+// Deterministic room id for a chosen subset (same set of people → same room).
+function _gvGroupRoomId(uids) {
+  var all = [userId].concat(uids).sort().join('~'), h = 0;
+  for (var i = 0; i < all.length; i++) h = (h * 31 + all.charCodeAt(i)) | 0;
+  return 'gv_' + groupName + '_g' + (h >>> 0).toString(36);
+}
+
+// ── Talk to SEVERAL: pick a subset of members and voice just them ───
+window._openVoicePicker = function () {
+  if (document.body.classList.contains('voice-off')) return;
+  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  var users = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+  var ids = Object.keys(users).filter(function (u) { return u !== userId && users[u] && users[u].name && users[u].conn !== false; });
+  if (!ids.length) { toast('No one else in the room to call'); return; }
+  var el = document.getElementById('voice-pick-list');
+  el.innerHTML = ids.map(function (u) {
+    var nm = String(users[u].name || 'Member');
+    return '<label style="display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+        '<input type="checkbox" class="vpick-cb" value="' + u + '" data-name="' + nm.replace(/"/g, '') + '" onchange="window._updateVoicePickCount()" style="width:19px;height:19px;accent-color:#f0a500;flex-shrink:0" />' +
+        '<span style="width:30px;height:30px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:var(--text);flex-shrink:0">' + initials(nm) + '</span>' +
+        '<span style="font-size:14px;font-weight:600;color:var(--text);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm + '</span>' +
+      '</label>';
+  }).join('');
+  _updateVoicePickCount();
+  document.getElementById('voice-pick').style.display = 'flex';
+};
+window._updateVoicePickCount = function () {
+  var n = document.querySelectorAll('#voice-pick-list .vpick-cb:checked').length;
+  var b = document.getElementById('voice-pick-start');
+  if (b) { b.textContent = n ? '🎙 Talk to ' + n : 'Select people'; b.disabled = !n; b.style.opacity = n ? '1' : '.5'; }
+};
+window._startVoicePick = function () {
+  var cbs = document.querySelectorAll('#voice-pick-list .vpick-cb:checked');
+  if (!cbs.length) return;
+  var uids = [], names = [];
+  cbs.forEach(function (cb) { uids.push(cb.value); names.push(cb.getAttribute('data-name')); });
+  document.getElementById('voice-pick').style.display = 'none';
+  _openVoiceToSelected(uids, names);
+};
+async function _openVoiceToSelected(uids, names) {
+  var cfg = window.VOICE_CONFIG || {};
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
+  if (!userId || !groupName) return;
+  var roomId = _gvGroupRoomId(uids);
+  // Ping each selected member so their app auto-joins the same shared room.
+  uids.forEach(function (u) {
+    try { fbSet(fbRef(db, 'gl/' + groupName + '/voice/' + u), { from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now() }); } catch (e) {}
+  });
+  window._gvPingedUids = uids;
+  _closePeopleDrawer();
+  var label = names.length <= 2 ? names.join(' & ') : (names.length + ' people');
+  if (window._evt) window._evt('🎙 started voice with ' + names.join(', '));
+  try {
+    var mod = await window._voiceMod();
+    mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member', partnerName: label, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+  } catch (e) { console.error('[voice] group-of-some open failed', e); alert('Voice failed to load: ' + e.message); }
+}
 
 // ── Initiator: tap 🎙 → ping the target + open voice (mic ready) ───
 window._openVoiceTo = async function (uid, name) {
@@ -9301,6 +9374,7 @@ window._openVoiceTo = async function (uid, name) {
   var cfg = window.VOICE_CONFIG || {};
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) { alert('Join a group first, then tap a member to talk.'); return; }
+  _closePeopleDrawer();   // get the People panel out of the way so the voice bar is clear
   var roomId = _gvRoomId(uid);
   // Ping the other device so it auto-joins (if it has voice on).
   try {
@@ -9325,6 +9399,7 @@ window._openVoiceToGroup = async function () {
   var cfg = window.VOICE_CONFIG || {};
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) { alert('Join a group first.'); return; }
+  _closePeopleDrawer();
   var roomId = 'gv_' + groupName + '_ALL';
   try {
     fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'), {
@@ -9435,7 +9510,7 @@ window._voiceMod().then(function (m) {
     'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
     'pin-modal','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
-    'delete-confirm-modal','color-picker-modal','invite-join-popup','cancelled-popup','member-popup'];
+    'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup','cancelled-popup','member-popup'];
   function g(id) { return document.getElementById(id); }
   // On-screen ⟺ has real size AND overlaps the viewport. Handles BOTH display-toggled
   // modals (display:none → 0 size) and transform-slide drawers (closed → off-screen rect).
