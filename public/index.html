@@ -1751,6 +1751,8 @@
     <button class="panel-close" id="close-user-drawer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
   <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="margin:8px 12px;padding:11px;background:#f0a500;border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">🎙 Talk to group</button>
+  <!-- Favorites who are online in OTHER rooms (or offline) — tap to jump to their room. -->
+  <div id="people-elsewhere"></div>
   <div id="user-list"></div>
 </div>
 
@@ -1816,6 +1818,10 @@
     <div onclick="_setToggleVoice()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
       <span id="set-voice-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
+    <div id="set-bglocation-row" onclick="window._setToggleBgLocation && window._setToggleBgLocation()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep updating your dot when the app is closed. Turning this off removes the status-bar icon — you'll only update while the app is open.</div></div></div>
+      <span id="set-bglocation-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
@@ -1907,7 +1913,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 152;
+var APP_BUILD = 153;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2129,6 +2135,62 @@ window._toggleFriend = function(uid, name, ev) {
   _setFriends(m);
   // Immediate star feedback; the pin-to-top reorder happens on the next member update.
   if (ev && ev.currentTarget) { ev.currentTarget.textContent = nowFriend ? '★' : '☆'; ev.currentTarget.style.color = nowFriend ? 'var(--accent)' : 'var(--muted)'; }
+  try { _renderMyPeople(); } catch (e) {}
+};
+
+// ── "My People": favorites who are online in OTHER rooms (or offline) ──────────────
+// Uses the global presence index (window._presenceAll, kept live by a /gl/_presence sub).
+function _presenceOnline(p) { return !!(p && p.room && (!p.ts || (Date.now() - p.ts) < 6 * 60 * 1000)); }
+function _renderMyPeople() {
+  var el = document.getElementById('people-elsewhere'); if (!el) return;
+  var friends = _getFriends(), pres = window._presenceAll || {}, rows = '';
+  Object.keys(friends).forEach(function(fid) {
+    if (fid === userId) return;                       // not yourself
+    var p = pres[fid];
+    if (p && p.room === groupName) return;            // already in your room → shown in the list below
+    var nm = (p && p.name) || friends[fid] || 'Friend';
+    var online = _presenceOnline(p);
+    var roomDisp = online ? _prettyGroup(p.room) : '';
+    var safeRoom = online ? String(p.room).replace(/'/g, '') : '';
+    var safeDisp = roomDisp.replace(/'/g, '');
+    rows +=
+      '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + initials(nm) + '</div>' +
+        '<div style="min-width:0;flex:1">' +
+          '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm + '</div>' +
+          '<div style="font-size:12px;color:' + (online ? '#3fb950' : 'var(--muted)') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (online ? 'In “' + roomDisp + '”' : 'Offline') + '</div>' +
+        '</div>' +
+        (online ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:8px 13px;background:#00e676;border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '') +
+      '</div>';
+  });
+  el.innerHTML = rows ? ('<div style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 12px 4px">Your people elsewhere</div>' + rows) : '';
+}
+// Toast when a favorite enters a room (skips the first snapshot so we don't flood on join).
+function _checkPresenceAlerts(newPres) {
+  var friends = _getFriends(), prev = window._prevPresence || {};
+  if (!window._presenceInit) { window._presenceInit = true; window._prevPresence = newPres; return; }
+  Object.keys(friends).forEach(function(fid) {
+    if (fid === userId) return;
+    var np = newPres[fid], pp = prev[fid];
+    var newRoom = np && np.room, oldRoom = pp && pp.room;
+    if (newRoom && newRoom !== oldRoom && newRoom !== groupName) {
+      var nm = (np && np.name) || friends[fid] || 'A friend';
+      try { toast('🟢 ' + nm + ' is in “' + _prettyGroup(newRoom) + '” — open People to join', 5500); } catch (e) {}
+    }
+  });
+  window._prevPresence = newPres;
+}
+// Jump to a favorite's room: persist it as the session group, then reload (auto-rejoins it).
+window._joinFriendRoom = function(roomKey, roomName) {
+  if (!roomKey) return;
+  if (roomKey === groupName) { try { document.getElementById('user-drawer').classList.remove('open'); } catch (e) {} return; }
+  var s = {}; try { s = getSavedSession() || {}; } catch (e) {}
+  var nm = userName || s.name || '', uid2 = userId || s.uid || '';
+  if (!nm) { toast('Set your name first'); return; }
+  try { saveSession(nm, roomKey, uid2); } catch (e) {}
+  toast('Joining “' + (roomName || roomKey) + '”…', 1800);
+  try { if (db && groupName && userId) fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId)); } catch (e) {}
+  setTimeout(function() { location.reload(); }, 350);
 };
 
 // Show/hide the small "NN mph" label under a member's map dot. Only while driving
@@ -2477,6 +2539,9 @@ function _syncSettings() {
     if (locationHidden) { lp.textContent = 'HIDDEN'; lp.style.background = 'var(--border)'; lp.style.color = 'var(--muted)'; }
     else { lp.textContent = 'ON'; lp.style.background = '#13361f'; lp.style.color = '#3fb950'; }
   }
+  // Background-location on/off — native app only.
+  var bglRow = document.getElementById('set-bglocation-row');
+  if (bglRow) { bglRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-bglocation-pill', _bgLocationOn()); } catch (e) {} }
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
   var bgRow = document.getElementById('set-bgtrack-row');
@@ -2511,6 +2576,16 @@ function _setToggleSpeed() {
     if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/spdH'), _shareSpeed() ? 0 : 1);
   } catch (e) {}
 }
+window._setToggleBgLocation = function () {
+  var on = !_bgLocationOn();
+  try { localStorage.setItem('gl_bg_location', on ? '1' : '0'); } catch (e) {}
+  if (on) { window._bgGeoStarted = false; try { startNativeBackgroundTracking(); } catch (e) {} }
+  else { try { stopNativeBackgroundTracking(); } catch (e) {} }
+  _syncSettings();
+  toast(on ? 'Background location on — your group sees you with the app closed'
+           : 'Background location off — updates only while the app is open (status-bar icon removed)', 4200);
+  try { window._evt('background location ' + (on ? 'enabled' : 'disabled')); } catch (e) {}
+};
 function _setToggleBatterySaver() {
   window._batterySaver = !window._batterySaver;
   try { localStorage.setItem('gl_battsaver', window._batterySaver ? '1' : '0'); } catch (e) {}
@@ -3180,8 +3255,23 @@ function enterMap(name, group, uid) {
         } catch (_) {}
         // Re-assert presence on (re)connect so a resolved blip doesn't leave conn:false behind.
         try { fb.update(_meRef, { conn: true, discTs: 0 }); } catch (_) {}
+        // Global presence index — lets your favorites see which room you're in (and you, theirs).
+        try {
+          var _presRef = fb.ref(fb.db, 'gl/_presence/' + userId);
+          fb.onDisconnect(_presRef).remove();
+          fb.set(_presRef, { room: groupName, name: userName, ts: fb.serverTimestamp() });
+        } catch (_) {}
       });
     } catch (_) {}
+    // Subscribe once to the global presence index → drives the "My People" list + friend alerts.
+    if (!window._presenceSubbed) {
+      window._presenceSubbed = true;
+      try { fb.onValue(fb.ref(fb.db, 'gl/_presence'), function(ps) {
+        window._presenceAll = ps.val() || {};
+        try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
+        try { _renderMyPeople(); } catch (e) {}
+      }); } catch (_) {}
+    }
 
     // Smooth transition — no black flash
     document.getElementById('join-screen').style.opacity = '0';
@@ -4313,8 +4403,13 @@ function _isNativeApp() {
   } catch (e) {}
   return false;
 }
+// Background-location sharing preference (native only, default ON). When OFF we never
+// start the foreground service, so Android shows no persistent status-bar notification —
+// at the cost of the dot only updating while the app is open.
+function _bgLocationOn() { try { return localStorage.getItem('gl_bg_location') !== '0'; } catch (e) { return true; } }
 async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
+  if (!_bgLocationOn()) return;   // user turned off background location → no service, no status-bar icon
   window._bgGeoStarted = true;
   try {
     // The Capacitor bridge exposes registered native plugins on Capacitor.Plugins.
@@ -6125,6 +6220,7 @@ if (_glb) _glb.addEventListener('click', function(e) {
 document.getElementById('users-toggle-btn').addEventListener('click', () => {
   var isOpen = document.getElementById('user-drawer').classList.toggle('open');
   setLocateMeVisible(!isOpen);
+  if (isOpen) { try { _renderMyPeople(); } catch (e) {} }
 });
 document.getElementById('map').addEventListener('click', () => {
   document.getElementById('user-drawer').classList.remove('open');
@@ -6161,6 +6257,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
     if (db && groupName && userId) {
       // Cancel the queued conn:false disconnect write so the reload below doesn't resurrect a husk.
       try { window._fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
+      try { fbRemove(fbRef(db, 'gl/_presence/' + userId)); } catch (_) {}   // drop global presence on exit
       var p = fbRemove(fbRef(db, `gl/${groupName}/users/${userId}`)); // trails persist 2h
       if (p && typeof p.then === 'function') { p.then(_go).catch(_go); } else { _go(); }
     } else { _go(); }
