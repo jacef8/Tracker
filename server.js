@@ -148,6 +148,11 @@ app.get('/test888', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index-test.html'));
 });
+// Public APK install page — share this link with friends: /download
+app.get('/download', function(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'download.html'));
+});
 // Digital Asset Links — required for TWA/Play Store verification
 app.get('/.well-known/assetlinks.json', function(req, res) {
   res.setHeader('Content-Type', 'application/json');
@@ -177,6 +182,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
     if (filePath.endsWith('admin.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+    if (filePath.endsWith('.apk')) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="GroundLink.apk"');
     }
   }
 }));
