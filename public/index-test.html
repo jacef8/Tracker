@@ -1884,7 +1884,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 144;
+var APP_BUILD = 145;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6512,22 +6512,30 @@ window._confirmOfflineDownload = async function () {
     if (i % 15 === 0) _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)');
   }
   if (dl) { dl.disabled = false; dl.style.opacity = '1'; }
+  var parcelKeys = [];
   if (done > 0) {
+    try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(map && map.getBounds ? map.getBounds() : null); } catch (e) {}
     var areas = _getAreas();
-    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng });
+    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng, parcelKeys: parcelKeys });
     _setAreas(areas);
     if (nameEl) nameEl.value = '';
     _renderOfflineAreas();
   } else {
     try { await caches.delete(cacheName); } catch (e) {}   // nothing saved → don't leave an empty cache
   }
-  _setOfflineStatus('Saved "' + name + '" — ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
-  if (window._evt) window._evt('offline area "' + name + '" saved: ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB');
+  _setOfflineStatus('Saved "' + name + '" — ' + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : '') + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
+  if (window._evt) window._evt('offline area "' + name + '" saved: ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : ''));
 };
 window._deleteOfflineArea = async function (id) {
   var a = _getAreas().filter(function (x) { return x.id === id; })[0];
   if (!confirm('Delete offline area "' + (a ? a.name : id) + '"? Its tiles will no longer work offline.')) return;
   try { if (window.caches) await caches.delete('gltiles_' + id); } catch (e) {}
+  // Drop this area's parcel tiles too — but keep any still claimed by another saved area.
+  if (a && a.parcelKeys && a.parcelKeys.length) {
+    var keep = {};
+    _getAreas().forEach(function (o) { if (o.id !== id) (o.parcelKeys || []).forEach(function (k) { keep[k] = 1; }); });
+    try { await _flDbDelete(a.parcelKeys.filter(function (k) { return !keep[k]; })); } catch (e) {}
+  }
   _setAreas(_getAreas().filter(function (x) { return x.id !== id; }));
   _renderOfflineAreas();
   if (window._evt && a) window._evt('offline area "' + a.name + '" deleted');
@@ -6542,13 +6550,44 @@ function _renderOfflineAreas() {
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
         '<div style="min-width:0">' +
           '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (a.name || 'Area').replace(/</g, '&lt;') + '</div>' +
-          '<div style="font-size:11px;color:var(--muted)">' + _fmtMB(a.bytes || 0) + ' · ' + (a.count || 0) + ' tiles</div>' +
+          '<div style="font-size:11px;color:var(--muted)">' + _fmtMB(a.bytes || 0) + ' · ' + (a.count || 0) + ' tiles' + (a.parcelKeys && a.parcelKeys.length ? ' · parcels ✓' : '') + '</div>' +
         '</div>' +
         '<button onclick="window._deleteOfflineArea(\'' + a.id + '\')" title="Delete this area" style="background:none;border:none;color:#f85149;font-size:17px;cursor:pointer;padding:4px 7px;flex-shrink:0;line-height:1">✕</button>' +
       '</div>';
     }).join('');
 }
 try { _renderOfflineAreas(); } catch (e) {}              // populate the manage list on load
+// Fetch + persist parcel GeoJSON tiles (z14) covering the given map bounds, for whatever
+// free parcel source covers the center. Best-effort and capped so a big area can't hammer
+// the FeatureServer; returns the list of saved tile keys (for per-area cleanup on delete).
+async function _downloadParcelsForArea(b) {
+  if (!b || typeof _parcelSourceAt !== 'function') return [];
+  var cx = (b.getWest() + b.getEast()) / 2, cy = (b.getSouth() + b.getNorth()) / 2;
+  var src = _parcelSourceAt(cx, cy);
+  if (!src) return [];
+  var z = FL_TILE_Z, tl = _flTileXY(b.getWest(), b.getNorth(), z), br = _flTileXY(b.getEast(), b.getSouth(), z);
+  var list = [];
+  for (var x = tl[0]; x <= br[0]; x++) for (var y = tl[1]; y <= br[1]; y++) list.push(z + '/' + x + '/' + y);
+  if (list.length > 120) list = list.slice(0, 120);      // safety cap
+  var saved = [];
+  for (var i = 0; i < list.length; i++) {
+    var ck = src.id + '/' + list[i];
+    if (await _flDbGet(ck)) { saved.push(ck); continue; } // already on disk → count it, skip refetch
+    var bb = _flTileBounds(list[i]).join(',');
+    var url = src.url + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
+      + '&geometryPrecision=6&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=5000'
+      + '&geometry=' + encodeURIComponent(bb);
+    try {
+      var r = await fetch(url); if (!r.ok) continue;
+      var gj = await r.json(); var feats = (gj && gj.features) || [];
+      for (var j = 0; j < feats.length; j++) _flNormalize(feats[j]);
+      await _flDbPut(ck, feats);
+      _flTileCache[ck] = { feats: feats, t: Date.now() };
+      saved.push(ck);
+    } catch (e) {}
+  }
+  return saved;
+}
 
 function setBaseLayer(btn) {
   document.querySelectorAll('.layer-base-btn').forEach(function(b) {
@@ -6904,6 +6943,49 @@ var _flTileCache = {};              // "srcId/z/x/y" -> { feats:[...], t:lastUse
 var _flInFlight = {};               // "srcId/z/x/y" -> true while fetching
 var _flCacheOrder = [];             // insertion order for LRU eviction
 
+// ── Offline parcel persistence (IndexedDB) ──────────────────────────
+// Parcel GeoJSON tiles are written through to IndexedDB as you view or download them,
+// so a previously-seen (or explicitly downloaded) area still draws parcels with NO signal.
+// The in-memory _flTileCache stays the fast path; IndexedDB is the durable backing store.
+var _flDbP = null;
+function _flDb() {
+  if (_flDbP) return _flDbP;
+  _flDbP = new Promise(function (resolve) {
+    try {
+      if (!window.indexedDB) { resolve(null); return; }
+      var rq = indexedDB.open('gl-parcels', 1);
+      rq.onupgradeneeded = function (e) { var d = e.target.result; if (!d.objectStoreNames.contains('tiles')) d.createObjectStore('tiles', { keyPath: 'k' }); };
+      rq.onsuccess = function (e) { resolve(e.target.result); };
+      rq.onerror = function () { resolve(null); };
+    } catch (e) { resolve(null); }
+  });
+  return _flDbP;
+}
+function _flDbPut(k, feats) {
+  return _flDb().then(function (db) {
+    if (!db) return;
+    try { db.transaction('tiles', 'readwrite').objectStore('tiles').put({ k: k, feats: feats, ts: Date.now() }); } catch (e) {}
+  });
+}
+function _flDbGet(k) {
+  return _flDb().then(function (db) {
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var rq = db.transaction('tiles', 'readonly').objectStore('tiles').get(k);
+        rq.onsuccess = function () { resolve(rq.result ? rq.result.feats : null); };
+        rq.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+function _flDbDelete(keys) {
+  return _flDb().then(function (db) {
+    if (!db || !keys || !keys.length) return;
+    try { var st = db.transaction('tiles', 'readwrite').objectStore('tiles'); keys.forEach(function (k) { try { st.delete(k); } catch (e) {} }); } catch (e) {}
+  });
+}
+
 function toggleFLParcels(on) {
   flParcelsOn = on;
   updateToggleUI('fl-parcels-toggle-track', 'fl-parcels-toggle-thumb', on);
@@ -7065,34 +7147,46 @@ function loadFLParcelsInView(force) {
       var ck = s.id + '/' + key;
       if (_flTileCache[ck] || _flInFlight[ck]) return; // already have it / fetching it
       _flInFlight[ck] = true;
-      var bb = _flTileBounds(key).join(',');
-      // geometryPrecision trims coordinate bytes; per-tile bbox keeps each request small.
-      var url = s.url + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
-        + '&geometryPrecision=6&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=5000'
-        + '&geometry=' + encodeURIComponent(bb);
-      fetch(url)
-        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function(gj) {
+      // Read-through: serve a previously-saved tile straight from IndexedDB (works with
+      // NO signal). Only hit the network when nothing is on disk yet.
+      _flDbGet(ck).then(function(dbFeats) {
+        if (dbFeats) {
           delete _flInFlight[ck];
-          var feats = (gj && gj.features) || [];
-          if (feats.length && !_flSchemaLogged[s.id]) {
-            _flSchemaLogged[s.id] = true;
-            try { window._evt('parcels schema [' + s.id + '] — ' + Object.keys(feats[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
-          }
-          for (var i = 0; i < feats.length; i++) _flNormalize(feats[i]);
-          _flTileCache[ck] = { feats: feats, t: Date.now() };
+          _flTileCache[ck] = { feats: dbFeats, t: Date.now() };
           _flCacheOrder.push(ck);
-          while (_flCacheOrder.length > FL_TILE_CACHE_MAX) {
-            var ev = _flCacheOrder.shift();
-            var keep = _flActiveSrc ? _flTilesInView(FL_TILE_Z).map(function(k) { return _flActiveSrc.id + '/' + k; }) : [];
-            if (ev && ev !== ck && keep.indexOf(ev) === -1) delete _flTileCache[ev];
-          }
           if (flParcelsOn) _flRepaintFromCache();
-        })
-        .catch(function(e) {
-          delete _flInFlight[ck];
-          try { window._evt('parcels tile failed [' + s.id + '] — ' + ((e && e.message) || 'net') + ' @ ' + key); } catch (x) {}
-        });
+          return;
+        }
+        var bb = _flTileBounds(key).join(',');
+        // geometryPrecision trims coordinate bytes; per-tile bbox keeps each request small.
+        var url = s.url + '?f=geojson&where=1%3D1&returnGeometry=true&outFields=*&outSR=4326&inSR=4326'
+          + '&geometryPrecision=6&spatialRel=esriSpatialRelIntersects&geometryType=esriGeometryEnvelope&resultRecordCount=5000'
+          + '&geometry=' + encodeURIComponent(bb);
+        fetch(url)
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(gj) {
+            delete _flInFlight[ck];
+            var feats = (gj && gj.features) || [];
+            if (feats.length && !_flSchemaLogged[s.id]) {
+              _flSchemaLogged[s.id] = true;
+              try { window._evt('parcels schema [' + s.id + '] — ' + Object.keys(feats[0].properties || {}).join(',').slice(0, 240)); } catch (e) {}
+            }
+            for (var i = 0; i < feats.length; i++) _flNormalize(feats[i]);
+            _flTileCache[ck] = { feats: feats, t: Date.now() };
+            _flCacheOrder.push(ck);
+            _flDbPut(ck, feats);   // write-through: persist for offline use
+            while (_flCacheOrder.length > FL_TILE_CACHE_MAX) {
+              var ev = _flCacheOrder.shift();
+              var keep = _flActiveSrc ? _flTilesInView(FL_TILE_Z).map(function(k) { return _flActiveSrc.id + '/' + k; }) : [];
+              if (ev && ev !== ck && keep.indexOf(ev) === -1) delete _flTileCache[ev];
+            }
+            if (flParcelsOn) _flRepaintFromCache();
+          })
+          .catch(function(e) {
+            delete _flInFlight[ck];
+            try { window._evt('parcels tile failed [' + s.id + '] — ' + ((e && e.message) || 'net') + ' @ ' + key); } catch (x) {}
+          });
+      });
     });
   }, force ? 0 : 250);
 }
