@@ -273,6 +273,7 @@ function renderBar() {
     <button id="gv-ptt" title="Tap to talk" aria-label="Push to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
+  document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
 
   const ptt = barEl.querySelector('#gv-ptt');
   ptt.addEventListener('click', (e) => { e.stopPropagation(); togglePtt(); });
@@ -281,7 +282,7 @@ function renderBar() {
 }
 
 function showBar() { if (barEl) barEl.style.display = 'flex'; }
-function removeBar() { if (barEl) { barEl.remove(); barEl = null; } }
+function removeBar() { if (barEl) { barEl.remove(); barEl = null; } document.body.classList.remove('gv-active'); }
 function setTalker(txt, color) { const el = barEl && barEl.querySelector('#gv-talker'); if (el) { el.textContent = txt; if (color) el.style.color = color; } }
 function setTx(on) { const el = barEl && barEl.querySelector('#gv-tx'); if (el) el.classList.toggle('tx-on', !!on); }
 function setRx(on) { const el = barEl && barEl.querySelector('#gv-rx'); if (el) el.classList.toggle('rx-on', !!on); }
