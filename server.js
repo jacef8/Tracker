@@ -43,6 +43,7 @@ app.post('/push', async function(req, res) {
   if (!pushReady && !fcmAdmin) return res.json({ ok: false, reason: 'push-not-configured' });
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
+  const senderFcm = b.senderFcm || '', senderEndpoint = b.senderEndpoint || '';
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
   // DB root namespace — the test page sends ns:'gltest' to isolate its data from
   // production ('gl'). Sanitized + defaulted so existing prod callers are unchanged.
@@ -74,6 +75,12 @@ app.post('/push', async function(req, res) {
     await Promise.all(Object.entries(targets).map(async function(entry) {
       const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
       if (uid === senderId || !rec) return;
+      // Also skip THIS physical device even under a different/old uid: a stale subscription
+      // carrying the sender's own FCM token or push endpoint must never notify the sender.
+      if (senderFcm && rec.fcm && rec.fcm === senderFcm) return;
+      if (senderEndpoint && rec.sub) {
+        try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) return; } catch (e) {}
+      }
       // Web Push — installed PWA (browser-backed)
       if (pushReady && rec.sub) {
         let subscription = null;
