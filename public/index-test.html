@@ -2004,7 +2004,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 173;
+var APP_BUILD = 174;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2450,6 +2450,7 @@ async function _registerFcm(silent) {
     var token = res && res.token;
     if (!token) return false;
     window._fcmToken = token;
+    try { localStorage.setItem('gl_fcm', token); } catch (e) {}
     if (db && groupName && userId) {
       fbSet(fbRef(db, `gltest/${groupName}/pushSubs/${userId}`),
             { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), ts: Date.now() });
@@ -2514,7 +2515,7 @@ async function enableAlerts(silent) {
         applicationServerKey: _urlB64ToUint8(VAPID_PUBLIC)
       });
     }
-    try { window._pushEndpoint = (sub && sub.endpoint) || window._pushEndpoint; } catch (e) {}
+    try { window._pushEndpoint = (sub && sub.endpoint) || window._pushEndpoint; if (window._pushEndpoint) localStorage.setItem('gl_push_endpoint', window._pushEndpoint); } catch (e) {}
     if (db && groupName && userId) {
       fbSet(fbRef(db, `gltest/${groupName}/pushSubs/${userId}`),
             { sub: JSON.stringify(sub), name: userName, ts: Date.now() });
@@ -2817,11 +2818,28 @@ function _setToggleParcels() {
   setTimeout(_syncSettings, 60);
 }
 
+// Resolve THIS device's push identity (FCM token / web-push endpoint) so the server can
+// skip our own subscription — even when it's filed under an OLD uid (e.g. a Google auth uid
+// from before the device/account identity split). Hydrates from localStorage, then from the
+// live push subscription. Cheap + idempotent; safe to await before any pushNotify.
+async function _ensurePushIdentity() {
+  try { if (!window._fcmToken) window._fcmToken = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
+  try { if (!window._pushEndpoint) window._pushEndpoint = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
+  try {
+    if (!window._pushEndpoint && 'serviceWorker' in navigator && navigator.serviceWorker) {
+      var reg = await navigator.serviceWorker.ready;
+      var sub = reg && await reg.pushManager.getSubscription();
+      if (sub && sub.endpoint) { window._pushEndpoint = sub.endpoint; try { localStorage.setItem('gl_push_endpoint', sub.endpoint); } catch (e) {} }
+    }
+  } catch (e) {}
+}
 // Fire-and-forget: ask the server to push everyone else in the group
 function pushNotify(type, title, body, opts) {
   try {
     if (!groupName || !userId) return;
     opts = opts || {};
+    try { if (!window._pushEndpoint) window._pushEndpoint = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
+    try { if (!window._fcmToken) window._fcmToken = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
     fetch('/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3032,7 +3050,7 @@ async function _ensurePushSub() {
     var reg = await navigator.serviceWorker.ready;
     var sub = await reg.pushManager.getSubscription();
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _urlB64ToUint8(VAPID_PUBLIC) });
-    try { window._pushEndpoint = (sub && sub.endpoint) || window._pushEndpoint; } catch (e) {}
+    try { window._pushEndpoint = (sub && sub.endpoint) || window._pushEndpoint; if (window._pushEndpoint) localStorage.setItem('gl_push_endpoint', window._pushEndpoint); } catch (e) {}
     return sub;
   } catch (e) { return null; }
 }
@@ -3556,7 +3574,7 @@ function enterMap(name, group, uid) {
     try { fbOnValue(fbRef(db, 'gltest/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
     }); } catch (e) {}
-    if (_announceJoinOn()) pushNotify('join', groupName, userName + ' joined the group', { toFavs: true });
+    if (_announceJoinOn()) _ensurePushIdentity().then(function () { pushNotify('join', groupName, userName + ' joined the group', { toFavs: true }); });
     // Notifications default ON — silently re-subscribe to this room if permission is already granted
     setTimeout(autoEnableAlerts, 800);
     // Load this room's cached passcode (so invites can build a direct-join link)
