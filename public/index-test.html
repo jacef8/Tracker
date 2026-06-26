@@ -1815,6 +1815,23 @@
   </div>
 </div>
 
+<!-- ══ VOICE LOG — replay recent / missed transmissions ══════════════ -->
+<div id="voice-log-sheet" style="display:none;position:fixed;inset:0;z-index:4100">
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,.5)" onclick="window._closeVoiceLog && window._closeVoiceLog()"></div>
+  <div style="position:absolute;left:0;right:0;bottom:0;max-height:78vh;display:flex;flex-direction:column;background:var(--surface);border-top-left-radius:18px;border-top-right-radius:18px;border-top:2px solid var(--accent);box-shadow:0 -8px 40px rgba(0,0,0,.6)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px">
+      <div><div style="font-size:16px;font-weight:800;color:var(--text)">🎙 Transmissions</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Replay recent calls — missed ones are marked.</div></div>
+      <button onclick="window._closeVoiceLog && window._closeVoiceLog()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;line-height:1;padding:4px">✕</button>
+    </div>
+    <div id="vlog-missed-bar" style="display:none;padding:0 16px 8px">
+      <button onclick="window._playMissedTransmissions && window._playMissedTransmissions()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#1a1200;font-weight:800;cursor:pointer">▶ Play missed (<span id="vlog-missed-n">0</span>)</button>
+    </div>
+    <div id="voice-log-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 12px calc(env(safe-area-inset-bottom,0px) + 16px)"></div>
+  </div>
+</div>
+<!-- floating "you missed transmissions" pill (visible on the map even with no voice bar) -->
+<button id="vlog-pill" onclick="window._openVoiceLog && window._openVoiceLog()" style="display:none;position:fixed;top:calc(var(--topbar-h,116px) + var(--safe-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:3500;padding:8px 15px;background:#ff5252;color:#fff;border:none;border-radius:20px;font-size:13px;font-weight:800;box-shadow:0 3px 14px rgba(0,0,0,.5);cursor:pointer">🎙 <span id="vlog-pill-n">0</span> missed transmission(s) ▶</button>
+
 <!-- ══ ROOM INFO SHEET ══════════════════════════════════════════════ -->
 <div id="room-info-sheet" style="display:none;position:fixed;inset:0;z-index:500">
   <div style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeRoomInfo()"></div>
@@ -2004,7 +2021,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 174;
+var APP_BUILD = 175;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2858,6 +2875,112 @@ window._onVoiceTx = function () {
   try { pushNotify('voice', (userName || 'Someone') + ' is talking 🔊', 'Tap to listen in ' + (groupName ? _prettyGroup(groupName) : 'your room')); } catch (e) {}
 };
 
+// ── Transmission log: store each PTT clip, list + replay missed ones ─────────
+var _VLOG_NS = 'gltest';             // (production uses 'gl')
+var _VLOG_MAX = 30;                  // keep only the most recent N clips per room
+window._voiceClips = [];             // oldest-first array of { key, uid, name, ts, dur, mime, audio }
+function _vlogSeenTs() { try { return parseInt(localStorage.getItem('gl_vlog_seen_' + groupName) || '0', 10) || 0; } catch (e) { return 0; } }
+function _setVlogSeen(ts) { try { if (ts > _vlogSeenTs()) localStorage.setItem('gl_vlog_seen_' + groupName, String(ts)); } catch (e) {} }
+function _vlogMissed() { var seen = _vlogSeenTs(); return window._voiceClips.filter(function (c) { return c.uid !== userId && c.ts > seen; }); }
+function _updateVlogBadge() {
+  var n = _vlogMissed().length;
+  var b = document.getElementById('gv-log-badge');
+  if (b) { b.textContent = n > 9 ? '9+' : String(n); b.classList.toggle('show', n > 0); }
+  var pill = document.getElementById('vlog-pill');
+  if (pill) { pill.style.display = n > 0 ? 'block' : 'none'; var pn = document.getElementById('vlog-pill-n'); if (pn) pn.textContent = String(n); }
+}
+// Called by voice.js when a transmission finishes recording.
+window._onVoiceClip = function (dataUrl, meta) {
+  meta = meta || {};
+  if (!dataUrl || !db || !groupName || !userId) return;
+  try {
+    var ref = fbPush(fbRef(db, _VLOG_NS + '/' + groupName + '/voicelog'));
+    fbSet(ref, { uid: userId, name: userName || 'Member', ts: Date.now(), dur: Math.round((meta.durMs || 0) / 100) / 10, mime: meta.mime || '', audio: dataUrl });
+    _setVlogSeen(Date.now());   // my own transmission counts as already heard
+  } catch (e) {}
+};
+function listenVoiceLog() {
+  if (!db || !groupName) return;
+  try { if (window._vlogUnsub) window._vlogUnsub(); } catch (e) {}
+  var r = fbRef(db, _VLOG_NS + '/' + groupName + '/voicelog');
+  window._vlogUnsub = fbOnValue(r, function (snap) {
+    var v = snap.val() || {};
+    var arr = Object.keys(v).map(function (k) { var c = v[k] || {}; c.key = k; return c; });
+    arr.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+    window._voiceClips = arr;
+    // Prune oldest beyond the cap (any client; removing a gone key is a harmless no-op).
+    if (arr.length > _VLOG_MAX) {
+      arr.slice(0, arr.length - _VLOG_MAX).forEach(function (c) { try { fbRemove(fbRef(db, _VLOG_NS + '/' + groupName + '/voicelog/' + c.key)); } catch (e) {} });
+    }
+    // Actively listening (foreground + voice bar up) → treat arrivals as heard live.
+    if (document.visibilityState === 'visible' && document.getElementById('gv-bar') && arr.length) _setVlogSeen(arr[arr.length - 1].ts);
+    _updateVlogBadge();
+    var sheet = document.getElementById('voice-log-sheet');
+    if (sheet && sheet.style.display === 'block') _renderVoiceLog();
+  });
+}
+window._stopVoiceLog = function () { try { if (window._vlogUnsub) window._vlogUnsub(); } catch (e) {} window._vlogUnsub = null; };
+function _vlogAudioEl() {
+  var a = document.getElementById('vlog-audio');
+  if (!a) { a = document.createElement('audio'); a.id = 'vlog-audio'; a.style.display = 'none'; a.setAttribute('playsinline', ''); document.body.appendChild(a); }
+  return a;
+}
+function _vlogAgo(ts) {
+  var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + 's ago';
+  var m = Math.round(s / 60); if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60); if (h < 24) return h + 'h ago';
+  try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; }
+}
+function _vlogDur(d) { if (!d) return ''; var s = Math.max(1, Math.round(d)); return '0:' + (s < 10 ? '0' : '') + s; }
+function _renderVoiceLog() {
+  var el = document.getElementById('voice-log-list'); if (!el) return;
+  var clips = window._voiceClips.slice().reverse();   // newest first
+  if (!clips.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:30px 10px">No transmissions yet.<br>Hold the mic button to talk — clips show up here to replay.</div>';
+  } else {
+    var seen = _vlogSeenTs();
+    el.innerHTML = clips.map(function (c) {
+      var missed = c.uid !== userId && c.ts > seen;
+      var mine = c.uid === userId;
+      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 6px;border-bottom:1px solid var(--border)">' +
+          '<button onclick="window._playVlogClip(\'' + c.key + '\')" style="width:42px;height:42px;border-radius:50%;border:none;background:var(--accent);color:#1a1200;font-size:17px;cursor:pointer;flex-shrink:0">&#9654;</button>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (missed ? '<span style="color:#ff5252">&#9679; </span>' : '') + escapeHtmlJs(mine ? 'You' : (c.name || 'Member')) + '</div>' +
+            '<div style="font-size:11px;color:var(--muted)">' + _vlogAgo(c.ts) + (c.dur ? ' &middot; ' + _vlogDur(c.dur) : '') + (missed ? ' &middot; <span style="color:#ff5252;font-weight:700">missed</span>' : '') + '</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+  }
+  var missedN = _vlogMissed().length;
+  var mb = document.getElementById('vlog-missed-bar');
+  if (mb) { mb.style.display = missedN ? 'block' : 'none'; var mn = document.getElementById('vlog-missed-n'); if (mn) mn.textContent = String(missedN); }
+}
+window._openVoiceLog = function () { _renderVoiceLog(); var s = document.getElementById('voice-log-sheet'); if (s) s.style.display = 'block'; };
+window._closeVoiceLog = function () {
+  var s = document.getElementById('voice-log-sheet'); if (s) s.style.display = 'none';
+  var latest = window._voiceClips.length ? window._voiceClips[window._voiceClips.length - 1].ts : 0;
+  if (latest) _setVlogSeen(latest);   // opening the log = you've seen what's there
+  _updateVlogBadge();
+};
+window._playVlogClip = function (key) {
+  var c = null; for (var i = 0; i < window._voiceClips.length; i++) { if (window._voiceClips[i].key === key) { c = window._voiceClips[i]; break; } }
+  if (!c || !c.audio) return;
+  var a = _vlogAudioEl();
+  try { a.onended = null; a.src = c.audio; a.play().catch(function () {}); } catch (e) {}
+  _setVlogSeen(c.ts); _updateVlogBadge(); _renderVoiceLog();
+};
+window._playMissedTransmissions = function () {
+  var missed = _vlogMissed(); if (!missed.length) return;
+  var a = _vlogAudioEl(); var i = 0;
+  (function next() {
+    if (i >= missed.length) { a.onended = null; _setVlogSeen(missed[missed.length - 1].ts); _updateVlogBadge(); _renderVoiceLog(); return; }
+    var c = missed[i++];
+    try { a.src = c.audio; a.onended = next; a.play().catch(next); } catch (e) { next(); }
+  })();
+};
+function escapeHtmlJs(s) { return String(s).replace(/[&<>"']/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]; }); }
+
 function sendSOS() {
   if (!groupName || !userId) { toast('Join a group first'); return; }
   if (!confirm('Send an SOS alert to everyone in your group?')) return;
@@ -3570,6 +3693,7 @@ function enterMap(name, group, uid) {
     listenChat();
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
+    try { listenVoiceLog(); } catch (e) {}
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gltest/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();

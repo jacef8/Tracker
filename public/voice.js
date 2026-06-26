@@ -31,6 +31,9 @@ let listeners = [];       // onVoiceEvent subscribers
 let barEl = null;         // docked bar DOM root
 let audioSink = null;     // hidden container that holds remote <audio> elements
 let micOn = false;        // toggle PTT state: true = transmitting (open mic)
+// ── Transmission recording: each PTT press is captured as a short clip and handed
+// to the page (window._onVoiceClip) so missed transmissions can be replayed later.
+let _rec = null, _recChunks = [], _recStart = 0, _recCap = null;
 
 function emit(evt) {
   listeners.forEach((cb) => { try { cb(evt); } catch (e) { /* ignore */ } });
@@ -168,6 +171,7 @@ async function setPtt(on) {
   // Ping the room so members with the app backgrounded get a "someone's talking"
   // notification (they can't hear live audio when the app is closed). Page debounces.
   if (on) { try { if (window._onVoiceTx) window._onVoiceTx(); } catch (e) {} }
+  else { _stopClipRecording(); }   // release → finalize the clip for replay
   try {
     await micPromise;
   } catch (e) {
@@ -177,7 +181,7 @@ async function setPtt(on) {
     micOn = false; updatePttButton();
     return;
   }
-  if (on) { try { await room.startAudio(); } catch (e) {} }
+  if (on) { try { await room.startAudio(); } catch (e) {} _startClipRecording(); }   // mic live → start capturing
   emit({ type: 'ptt', on: micOn, room: session && session.room });
 }
 function updatePttButton() {
@@ -187,6 +191,74 @@ function updatePttButton() {
   btn.title = micOn ? 'On air — release to stop' : 'Hold to talk';
   var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'HOLD';
   setTx(micOn);
+}
+
+// ── Clip recording (for replaying missed transmissions) ────────────────────
+// Records straight off the SAME mic track LiveKit is publishing (no second
+// getUserMedia / no extra permission). On release the clip is finalized and
+// handed to the page via window._onVoiceClip(dataUrl, meta) to store + list.
+function _localMicStream() {
+  try {
+    const lp = room && room.localParticipant;
+    if (!lp) return null;
+    let pub = null;
+    try { pub = lp.getTrackPublication && lp.getTrackPublication(Track.Source.Microphone); } catch (e) {}
+    if ((!pub || !pub.track) && lp.audioTrackPublications) {
+      for (const p of lp.audioTrackPublications.values()) { if (p && p.track) { pub = p; break; } }
+    }
+    const mst = pub && pub.track && pub.track.mediaStreamTrack;
+    if (mst) return new MediaStream([mst]);
+  } catch (e) {}
+  return null;
+}
+function _pickClipMime() {
+  const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (let i = 0; i < cands.length; i++) {
+    try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(cands[i])) return cands[i]; } catch (e) {}
+  }
+  return '';
+}
+function _startClipRecording() {
+  try {
+    if (!window.MediaRecorder) return;
+    const stream = _localMicStream();
+    if (!stream) return;
+    const mime = _pickClipMime();
+    _recChunks = [];
+    _rec = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 })
+                : new MediaRecorder(stream);
+    _rec.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data); };
+    _rec.onstop = _onClipStop;
+    _recStart = Date.now();
+    _rec.start();
+    // Hard cap a single clip at 30s so we never store a giant blob.
+    _recCap = setTimeout(() => { try { if (_rec && _rec.state !== 'inactive') _rec.stop(); } catch (e) {} }, 30000);
+  } catch (e) { _rec = null; }
+}
+function _stopClipRecording() {
+  try { if (_recCap) { clearTimeout(_recCap); _recCap = null; } } catch (e) {}
+  try { if (_rec && _rec.state !== 'inactive') _rec.stop(); } catch (e) {}
+}
+function _onClipStop() {
+  const chunks = _recChunks; _recChunks = [];
+  const mime = (_rec && _rec.mimeType) || 'audio/webm';
+  _rec = null;
+  const durMs = Date.now() - _recStart;
+  if (!chunks.length || durMs < 600) return;   // ignore accidental taps (<0.6s)
+  let blob;
+  try { blob = new Blob(chunks, { type: mime }); } catch (e) { return; }
+  // Keep RTDB light: skip storing very large clips (live listeners still heard it).
+  if (blob.size > 96 * 1024) {
+    try { if (window._onVoiceClip) window._onVoiceClip(null, { durMs: durMs, tooBig: true }); } catch (e) {}
+    return;
+  }
+  try {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      try { if (window._onVoiceClip) window._onVoiceClip(reader.result, { durMs: durMs, mime: mime }); } catch (e) {}
+    };
+    reader.readAsDataURL(blob);
+  } catch (e) {}
 }
 
 function updatePresence() {
@@ -257,8 +329,13 @@ function injectStylesOnce() {
     /* Gentle pulse while idle to invite a TAP (people kept trying to hold it). */
     #gv-ptt:not(.gv-keyed) { animation: gvPulse 2s ease-in-out infinite; }
     @keyframes gvPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(240,165,0,.45), 0 2px 0 #b87d00; } 50% { box-shadow: 0 0 0 7px rgba(240,165,0,0), 0 2px 0 #b87d00; } }
-    #gv-bar .gv-icon { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 6px; }
+    #gv-bar .gv-icon { position: relative; background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 6px; }
     #gv-bar .gv-icon:active { color: #e6edf3; }
+    #gv-bar #gv-log { color: #c9d1d9; }
+    #gv-bar .gv-badge { position: absolute; top: -1px; right: -1px; min-width: 16px; height: 16px; padding: 0 4px;
+      border-radius: 8px; background: #ff5252; color: #fff; font-size: 10px; font-weight: 900; line-height: 16px;
+      text-align: center; box-shadow: 0 0 0 2px #161b22; display: none; }
+    #gv-bar .gv-badge.show { display: block; }
   `;
   document.head.appendChild(s);
 }
@@ -278,6 +355,7 @@ function renderBar() {
       <div class="gv-talker" id="gv-talker"></div>
     </div>
     <button id="gv-ptt" title="Tap to talk (don't hold)" aria-label="Tap to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">TAP</span></button>
+    <button class="gv-icon" id="gv-log" title="Missed transmissions" aria-label="Transmissions">🕓<span class="gv-badge" id="gv-log-badge"></span></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
@@ -291,6 +369,7 @@ function renderBar() {
   ptt.addEventListener('pointercancel', _pttUp);
   ptt.addEventListener('contextmenu', (e) => e.preventDefault());  // no long-press menu on mobile
   updatePttButton();
+  barEl.querySelector('#gv-log').addEventListener('click', (e) => { e.stopPropagation(); try { if (window._openVoiceLog) window._openVoiceLog(); } catch (_) {} });
   barEl.querySelector('#gv-leave').addEventListener('click', (e) => { e.stopPropagation(); leaveVoice(); });
 }
 
