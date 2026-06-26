@@ -1833,9 +1833,16 @@
       <div style="font-size:14px;font-weight:600;color:var(--text)">⏱ Keep active until…</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px">Keeps this room in the list even when it's empty, until the time you set.</div>
       <div id="ri-expire-status" style="font-size:12px;color:#3fb950;font-weight:700;margin-top:8px;display:none"></div>
-      <div style="display:flex;gap:8px;margin-top:9px">
-        <input type="datetime-local" id="ri-expire-input" style="flex:1;min-width:0;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px 10px" />
-        <button onclick="window._setRoomExpire && window._setRoomExpire()" style="padding:8px 14px;background:var(--accent);border:none;border-radius:8px;color:#1a1200;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap">Set</button>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">
+        <button type="button" onclick="window._setRoomExpirePreset && window._setRoomExpirePreset('tonight')" style="flex:1 1 calc(50% - 3px);padding:10px 8px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Tonight</button>
+        <button type="button" onclick="window._setRoomExpirePreset && window._setRoomExpirePreset('tomorrow')" style="flex:1 1 calc(50% - 3px);padding:10px 8px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Tomorrow night</button>
+        <button type="button" onclick="window._setRoomExpirePreset && window._setRoomExpirePreset('weekend')" style="flex:1 1 calc(50% - 3px);padding:10px 8px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;cursor:pointer">This weekend</button>
+        <button type="button" onclick="window._setRoomExpirePreset && window._setRoomExpirePreset('week')" style="flex:1 1 calc(50% - 3px);padding:10px 8px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;cursor:pointer">+1 week</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin:11px 0 5px">Or pick an exact date &amp; time:</div>
+      <div style="display:flex;gap:8px">
+        <input type="datetime-local" id="ri-expire-input" onclick="try{this.showPicker()}catch(e){}" style="flex:1;min-width:0;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:11px 10px;cursor:pointer" />
+        <button onclick="window._setRoomExpire && window._setRoomExpire()" style="padding:8px 16px;background:var(--accent);border:none;border-radius:8px;color:#1a1200;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap">Set</button>
       </div>
       <button id="ri-expire-clear" onclick="window._clearRoomExpire && window._clearRoomExpire()" style="display:none;width:100%;margin-top:8px;padding:8px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer">Clear expiration</button>
     </div>
@@ -1994,7 +2001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 169;
+var APP_BUILD = 170;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2646,17 +2653,30 @@ function _renderRoomExpire() {
     if (clearBtn) clearBtn.style.display = 'none';
   }
 }
-window._setRoomExpire = function () {
-  var inp = document.getElementById('ri-expire-input');
-  if (!inp || !inp.value) { toast('Pick a date & time first'); return; }
-  var ts = new Date(inp.value).getTime();
-  if (isNaN(ts)) { toast('Invalid date'); return; }
-  if (ts <= Date.now()) { toast('Pick a time in the future'); return; }
+function _applyRoomExpire(ts) {
+  if (isNaN(ts) || ts <= Date.now()) { toast('Pick a time in the future'); return; }
   try { if (db && groupName) fbSet(fbRef(db, 'gltest/' + groupName + '/config/expires'), ts); } catch (e) {}
   if (window._evt) window._evt('room kept active until ' + new Date(ts).toLocaleString());
   toast('Room stays active until ' + new Date(ts).toLocaleString(), 3500);
   try { if (window._lastGlSnap && window._lastGlSnap[groupName]) { window._lastGlSnap[groupName].config = window._lastGlSnap[groupName].config || {}; window._lastGlSnap[groupName].config.expires = ts; } } catch (e) {}
+  var inp = document.getElementById('ri-expire-input'); if (inp) { try { inp.value = _toLocalDatetime(ts); } catch (e) {} }
   _renderRoomExpire();
+}
+// One-tap presets — all resolve to 11:59 PM of the target day (week = 7 days out).
+window._setRoomExpirePreset = function (kind) {
+  var d = new Date();
+  if (kind === 'tonight') { d.setHours(23, 59, 0, 0); }
+  else if (kind === 'tomorrow') { d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); }
+  else if (kind === 'weekend') { var add = (7 - d.getDay()) % 7; d.setDate(d.getDate() + add); d.setHours(23, 59, 0, 0); } // upcoming Sunday
+  else if (kind === 'week') { d.setDate(d.getDate() + 7); d.setHours(23, 59, 0, 0); }
+  var ts = d.getTime();
+  if (ts <= Date.now()) ts = Date.now() + 86400000; // safety (e.g. "tonight" tapped after 11:59pm)
+  _applyRoomExpire(ts);
+};
+window._setRoomExpire = function () {
+  var inp = document.getElementById('ri-expire-input');
+  if (!inp || !inp.value) { toast('Pick a date & time first'); return; }
+  _applyRoomExpire(new Date(inp.value).getTime());
 };
 window._clearRoomExpire = function () {
   try { if (db && groupName) fbRemove(fbRef(db, 'gltest/' + groupName + '/config/expires')); } catch (e) {}
