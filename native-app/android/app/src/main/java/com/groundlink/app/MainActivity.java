@@ -6,6 +6,9 @@ import android.os.Bundle;
 import android.webkit.WebSettings;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -31,6 +34,29 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Exception e) {
             // Non-fatal — voice just won't have mic access until granted in app settings.
+        }
+        hideNavBar();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Re-hide after the bar transiently returns (dialogs, swipe-to-reveal, app resume).
+        if (hasFocus) hideNavBar();
+    }
+
+    // Immersive: hide the bottom Android navigation bar so the map uses the full screen.
+    // The status bar (clock/battery) stays. Swipe up from the bottom edge reveals the nav
+    // bar briefly, then it auto-hides again (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE).
+    private void hideNavBar() {
+        try {
+            WindowInsetsControllerCompat c = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+            if (c != null) {
+                c.hide(WindowInsetsCompat.Type.navigationBars());
+                c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } catch (Exception e) {
+            // Older devices / unexpected state — just leave the bars as they are.
         }
     }
 }
