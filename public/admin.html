@@ -177,8 +177,8 @@
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
   <div class="group-subtabs">
-    <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">Active &middot; <span id="gsub-active-n">0</span></button>
-    <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Inactive &middot; <span id="gsub-retired-n">0</span></button>
+    <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">On home &middot; <span id="gsub-active-n">0</span></button>
+    <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Off home &middot; <span id="gsub-retired-n">0</span></button>
   </div>
   <div id="admin-list"><div class="loading">Connecting to Firebase…</div></div>
   <div id="admin-list-retired" style="display:none"></div>
@@ -1695,7 +1695,8 @@ function loadAdmin() {
         else if (presentUsers.length) { _badgeClass = 'live-badge'; _badgeText = presentUsers.length + ' in room'; _clockText = 'in room &middot; last update ' + timeAgo(lastActive); }
         else if (keptUntil)    { _badgeClass = 'dead-badge'; _badgeText = 'Kept active';                    _clockText = 'empty &middot; &#9201; kept until ' + _expStr; }
         else if (persistent)   { _badgeClass = 'dead-badge'; _badgeText = 'Dormant';                       _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; permanent (signed-in owner)'; }
-        else if (lastActive && (now - lastActive) < HOME_GRACE_MS) { _badgeClass = 'dead-badge'; _badgeText = 'Open';  _clockText = 'empty &middot; still on the home screen (joinable)'; }
+        else if (vis === 'public' && lastActive && (now - lastActive) < HOME_GRACE_MS) { _badgeClass = 'dead-badge'; _badgeText = 'Open';  _clockText = 'empty &middot; still on the home screen (joinable)'; }
+        else if (vis === 'private') { _badgeClass = 'dead-badge'; _badgeText = 'Private'; _clockText = 'private &middot; join by name/link &middot; ' + (lastActive ? 'last active ' + timeAgo(lastActive) : 'no activity yet'); }
         else                   { _badgeClass = 'dead-badge'; _badgeText = 'Inactive ' + durShort(_inactiveMs); _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; not on home &middot; deletes at 24h'; }
         card.innerHTML =
           '<div class="group-header">' +
@@ -1722,27 +1723,29 @@ function loadAdmin() {
             (keptUntil ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/config/expires\',\'expiry for '+displayName+'\')">Clear Expiry</button>' : '') +
             '<button class="btn btn-danger" onclick="closeAndNukeRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">Close &amp; Nuke</button>' +
           '</div>';
-        // "Active" here = still shown on the HOME SCREEN as joinable — i.e. someone's in it,
-        // OR it's kept alive (signed-in owner / private / favorited / expiry), OR it emptied
-        // out within the last 5 min (home grace). Those must NOT read as "Inactive". Only rooms
-        // that have fallen off the home screen (empty, not kept, idle 5min–24h) go to Inactive.
+        // "On home" = EXACTLY what the public home directory shows, so the counts match the
+        // home screen. That's a PUBLIC room that (a) has members, (b) has a future expiry, or
+        // (c) emptied within the last 5 min (home grace). Private rooms are join-by-name and
+        // never on the public list; an empty `persistent` room drops off once idle past the
+        // grace. Everything else that still exists (private / persistent / recently-active)
+        // goes under "Off home" so the admin can still manage it — just not counted as on-home.
         var hasUsers = presentUsers.length > 0;
         if (hasUsers) liveGroups++;
+        var withinGrace = !!(lastActive && (now - lastActive) < HOME_GRACE_MS);
         var recentlyActive = lastActive && (now - lastActive) < STALE_24H;
-        var onHome = hasUsers || keptAlive || (lastActive && (now - lastActive) < HOME_GRACE_MS);
+        var onHome = (vis === 'public') && (hasUsers || keptUntil || withinGrace);
         if (onHome) {
-          if (!hasUsers) card.style.opacity = '0.92';   // dim empty-but-joinable rooms slightly
+          if (!hasUsers) card.style.opacity = '0.92';   // dim empty-but-listed rooms slightly
           activeFrag.appendChild(card);
           activeCount++;
-        } else if (recentlyActive) {
-          card.style.opacity = '0.9';
-          card.style.border = '1px solid rgba(192,57,43,0.7)';
+        } else if (hasUsers || keptAlive || vis === 'private' || recentlyActive) {
+          if (!hasUsers) { card.style.opacity = '0.9'; card.style.border = '1px solid rgba(192,57,43,0.7)'; }
           inactiveFrag.appendChild(card);
           inactiveCount++;
           allInactiveKeys.push(key);
-          retiredKeys.push(key); // empty, not kept, off the home screen — safe to bulk-clear
+          if (!keptAlive && vis !== 'private') retiredKeys.push(key); // only plain idle rooms are bulk-clearable
         }
-        // else: empty AND idle >24h (and not kept) -> skip (falls out of panel; data stays in Firebase)
+        // else: empty AND idle >24h (and not kept/private) -> skip (data stays in Firebase)
       });
 
       // Active sub-tab \u2014 rooms with live members.
@@ -1750,7 +1753,7 @@ function loadAdmin() {
       if (activeCount) {
         container.appendChild(activeFrag);
       } else {
-        container.innerHTML = '<div class="empty">No rooms with members right now.</div>';
+        container.innerHTML = '<div class="empty">No rooms on the home screen right now.</div>';
       }
 
       // Empty / Retired sub-tab \u2014 rooms that emptied out but still have recent activity.
@@ -1777,7 +1780,7 @@ function loadAdmin() {
         retiredContainer.appendChild(clearBar);
         retiredContainer.appendChild(inactiveFrag);
       } else {
-        retiredContainer.innerHTML = '<div class="empty">No inactive rooms in the last 24 hours.</div>';
+        retiredContainer.innerHTML = '<div class="empty">No off-home rooms (private / persistent / recently-active) right now.</div>';
       }
 
       // Update the sub-tab counters.
