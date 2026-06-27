@@ -2045,7 +2045,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 181;
+var APP_BUILD = 182;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3292,6 +3292,14 @@ function renderRoomList(all) {
   // A member still "counts" unless their live connection has been gone past the grace.
   var _present = function(u) { return !(u.conn === false && (now - (u.discTs || u.ts || 0)) >= HOME_DISC_GRACE_MS); };
   var favs = _getFavs();
+  // Drop favorites whose room no longer exists (e.g. nuked from the admin panel) so the
+  // favorites list/count never shows ghosts. Only when we actually have a snapshot.
+  try {
+    if (all && Object.keys(all).length) {
+      var _liveFavs = favs.filter(function (k) { return !!all[k]; });
+      if (_liveFavs.length !== favs.length) { _setFavs(_liveFavs); favs = _liveFavs; }
+    }
+  } catch (e) {}
   var rooms = [];
   Object.entries(all).forEach(function(entry) {
     var key = entry[0], group = entry[1];
