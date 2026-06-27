@@ -109,12 +109,20 @@
     border-radius: 16px; padding: 13px 16px 14px;
     display: flex; flex-direction: column; gap: 9px;
     margin: auto;
+    /* Cap to the viewport; the panel area scrolls inside if needed (vh fallback, then dvh). */
+    max-height: calc(100vh - var(--safe-top) - var(--safe-bot) - 12px);
+    max-height: calc(100dvh - var(--safe-top) - var(--safe-bot) - 12px);
   }
-  #join-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 -2px; transition: height .22s ease; }
+  /* One panel shown at a time (no side-by-side swipe pager) so the card height is just the
+     active panel's content — no JS measuring, no phantom empty space. The pager is the
+     scroll area: Quick-join fits (no scroll); the taller Account page scrolls inside it. */
+  #join-pager { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scrollbar-width: none; margin: 0 -2px; }
   #join-pager::-webkit-scrollbar { display: none; }
   body.solo-mode #chat-toggle-btn, body.solo-mode #sos-btn { display: none !important; }
   body.voice-off .utalk-btn, body.voice-off #group-talk-btn { display: none !important; }
-  .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 7px; padding: 0 2px; align-self: flex-start; }
+  .join-panel { display: none; flex-direction: column; gap: 7px; padding: 0 2px; }
+  .join-panel.gl-on { display: flex; }
   /* (room-list sizing lives in the single rule lower down — see #room-list below) */
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .jtab.active { background: var(--accent); color: #000; }
@@ -1007,7 +1015,7 @@
 
     <div id="join-pager">
       <!-- ░░ PANEL 0 — QUICK JOIN ░░ -->
-      <section class="join-panel" id="panel-join">
+      <section class="join-panel gl-on" id="panel-join">
         <!-- Account status: signed-in confirmation, or a prominent sign-in CTA for guests -->
         <div id="acct-status" style="display:none"></div>
         <!-- Install prompt (Android Chrome) -->
@@ -2045,7 +2053,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 183;
+var APP_BUILD = 184;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9644,70 +9652,24 @@ document.addEventListener('click', function(e) {
 <!-- ══ Home-screen swipe pager (Quick join ⇄ Account) ══════════════════ -->
 <script>
 (function () {
-  // Size the pager to the panel currently in view so the short Quick-join panel doesn't
-  // inherit the tall Account panel's height (which forced empty-space scrolling).
-  window._sizePager = function (idx) {
-    var p = document.getElementById('join-pager'); if (!p) return;
-    if (!p.clientWidth || !p.offsetParent) return;
-    var panels = p.querySelectorAll('.join-panel');
-    // ALWAYS size to the panel actually IN VIEW (by scroll position). Sizing to a passed idx
-    // that isn't on screen would set the visible (short) Quick-join panel to the taller
-    // Account panel's height, leaving empty, scrollable space below it — the "everything
-    // from the content down scrolls into empty space" bug. The scroll handler re-sizes once
-    // a deliberate swipe to the other panel settles.
-    var viewIdx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
-    var active = panels[viewIdx] || panels[0];
-    if (active && active.offsetHeight) {
-      var desired = active.offsetHeight;
-      // Never let the pager (and thus the join card) grow taller than the viewport — otherwise
-      // the whole front page scrolls. When capped, the panel's own list scrolls inside instead.
-      try {
-        var avail = (window.innerHeight || 800) - p.getBoundingClientRect().top - 14;
-        if (avail > 150 && desired > avail) desired = Math.floor(avail);
-      } catch (e) {}
-      p.style.height = desired + 'px';
-    }
-  };
-  // Re-measure a few times after the join screen is shown (blur, fonts, account content settle).
-  window._sizePagerSoon = function () {
-    try { requestAnimationFrame(window._sizePager); } catch (e) {}
-    setTimeout(window._sizePager, 120);
-    setTimeout(window._sizePager, 400);
-  };
+  // Quick-join ⇄ Account are now SHOWN ONE AT A TIME via the .gl-on class (no side-by-side
+  // swipe pager). The join card's height therefore comes purely from CSS flex (the active
+  // panel's content, capped to the viewport) — there is no JS height measuring, which is what
+  // kept mis-sizing the old pager and leaving the home screen scrollable / with empty space.
+  function panels() { return document.querySelectorAll('#join-pager .join-panel'); }
   function setActive(i) {
+    var ps = panels();
+    for (var k = 0; k < ps.length; k++) ps[k].classList.toggle('gl-on', k === i);
     var tabs = document.querySelectorAll('#join-tabs .jtab');
-    for (var k = 0; k < tabs.length; k++) {
-      if (k === i) tabs[k].classList.add('active'); else tabs[k].classList.remove('active');
-    }
-    if (i === 1) { try { _renderAccountPage(); } catch (e) {} } // keep the Account page fresh on tap or swipe
-    requestAnimationFrame(function(){ window._sizePager(i); });
+    for (var t = 0; t < tabs.length; t++) { if (t === i) tabs[t].classList.add('active'); else tabs[t].classList.remove('active'); }
+    if (i === 1) { try { _renderAccountPage(); } catch (e) {} }   // keep the Account page fresh
+    try { var pg = document.getElementById('join-pager'); if (pg) pg.scrollTop = 0; } catch (e) {}
   }
-  window._goPanel = function (i) {
-    var p = document.getElementById('join-pager');
-    if (!p) return;
-    var x = i * p.clientWidth;
-    try { p.scrollTo({ left: x, behavior: 'smooth' }); } catch (e) { p.scrollLeft = x; }
-    setActive(i);
-  };
-  window._joinPagerReset = function () {
-    var p = document.getElementById('join-pager');
-    if (p) p.scrollLeft = 0;
-    setActive(0);
-  };
-  var p = document.getElementById('join-pager');
-  if (p) {
-    var raf = null;
-    p.addEventListener('scroll', function () {
-      if (raf) return;
-      raf = requestAnimationFrame(function () {
-        raf = null;
-        var idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
-        setActive(idx);
-      });
-    });
-    window.addEventListener('resize', function () { window._sizePager(); });
-    setTimeout(window._sizePager, 300); // initial size once content has laid out
-  }
+  window._goPanel = function (i) { setActive(i); };
+  window._joinPagerReset = function () { setActive(0); };
+  // Back-compat shims — height is pure CSS now, so the old sizing hooks are no-ops.
+  window._sizePager = function () {};
+  window._sizePagerSoon = function () {};
 })();
 </script>
 
