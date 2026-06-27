@@ -60,9 +60,11 @@
   .tab-panel.active { display: block; }
 
   /* Stats — one solid strip with dividers */
-  .stats-row { display: flex; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
-  .stat-card { flex: 1; padding: 13px 12px; text-align: center; border-right: 1px solid var(--border); }
-  .stat-card:last-child { border-right: none; }
+  /* Grid so any number of cards wraps (e.g. 6 = two rows of 3) instead of overflowing
+     off-screen. The 1px gap over a border-colored background draws the divider lines. */
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-bottom: 18px;
+    background: var(--border); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+  .stat-card { padding: 13px 8px; text-align: center; background: var(--surface); min-width: 0; }
   .stat-val { font-size: 23px; font-weight: 700; color: var(--accent); line-height: 1; }
   .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
@@ -1249,6 +1251,16 @@ var _debugFilter = 'all';
 var _allDebugEntries = [];
 var _debugUnsubs = [];
 
+// Group card → jump to the Troubleshoot ▸ Event Log, filtered to this group, so you can
+// read its join/leave (and pin/chat) history in chronological order.
+window.setGroupHistory = function (groupKey) {
+  try {
+    switchTab('debug');
+    setTroubleshootSub('log');
+    setDebugFilter(groupKey);
+    var el = document.getElementById('tab-debug'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {}
+};
 function setDebugFilter(groupKey) {
   _debugFilter = groupKey;
   // Update button styles
@@ -1534,17 +1546,19 @@ function loadAdmin() {
       document.getElementById('last-refresh').textContent =
         'Last update: ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
-      detectChanges(all, now);
+      try { detectChanges(all, now); } catch (e) { addLog('detectChanges error: ' + e.message, 'error'); }
       _allDataSnapshot = all;
       try { _refreshStatDetail(); } catch (e) {} // keep an open KPI-card panel current
       // Most Active Groups now lives on the Groups tab, so keep its summary fresh every
       // snapshot regardless of which tab is open (the render is guarded by element id).
-      renderSummary(all);
-      renderActiveUsers(all);
+      // Each render is isolated so one failure can't block the Groups list (which would
+      // otherwise leave it stuck on "Connecting to Firebase…").
+      try { renderSummary(all); } catch (e) { addLog('renderSummary error: ' + e.message, 'error'); }
+      try { renderActiveUsers(all); } catch (e) { addLog('renderActiveUsers error: ' + e.message, 'error'); }
       // Live-refresh the Map (overview) tab if it's open
-      if (document.getElementById('tab-overview').classList.contains('active')) {
-        renderOverview();
-      }
+      try {
+        if (document.getElementById('tab-overview').classList.contains('active')) renderOverview();
+      } catch (e) { addLog('renderOverview error: ' + e.message, 'error'); }
 
       // --- GROUPS TAB ---
       var container = document.getElementById('admin-list');
@@ -1716,6 +1730,7 @@ function loadAdmin() {
           pinsHTML +
           msgsHTML +
           '<div class="btn-row">' +
+            '<button class="btn" onclick="setGroupHistory(\''+key+'\')">&#128221; Join/leave log</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/pins\',\'pins for '+displayName+'\')">Clear Pins</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/chat\',\'chat for '+displayName+'\')">Clear Chat</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/trails\',\'trails for '+displayName+'\')">Clear Trails</button>' +
