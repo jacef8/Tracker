@@ -2043,7 +2043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 178;
+var APP_BUILD = 179;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2512,6 +2512,7 @@ async function enableAlerts(silent) {
     if (_cap && _cap.isNativePlatform && _cap.isNativePlatform() && _cap.Plugins && _cap.Plugins.FirebaseMessaging) {
       var okF = await _registerFcm(silent);
       alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
+      if (okF) { try { _registerAllFavSubs(); } catch (e) {} }   // now that FCM is live, wire up favorite-group alerts
       if (!silent) toast(okF ? 'Alerts on' : 'In-app alerts on — allow notifications for background alerts', okF ? 2500 : 4500);
       return;
     }
@@ -3126,6 +3127,7 @@ window._acctDeleteGroup = function(key, disp) {
 };
 function _renderAccountPage() {
   try { if (window._ensurePresenceSub) window._ensurePresenceSub(); } catch (e) {}  // so friends show before joining
+  try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
   try { _renderFriends(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
@@ -3181,9 +3183,9 @@ window._toggleFav = function(key, name, ev) {
     // Favoriting keeps the room alive server-side, so a starred room never auto-deletes.
     try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gl/' + key + '/config/persistent'), true); } catch (e) {}
     toast('★ ' + (name || 'Group') + ' favorited');
-    _registerFavSub(key, name).then(function(ok) {
+    _registerFavSub(key, name, false).then(function(ok) {
       toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
-               : 'Favorited. Background alerts need the installed web app with notifications allowed (not the native app yet).', 5500);
+               : 'Favorited. Turn on notifications (in Settings) to get background alerts when it’s active.', 5500);
     });
   } else {
     f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites');
@@ -3210,15 +3212,43 @@ async function _ensurePushSub() {
     return sub;
   } catch (e) { return null; }
 }
-async function _registerFavSub(key, name) {
+// Get this device's FCM token (native app only) so favoriter alerts can reach it via FCM —
+// the native WebView has no Web Push API, so favSubs needs the FCM token instead. `silent`
+// avoids a permission prompt (used for the on-load bulk refresh).
+async function _ensureFcmToken(silent) {
   try {
-    var sub = await _ensurePushSub();
-    if (!sub) return false; // no push here (native WebView / permission denied) — favorite still pins locally
+    if (window._fcmToken) return window._fcmToken;
+    var cap = window.Capacitor;
+    if (!(cap && cap.isNativePlatform && cap.isNativePlatform() && cap.Plugins && cap.Plugins.FirebaseMessaging)) return null;
+    var FM = cap.Plugins.FirebaseMessaging;
+    var perm = await FM.checkPermissions();
+    if (perm.receive !== 'granted') { if (silent) return null; perm = await FM.requestPermissions(); if (perm.receive !== 'granted') return null; }
+    var res = await FM.getToken(); var token = res && res.token;
+    if (token) { window._fcmToken = token; try { localStorage.setItem('gl_fcm', token); } catch (e) {} }
+    return token || null;
+  } catch (e) { return null; }
+}
+// Register this device under a favorited group's favSubs so the server can alert us when
+// someone joins it — even when we're in no room. Native → FCM token; web/PWA → Web Push sub.
+async function _registerFavSub(key, name, silent) {
+  try {
     var fb = window._fb; var s = getSavedSession();
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
-    if (fb && uid) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
-    return false;
+    if (!fb || !uid) return false;
+    var fcm = await _ensureFcmToken(silent);   // native path
+    if (fcm) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { fcm: fcm, name: name || s.name || '', ts: Date.now() }); return true; }
+    var sub = await _ensurePushSub();          // web/PWA path
+    if (sub) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
+    return false; // no push available here / permission denied — favorite still pins locally
   } catch (e) { return false; }
+}
+// On launch (and after enabling alerts), (re)register favSubs for every favorited group so
+// background "joined" alerts keep working without re-tapping the star. Silent: never prompts.
+async function _registerAllFavSubs() {
+  try {
+    var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
+    for (var i = 0; i < favs.length; i++) { try { await _registerFavSub(favs[i], null, true); } catch (e) {} }
+  } catch (e) {}
 }
 async function _unregisterFavSub(key) {
   try {
