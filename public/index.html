@@ -2045,7 +2045,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 182;
+var APP_BUILD = 183;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9650,10 +9650,13 @@ document.addEventListener('click', function(e) {
     var p = document.getElementById('join-pager'); if (!p) return;
     if (!p.clientWidth || !p.offsetParent) return;
     var panels = p.querySelectorAll('.join-panel');
-    // Prefer the explicit target panel; only fall back to scroll position when not given,
-    // so returning to page 1 sizes to page 1 (not the mid-scroll/taller page).
-    if (idx == null) idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
-    var active = panels[idx] || panels[0];
+    // ALWAYS size to the panel actually IN VIEW (by scroll position). Sizing to a passed idx
+    // that isn't on screen would set the visible (short) Quick-join panel to the taller
+    // Account panel's height, leaving empty, scrollable space below it — the "everything
+    // from the content down scrolls into empty space" bug. The scroll handler re-sizes once
+    // a deliberate swipe to the other panel settles.
+    var viewIdx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
+    var active = panels[viewIdx] || panels[0];
     if (active && active.offsetHeight) {
       var desired = active.offsetHeight;
       // Never let the pager (and thus the join card) grow taller than the viewport — otherwise
