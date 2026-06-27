@@ -161,6 +161,8 @@
   <div class="stat-card" onclick="statExpand('live')" style="cursor:pointer" title="Tap to see who's live"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups</div></div>
   <div class="stat-card" onclick="statExpand('pins')" style="cursor:pointer" title="Tap for pins by group"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
   <div class="stat-card" onclick="statExpand('messages')" style="cursor:pointer" title="Tap for recent messages"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
+  <div class="stat-card" title="Rooms held open by a signed-in owner or an expiry time"><div class="stat-val" id="stat-kept" style="color:var(--gold,#f0a500)">—</div><div class="stat-label">Kept Alive</div></div>
+  <div class="stat-card" title="Total saved voice transmissions across all rooms"><div class="stat-val" id="stat-clips">—</div><div class="stat-label">Transmissions</div></div>
 </div>
 <div id="stat-detail" style="display:none"></div>
 
@@ -1557,6 +1559,8 @@ function loadAdmin() {
         document.getElementById('stat-users').textContent  = '0';
         document.getElementById('stat-pins').textContent   = '0';
         document.getElementById('stat-chats').textContent  = '0';
+        var _z1 = document.getElementById('stat-kept'); if (_z1) _z1.textContent = '0';
+        var _z2 = document.getElementById('stat-clips'); if (_z2) _z2.textContent = '0';
         return;
       }
 
@@ -1566,6 +1570,7 @@ function loadAdmin() {
       var activeFrag = document.createDocumentFragment();
       var inactiveFrag = document.createDocumentFragment();
       var activeCount = 0, inactiveCount = 0;
+      var keptAliveCount = 0, totalClips = 0;   // rooms held open (persistent/expiry) + total transmissions
       var retiredKeys = [];      // non-permanent inactive rooms (safe to bulk-clear)
       var allInactiveKeys = [];  // every inactive room incl. permanent (for Nuke ALL)
 
@@ -1675,9 +1680,18 @@ function loadAdmin() {
         var displayName2 = isTest ? displayName.replace(/^Test /i, '') : displayName;
         var _inactiveMs = lastActive ? (now - lastActive) : 0;
         var persistent = !!(group.config && group.config.persistent);
+        var vis = (group.config && group.config.visibility) || 'public';
+        var expiresTs = (group.config && group.config.expires) || 0;
+        var keptUntil = !!(expiresTs && expiresTs > now);
+        var keptAlive = persistent || keptUntil;            // never auto-deletes while true
+        var voicelog = group.voicelog ? Object.keys(group.voicelog).length : 0;
+        if (keptAlive) keptAliveCount++;
+        totalClips += voicelog;
+        var _expStr = expiresTs ? new Date(expiresTs).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
         var _badgeClass, _badgeText, _clockText;
         if (liveUsers.length)  { _badgeClass = 'live-badge'; _badgeText = liveUsers.length + ' LIVE';        _clockText = 'active &middot; updated ' + timeAgo(lastActive); }
         else if (presentUsers.length) { _badgeClass = 'live-badge'; _badgeText = presentUsers.length + ' in room'; _clockText = 'in room &middot; last update ' + timeAgo(lastActive); }
+        else if (keptUntil)    { _badgeClass = 'dead-badge'; _badgeText = 'Kept active';                    _clockText = 'empty &middot; &#9201; kept until ' + _expStr; }
         else if (persistent)   { _badgeClass = 'dead-badge'; _badgeText = 'Dormant';                       _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; permanent (signed-in owner)'; }
         else                   { _badgeClass = 'dead-badge'; _badgeText = 'Inactive ' + durShort(_inactiveMs); _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; deletes at 24h'; }
         card.innerHTML =
@@ -1690,6 +1704,8 @@ function loadAdmin() {
             '<span>' + mIcon(ICO_PIN) + pins.length + ' pin' + (pins.length!==1?'s':'') + '</span>' +
             '<span>' + mIcon(ICO_MSG) + chats.length + ' msg' + (chats.length!==1?'s':'') + '</span>' +
             '<span>' + mIcon(ICO_TRAIL) + trails.length + ' trail' + (trails.length!==1?'s':'') + '</span>' +
+            '<span>&#127908; ' + voicelog + ' clip' + (voicelog!==1?'s':'') + '</span>' +
+            '<span>' + (vis === 'private' ? '&#128274; private' : '&#127758; public') + '</span>' +
             '<span>' + mIcon(ICO_CLOCK) + _clockText + '</span>' +
           '</div>' +
           userRowsHTML +
@@ -1699,6 +1715,8 @@ function loadAdmin() {
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/pins\',\'pins for '+displayName+'\')">Clear Pins</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/chat\',\'chat for '+displayName+'\')">Clear Chat</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/trails\',\'trails for '+displayName+'\')">Clear Trails</button>' +
+            (voicelog ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/voicelog\',\'transmissions for '+displayName+'\')">Clear Clips</button>' : '') +
+            (keptUntil ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/config/expires\',\'expiry for '+displayName+'\')">Clear Expiry</button>' : '') +
             '<button class="btn btn-danger" onclick="closeAndNukeRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">Close &amp; Nuke</button>' +
           '</div>';
         // Active = someone is currently in the room (live OR present-but-quiet). A user
@@ -1708,13 +1726,13 @@ function loadAdmin() {
         if (hasUsers) {
           activeFrag.appendChild(card);
           activeCount++;
-        } else if (recentlyActive || persistent) {
+        } else if (recentlyActive || keptAlive) {
           card.style.opacity = '0.9';
           card.style.border = '1px solid rgba(192,57,43,0.7)';
           inactiveFrag.appendChild(card);
           inactiveCount++;
           allInactiveKeys.push(key);
-          if (!persistent) retiredKeys.push(key); // permanent rooms never get bulk-cleared
+          if (!keptAlive) retiredKeys.push(key); // permanent / kept-until rooms never get bulk-cleared
         }
         // else: empty AND idle >24h (and not permanent) -> skip (falls out of panel; data stays in Firebase)
       });
@@ -1781,6 +1799,8 @@ function loadAdmin() {
       document.getElementById('stat-users').textContent  = activeCount; // live groups, matches the label
       document.getElementById('stat-pins').textContent   = totalPins;
       document.getElementById('stat-chats').textContent  = totalChats;
+      var _sk = document.getElementById('stat-kept'); if (_sk) _sk.textContent = keptAliveCount;
+      var _sc = document.getElementById('stat-clips'); if (_sc) _sc.textContent = totalClips;
 
       // Keep the Debug tab live if it's the open tab.
       if (document.getElementById('tab-debug').classList.contains('active')) renderDeviceDebug();
