@@ -857,8 +857,19 @@
   #home-filter button { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; font-size: 13.5px; font-weight: 700; color: #b6bfca; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #home-filter button.active { background: rgba(240,165,0,0.12); border-color: var(--accent); color: var(--accent); }
   /* Sized so at least TWO full room boxes are always visible without scrolling the list
-     (floor 136px ≈ 2 rows), growing up to ~3.5 rows on taller screens. */
-  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: clamp(136px, 26vh, 220px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+     (floor 124px ≈ 2 rows), growing up to ~3 rows on taller screens. */
+  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: clamp(124px, 22vh, 180px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  /* Short / landscape screens: compact the join card so the whole front page fits without
+     the page itself scrolling. Drop the redundant front buttons + extra banners, tighten
+     spacing, and keep the room list at ~2 rows. */
+  @media (max-height: 900px) {
+    #join-screen { padding-top: calc(var(--safe-top) + 6px); padding-bottom: calc(var(--safe-bot) + 6px); }
+    .join-card { gap: 7px; padding: 11px 14px 12px; }
+    .join-panel { gap: 6px; }
+    #front-extra-actions, #install-banner { display: none !important; }
+    .join-sub { display: none; }
+    #room-list { max-height: clamp(124px, 20vh, 150px); }
+  }
   .room-item {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 14px; border-radius: var(--radius);
@@ -1037,8 +1048,8 @@
 
         <button class="btn-primary" id="join-btn">Open Map →</button>
 
-        <!-- Share + Install, on the front screen for quick access -->
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:2px">
+        <!-- Share + Install, on the front screen for quick access (hidden on short screens to fit) -->
+        <div id="front-extra-actions" style="display:flex;flex-direction:column;gap:8px;margin-top:2px">
           <button type="button" id="front-install-btn" onclick="window._installApp()" style="width:100%;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:var(--radius);color:var(--accent);font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Install GroundLink</button>
           <button type="button" onclick="window._shareApp()" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-share"/></svg>Share GroundLink</button>
         </div>
@@ -2032,7 +2043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 177;
+var APP_BUILD = 178;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9603,7 +9614,16 @@ document.addEventListener('click', function(e) {
     // so returning to page 1 sizes to page 1 (not the mid-scroll/taller page).
     if (idx == null) idx = Math.round(p.scrollLeft / Math.max(1, p.clientWidth));
     var active = panels[idx] || panels[0];
-    if (active && active.offsetHeight) p.style.height = active.offsetHeight + 'px';
+    if (active && active.offsetHeight) {
+      var desired = active.offsetHeight;
+      // Never let the pager (and thus the join card) grow taller than the viewport — otherwise
+      // the whole front page scrolls. When capped, the panel's own list scrolls inside instead.
+      try {
+        var avail = (window.innerHeight || 800) - p.getBoundingClientRect().top - 14;
+        if (avail > 150 && desired > avail) desired = Math.floor(avail);
+      } catch (e) {}
+      p.style.height = desired + 'px';
+    }
   };
   // Re-measure a few times after the join screen is shown (blur, fonts, account content settle).
   window._sizePagerSoon = function () {
