@@ -113,10 +113,7 @@
   body.solo-mode #chat-toggle-btn, body.solo-mode #sos-btn { display: none !important; }
   body.voice-off .utalk-btn, body.voice-off #group-talk-btn { display: none !important; }
   .join-panel { flex: 0 0 100%; min-width: 100%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 7px; padding: 0 2px; align-self: flex-start; }
-  /* Shrink the room list to whatever vertical space is left so the whole join card fits
-     the viewport (no page scroll) — even on short / landscape screens. The plain 30vh line
-     is a fallback for WebViews without dvh support. */
-  #room-list { max-height: 30vh; max-height: clamp(72px, calc(100dvh - 520px), 30vh); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  /* (room-list sizing lives in the single rule lower down — see #room-list below) */
   .jtab { flex: 1; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .jtab.active { background: var(--accent); color: #000; }
   .join-logo { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
@@ -851,14 +848,18 @@
   .room-list-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   #home-filter button { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; font-size: 13.5px; font-weight: 700; color: #b6bfca; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #home-filter button.active { background: rgba(240,165,0,0.12); border-color: var(--accent); color: var(--accent); }
-  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: min(150px, 20vh); overflow-y: auto; }
+  /* Sized so at least TWO full room boxes are always visible without scrolling the list
+     (floor 136px ≈ 2 rows), growing up to ~3.5 rows on taller screens. */
+  #room-list { display: flex; flex-direction: column; gap: 6px; max-height: clamp(136px, 26vh, 220px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
   .room-item {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 14px; border-radius: var(--radius);
     background: var(--bg); border: 1px solid var(--border);
     cursor: pointer; transition: border-color .15s; gap: 10px;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   }
   .room-item:active { border-color: var(--accent); }
+  .room-item.peeking { border-color: var(--accent); background: rgba(240,165,0,0.06); }
   .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .room-name { font-size: 15.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .room-meta { font-size: 12.5px; color: #a7b0bd; margin-top: 1px; }
@@ -2024,7 +2025,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 176;
+var APP_BUILD = 177;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3358,8 +3359,70 @@ function renderRoomList(all) {
         setTimeout(function() { document.getElementById('inp-name').style.borderColor = ''; }, 3000);
       }
     });
+    _attachRoomPeek(item, room.key, room.displayName);
     listEl.appendChild(item);
   });
+}
+// ── Long-press a room row to peek at who's in it; release to dismiss ─────────
+function _roomPeekEl() {
+  var el = document.getElementById('room-peek');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'room-peek';
+    el.style.cssText = 'display:none;position:fixed;left:50%;transform:translateX(-50%);width:min(360px,92vw);z-index:5000;pointer-events:none;background:var(--surface);border:1px solid var(--accent);border-radius:14px;box-shadow:0 12px 48px rgba(0,0,0,.6);padding:12px 14px 8px;max-height:62vh;overflow:hidden';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function _showRoomPeek(key, name, touchY) {
+  var snap = (window._lastGlSnap && window._lastGlSnap[key]) || {};
+  var users = snap.users ? Object.values(snap.users) : [];
+  var now = Date.now();
+  var real = users.filter(function (u) { return u.name && !u.claiming; });
+  real.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });   // most recent first
+  var rows = real.map(function (u) {
+    var age = now - (u.ts || 0);
+    var online = age < 90000;
+    var resting = u.rest && !online;
+    var dot = online ? '#3fb950' : resting ? '#2ec4b6' : '#6e7681';
+    var sub = online ? 'online' : resting ? 'resting' : (u.noGps ? 'no GPS' : 'idle');
+    var dev = u.dev ? ' &middot; ' + escapeHtmlJs(String(u.dev)) : '';
+    return '<div style="display:flex;align-items:center;gap:9px;padding:6px 0;border-top:1px solid var(--border)">' +
+        '<span style="width:9px;height:9px;border-radius:50%;background:' + dot + ';flex-shrink:0;box-shadow:0 0 6px ' + dot + '"></span>' +
+        '<span style="flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(String(u.name)) + '</span>' +
+        '<span style="font-size:11px;color:var(--muted);white-space:nowrap">' + sub + dev + '</span>' +
+      '</div>';
+  }).join('');
+  var head = '<div style="font-size:15px;font-weight:800;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(String(name)) + '</div>' +
+             '<div style="font-size:11px;color:var(--muted);margin:2px 0 2px">' + (real.length ? real.length + ' in this room' : 'Nobody here right now') + '</div>';
+  var el = _roomPeekEl();
+  el.innerHTML = head + (rows || '');
+  // Keep the popup away from the finger: pressing low → show it up top; pressing high → bottom.
+  var vh = window.innerHeight || 700;
+  if (touchY > vh * 0.45) { el.style.top = 'calc(var(--safe-top, 0px) + 14px)'; el.style.bottom = 'auto'; }
+  else { el.style.bottom = 'calc(var(--safe-bot, 0px) + 14px)'; el.style.top = 'auto'; }
+  el.style.display = 'block';
+}
+function _hideRoomPeek() { var el = document.getElementById('room-peek'); if (el) el.style.display = 'none'; }
+function _attachRoomPeek(item, key, name) {
+  var timer = null, sx = 0, sy = 0;
+  function clearT() { if (timer) { clearTimeout(timer); timer = null; } }
+  function end() { clearT(); if (item.classList.contains('peeking')) { item.classList.remove('peeking'); _hideRoomPeek(); } }
+  item.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.room-join-btn, .room-fav-btn')) return;   // let the fav/join buttons work
+    sx = e.clientX; sy = e.clientY; clearT();
+    timer = setTimeout(function () {
+      timer = null; item.classList.add('peeking'); _showRoomPeek(key, name, sy);
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (_) {}
+    }, 420);
+  });
+  item.addEventListener('pointermove', function (e) {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) end();   // slid / scrolled away → cancel
+  });
+  item.addEventListener('pointerup', end);
+  item.addEventListener('pointercancel', end);
+  item.addEventListener('pointerleave', end);
+  item.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // suppress the OS long-press menu
 }
 loadRoomList();
 

@@ -1570,7 +1570,9 @@ function loadAdmin() {
       var activeFrag = document.createDocumentFragment();
       var inactiveFrag = document.createDocumentFragment();
       var activeCount = 0, inactiveCount = 0;
+      var liveGroups = 0;                        // rooms with members RIGHT NOW (for the 'Live Groups' stat)
       var keptAliveCount = 0, totalClips = 0;   // rooms held open (persistent/expiry) + total transmissions
+      var HOME_GRACE_MS = 5 * 60 * 1000;        // matches the home screen's empty-room grace
       var retiredKeys = [];      // non-permanent inactive rooms (safe to bulk-clear)
       var allInactiveKeys = [];  // every inactive room incl. permanent (for Nuke ALL)
 
@@ -1693,7 +1695,8 @@ function loadAdmin() {
         else if (presentUsers.length) { _badgeClass = 'live-badge'; _badgeText = presentUsers.length + ' in room'; _clockText = 'in room &middot; last update ' + timeAgo(lastActive); }
         else if (keptUntil)    { _badgeClass = 'dead-badge'; _badgeText = 'Kept active';                    _clockText = 'empty &middot; &#9201; kept until ' + _expStr; }
         else if (persistent)   { _badgeClass = 'dead-badge'; _badgeText = 'Dormant';                       _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; permanent (signed-in owner)'; }
-        else                   { _badgeClass = 'dead-badge'; _badgeText = 'Inactive ' + durShort(_inactiveMs); _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; deletes at 24h'; }
+        else if (lastActive && (now - lastActive) < HOME_GRACE_MS) { _badgeClass = 'dead-badge'; _badgeText = 'Open';  _clockText = 'empty &middot; still on the home screen (joinable)'; }
+        else                   { _badgeClass = 'dead-badge'; _badgeText = 'Inactive ' + durShort(_inactiveMs); _clockText = 'inactive ' + durShort(_inactiveMs) + ' &middot; not on home &middot; deletes at 24h'; }
         card.innerHTML =
           '<div class="group-header">' +
             '<div><div class="group-name">' + displayName2 + (isTest ? '<span class="test-tag">⚗ test</span>' : '') + '</div><div class="group-key">' + key + '</div></div>' +
@@ -1719,22 +1722,27 @@ function loadAdmin() {
             (keptUntil ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/config/expires\',\'expiry for '+displayName+'\')">Clear Expiry</button>' : '') +
             '<button class="btn btn-danger" onclick="closeAndNukeRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">Close &amp; Nuke</button>' +
           '</div>';
-        // Active = someone is currently in the room (live OR present-but-quiet). A user
-        // who's there but whose updates are throttled shouldn't get demoted to Inactive.
+        // "Active" here = still shown on the HOME SCREEN as joinable — i.e. someone's in it,
+        // OR it's kept alive (signed-in owner / private / favorited / expiry), OR it emptied
+        // out within the last 5 min (home grace). Those must NOT read as "Inactive". Only rooms
+        // that have fallen off the home screen (empty, not kept, idle 5min–24h) go to Inactive.
         var hasUsers = presentUsers.length > 0;
+        if (hasUsers) liveGroups++;
         var recentlyActive = lastActive && (now - lastActive) < STALE_24H;
-        if (hasUsers) {
+        var onHome = hasUsers || keptAlive || (lastActive && (now - lastActive) < HOME_GRACE_MS);
+        if (onHome) {
+          if (!hasUsers) card.style.opacity = '0.92';   // dim empty-but-joinable rooms slightly
           activeFrag.appendChild(card);
           activeCount++;
-        } else if (recentlyActive || keptAlive) {
+        } else if (recentlyActive) {
           card.style.opacity = '0.9';
           card.style.border = '1px solid rgba(192,57,43,0.7)';
           inactiveFrag.appendChild(card);
           inactiveCount++;
           allInactiveKeys.push(key);
-          if (!keptAlive) retiredKeys.push(key); // permanent / kept-until rooms never get bulk-cleared
+          retiredKeys.push(key); // empty, not kept, off the home screen — safe to bulk-clear
         }
-        // else: empty AND idle >24h (and not permanent) -> skip (falls out of panel; data stays in Firebase)
+        // else: empty AND idle >24h (and not kept) -> skip (falls out of panel; data stays in Firebase)
       });
 
       // Active sub-tab \u2014 rooms with live members.
@@ -1796,7 +1804,7 @@ function loadAdmin() {
           btnContainer.appendChild(btn);
         });
       }
-      document.getElementById('stat-users').textContent  = activeCount; // live groups, matches the label
+      document.getElementById('stat-users').textContent  = liveGroups; // rooms with members now (not empty-joinable)
       document.getElementById('stat-pins').textContent   = totalPins;
       document.getElementById('stat-chats').textContent  = totalChats;
       var _sk = document.getElementById('stat-kept'); if (_sk) _sk.textContent = keptAliveCount;
