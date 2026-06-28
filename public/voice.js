@@ -46,6 +46,21 @@ export function onVoiceEvent(cb) {
 
 export function currentRoom() { return session ? session.room : null; }
 
+// iOS won't play WebRTC audio until a user gesture unlocks the audio system. Call this
+// SYNCHRONOUSLY from a tap (before any await) to unlock it, and resume any live room audio.
+export function unlockAudio() {
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      if (!window._gvAC) window._gvAC = new AC();
+      if (window._gvAC.state === 'suspended') window._gvAC.resume();
+      var b = window._gvAC.createBuffer(1, 1, 22050), s = window._gvAC.createBufferSource();
+      s.buffer = b; s.connect(window._gvAC.destination); s.start(0);
+    }
+  } catch (e) {}
+  try { if (room) room.startAudio(); } catch (e) {}
+}
+
 // ── Public: open a voice session and connect right away ─────────────────────
 // Idempotent: if already in the SAME room, just re-show the bar (audio survives).
 // Initiator path (from a tap) primes the mic. Receiver path (`listen:true`,
