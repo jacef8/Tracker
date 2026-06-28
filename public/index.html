@@ -2067,7 +2067,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 186;
+var APP_BUILD = 187;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9910,15 +9910,17 @@ window._listenVoiceInvites = function () {
       _gvLastPingTs = inv.ts;
       var cfg = window.VOICE_CONFIG || {};
       if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+      // iOS: show the tap-to-join prompt IMMEDIATELY — do NOT wait on the voice module first
+      // (its CDN import can be slow/blocked on iPhones, which is why nothing was appearing).
+      if (_isIOSVoice()) { window._showIncomingVoice(inv.room, inv.fromName); return; }
       try {
         var mod = await window._voiceMod();
         if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in it
-        if (_isIOSVoice()) { window._showIncomingVoice(inv.room, inv.fromName); return; }  // iOS: needs a tap
         mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
           partnerName: inv.fromName || 'member', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined voice from ' + (inv.fromName || 'member'));
-      } catch (e) { console.error('[voice] auto-join failed', e); }
+      } catch (e) { console.error('[voice] auto-join failed', e); window._showIncomingVoice(inv.room, inv.fromName); }
     });
     // Group all-call broadcast — every member auto-joins the one shared group room.
     fbOnValue(fbRef(db, 'gl/' + groupName + '/voiceAll'), async function (snap) {
@@ -9930,15 +9932,15 @@ window._listenVoiceInvites = function () {
       _gvLastGroupTs = inv.ts;
       var cfg = window.VOICE_CONFIG || {};
       if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+      if (_isIOSVoice()) { window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); return; }  // iOS: prompt before loading anything
       try {
         var mod = await window._voiceMod();
         if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in (incl. the starter)
-        if (_isIOSVoice()) { window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); return; }  // iOS: needs a tap
         mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
           partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined GROUP voice from ' + (inv.fromName || 'member'));
-      } catch (e) { console.error('[voice] group auto-join failed', e); }
+      } catch (e) { console.error('[voice] group auto-join failed', e); window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); }
     });
   } catch (e) {}
 };
