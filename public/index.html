@@ -2067,7 +2067,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 187;
+var APP_BUILD = 188;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9896,7 +9896,14 @@ window._acceptIncomingVoice = async function () {
   } catch (e) { try { toast('Voice failed to load — try again'); } catch (_) {} }
 };
 // Preload the voice module on room entry so the tap-to-join is instant + audio unlock is ready.
-try { window._voiceMod().then(function (m) { window._voiceModSync = m; }).catch(function () {}); } catch (e) {}
+// If it FAILS (e.g. the LiveKit library can't load on this device — common on older iOS or an
+// in-app browser), say so plainly: live voice won't work, only the recorded clips will.
+try {
+  window._voiceMod().then(function (m) { window._voiceModSync = m; window._voiceLoadErr = ''; }).catch(function (e) {
+    window._voiceLoadErr = (e && e.message) || 'load failed';
+    try { setTimeout(function () { if (!window._voiceModSync && typeof toast === 'function') toast('⚠ Live voice engine didn’t load on this device — you’ll still get the recordings. For live, open GroundLink in Safari (not an in-app browser).', 7000); }, 1800); } catch (_) {}
+  });
+} catch (e) {}
 
 window._listenVoiceInvites = function () {
   if (!db || !groupName || !userId) return;
