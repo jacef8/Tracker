@@ -1526,10 +1526,12 @@
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-star"/></svg>My Saved Pins</span>
     <div style="display:flex;align-items:center;gap:8px">
+      <button onclick="window._importGpx && window._importGpx()" title="Import OnX / GPX waypoints" style="background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 10px;cursor:pointer;display:flex;align-items:center;gap:5px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>GPX</button>
       <button id="sv-select-all" onclick="window._svSelectAllShown()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">All</button>
       <button id="sv-select-toggle" onclick="window._svToggleSelect()" style="background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Select</button>
       <button class="panel-close" id="close-saved-pins"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
+    <input type="file" id="gpx-file-input" accept=".gpx,application/gpx+xml,application/octet-stream" style="display:none" onchange="window._handleGpxFile && window._handleGpxFile(this.files && this.files[0]); this.value='';" />
   </div>
   <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">
     Saved here across all groups and sessions. Tap to fly there. Filter by type, then add just those to a room.
@@ -2062,7 +2064,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 190;
+var APP_BUILD = 191;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8110,6 +8112,57 @@ function setSavedPins(arr) {
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
   try { if (window._glSync) window._glSync(); } catch (e) {}
 }
+
+// ── Import OnX / GPX waypoints into My Saved Pins (then add the ones you want to a room) ──
+window._importGpx = function () { var inp = document.getElementById('gpx-file-input'); if (inp) inp.click(); };
+function _gpxCat(s) {
+  s = (s || '').toLowerCase();
+  if (/tree ?stand|ladder|\bstand\b|tower|box blind/.test(s)) return 'Deer Stand';
+  if (/blind/.test(s)) return 'Ground Blind';
+  if (/cam(era)?\b|trail ?cam/.test(s)) return 'Trail Camera';
+  if (/feeder|corn/.test(s)) return 'Feeder';
+  if (/food ?plot|\bplot\b/.test(s)) return 'Food Plot';
+  if (/scrape/.test(s)) return 'Scrape';
+  if (/\brub\b/.test(s)) return 'Rub';
+  if (/bed(ding)?/.test(s)) return 'Bedding';
+  if (/blood/.test(s)) return 'Blood Trail';
+  if (/harvest|\bkill\b|downed/.test(s)) return 'Harvest';
+  if (/trail|crossing|funnel|pinch/.test(s)) return 'Game Trail';
+  if (/glass|lookout|overlook|vantage|\bview\b|vista/.test(s)) return 'Overlook';
+  if (/camp|parking|\btruck\b|vehicle|atv/.test(s)) return 'Camp';
+  if (/gate/.test(s)) return 'Gate';
+  if (/water|pond|creek|spring|tank|trough|river|lake/.test(s)) return 'Water';
+  return 'Waypoint';
+}
+window._handleGpxFile = function (file) {
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    try {
+      var doc = new DOMParser().parseFromString(String(reader.result || ''), 'application/xml');
+      var wpts = doc.getElementsByTagName('wpt');
+      if (!wpts || !wpts.length) { try { toast('No waypoints found in that GPX file'); } catch (e) {} return; }
+      var coll = (file.name || 'GPX').replace(/\.gpx$/i, '').slice(0, 40) || 'Imported';
+      var arr = getSavedPins(); var added = 0;
+      for (var i = 0; i < wpts.length; i++) {
+        var w = wpts[i];
+        var lat = parseFloat(w.getAttribute('lat')), lng = parseFloat(w.getAttribute('lon'));
+        if (isNaN(lat) || isNaN(lng)) continue;
+        var nmEl = w.getElementsByTagName('name')[0], symEl = w.getElementsByTagName('sym')[0], typeEl = w.getElementsByTagName('type')[0];
+        var nm = nmEl ? (nmEl.textContent || '').trim() : '';
+        var cat = _gpxCat(nm + ' ' + (symEl ? symEl.textContent : '') + ' ' + (typeEl ? typeEl.textContent : ''));
+        arr.push({ pid: 'gpx_' + Date.now() + '_' + i, lat: lat, lng: lng, cat: cat, label: nm || cat, coll: coll, savedAt: Date.now() });
+        added++;
+      }
+      setSavedPins(arr);
+      try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
+      try { if (typeof openSavedPins === 'function') openSavedPins(); } catch (e) {}
+      try { if (window._evt) window._evt('imported ' + added + ' GPX waypoints (' + coll + ')'); } catch (e) {}
+      try { toast('Imported ' + added + ' waypoint' + (added !== 1 ? 's' : '') + ' into My Saved Pins. Select the ones you want and add them to the room.', 5500); } catch (e) {}
+    } catch (e) { try { toast('Couldn’t read that GPX file'); } catch (_) {} }
+  };
+  reader.readAsText(file);
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // PERSONAL TRACKS — record your path with full stats, saved like pins.
