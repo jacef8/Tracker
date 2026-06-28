@@ -1863,6 +1863,12 @@
 </div>
 <!-- floating "you missed transmissions" pill (visible on the map even with no voice bar) -->
 <button id="vlog-pill" onclick="window._openVoiceLog && window._openVoiceLog()" style="display:none;position:fixed;top:calc(var(--topbar-h,116px) + var(--safe-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:3500;padding:8px 15px;background:#ff5252;color:#fff;border:none;border-radius:20px;font-size:13px;font-weight:800;box-shadow:0 3px 14px rgba(0,0,0,.5);cursor:pointer">🎙 <span id="vlog-pill-n">0</span> missed transmission(s) ▶</button>
+<!-- Incoming voice prompt — needed on iOS, where audio won't start without a tap (gesture) -->
+<div id="voice-incoming" onclick="window._acceptIncomingVoice && window._acceptIncomingVoice()" style="display:none;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:4300;background:var(--accent);border-radius:16px;box-shadow:0 8px 36px rgba(0,0,0,.6);padding:14px 16px;cursor:pointer;align-items:center;gap:13px">
+  <div style="font-size:30px;line-height:1;animation:gvPulse 1.4s ease-in-out infinite">🎙</div>
+  <div style="flex:1;min-width:0"><div id="vinc-name" style="font-size:15px;font-weight:800;color:#1a1200;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Someone wants to talk</div><div style="font-size:12px;color:#5a4400;font-weight:700">Tap to join &amp; hear them live</div></div>
+  <button onclick="event.stopPropagation();window._dismissIncomingVoice&&window._dismissIncomingVoice()" style="background:rgba(0,0,0,.18);border:none;border-radius:9px;color:#1a1200;font-weight:800;font-size:13px;padding:9px 12px;cursor:pointer;flex-shrink:0">Ignore</button>
+</div>
 
 <!-- ══ ROOM INFO SHEET ══════════════════════════════════════════════ -->
 <div id="room-info-sheet" style="display:none;position:fixed;inset:0;z-index:500">
@@ -2061,7 +2067,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 185;
+var APP_BUILD = 186;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9865,6 +9871,33 @@ window._openVoiceToGroup = async function () {
 // ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
 var _gvLastPingTs = 0;
 var _gvLastGroupTs = 0;
+// iOS needs a tap to start audio. Detect it, and for incoming calls show a tap-to-join
+// prompt instead of silently auto-joining (which leaves iPhone users hearing nothing).
+function _isIOSVoice() { var ua = navigator.userAgent || ''; return /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1); }
+window._showIncomingVoice = function (room, fromName) {
+  window._pendingVoiceJoin = { room: room, fromName: fromName };
+  var el = document.getElementById('voice-incoming'); if (!el) return;
+  var nm = document.getElementById('vinc-name'); if (nm) nm.textContent = (fromName || 'Someone') + ' wants to talk';
+  el.style.display = 'flex';
+  try { clearTimeout(window._vincTimer); } catch (e) {}
+  window._vincTimer = setTimeout(function () { window._dismissIncomingVoice(); }, 30000);   // ping goes stale
+};
+window._dismissIncomingVoice = function () { var el = document.getElementById('voice-incoming'); if (el) el.style.display = 'none'; window._pendingVoiceJoin = null; };
+window._acceptIncomingVoice = async function () {
+  var p = window._pendingVoiceJoin; if (!p) return;
+  // Unlock iOS audio SYNCHRONOUSLY in this tap, before any await.
+  try { var m0 = window._voiceModSync; if (m0 && m0.unlockAudio) m0.unlockAudio(); } catch (e) {}
+  window._dismissIncomingVoice();
+  var cfg = window.VOICE_CONFIG || {};
+  try {
+    var mod = await window._voiceMod();
+    try { if (mod.unlockAudio) mod.unlockAudio(); } catch (e) {}
+    mod.openVoice({ room: p.room, identity: userId, name: userName || 'Member', partnerName: p.fromName || 'group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+  } catch (e) { try { toast('Voice failed to load — try again'); } catch (_) {} }
+};
+// Preload the voice module on room entry so the tap-to-join is instant + audio unlock is ready.
+try { window._voiceMod().then(function (m) { window._voiceModSync = m; }).catch(function () {}); } catch (e) {}
+
 window._listenVoiceInvites = function () {
   if (!db || !groupName || !userId) return;
   try {
@@ -9880,6 +9913,7 @@ window._listenVoiceInvites = function () {
       try {
         var mod = await window._voiceMod();
         if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in it
+        if (_isIOSVoice()) { window._showIncomingVoice(inv.room, inv.fromName); return; }  // iOS: needs a tap
         mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
           partnerName: inv.fromName || 'member', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
@@ -9899,6 +9933,7 @@ window._listenVoiceInvites = function () {
       try {
         var mod = await window._voiceMod();
         if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in (incl. the starter)
+        if (_isIOSVoice()) { window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); return; }  // iOS: needs a tap
         mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
           partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
