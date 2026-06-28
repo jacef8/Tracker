@@ -171,14 +171,18 @@ self.addEventListener('push', function(e) {
 
 self.addEventListener('notificationclick', function(e) {
   e.notification.close();
-  var url = (e.notification.data && e.notification.data.url) || '/';
+  var data = (e.notification && e.notification.data) || {};
+  var grp = data.group || '';
+  // Deep-link into the room (and flag a voice ping so the app opens the transmission log).
+  var url = grp ? ('/?room=' + encodeURIComponent(grp) + (data.type === 'voice' ? '&notif=voice' : '')) : (data.url || '/');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
       for (var i = 0; i < list.length; i++) {
         var c = list[i];
         if ('focus' in c) {
           c.focus();
-          if (url && url !== '/' && 'navigate' in c) { try { c.navigate(url); } catch (e2) {} }
+          // App is open → let it route in place (open the room / voice log) without a reload.
+          try { c.postMessage({ __glNotif: data }); } catch (e2) {}
           return;
         }
       }

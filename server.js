@@ -81,6 +81,8 @@ app.post('/push', async function(req, res) {
       if (senderEndpoint && rec.sub) {
         try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) return; } catch (e) {}
       }
+      // Respect the recipient's per-type notification prefs (SOS always goes through).
+      if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) return;
       // Web Push — installed PWA (browser-backed)
       if (pushReady && rec.sub) {
         let subscription = null;
