@@ -1544,6 +1544,16 @@
     Saved here across all groups and sessions. Tap to fly there. Filter by type, then add just those to a room.
   </div>
   <div id="saved-pins-filter"></div>
+  <div id="saved-pins-tools" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border)">
+    <label for="saved-pins-sort" style="font-size:11px;color:var(--muted);font-weight:700">Sort</label>
+    <select id="saved-pins-sort" onchange="window.setSavedSort(this.value)" style="flex:1;min-width:0;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:600;padding:6px 8px">
+      <option value="recent">Recently saved</option>
+      <option value="name">Name (A–Z)</option>
+      <option value="type">Type</option>
+      <option value="near">Nearest</option>
+    </select>
+    <button id="sv-show-map-btn" onclick="window._toggleSavedOnMap()" style="flex:0 0 auto;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:5px"><svg class="licon licon-sm"><use href="#ic-star"/></svg><span class="sv-show-map-txt">Show on map</span></button>
+  </div>
   <div id="saved-pins-list"></div>
   <div id="saved-pins-foot">
     <button id="saved-pins-collect" onclick="window._svAddToCollection()" style="display:none;width:100%;margin-bottom:8px;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">Add to collection</button>
@@ -1866,7 +1876,7 @@
   </div>
 </div>
 <!-- floating "you missed transmissions" pill (visible on the map even with no voice bar) -->
-<button id="vlog-pill" onclick="window._openVoiceLog && window._openVoiceLog()" style="display:none;position:fixed;top:calc(var(--topbar-h,116px) + var(--safe-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:3500;padding:8px 15px;background:#ff5252;color:#fff;border:none;border-radius:20px;font-size:13px;font-weight:800;box-shadow:0 3px 14px rgba(0,0,0,.5);cursor:pointer;display:flex;align-items:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg><span><span id="vlog-pill-n">0</span> missed transmission(s)</span><svg class="licon licon-sm"><use href="#ic-play"/></svg></button>
+<button id="vlog-pill" onclick="window._openVoiceLog && window._openVoiceLog()" style="display:none;position:fixed;top:calc(var(--topbar-h,116px) + var(--safe-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:3500;padding:8px 15px;background:#ff5252;color:#fff;border:none;border-radius:20px;font-size:13px;font-weight:800;box-shadow:0 3px 14px rgba(0,0,0,.5);cursor:pointer;align-items:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg><span><span id="vlog-pill-n">0</span> missed transmission(s)</span><svg class="licon licon-sm"><use href="#ic-play"/></svg></button>
 <!-- Incoming voice prompt — needed on iOS, where audio won't start without a tap (gesture) -->
 <div id="voice-incoming" onclick="window._acceptIncomingVoice && window._acceptIncomingVoice()" style="display:none;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:4300;background:var(--accent);border-radius:16px;box-shadow:0 8px 36px rgba(0,0,0,.6);padding:14px 16px;cursor:pointer;align-items:center;gap:13px">
   <div style="line-height:1;animation:gvPulse 1.4s ease-in-out infinite;display:flex"><svg class="licon" style="width:30px;height:30px;color:#1a1200"><use href="#ic-mic"/></svg></div>
@@ -2071,7 +2081,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 191;
+var APP_BUILD = 192;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3010,7 +3020,7 @@ function _updateVlogBadge() {
   var b = document.getElementById('gv-log-badge');
   if (b) { b.textContent = n > 9 ? '9+' : String(n); b.classList.toggle('show', n > 0); }
   var pill = document.getElementById('vlog-pill');
-  if (pill) { pill.style.display = n > 0 ? 'block' : 'none'; var pn = document.getElementById('vlog-pill-n'); if (pn) pn.textContent = String(n); }
+  if (pill) { pill.style.display = n > 0 ? 'flex' : 'none'; var pn = document.getElementById('vlog-pill-n'); if (pn) pn.textContent = String(n); }
 }
 // Called by voice.js when a transmission finishes recording.
 window._onVoiceClip = function (dataUrl, meta) {
@@ -4401,6 +4411,8 @@ function initMap() {
     }
     // Signal ready and flush queued pins
     window._mapReady = true;
+    // Restore personal saved-pin markers if the user left "Show on map" on.
+    try { if (window._showSavedOnMap && typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch(e){}
     if (window._queuedPins) {
       updatePinSource(window._queuedPins);
       window._queuedPins = null;
@@ -8724,6 +8736,91 @@ window.shareSavedPin = function(idx) {
 var _savedFilter = 'all';
 window.setSavedFilter = function(cat) { _savedFilter = cat; renderSavedPins(); };
 
+// Sort order for the saved-pins list (persisted). 'recent' | 'name' | 'type' | 'near'.
+var _savedSort = (function(){ try { return localStorage.getItem('gl_saved_sort') || 'recent'; } catch(e){ return 'recent'; } })();
+window.setSavedSort = function(v) { _savedSort = v; try { localStorage.setItem('gl_saved_sort', v); } catch(e){} renderSavedPins(); };
+
+// Cheap, monotonic-with-distance metric for "nearest" ordering (no need for true miles).
+function _approxDist(lat1, lng1, lat2, lng2) {
+  var dLat = lat2 - lat1, dLng = (lng2 - lng1) * Math.cos(lat1 * Math.PI / 180);
+  return dLat * dLat + dLng * dLng;
+}
+// Sort {pin,idx} entries in place by the active sort. idx is preserved so the per-card
+// Share/Delete buttons keep targeting the right saved pin regardless of display order.
+function _sortSavedEntries(entries) {
+  var gps = window._lastGPS;
+  function nm(p) { return (p.label || p.cat || '').toLowerCase(); }
+  if (_savedSort === 'name') {
+    entries.sort(function(a, b) { var x = nm(a.pin), y = nm(b.pin); return x < y ? -1 : x > y ? 1 : 0; });
+  } else if (_savedSort === 'type') {
+    entries.sort(function(a, b) {
+      var x = (a.pin.cat || '').toLowerCase(), y = (b.pin.cat || '').toLowerCase();
+      if (x !== y) return x < y ? -1 : 1;
+      return (b.pin.savedAt || 0) - (a.pin.savedAt || 0);
+    });
+  } else if (_savedSort === 'near' && gps) {
+    entries.sort(function(a, b) {
+      return _approxDist(gps.lat, gps.lng, a.pin.lat, a.pin.lng) - _approxDist(gps.lat, gps.lng, b.pin.lat, b.pin.lng);
+    });
+  } else {
+    entries.sort(function(a, b) { return (b.pin.savedAt || 0) - (a.pin.savedAt || 0); });
+  }
+  return entries;
+}
+
+// ── Show saved/imported pins on the map (personal — only this device sees them) ──
+// Distinct from shared room pins: dashed white ring. Respects the active filter.
+window._showSavedOnMap = (function(){ try { return localStorage.getItem('gl_show_saved_map') === '1'; } catch(e){ return false; } })();
+window._savedMapMarkers = [];
+function _clearSavedMapMarkers() {
+  (window._savedMapMarkers || []).forEach(function(m) { try { m.remove(); } catch(e){} });
+  window._savedMapMarkers = [];
+}
+function _renderSavedOnMap() {
+  if (typeof map === 'undefined' || !map) return;
+  _clearSavedMapMarkers();
+  if (!window._showSavedOnMap) return;
+  getSavedPins().filter(_savedMatch).forEach(function(pin) {
+    var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
+    var el = document.createElement('div');
+    el.style.cssText = 'width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:' + def.color + ';border:2px dashed #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;cursor:pointer';
+    var inner = document.createElement('div');
+    inner.style.cssText = 'transform:rotate(45deg);font-size:11px;line-height:1;color:#fff';
+    inner.textContent = def.emoji || '';
+    el.appendChild(inner);
+    el.title = (pin.label || pin.cat || 'Saved pin') + (pin.coll ? ' · ' + pin.coll : '');
+    try {
+      var m = new mapboxgl.Marker({ element: el, anchor:'bottom' }).setLngLat([pin.lng, pin.lat]).addTo(map);
+      if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
+        m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
+          '<div style="font-weight:800;font-size:12px;color:#111">' + (pin.label || pin.cat) + '</div>' +
+          (pin.coll ? '<div style="font-size:11px;color:#555">' + pin.coll + '</div>' : '')));
+      }
+      window._savedMapMarkers.push(m);
+    } catch(e){}
+  });
+}
+window._toggleSavedOnMap = function() {
+  window._showSavedOnMap = !window._showSavedOnMap;
+  try { localStorage.setItem('gl_show_saved_map', window._showSavedOnMap ? '1' : '0'); } catch(e){}
+  _renderSavedOnMap();
+  _syncShowMapBtn();
+  if (window._showSavedOnMap) {
+    var n = (window._savedMapMarkers || []).length;
+    toast(n ? ('Showing ' + n + ' saved pin' + (n > 1 ? 's' : '') + ' on the map (only you see these)') : 'No saved pins match the current filter');
+  } else {
+    toast('Hid your saved pins from the map');
+  }
+};
+function _syncShowMapBtn() {
+  var b = document.getElementById('sv-show-map-btn');
+  if (!b) return;
+  var on = !!window._showSavedOnMap;
+  b.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+  b.style.color = on ? 'var(--accent)' : 'var(--text)';
+  var t = b.querySelector('.sv-show-map-txt'); if (t) t.textContent = on ? 'On map' : 'Show on map';
+}
+
 // Does a saved pin match the active filter? Filter is 'all', a pin type, or 'coll:<name>'.
 function _savedMatch(p) {
   if (_savedFilter === 'all') return true;
@@ -8821,10 +8918,13 @@ function renderSavedPins() {
   list.innerHTML = '';
   var gps = window._lastGPS;
   var shown = 0;
-  pins.forEach(function(pin, idx) {
-    // Filter by the active category chip — keep idx aligned to the full array so the
-    // per-card Share/Delete buttons still target the right saved pin.
-    if (!_savedMatch(pin)) return;
+  // Keep idx aligned to the full array (so per-card Share/Delete target the right pin),
+  // filter by the active chip, then sort the survivors by the active sort order.
+  var entries = pins.map(function(pin, idx) { return { pin:pin, idx:idx }; }).filter(function(e) { return _savedMatch(e.pin); });
+  _sortSavedEntries(entries);
+  var sortSel = document.getElementById('saved-pins-sort'); if (sortSel) sortSel.value = _savedSort;
+  entries.forEach(function(e) {
+    var pin = e.pin, idx = e.idx;
     shown++;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
@@ -8864,6 +8964,8 @@ function renderSavedPins() {
     list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No ' + _savedFilter + ' pins saved.</div>';
   }
   _updateSavedFoot(shown);
+  _syncShowMapBtn();
+  _renderSavedOnMap();
 }
 // saved-pins-btn removed from toolbar (now in pin hub sheet)
 document.getElementById('close-saved-pins').addEventListener('click', function() {
