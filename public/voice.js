@@ -288,7 +288,7 @@ function updatePresence() {
 function showAudioBlocked() {
   if (!barEl) return;
   barEl._audioBlocked = true;
-  setTalker('🔊 tap to hear', '#f0a500');
+  setTalker('Tap to hear', '#f0a500');
   barEl.style.cursor = 'pointer';
   barEl.addEventListener('click', _resumeAudio);
 }
@@ -370,7 +370,7 @@ function renderBar() {
       <div class="gv-talker" id="gv-talker"></div>
     </div>
     <button id="gv-ptt" title="Tap to talk (don't hold)" aria-label="Tap to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">TAP</span></button>
-    <button class="gv-icon" id="gv-log" title="Missed transmissions" aria-label="Transmissions">🕓<span class="gv-badge" id="gv-log-badge"></span></button>
+    <button class="gv-icon" id="gv-log" title="Missed transmissions" aria-label="Transmissions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;display:block"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg><span class="gv-badge" id="gv-log-badge"></span></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
