@@ -200,6 +200,9 @@
 
 <!-- TROUBLESHOOT TAB — device diagnostics + activity event log -->
 <div class="tab-panel" id="tab-debug">
+  <!-- Grab EVERYTHING: rooms, members (+stale), device diagnostics, recent events, duplicate
+       identities — one copyable report to hand straight to support. -->
+  <button onclick="copyAllDiagnostics(this)" style="width:100%;margin-bottom:12px;padding:12px;background:var(--accent);border:none;border-radius:12px;color:#1a1200;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">&#128203; Copy EVERYTHING (full diagnostics)</button>
   <div class="group-subtabs">
     <button id="tsub-status-btn" class="gsub-btn active" onclick="setTroubleshootSub('status')">Device Status</button>
     <button id="tsub-log-btn" class="gsub-btn" onclick="setTroubleshootSub('log')">Event Log</button>
@@ -218,7 +221,10 @@
   <div id="ts-log" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px">
       <span style="font-size:12px;color:var(--muted)">Last 24hrs — joins, exits &amp; GPS events</span>
-      <button class="btn btn-danger" onclick="if(confirm('Clear the activity log for all groups? Cannot be undone.')) clearAllDebugLogs()" style="font-size:11px;padding:5px 12px">&#128465; Clear Feed</button>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-warn" onclick="copyEventLog(this)" style="font-size:11px;padding:5px 12px">Copy</button>
+        <button class="btn btn-danger" onclick="if(confirm('Clear the activity log for all groups? Cannot be undone.')) clearAllDebugLogs()" style="font-size:11px;padding:5px 12px">&#128465; Clear Feed</button>
+      </div>
     </div>
     <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;color:var(--muted)">Filter:</span>
@@ -577,6 +583,90 @@ function copyDeviceDebug(btn) {
   } else {
     window.prompt('Copy device diagnostics:', text);
   }
+}
+
+// Shared clipboard helper (falls back to a prompt where the Clipboard API is unavailable).
+function _adminCopy(text, btn) {
+  function done() { if (btn) { var t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(function () { btn.textContent = t; }, 1500); } }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy:', text); });
+  } else { window.prompt('Copy:', text); }
+}
+
+// "Copy EVERYTHING" — one report covering every room, every member (with stale flags),
+// device diagnostics, recent in/out + GPS events, and duplicate identities. Built from the
+// full `gl` snapshot the admin already holds, so it's instant.
+function copyAllDiagnostics(btn) {
+  try {
+    var all = window._allDataSnapshot || {};
+    var now = Date.now();
+    var STALE = 20 * 60 * 1000;
+    function ago(ts) { if (!ts) return 'never'; var s = Math.round((now - ts) / 1000); if (s < 60) return s + 's'; var m = Math.round(s / 60); if (m < 60) return m + 'm'; return Math.round(m / 60) + 'h'; }
+    var L = [];
+    L.push('=== GROUNDLINK FULL DIAGNOSTICS ===');
+    L.push('generated: ' + new Date().toString());
+    L.push('groups: ' + Object.keys(all).length);
+    L.push('');
+    var nameCounts = {}, totalUsers = 0, totalStale = 0, staleList = [];
+    Object.keys(all).sort().forEach(function (gk) {
+      var g = all[gk] || {}; var cfg = g.config || {}; var users = g.users || {};
+      var uids = Object.keys(users).filter(function (k) { return users[k] && typeof users[k] === 'object'; });
+      var pins = g.pins ? Object.keys(g.pins).length : 0, chat = g.chat ? Object.keys(g.chat).length : 0;
+      var trails = g.trails ? Object.keys(g.trails).length : 0, clips = g.voicelog ? Object.keys(g.voicelog).length : 0;
+      L.push('### GROUP: ' + gk);
+      L.push('  config: visibility=' + (cfg.visibility || 'public') + ' persistent=' + !!cfg.persistent +
+        (cfg.expires ? ' expires=' + new Date(cfg.expires).toLocaleString() : '') +
+        (cfg.owner ? ' owner=' + String(cfg.owner).slice(0, 10) : ''));
+      L.push('  counts: users=' + uids.length + ' pins=' + pins + ' chat=' + chat + ' trails=' + trails + ' clips=' + clips);
+      uids.forEach(function (uid) {
+        var u = users[uid] || {}; var age = now - (u.ts || 0);
+        var st = age < 90000 ? 'LIVE' : (u.rest ? 'resting' : (u.noGps ? 'no-GPS' : (u.conn === false ? 'disconnected' : 'idle')));
+        if (age >= STALE) { totalStale++; staleList.push(gk + ' / ' + (u.name || uid.slice(0, 8)) + ' [' + uid.slice(0, 12) + '] ' + ago(u.ts) + ' ago'); }
+        totalUsers++; if (u.name) nameCounts[u.name] = (nameCounts[u.name] || 0) + 1;
+        L.push('  - ' + (u.name || '(no name)') + ' [' + uid.slice(0, 12) + '] ' + st + ' · ' + ago(u.ts) + ' ago · conn=' +
+          (u.conn === false ? 'false' : 'true') + (u.noGps ? ' noGps' : '') + (u.rest ? ' rest' : '') + (u.hidden ? ' hidden' : '') +
+          (u.claiming ? ' CLAIMING' : '') + (u.dev ? ' · ' + u.dev : '') + (u.accuracy != null ? ' · ±' + u.accuracy + 'ft' : ''));
+      });
+      if (g.diag) Object.keys(g.diag).forEach(function (uid) {
+        var d = g.diag[uid] || {};
+        L.push('  [diag] ' + (d.name || uid.slice(0, 8)) + ': ' + (d.native ? 'NATIVE' : 'web') + ' build=' + (d.build || '?') +
+          ' bgGPS=' + (d.bgStarted ? (d.gotNative ? 'on' : 'starting') : 'off') +
+          ' lastFix=' + (d.lastFixAgo >= 0 ? d.lastFixAgo + 's' : 'never') + ' lastWrite=' + (d.lastWriteAgo >= 0 ? d.lastWriteAgo + 's' : 'never') +
+          ' acc=' + (d.acc != null ? d.acc + 'm' : '?') + ' screen=' + (d.vis || '?') + ' report=' + ago(d.ts) + ' ago' + (d.bgErr ? ' ERR:' + d.bgErr : ''));
+      });
+      if (g.debug) {
+        var ev = Object.keys(g.debug).map(function (k) { return g.debug[k]; }).filter(function (e) { return e && e.ts; }).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 15);
+        if (ev.length) { L.push('  [recent events]'); ev.forEach(function (e) { L.push('    ' + new Date(e.ts).toLocaleString() + ' — ' + (e.msg || '')); }); }
+      }
+      L.push('');
+    });
+    L.push('=== SUMMARY ===');
+    L.push('total users (all groups): ' + totalUsers);
+    L.push('stale users (>20m, prune candidates): ' + totalStale);
+    staleList.forEach(function (s) { L.push('  stale: ' + s); });
+    var dups = Object.keys(nameCounts).filter(function (n) { return nameCounts[n] > 1; });
+    if (dups.length) {
+      L.push('DUPLICATE IDENTITIES (same name under multiple device-ids — usually reinstalls / identity resets):');
+      dups.forEach(function (n) { L.push('  ' + n + ' × ' + nameCounts[n]); });
+    }
+    _adminCopy(L.join('\n'), btn);
+  } catch (e) { alert('Diagnostics error: ' + ((e && e.message) || e)); }
+}
+
+// Copy the activity / event log (joins, exits, GPS) across all groups, last 24h.
+function copyEventLog(btn) {
+  try {
+    var all = window._allDataSnapshot || {};
+    var rows = [];
+    Object.keys(all).forEach(function (gk) {
+      var dbg = all[gk] && all[gk].debug; if (!dbg) return;
+      Object.keys(dbg).forEach(function (k) { var e = dbg[k]; if (e && e.ts) rows.push({ gk: gk, ts: e.ts, msg: e.msg || '' }); });
+    });
+    rows.sort(function (a, b) { return b.ts - a.ts; });
+    var L = ['=== GROUNDLINK EVENT LOG (' + rows.length + ' events) ==='];
+    rows.forEach(function (r) { L.push(new Date(r.ts).toLocaleString() + ' [' + r.gk + '] ' + r.msg); });
+    _adminCopy(L.join('\n'), btn);
+  } catch (e) { alert('Event log copy error: ' + ((e && e.message) || e)); }
 }
 
 function clearDeviceDebug() {
