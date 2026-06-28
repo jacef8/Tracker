@@ -1929,6 +1929,14 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-bell"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Notifications</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Chat, pins, joins &amp; SOS alerts</div></div></div>
       <span id="set-alerts-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
+    <!-- Per-type notification toggles — shown only when notifications are on -->
+    <div id="notif-types" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 6px;margin:-2px 0 8px">
+      <div onclick="window._toggleNotifType('join')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 8px;cursor:pointer;border-bottom:1px solid var(--border);-webkit-tap-highlight-color:transparent"><span style="font-size:13px;color:var(--text)">Joins &amp; leaves</span><span id="ntype-join-pill" style="font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span></div>
+      <div onclick="window._toggleNotifType('chat')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 8px;cursor:pointer;border-bottom:1px solid var(--border);-webkit-tap-highlight-color:transparent"><span style="font-size:13px;color:var(--text)">Chat messages</span><span id="ntype-chat-pill" style="font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span></div>
+      <div onclick="window._toggleNotifType('pin')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 8px;cursor:pointer;border-bottom:1px solid var(--border);-webkit-tap-highlight-color:transparent"><span style="font-size:13px;color:var(--text)">New pins</span><span id="ntype-pin-pill" style="font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span></div>
+      <div onclick="window._toggleNotifType('voice')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 8px;cursor:pointer;-webkit-tap-highlight-color:transparent"><span style="font-size:13px;color:var(--text)">Someone talking (voice)</span><span id="ntype-voice-pill" style="font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;background:var(--border);color:var(--muted)">ON</span></div>
+      <div style="font-size:10px;color:var(--muted);padding:4px 8px 7px">🆘 SOS alerts always come through.</div>
+    </div>
     <div onclick="_setToggleLocation()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Turn off to stay in the room &amp; chat, but hide your spot on the map</div></div></div>
       <span id="set-location-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2053,7 +2061,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 184;
+var APP_BUILD = 185;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2510,7 +2518,13 @@ async function _registerFcm(silent) {
     try { localStorage.setItem('gl_fcm', token); } catch (e) {}
     if (db && groupName && userId) {
       fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
-            { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), ts: Date.now() });
+            { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), prefs: _notifPrefs(), ts: Date.now() });
+    }
+    // Tap a system notification → route into the room; foreground arrival → in-app toast.
+    if (!window._fcmListenersAdded) {
+      window._fcmListenersAdded = true;
+      try { FM.addListener('notificationActionPerformed', function (e) { try { window._handleNotifOpen((e && e.notification && e.notification.data) || {}); } catch (x) {} }); } catch (e) {}
+      try { FM.addListener('notificationReceived', function (e) { try { _onForegroundNotif((e && e.notification) || {}); } catch (x) {} }); } catch (e) {}
     }
     return true;
   } catch (e) { console.warn('registerFcm', e); return false; }
@@ -2576,7 +2590,7 @@ async function enableAlerts(silent) {
     try { window._pushEndpoint = (sub && sub.endpoint) || window._pushEndpoint; if (window._pushEndpoint) localStorage.setItem('gl_push_endpoint', window._pushEndpoint); } catch (e) {}
     if (db && groupName && userId) {
       fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
-            { sub: JSON.stringify(sub), name: userName, ts: Date.now() });
+            { sub: JSON.stringify(sub), name: userName, prefs: _notifPrefs(), ts: Date.now() });
     }
     alertsOn = true; _setAlertsPref(true); _syncAlertsUI(); _syncSettings();
     if (!silent) toast('Alerts on');
@@ -2789,6 +2803,11 @@ function _setPill(id, on) {
 }
 function _syncSettings() {
   _setPill('set-alerts-pill', !!alertsOn);
+  // Per-type notification toggles — only relevant (and shown) when notifications are on.
+  try {
+    var nt = document.getElementById('notif-types'); if (nt) nt.style.display = alertsOn ? 'block' : 'none';
+    ['join', 'chat', 'pin', 'voice'].forEach(function (t) { _setPill('ntype-' + t + '-pill', _notifPref(t)); });
+  } catch (e) {}
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-announce-pill', _announceJoinOn());
@@ -2909,6 +2928,56 @@ function pushNotify(type, title, body, opts) {
     }).catch(function(){});
   } catch (e) {}
 }
+
+// ─── Per-type notification preferences (mute join/chat/pin/voice; SOS always on) ───
+// Stored locally AND mirrored into this device's push subscriptions so the SERVER can skip
+// a muted type before sending (works even when the app is closed).
+var _NOTIF_NS = 'gl';
+function _notifPrefs() { try { return JSON.parse(localStorage.getItem('gl_notif_prefs') || '{}'); } catch (e) { return {}; } }
+function _notifPref(type) { if (type === 'sos') return true; var p = _notifPrefs(); return p[type] !== 0 && p[type] !== false; }
+function _syncNotifPrefsToSubs() {
+  try {
+    var fb = window._fb; if (!fb || !fb.set) return;
+    var s = (typeof getSavedSession === 'function') ? getSavedSession() : {};
+    var uid = s.uid || (typeof userId !== 'undefined' ? userId : null); if (!uid) return;
+    var prefs = _notifPrefs();
+    if (db && groupName && userId) { try { fb.set(fb.ref(fb.db, _NOTIF_NS + '/' + groupName + '/pushSubs/' + userId + '/prefs'), prefs); } catch (e) {} }
+    (typeof _getFavs === 'function' ? _getFavs() : []).forEach(function (k) { try { fb.set(fb.ref(fb.db, _NOTIF_NS + '/' + k + '/favSubs/' + uid + '/prefs'), prefs); } catch (e) {} });
+  } catch (e) {}
+}
+window._toggleNotifType = function (type) {
+  try { var p = _notifPrefs(); p[type] = _notifPref(type) ? 0 : 1; localStorage.setItem('gl_notif_prefs', JSON.stringify(p)); } catch (e) {}
+  _syncNotifPrefsToSubs();
+  try { _syncSettings(); } catch (e) {}
+};
+
+// ─── Notification tap → open the right room (and for voice, the missed-transmission log) ───
+window._handleNotifOpen = function (data) {
+  try {
+    data = data || {};
+    var grp = data.group || ''; var type = data.type || '';
+    if (!grp) return;
+    if (typeof groupName !== 'undefined' && groupName === grp) {   // already in that room
+      if (type === 'voice') { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }
+      try { window.focus && window.focus(); } catch (e) {}
+      return;
+    }
+    location.href = '/?room=' + encodeURIComponent(grp) + (type === 'voice' ? '&notif=voice' : '');
+  } catch (e) {}
+};
+// A notification that arrived while the app is in the FOREGROUND (native FCM) — surface a
+// lightweight in-app toast unless you're already looking at that room.
+function _onForegroundNotif(n) {
+  try {
+    n = n || {}; var data = n.data || {}; var type = data.type || '';
+    if (type && !_notifPref(type)) return;
+    if (data.group && typeof groupName !== 'undefined' && data.group === groupName) return;
+    var msg = (n.title || 'GroundLink') + (n.body ? ' — ' + n.body : '');
+    if (typeof toast === 'function') toast(msg, 4200);
+  } catch (e) {}
+}
+// Web (PWA): the service worker forwards a clicked notification here.
+try { if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function (ev) { if (ev && ev.data && ev.data.__glNotif) window._handleNotifOpen(ev.data.__glNotif); }); } catch (e) {}
 // Voice key-up → notify the room so members with the app backgrounded know someone's
 // talking (they can't hear live audio when the app is closed). Debounced per device so a
 // burst of transmissions sends at most one ping every 25s. Called from voice.js.
@@ -3246,9 +3315,9 @@ async function _registerFavSub(key, name, silent) {
     var uid = s.uid || (typeof userId !== 'undefined' ? userId : null);
     if (!fb || !uid) return false;
     var fcm = await _ensureFcmToken(silent);   // native path
-    if (fcm) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { fcm: fcm, name: name || s.name || '', ts: Date.now() }); return true; }
+    if (fcm) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { fcm: fcm, name: name || s.name || '', prefs: _notifPrefs(), ts: Date.now() }); return true; }
     var sub = await _ensurePushSub();          // web/PWA path
-    if (sub) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', ts: Date.now() }); return true; }
+    if (sub) { fb.set(fb.ref(fb.db, 'gl/' + key + '/favSubs/' + uid), { sub: JSON.stringify(sub), name: name || s.name || '', prefs: _notifPrefs(), ts: Date.now() }); return true; }
     return false; // no push available here / permission denied — favorite still pins locally
   } catch (e) { return false; }
 }
@@ -3838,6 +3907,8 @@ function enterMap(name, group, uid) {
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { listenVoiceLog(); } catch (e) {}
+    // Opened from a "someone's talking" notification → pop the transmission log once it loads.
+    if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
@@ -4040,6 +4111,7 @@ function showJoinScreen() {
   var _invRoom = _q.get('room');
   if (_invRoom) {
     window._inviteRoom = _invRoom;
+    if (_q.get('notif') === 'voice') window._pendingNotif = 'voice';   // opened from a voice ping
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
     showInviteJoin(_invRoom, window._invitePin || null);
