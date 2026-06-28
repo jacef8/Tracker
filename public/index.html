@@ -2069,7 +2069,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 189;
+var APP_BUILD = 190;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5461,8 +5461,18 @@ function startLocationSharing() {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
     } else if (window._batterySaver && window._bsIdle) {
-      // Battery-saver "resting": stay intentionally quiet so the member shows RESTING and we
-      // actually save the writes. Presence (conn flag) keeps them visible; movement wakes us.
+      // Battery-saver "resting": send a SLOW heartbeat (about every BS_HEARTBEAT_MS) that keeps
+      // us in the member count as "resting" with our last position. (We used to write NOTHING
+      // here, so two people sitting still both aged out and the in-room count dropped to 0.)
+      if (!window._bsRestBeat || (Date.now() - window._bsRestBeat) >= BS_HEARTBEAT_MS) {
+        window._bsRestBeat = Date.now();
+        var _g = window._lastGPS;
+        try {
+          if (_g) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
+            { lat: _g.lat, lng: _g.lng, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), rest: true });
+          else fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/ts'), Date.now());
+        } catch (_) {}
+      }
       return;
     } else {
       // Stationary but still tracking — bump only our timestamp (keep position/accuracy)
