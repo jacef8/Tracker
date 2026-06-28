@@ -170,7 +170,7 @@ app.get('/.well-known/assetlinks.json', function(req, res) {
     "target": {
       "namespace": "android_app",
       "package_name": "com.groundlink.app",
-      "sha256_cert_fingerprints": ["D5:BF:39:0E:56:EA:85:26:BD:DA:3D:77:CF:C7:1E:1C:C4:2A:E2:C3:50:68:DD:23:00:96:00:26:2D:96:9C:17", "10:09:BB:FE:B3:3B:9A:44:79:50:C8:07:88:23:25:D0:A5:AA:1A:53:75:84:29:34:5B:24:CA:0A:CD:A9:70:EB"]
+      "sha256_cert_fingerprints": ["66:D4:5E:8A:57:E7:1E:75:92:B6:A5:EF:CC:C9:04:6D:B7:AA:CD:D7:E2:A9:14:45:B6:7E:5E:66:07:06:90:4C", "D5:BF:39:0E:56:EA:85:26:BD:DA:3D:77:CF:C7:1E:1C:C4:2A:E2:C3:50:68:DD:23:00:96:00:26:2D:96:9C:17", "10:09:BB:FE:B3:3B:9A:44:79:50:C8:07:88:23:25:D0:A5:AA:1A:53:75:84:29:34:5B:24:CA:0A:CD:A9:70:EB"]
     }
   }]));
 });

@@ -2076,7 +2076,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 193;
+var APP_BUILD = 194;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4094,6 +4094,34 @@ function showJoinScreen() {
   });
   document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
 }
+
+// ── Native deep links (Android App Links) ──────────────────────────────────
+// When the app is opened by tapping a shared GroundLink https link, Android hands
+// the URL to Capacitor — but the WebView still loads the server ROOT, not the
+// link's ?room=&k= query. So we apply it ourselves: redirect the WebView to the
+// link's path+query, which re-runs the normal invite flow in tryResume() below.
+// No-op on the web (window.Capacitor / the App plugin are absent there).
+(function nativeDeepLinks() {
+  try {
+    var cap = window.Capacitor;
+    if (!cap || !cap.Plugins || !cap.Plugins.App) return;
+    var AppPlugin = cap.Plugins.App;
+    function applyDeepLink(url) {
+      if (!url) return;
+      var u;
+      try { u = new URL(url); } catch (e) { return; }
+      if (!u.searchParams.get('room')) return;          // only room-invite links
+      if (u.search === window.location.search) return;  // already here — avoid a reload loop
+      window.location.replace(u.pathname + u.search + u.hash);
+    }
+    // Cold start: the app may have been launched by the link.
+    if (AppPlugin.getLaunchUrl) {
+      AppPlugin.getLaunchUrl().then(function (r) { if (r && r.url) applyDeepLink(r.url); }).catch(function () {});
+    }
+    // Warm: app already open when the link is tapped.
+    AppPlugin.addListener('appUrlOpen', function (data) { if (data && data.url) applyDeepLink(data.url); });
+  } catch (e) {}
+})();
 
 (function tryResume() {
   const s = getSavedSession();
