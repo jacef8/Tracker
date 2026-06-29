@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 211;
+var APP_BUILD = 212;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2553,18 +2553,33 @@ function _flyToDevice() {
 window._locateDevice = function (id) {
   var d = (window._devicesAll[id] || {}).live || {};
   if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('No location yet for this device'); } catch (e) {} return; }
-  // If you're IN a room (the GroundLink map is the active view), fly to the device's ⌚ there.
+  // Already on a GroundLink map (in a room)? fly to the device's ⌚ there.
   if (typeof map !== 'undefined' && map && typeof groupName !== 'undefined' && groupName) {
     window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
     _flyToDevice();
     return;
   }
-  // Otherwise (on the home/Account screen, no live map) open the spot in your phone's Maps —
-  // always works, even with no rooms.
-  try {
-    window.open('https://www.google.com/maps?q=' + d.lat + ',' + d.lng, '_blank');
-    toast('Opened ' + (d.name || 'device') + '’s location in Maps');
-  } catch (e) { try { toast('At ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5)); } catch (_) {} }
+  window._openMyMap(id);    // otherwise open YOUR private map and fly to it
+};
+// "My map" — a private GroundLink map that's just YOU + your devices (no hunting room). Opens
+// the normal map on a personal private room whose key starts with "_", so it never appears in
+// any room list/directory. Your watch's ⌚ renders here (only you can see it).
+window._openMyMap = function (deviceId) {
+  var nm = (typeof userName !== 'undefined' && userName) || '';
+  if (!nm) { try { nm = localStorage.getItem('gl_name') || ''; } catch (e) {} }
+  if (!nm) nm = 'Me';
+  var acct = _myAcct();
+  if (!acct) { try { acct = localStorage.getItem('gl_uid') || 'me'; } catch (e) { acct = 'me'; } }
+  var uid = (typeof userId !== 'undefined' && userId) || '';
+  if (!uid) { try { uid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
+  if (!uid && typeof genUid === 'function') uid = genUid();
+  if (deviceId) {
+    var d = (window._devicesAll[deviceId] || {}).live || {};
+    if (typeof d.lat === 'number') { window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name }; window._locatePending = true; }
+  }
+  try { enterMap(nm, '_mymap_' + acct, uid); } catch (e) {}
+  // Keep this personal map private — never on the public directory.
+  setTimeout(function () { try { if (db && groupName) fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), 'private'); } catch (e) {} }, 700);
 };
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
@@ -2595,6 +2610,7 @@ window._renderMyDevices = function () {
         '<button onclick="window._claimDevice(\'' + u.id + '\')" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:800;padding:7px 13px;cursor:pointer;flex-shrink:0">Claim</button></div>';
     });
   }
+  if (owned.length) html = '<button onclick="window._openMyMap()" style="width:100%;padding:10px;margin-bottom:8px;background:#7c3aed;border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:800;cursor:pointer">&#128506;&#65039; Open my map</button>' + html;
   if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
   el.innerHTML = html;
 };
