@@ -1840,7 +1840,7 @@
   </div>
   <div id="tab-inroom">
     <div style="display:flex;gap:6px;padding:0 12px 8px">
-      <button id="group-talk-btn" onclick="window._openVoiceToGroup && window._openVoiceToGroup()" style="flex:1;padding:11px 8px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Whole group</button>
+      <button id="channel-btn" onclick="window._toggleOpenChannel && window._toggleOpenChannel()" title="Open the always-on group channel — everyone who opens it hears each other live" style="flex:1;padding:11px 8px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Open channel</button>
       <button onclick="window._openVoicePicker && window._openVoicePicker()" style="flex:1;padding:11px 8px;background:transparent;border:1px solid var(--accent);border-radius:10px;font-size:14px;font-weight:800;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Choose people</button>
     </div>
     <div id="user-list"></div>
@@ -2089,7 +2089,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 198;
+var APP_BUILD = 199;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3974,6 +3974,7 @@ function enterMap(name, group, uid) {
     listenChat();
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
+    try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { listenVoiceLog(); } catch (e) {}
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
@@ -10160,16 +10161,86 @@ window._openVoiceToGroup = async function () {
   } catch (e) { console.error('[voice] group open failed', e); alert('Voice failed to load: ' + e.message); }
 };
 
+// ── ALWAYS-OPEN GROUP CHANNEL ───────────────────────────────────────
+// Tap once to join the shared room gv_<group>_ALL and STAY connected (survives reloads via
+// gl_open_channel + auto-rejoin on room entry). Everyone who opens the channel hears everyone's
+// PTT live — no per-call ping/prompt handshake. The opening tap also unlocks iOS audio, so it
+// sidesteps the "iPhone can't auto-play incoming audio" problem entirely. Opt-in per device.
+function _openChannelOn() { try { return localStorage.getItem('gl_open_channel') === '1'; } catch (e) { return false; } }
+function _channelRoomId() { return 'gv_' + groupName + '_ALL'; }
+window._inOpenChannel = false;
+
+window._updateChannelBtn = function () {
+  var b = document.getElementById('channel-btn'); if (!b) return;
+  if (_openChannelOn()) {
+    b.innerHTML = '<span style="width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 8px #00e676;flex:0 0 auto"></span>Channel open';
+    b.style.background = '#0f2418'; b.style.color = '#5ef0a0'; b.style.boxShadow = 'inset 0 0 0 1px #1d5236';
+  } else {
+    b.innerHTML = '<svg class="licon licon-sm"><use href="#ic-mic"/></svg>Open channel';
+    b.style.background = 'var(--accent)'; b.style.color = '#1a1200'; b.style.boxShadow = 'none';
+  }
+};
+
+async function _joinOpenChannel() {
+  var cfg = window.VOICE_CONFIG || {};
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
+  if (!userId || !groupName) return;
+  var roomId = _channelRoomId();
+  try {
+    var mod = await window._voiceMod();
+    try { if (mod.unlockAudio) mod.unlockAudio(); } catch (e) {}
+    var already = mod.currentRoom && mod.currentRoom() === roomId;
+    if (!already) {
+      mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
+        partnerName: groupName + ' · channel', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+      if (window._evt) window._evt('📻 joined the open channel');
+    }
+    window._inOpenChannel = true;
+  } catch (e) { console.error('[voice] open-channel join failed', e); try { toast('Voice failed to load — try again'); } catch (_) {} }
+}
+
+window._toggleOpenChannel = async function () {
+  if (document.body.classList.contains('voice-off')) { toast('Turn Voice on first (Settings → Voice)'); return; }
+  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  if (_openChannelOn()) {
+    try { localStorage.setItem('gl_open_channel', '0'); } catch (e) {}
+    window._inOpenChannel = false;
+    _updateChannelBtn();
+    try { var m = await window._voiceMod(); if (m.leaveVoice) m.leaveVoice(); } catch (e) {}
+    if (window._evt) window._evt('📻 closed the open channel');
+    toast('Channel closed');
+    return;
+  }
+  // Opening — this tap unlocks iOS audio synchronously (before any await).
+  try { var m0 = window._voiceModSync; if (m0 && m0.unlockAudio) m0.unlockAudio(); } catch (e) {}
+  try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
+  _updateChannelBtn();
+  _closePeopleDrawer();
+  toast('Channel open — anyone who opens it hears your Talk button live');
+  await _joinOpenChannel();
+};
+
+// On room entry, rejoin the channel if the user left it open. Android joins silently; iOS shows
+// the one-tap prompt (a fresh page load needs a gesture to unlock audio on iPhones).
+window._maybeRejoinChannel = function () {
+  if (!_openChannelOn()) return;
+  if (document.body.classList.contains('voice-off')) return;
+  if (!userId || !groupName) return;
+  _updateChannelBtn();
+  if (_isIOSVoice()) { window._showIncomingVoice(_channelRoomId(), '📻 Group channel', true); }
+  else { _joinOpenChannel(); }
+};
+
 // ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
 var _gvLastPingTs = 0;
 var _gvLastGroupTs = 0;
 // iOS needs a tap to start audio. Detect it, and for incoming calls show a tap-to-join
 // prompt instead of silently auto-joining (which leaves iPhone users hearing nothing).
 function _isIOSVoice() { var ua = navigator.userAgent || ''; return /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1); }
-window._showIncomingVoice = function (room, fromName) {
-  window._pendingVoiceJoin = { room: room, fromName: fromName };
+window._showIncomingVoice = function (room, fromName, isChannel) {
+  window._pendingVoiceJoin = { room: room, fromName: fromName, isChannel: !!isChannel };
   var el = document.getElementById('voice-incoming'); if (!el) return;
-  var nm = document.getElementById('vinc-name'); if (nm) nm.textContent = (fromName || 'Someone') + ' wants to talk';
+  var nm = document.getElementById('vinc-name'); if (nm) nm.textContent = isChannel ? '📻 Tap to open your channel' : ((fromName || 'Someone') + ' wants to talk');
   el.style.display = 'flex';
   try { clearTimeout(window._vincTimer); } catch (e) {}
   window._vincTimer = setTimeout(function () { window._dismissIncomingVoice(); }, 45000);   // ping goes stale
@@ -10185,6 +10256,12 @@ window._acceptIncomingVoice = async function () {
     var mod = await window._voiceMod();
     try { if (mod.unlockAudio) mod.unlockAudio(); } catch (e) {}
     mod.openVoice({ room: p.room, identity: userId, name: userName || 'Member', partnerName: p.fromName || 'group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+    // Accepting the channel prompt = opting into the always-open channel (persist + reflect).
+    if (p.isChannel || /_ALL$/.test(p.room || '')) {
+      try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
+      window._inOpenChannel = true;
+      try { if (window._updateChannelBtn) window._updateChannelBtn(); } catch (e) {}
+    }
   } catch (e) { try { toast('Voice failed to load — try again'); } catch (_) {} }
 };
 // Preload the voice module on room entry so the tap-to-join is instant + audio unlock is ready.
@@ -10230,6 +10307,7 @@ window._listenVoiceInvites = function () {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;
+      if (!_openChannelOn()) return;   // only members who opted into the channel react to the group broadcast
       if (Date.now() - (inv.ts || 0) > 60000) return;
       if (inv.ts <= _gvLastGroupTs) return;
       _gvLastGroupTs = inv.ts;
@@ -10266,6 +10344,13 @@ window._voiceMod().then(function (m) {
       }, 12000);
     }
     if (ev.type === 'left') {
+      // Leaving voice (incl. the bar's ✕) also closes the open channel, so the heartbeat
+      // can't drag the user back in on the next room entry.
+      if (window._inOpenChannel) {
+        window._inOpenChannel = false;
+        try { localStorage.setItem('gl_open_channel', '0'); } catch (e) {}
+        try { if (window._updateChannelBtn) window._updateChannelBtn(); } catch (e) {}
+      }
       try { clearInterval(window._gvGroupBeat); } catch (e) {}
       window._gvGroupBeat = null;
       if (window._gvPingedUid) {
