@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 213;
+var APP_BUILD = 214;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2569,21 +2569,19 @@ window._locateDevice = function (id) {
 // the normal map on a personal private room whose key starts with "_", so it never appears in
 // any room list/directory. Your watch's ⌚ renders here (only you can see it).
 window._openMyMap = function (deviceId) {
-  var nm = (typeof userName !== 'undefined' && userName) || '';
-  if (!nm) { try { nm = localStorage.getItem('gl_name') || ''; } catch (e) {} }
-  if (!nm) nm = 'Me';
-  var acct = _myAcct();
-  if (!acct) { try { acct = localStorage.getItem('gl_uid') || 'me'; } catch (e) { acct = 'me'; } }
-  var uid = (typeof userId !== 'undefined' && userId) || '';
-  if (!uid) { try { uid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
-  if (!uid && typeof genUid === 'function') uid = genUid();
   if (deviceId) {
     var d = (window._devicesAll[deviceId] || {}).live || {};
-    if (typeof d.lat === 'number') { window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name }; window._locatePending = true; }
+    if (typeof d.lat === 'number') window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
   }
-  try { enterMap(nm, '_mymap_' + acct, uid); } catch (e) {}
-  // Keep this personal map private — never on the public directory.
-  setTimeout(function () { try { if (db && groupName) fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), 'private'); } catch (e) {} }, 700);
+  try { _enterSoloMap(); } catch (e) {}   // the existing "My Map" (no room) — now shows your devices
+  // Once the solo map is ready, draw the devices + fly to the requested one.
+  var tries = 0, iv = setInterval(function () {
+    if (window._mapReady && typeof map !== 'undefined' && map) {
+      clearInterval(iv);
+      try { _renderDevices(); } catch (e) {}
+      if (deviceId && window._locateTarget) { try { map.flyTo({ center: [window._locateTarget.lng, window._locateTarget.lat], zoom: 16 }); } catch (e) {} }
+    } else if (++tries > 50) clearInterval(iv);
+  }, 150);
 };
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
@@ -9044,12 +9042,20 @@ window._enterSoloMap = function() {
   if (!window._mapStarted) initMap();
   var apply = function() {
     updatePinSource(lastPins);
-    var keys = Object.keys(lastPins);
+    try { if (window._listenDevices) _listenDevices(); } catch (e) {}
+    try { _renderDevices(); } catch (e) {}   // your private devices (kid's watch ⌚) on My Map
+    // Frame everything you can see: saved pins + your devices.
+    var pts = [];
+    Object.keys(lastPins).forEach(function(k) { pts.push([lastPins[k].lng, lastPins[k].lat]); });
     try {
-      if (keys.length === 1) { var k0 = keys[0]; map.jumpTo({ center: [lastPins[k0].lng, lastPins[k0].lat], zoom: 15 }); }
-      else if (keys.length) {
+      var _dv = window._devicesAll || {};
+      Object.keys(_dv).forEach(function(id) { var d = _dv[id] || {}, lv = d.live; if (lv && typeof lv.lat === 'number' && _canSeeDevice(d)) pts.push([lv.lng, lv.lat]); });
+    } catch (e) {}
+    try {
+      if (pts.length === 1) { map.jumpTo({ center: pts[0], zoom: 15 }); }
+      else if (pts.length) {
         var b = new mapboxgl.LngLatBounds();
-        keys.forEach(function(k) { b.extend([lastPins[k].lng, lastPins[k].lat]); });
+        pts.forEach(function(p) { b.extend(p); });
         map.fitBounds(b, { padding: 80, maxZoom: 15, duration: 0 });
       } else if (window._lastGPS) { map.jumpTo({ center: [window._lastGPS.lng, window._lastGPS.lat], zoom: 13 }); }
     } catch (e) {}
