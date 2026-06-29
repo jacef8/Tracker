@@ -1882,7 +1882,7 @@
 <!-- floating "you missed transmissions" pill (visible on the map even with no voice bar) -->
 <button id="vlog-pill" onclick="window._openVoiceLog && window._openVoiceLog()" style="display:none;position:fixed;top:calc(var(--topbar-h,116px) + var(--safe-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:3500;padding:8px 15px;background:#ff5252;color:#fff;border:none;border-radius:20px;font-size:13px;font-weight:800;box-shadow:0 3px 14px rgba(0,0,0,.5);cursor:pointer;align-items:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg><span><span id="vlog-pill-n">0</span> missed transmission(s)</span><svg class="licon licon-sm"><use href="#ic-play"/></svg></button>
 <!-- Incoming voice prompt — needed on iOS, where audio won't start without a tap (gesture) -->
-<div id="voice-incoming" onclick="window._acceptIncomingVoice && window._acceptIncomingVoice()" style="display:none;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:4300;background:var(--accent);border-radius:16px;box-shadow:0 8px 36px rgba(0,0,0,.6);padding:14px 16px;cursor:pointer;align-items:center;gap:13px">
+<div id="voice-incoming" onclick="window._acceptIncomingVoice && window._acceptIncomingVoice()" style="display:none;position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top,0px));z-index:4300;background:var(--accent);border-radius:16px;box-shadow:0 8px 36px rgba(0,0,0,.6),0 0 0 3px rgba(240,165,0,.4);padding:16px;cursor:pointer;align-items:center;gap:13px;animation:gvPulse 1.4s ease-in-out infinite">
   <div style="line-height:1;animation:gvPulse 1.4s ease-in-out infinite;display:flex"><svg class="licon" style="width:30px;height:30px;color:#1a1200"><use href="#ic-mic"/></svg></div>
   <div style="flex:1;min-width:0"><div id="vinc-name" style="font-size:15px;font-weight:800;color:#1a1200;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Someone wants to talk</div><div style="font-size:12px;color:#5a4400;font-weight:700">Tap to join &amp; hear them live</div></div>
   <button onclick="event.stopPropagation();window._dismissIncomingVoice&&window._dismissIncomingVoice()" style="background:rgba(0,0,0,.18);border:none;border-radius:9px;color:#1a1200;font-weight:800;font-size:13px;padding:9px 12px;cursor:pointer;flex-shrink:0">Ignore</button>
@@ -2089,7 +2089,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 197;
+var APP_BUILD = 198;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10172,7 +10172,7 @@ window._showIncomingVoice = function (room, fromName) {
   var nm = document.getElementById('vinc-name'); if (nm) nm.textContent = (fromName || 'Someone') + ' wants to talk';
   el.style.display = 'flex';
   try { clearTimeout(window._vincTimer); } catch (e) {}
-  window._vincTimer = setTimeout(function () { window._dismissIncomingVoice(); }, 30000);   // ping goes stale
+  window._vincTimer = setTimeout(function () { window._dismissIncomingVoice(); }, 45000);   // ping goes stale
 };
 window._dismissIncomingVoice = function () { var el = document.getElementById('voice-incoming'); if (el) el.style.display = 'none'; window._pendingVoiceJoin = null; };
 window._acceptIncomingVoice = async function () {
@@ -10204,9 +10204,13 @@ window._listenVoiceInvites = function () {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;     // voice off here
-      if (Date.now() - (inv.ts || 0) > 25000) return;                // stale ping
+      if (Date.now() - (inv.ts || 0) > 60000) return;                // stale ping (widened for slow delivery / clock skew)
       if (inv.ts <= _gvLastPingTs) return;                           // already handled
       _gvLastPingTs = inv.ts;
+      // Log on the RECEIVE side so diagnostics show the ping actually reached THIS device
+      // (previously only the Android auto-join logged, so an iPhone that got the ping but
+      // showed no prompt was indistinguishable from one that never got it).
+      if (window._evt) window._evt('🎙 incoming voice from ' + (inv.fromName || 'member') + (_isIOSVoice() ? ' — iOS tap-to-join shown' : ''));
       var cfg = window.VOICE_CONFIG || {};
       if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
       // iOS: show the tap-to-join prompt IMMEDIATELY — do NOT wait on the voice module first
@@ -10226,9 +10230,10 @@ window._listenVoiceInvites = function () {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;
-      if (Date.now() - (inv.ts || 0) > 25000) return;
+      if (Date.now() - (inv.ts || 0) > 60000) return;
       if (inv.ts <= _gvLastGroupTs) return;
       _gvLastGroupTs = inv.ts;
+      if (window._evt) window._evt('🎙 incoming GROUP voice from ' + (inv.fromName || 'member') + (_isIOSVoice() ? ' — iOS tap-to-join shown' : ''));
       var cfg = window.VOICE_CONFIG || {};
       if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
       if (_isIOSVoice()) { window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); return; }  // iOS: prompt before loading anything
