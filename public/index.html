@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 210;
+var APP_BUILD = 211;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2553,16 +2553,18 @@ function _flyToDevice() {
 window._locateDevice = function (id) {
   var d = (window._devicesAll[id] || {}).live || {};
   if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('No location yet for this device'); } catch (e) {} return; }
-  window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
-  if (typeof map !== 'undefined' && map) { _flyToDevice(); return; }
-  var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
-  if (favs && favs.length) {
-    window._locatePending = true;
-    try { toast('Opening map…'); } catch (e) {}
-    try { _rejoinSavedGroup(favs[0], favs[0].replace(/^test_/, '').replace(/_/g, ' ')); } catch (e) { window._locatePending = false; }
-  } else {
-    try { toast('Join or create a room first, then tap Locate'); } catch (e) {}
+  // If you're IN a room (the GroundLink map is the active view), fly to the device's ⌚ there.
+  if (typeof map !== 'undefined' && map && typeof groupName !== 'undefined' && groupName) {
+    window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
+    _flyToDevice();
+    return;
   }
+  // Otherwise (on the home/Account screen, no live map) open the spot in your phone's Maps —
+  // always works, even with no rooms.
+  try {
+    window.open('https://www.google.com/maps?q=' + d.lat + ',' + d.lng, '_blank');
+    toast('Opened ' + (d.name || 'device') + '’s location in Maps');
+  } catch (e) { try { toast('At ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5)); } catch (_) {} }
 };
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
