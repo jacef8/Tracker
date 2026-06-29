@@ -73,6 +73,7 @@ export function unlockAudio() {
     }
   } catch (e) {}
   try { if (room) room.startAudio(); } catch (e) {}
+  try { Object.keys(monRooms).forEach((id) => { if (monRooms[id].room) monRooms[id].room.startAudio(); }); } catch (e) {}
 }
 
 // ── Public: open a voice session and connect right away ─────────────────────
@@ -109,6 +110,73 @@ export function leaveVoice() {
   removeBar();
   emit({ type: 'left' });
 }
+
+// ── Device monitor: stay joined (listen-only) to your OWNED devices' channels so
+// you HEAR the watch from any screen without tapping Talk, and get a "talking" event
+// for an alert. Runs as SEPARATE LiveKit rooms so it never disturbs the main voice bar.
+let monRooms = {};   // deviceId -> { room, name, talking }
+
+async function mintToken(endpoint, roomName, identity, name) {
+  const res = await fetch(endpoint, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room: roomName, identity, name }),
+  });
+  if (!res.ok) throw new Error('token endpoint ' + res.status);
+  const data = await res.json();
+  if (!data.token) throw new Error('no token in response');
+  return data.token;
+}
+
+// devices: [{ id, name }]. Reconciles: joins new ones, drops removed ones, leaves the rest.
+export async function startDeviceMonitor(opts) {
+  const { devices, identity, livekitUrl, tokenEndpoint } = opts || {};
+  if (!devices || !livekitUrl || !tokenEndpoint || !identity) return;
+  const wanted = {};
+  devices.forEach((d) => { if (d && d.id) wanted[d.id] = d.name || 'device'; });
+  // Drop monitors no longer wanted.
+  Object.keys(monRooms).forEach((id) => {
+    if (!wanted[id]) { try { monRooms[id].room && monRooms[id].room.disconnect(); } catch (e) {} delete monRooms[id]; }
+  });
+  // Add monitors for newly-wanted devices.
+  for (const id of Object.keys(wanted)) {
+    if (monRooms[id]) { monRooms[id].name = wanted[id]; continue; }
+    monRooms[id] = { room: null, name: wanted[id], talking: false };   // reserve slot (avoid double-join races)
+    const roomName = 'gv_dev_' + id + '_ALL';
+    const monIdentity = identity + '__mon';   // distinct identity so it never kicks your Talk session
+    try {
+      const token = await mintToken(tokenEndpoint, roomName, monIdentity, 'monitor');
+      const r = new Room();
+      r.on(RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind !== Track.Kind.Audio) return;
+        // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
+        if (session && session.room === roomName) return;
+        const el = track.attach(); el.autoplay = true; el.setAttribute('playsinline', '');
+        ensureAudioSink().appendChild(el);
+      });
+      r.on(RoomEvent.TrackUnsubscribed, (track) => {
+        if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
+      });
+      r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const on = speakers.some((p) => p.identity && p.identity !== monIdentity);
+        const slot = monRooms[id]; if (!slot) return;
+        if (on !== slot.talking) { slot.talking = on; emit({ type: 'deviceTalking', id, name: slot.name, on }); }
+      });
+      await r.connect(livekitUrl, token);
+      try { await r.startAudio(); } catch (e) {}
+      if (monRooms[id]) monRooms[id].room = r; else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
+    } catch (e) {
+      console.error('[voice] device monitor failed for ' + id, e);
+      delete monRooms[id];
+    }
+  }
+}
+
+export function stopDeviceMonitor() {
+  Object.keys(monRooms).forEach((id) => { try { monRooms[id].room && monRooms[id].room.disconnect(); } catch (e) {} });
+  monRooms = {};
+}
+
+export function deviceMonitorIds() { return Object.keys(monRooms); }
 
 // ───────────────────────────── connection ─────────────────────────────────
 async function connectVoice() {
