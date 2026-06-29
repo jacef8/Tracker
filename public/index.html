@@ -706,6 +706,10 @@
   #join-alert-name { font-size: 17px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #join-alert-sub  { font-size: 12px; font-weight: 700; color: #5ef0a0; letter-spacing: .04em; text-transform: uppercase; }
 
+  /* Device action buttons (Talk/Share/Map/✕): clear press feedback. */
+  .dev-act { transition: transform .07s ease, filter .12s ease; -webkit-tap-highlight-color: transparent; }
+  .dev-act:active { transform: scale(.88); filter: brightness(1.18); }
+
   /* Member-count badge: bigger + a pop when the count changes so it's noticeable. */
   #users-badge { box-shadow: 0 0 0 2px var(--bg); }
   #users-badge.count-pop { animation: usersBadgePop .6s ease; }
@@ -2108,7 +2112,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 219;
+var APP_BUILD = 220;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2704,6 +2708,12 @@ window._onDeviceTalking = function (ev) {
 };
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
+  if (!window._devHapticBound) {   // light haptic on any device action button (Android; no-op on iOS)
+    window._devHapticBound = true;
+    document.addEventListener('pointerdown', function (e) {
+      try { if (e.target && e.target.closest && e.target.closest('.dev-act') && navigator.vibrate) navigator.vibrate(12); } catch (x) {}
+    }, { passive: true });
+  }
   var me = _myAcct(), devs = window._devicesAll || {}, now = Date.now();
   var owned = [], sharedMe = [], unclaimed = [];
   Object.keys(devs).forEach(function (id) {
@@ -2715,26 +2725,25 @@ window._renderMyDevices = function () {
     } else if (fresh) unclaimed.push({ id: id, live: live });
   });
   var html = '';
+  var _db = 'width:34px;height:34px;padding:0;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center';
   owned.forEach(function (o) {
     var n = o.d.sharedWith ? Object.keys(o.d.sharedWith).length : 0;
-    var sub = (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · ' + (n ? ('shared with ' + n + ' ' + (n === 1 ? 'person' : 'people')) : 'only you can see it');
-    html += '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap">' +
-      '<svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg>' +
-      '<div style="flex:1;min-width:90px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
-      '<div style="font-size:11px;color:var(--muted)">' + sub + '</div></div>' +
-      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
-      '<button onclick="window._shareDevice(\'' + o.id + '\')" title="Share with family" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:11px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">Share</button>' +
-      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer;flex-shrink:0">Map</button>' +
-      '<button onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
+    var sub = (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · ' + (n ? ('shared with ' + n) : 'private to you');
+    html += '<div style="display:flex;align-items:center;gap:6px;padding:9px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">' +
+      '<div style="flex:1;min-width:56px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
+      '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + sub + '</div></div>' +
+      '<button class="dev-act" onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
+      '<button class="dev-act" onclick="window._shareDevice(\'' + o.id + '\')" title="Share with family" style="background:#7c3aed;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-share"/></svg></button>' +
+      '<button class="dev-act" onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);color:var(--text);' + _db + '"><svg class="licon licon-sm"><use href="#ic-pin"/></svg></button>' +
+      '<button class="dev-act" onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);color:#e74c3c;font-size:13px;font-weight:800;' + _db + '">✕</button></div>';
   });
   sharedMe.forEach(function (o) {
-    html += '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:rgba(63,185,80,0.08);border:1px solid #2ea043;border-radius:10px;margin-bottom:6px;flex-wrap:wrap">' +
-      '<svg class="licon" style="color:#3fb950;flex-shrink:0"><use href="#ic-pin"/></svg>' +
-      '<div style="flex:1;min-width:90px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· shared with you</span></div>' +
-      '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + '</div></div>' +
-      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
-      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer;flex-shrink:0">Map</button>' +
-      '<button onclick="window._leaveSharedDevice(\'' + o.id + '\')" title="Stop following" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
+    html += '<div style="display:flex;align-items:center;gap:6px;padding:9px 10px;background:rgba(63,185,80,0.08);border:1px solid #2ea043;border-radius:10px;margin-bottom:6px">' +
+      '<div style="flex:1;min-width:56px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· shared</span></div>' +
+      '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + '</div></div>' +
+      '<button class="dev-act" onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
+      '<button class="dev-act" onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);color:var(--text);' + _db + '"><svg class="licon licon-sm"><use href="#ic-pin"/></svg></button>' +
+      '<button class="dev-act" onclick="window._leaveSharedDevice(\'' + o.id + '\')" title="Stop following" style="background:none;border:1px solid var(--border);color:#e74c3c;font-size:13px;font-weight:800;' + _db + '">✕</button></div>';
   });
   var pend; try { pend = localStorage.getItem('gl_pending_dshare'); } catch (e) {}
   if (pend && !me) {
