@@ -1447,9 +1447,10 @@
 <div id="invite-picker-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:340px;max-height:84vh;overflow-y:auto">
     <div style="font-size:16px;font-weight:800;margin-bottom:3px">Invite to this room</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or invite one of your favorites straight into the room.</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or find a person and invite them straight into the room.</div>
     <button onclick="document.getElementById('invite-picker-modal').style.display='none';shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Your favorites</div>
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Find people</div>
+    <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
     <div id="invite-pick-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
     <button onclick="document.getElementById('invite-picker-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Close</button>
   </div>
@@ -2084,7 +2085,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 195;
+var APP_BUILD = 196;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7080,27 +7081,67 @@ window._confirmDeleteRoom = function() {
 function _escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); }
 
 window._openInvitePicker = function() {
-  var listEl = document.getElementById('invite-pick-list');
-  if (!listEl) return;
-  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
-  var entries = Object.keys(friends).map(function(u) { return [u, friends[u]]; });
-  if (!entries.length) {
-    listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">You haven’t starred anyone yet. Tap the &#9734; next to a person in the member list to add them, then you can invite them here in one tap.</div>';
-  } else {
-    listEl.innerHTML = entries.map(function(e) {
-      return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px">' +
-               '<span style="flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(e[1]) + '</span>' +
-               '<button onclick="window._sendRoomInvite(\'' + _escHtml(e[0]) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>' +
-             '</div>';
-    }).join('');
-  }
+  var si = document.getElementById('invite-search'); if (si) si.value = '';
+  _renderInvitePeople('');
   document.getElementById('invite-picker-modal').style.display = 'flex';
 };
+window._inviteSearch = function(q) { _renderInvitePeople(q || ''); };
+
+// People list for the invite picker: your friends (★) PLUS anyone currently online (from the
+// global presence index), de-duped, filtered by the search box, with whoever's already in this
+// room shown as "here ✓" instead of an Invite button.
+function _renderInvitePeople(q) {
+  var listEl = document.getElementById('invite-pick-list');
+  if (!listEl) return;
+  q = String(q || '').trim().toLowerCase();
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var pres = window._presenceAll || {};
+  var me = null; try { me = localStorage.getItem('gl_uid'); } catch (e) {}
+  var seen = {}, people = [];
+  Object.keys(friends).forEach(function(uid) {
+    if (uid === me) return;
+    seen[uid] = 1;
+    var p = pres[uid];
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), room: p && p.room });
+  });
+  Object.keys(pres).forEach(function(uid) {
+    if (seen[uid] || uid === me) return;
+    var p = pres[uid] || {};
+    if (!p.name) return;
+    people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+  });
+  if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
+  function rank(pp) { return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3; }
+  people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
+  if (!people.length) {
+    listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">' +
+      (q ? 'No one matching “' + _escHtml(q) + '”.'
+         : 'No friends yet and no one else is online. Tap the &#9734; next to a person in the member list to save them, or share the link above.') + '</div>';
+    return;
+  }
+  listEl.innerHTML = people.slice(0, 40).map(function(pp) {
+    var inMyRoom = pp.room && groupName && pp.room === groupName;
+    var status = inMyRoom ? '<span style="color:#3fb950;font-weight:700">in this room</span>'
+      : pp.online ? '<span style="color:#3fb950;font-weight:700">online</span>'
+      : pp.friend ? '<span style="color:var(--muted)">friend · offline</span>'
+      : '<span style="color:var(--muted)">offline</span>';
+    return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px">' +
+             '<div style="flex:1;min-width:0">' +
+               '<div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
+               '<div style="font-size:11px;margin-top:1px">' + status + '</div>' +
+             '</div>' +
+             (inMyRoom
+               ? '<span style="flex-shrink:0;font-size:11px;color:var(--muted);font-weight:700;padding:7px 8px">here &#10003;</span>'
+               : '<button onclick="window._sendRoomInvite(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>') +
+           '</div>';
+  }).join('');
+}
 
 window._sendRoomInvite = function(uid) {
   if (!uid || !db || !groupName) return;
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
-  var nm = friends[uid] || 'them';
+  var pres = window._presenceAll || {};
+  var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
   var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
