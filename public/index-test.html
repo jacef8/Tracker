@@ -1151,6 +1151,7 @@
         <!-- Your people — see where favorites are, even before you join a group -->
         <div style="margin-top:4px">
           <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">★ Your people</div>
+          <input id="acct-friend-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._acctPeopleSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:7px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
@@ -2082,7 +2083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 199;
+var APP_BUILD = 200;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2359,8 +2360,65 @@ function _friendsRowsHTML() {
 function _renderFriends() {
   var html = _friendsRowsHTML();
   var a = document.getElementById('friends-list'); if (a) a.innerHTML = html;
-  var b = document.getElementById('account-friends'); if (b) b.innerHTML = html;
+  var b = document.getElementById('account-friends');
+  // Don't clobber active search results on the Account page (presence updates call this).
+  var q = (document.getElementById('acct-friend-search') || {}).value || '';
+  if (b && !String(q).trim()) b.innerHTML = html;
 }
+
+// Account-page people search: empty box → your normal favorites list; typing → matching
+// friends PLUS anyone currently online (from the presence index). Friends show Join/remove;
+// online non-friends show "★ Add". No room context here, so there's no "invite to a room".
+window._acctPeopleSearch = function (q) {
+  var el = document.getElementById('account-friends'); if (!el) return;
+  q = String(q || '').trim().toLowerCase();
+  if (!q) { el.innerHTML = _friendsRowsHTML(); return; }
+  var friends = _getFriends();
+  var pres = window._presenceAll || {};
+  var me = null; try { me = localStorage.getItem('gl_uid'); } catch (e) {} if (!me) me = (typeof userId !== 'undefined') ? userId : null;
+  var inRoom = (typeof groupName !== 'undefined') ? groupName : null;
+  var seen = {}, people = [];
+  Object.keys(friends).forEach(function (uid) {
+    if (uid === me) return; seen[uid] = 1;
+    var p = pres[uid];
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), room: p && p.room });
+  });
+  Object.keys(pres).forEach(function (uid) {
+    if (seen[uid] || uid === me) return;
+    var p = pres[uid] || {}; if (!p.name) return;
+    people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+  });
+  people = people.filter(function (pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
+  people.sort(function (a, b) { var r = (a.online ? 0 : 1) - (b.online ? 0 : 1); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
+  if (!people.length) { el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:12px;text-align:center">No one matching &ldquo;' + _escHtml(q) + '&rdquo;.</div>'; return; }
+  el.innerHTML = people.slice(0, 40).map(function (pp) {
+    var inMine = pp.room && inRoom && pp.room === inRoom;
+    var disp = pp.online ? _prettyGroup(pp.room) : '';
+    var statusTxt = inMine ? 'In your room' : pp.online ? 'In &ldquo;' + _escHtml(disp) + '&rdquo;' : 'Offline';
+    var statusCol = inMine ? '#f0a500' : pp.online ? '#3fb950' : 'var(--muted)';
+    var safeRoom = pp.online ? String(pp.room).replace(/'/g, '') : '';
+    var safeDisp = disp.replace(/'/g, '');
+    var joinBtn = (pp.online && !inMine) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
+    var addRm = pp.friend
+      ? '<button onclick="window._removeFriend(\'' + pp.uid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">&times;</button>'
+      : '<button onclick="window._acctAddFriend(\'' + pp.uid + '\')" title="Add to favorites" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer;flex-shrink:0;white-space:nowrap">&#9733; Add</button>';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + initials(pp.name) + '</div>' +
+        '<div style="min-width:0;flex:1">' +
+          '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
+          '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
+        '</div>' + joinBtn + addRm +
+      '</div>';
+  }).join('');
+};
+// Add an online non-friend to favorites (name looked up from presence — avoids inline escaping),
+// then refresh the search results so the row flips to ★/remove.
+window._acctAddFriend = function (uid) {
+  var pres = window._presenceAll || {};
+  var nm = (pres[uid] && pres[uid].name) || 'Friend';
+  try { _toggleFriend(uid, nm); } catch (e) {}
+  try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; window._acctPeopleSearch(q); } catch (e) {}
+};
 function _renderMyPeople() { _renderFriends(); }
 window._removeFriend = function (fid) {
   var m = _getFriends(); var nm = m[fid];
