@@ -1923,6 +1923,10 @@
       <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
       <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen for quick rejoin</div></div>
     </div>
+    <div id="ri-secdev-row" onclick="window._toggleSecureDevices && window._toggleSecureDevices()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show secure devices here</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Put your private devices (like the watch) on THIS group's map. Off by default — they always show on My Map.</div></div></div>
+      <span id="ri-secdev-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <!-- Keep the room alive (in the list, even when empty) until a set time -->
     <div id="ri-expire-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="font-size:14px;font-weight:600;color:var(--text)">⏱ Keep active until…</div>
@@ -2112,7 +2116,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 220;
+var APP_BUILD = 221;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2496,8 +2500,27 @@ window._listenDevices = function () {
     });
   } catch (e) {}
 };
+// Secure devices (the watch) show on My Map (no groupName) ALWAYS; on a GROUP map only when
+// you flip "Show secure devices here" in Room Info (per-room, off by default).
+window._secDevOn = function () {
+  if (typeof groupName === 'undefined' || !groupName) return true;   // My Map / no room
+  try { return localStorage.getItem('gl_secdev_' + groupName) === '1'; } catch (e) { return false; }
+};
+window._toggleSecureDevices = function () {
+  if (typeof groupName === 'undefined' || !groupName) return;        // nothing to toggle on My Map
+  var on = !window._secDevOn();
+  try { localStorage.setItem('gl_secdev_' + groupName, on ? '1' : '0'); } catch (e) {}
+  try { _setPill('ri-secdev-pill', on); } catch (e) {}
+  try { _renderDevices(); } catch (e) {}
+  try { _renderDeviceList(); } catch (e) {}
+  try { toast(on ? 'Secure devices shown on this map' : 'Secure devices hidden here'); } catch (e) {}
+};
 function _renderDevices() {
   if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
+  if (!window._secDevOn()) {   // hidden on this group map — clear any drawn markers and stop
+    try { Object.keys(window._deviceMarkers).forEach(function (id) { try { window._deviceMarkers[id].remove(); } catch (e) {} delete window._deviceMarkers[id]; }); } catch (e) {}
+    return;
+  }
   var devs = window._devicesAll || {}, seen = {};
   Object.keys(devs).forEach(function (id) {
     var d = devs[id] || {}, live = d.live;
@@ -2537,6 +2560,7 @@ function _renderDevices() {
 // People drawer, each with a Talk button — so a device acts just like any other member.
 window._renderDeviceList = function _renderDeviceList() {
   var el = document.getElementById('device-list'); if (!el) return;
+  if (!window._secDevOn || !window._secDevOn()) { el.innerHTML = ''; try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {} return; }
   var devs = window._devicesAll || {};
   var html = '';
   Object.keys(devs).forEach(function (id) {
@@ -2559,6 +2583,7 @@ window._renderDeviceList = function _renderDeviceList() {
 // People-count badge = room users + the private devices you can see (the watch counts).
 window._roomUserCount = 0;
 window._countVisibleDevices = function () {
+  if (!window._secDevOn || !window._secDevOn()) return 0;   // not shown on this map → not counted
   var n = 0, dv = window._devicesAll || {};
   try { Object.keys(dv).forEach(function (id) { if (_canSeeDevice(dv[id])) n++; }); } catch (e) {}
   return n;
@@ -3251,6 +3276,14 @@ function openRoomInfo() {
   if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
   try { _renderRiFav(); } catch (e) {}
   try { _renderRoomExpire(); } catch (e) {}
+  // "Show secure devices here" — only relevant if you actually have a private device to show.
+  var sdRow = document.getElementById('ri-secdev-row');
+  if (sdRow) {
+    var hasDev = false;
+    try { var _dv = window._devicesAll || {}; hasDev = Object.keys(_dv).some(function (id) { return _canSeeDevice(_dv[id] || {}); }); } catch (e) {}
+    sdRow.style.display = hasDev ? 'flex' : 'none';
+    try { _setPill('ri-secdev-pill', window._secDevOn()); } catch (e) {}
+  }
   document.getElementById('room-info-sheet').style.display = 'block';
 }
 // ── "Keep active until…" expiration: a future timestamp at config/expires keeps the room
