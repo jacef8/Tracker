@@ -1036,6 +1036,7 @@
         <!-- Active rooms list -->
         <div id="room-list-section">
           <div class="field-label" style="margin-bottom:2px">Tap a group to join</div>
+          <input id="room-search" type="search" inputmode="search" autocomplete="off" placeholder="Search any group by name (incl. private)…" oninput="window._setRoomSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
           <div id="home-filter" style="display:flex;gap:6px;margin-bottom:4px">
             <button id="home-filter-public" class="active" onclick="window._setHomeFilter('public')" type="button">Public</button>
             <button id="home-filter-favs" onclick="window._setHomeFilter('favorites')" type="button">&#9733; Favorites</button>
@@ -2076,7 +2077,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 194;
+var APP_BUILD = 195;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3349,6 +3350,15 @@ window._setHomeFilter = function(f) {
   if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
 };
 
+// Room search: type any group name (including PRIVATE / dormant rooms that the directory
+// hides) to find and join it. While searching, the Public/Favorites chips are hidden.
+window._setRoomSearch = function(v) {
+  window._roomSearch = v || '';
+  var hf = document.getElementById('home-filter');
+  if (hf) hf.style.display = window._roomSearch.trim() ? 'none' : 'flex';
+  if (window._lastGlSnap) { try { renderRoomList(window._lastGlSnap); } catch (e) {} }
+};
+
 function loadRoomList() {
   if (window._roomListSubbed) { if (window._lastGlSnap) { try { renderRoomList(window._lastGlSnap); } catch (e) {} } return; }
   window._roomListSubbed = true;
@@ -3366,6 +3376,10 @@ function renderRoomList(all) {
   if (!listEl) return;
   var fb = window._fb;
   var now = Date.now();
+  // Room search: when the box has text, find ANY group by name — including private and
+  // dormant rooms the directory normally hides — and bypass the public/favorites filter.
+  var _searching = !!(window._roomSearch && String(window._roomSearch).trim().length);
+  var _sq = _searching ? String(window._roomSearch).trim().toLowerCase() : '';
   var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000, YEAR_MS = 365 * 24 * 60 * 60 * 1000;
   var HOME_DISC_GRACE_MS = 3 * 60 * 1000; // disconnected clients drop from the count after this grace
   // A member still "counts" unless their live connection has been gone past the grace.
@@ -3384,6 +3398,11 @@ function renderRoomList(all) {
     var key = entry[0], group = entry[1];
     var key = entry[0], group = entry[1];
     if (key.startsWith('test_')) return;
+    // In search mode, only consider rooms whose name (or key) contains the query.
+    if (_searching) {
+      var _nm = key.replace(/_/g, ' ').toLowerCase();
+      if (_nm.indexOf(_sq) === -1 && key.toLowerCase().indexOf(_sq) === -1) return;
+    }
     var users = group.users ? Object.values(group.users) : [];
     var pins = group.pins ? Object.keys(group.pins).length : 0;
 
@@ -3436,7 +3455,7 @@ function renderRoomList(all) {
     // connected (hasUsers respects the socket / disconnect grace), not merely "no GPS-live
     // member." This keeps a room visible while someone is in it but backgrounded (GPS paused
     // but still connected). Favorites stay visible even when dormant.
-    if (!hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav && !keptUntil) return;
+    if (!_searching && !hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav && !keptUntil) return;
 
     var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
@@ -3445,16 +3464,21 @@ function renderRoomList(all) {
 
     // Filter: Favorites view shows only your stars; Public view shows public groups
     // (private ones only appear if you've favorited them — otherwise they're join-by-name).
-    if (_homeFilter === 'favorites') { if (!isFav) return; }
-    else { if (vis !== 'public' && !isFav) return; }
+    // Search mode skips this — the name match above already decided what's shown.
+    if (!_searching) {
+      if (_homeFilter === 'favorites') { if (!isFav) return; }
+      else { if (vis !== 'public' && !isFav) return; }
+    }
 
     rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, hasUsers: hasUsers, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav, keptUntil: keptUntil ? config.expires : 0 });
   });
 
   if (rooms.length === 0) {
-    listEl.innerHTML = '<div class="room-empty">' + (_homeFilter === 'favorites'
-      ? 'No favorites yet — tap the ☆ on a group to favorite it.'
-      : 'No public groups active right now — create one below.') + '</div>';
+    listEl.innerHTML = '<div class="room-empty">' + (_searching
+      ? 'No group matching “' + _escHtml(_sq) + '”. Check the spelling, or type the exact name below to create/join it.'
+      : _homeFilter === 'favorites'
+        ? 'No favorites yet — tap the ☆ on a group to favorite it.'
+        : 'No public groups active right now — create one below.') + '</div>';
     return;
   }
 
@@ -4110,9 +4134,14 @@ function showJoinScreen() {
       if (!url) return;
       var u;
       try { u = new URL(url); } catch (e) { return; }
-      if (!u.searchParams.get('room')) return;          // only room-invite links
-      if (u.search === window.location.search) return;  // already here — avoid a reload loop
-      window.location.replace(u.pathname + u.search + u.hash);
+      var room = u.searchParams.get('room');
+      var k = u.searchParams.get('k');
+      // Short link form: /j/<room>  (?k=<passcode> optional)
+      if (!room) { var m = u.pathname.match(/^\/j\/([^\/?#]+)/); if (m) room = decodeURIComponent(m[1]); }
+      if (!room) return;                                   // not a room link
+      var target = '/?room=' + encodeURIComponent(room) + (k ? '&k=' + encodeURIComponent(k) : '');
+      if (target === window.location.pathname + window.location.search) return; // already here — avoid a loop
+      window.location.replace(target);
     }
     // Cold start: the app may have been launched by the link.
     if (AppPlugin.getLaunchUrl) {
@@ -9429,8 +9458,10 @@ function _loadRoomPin(key) { try { return localStorage.getItem('gl_pin_' + key) 
 function _clearRoomPin(key) { try { localStorage.removeItem('gl_pin_' + key); } catch (e) {} }
 
 function _inviteUrl(includePin, plainPin) {
-  var u = INVITE_BASE + '?room=' + encodeURIComponent(groupName);
-  if (includePin && plainPin) { try { u += '&k=' + encodeURIComponent(btoa(plainPin)); } catch (e) {} }
+  // Short form: /j/<room> (server 302s it into the app; App-Links opens it natively).
+  // Passcode-less rooms get a clean link with no query at all.
+  var u = INVITE_BASE + 'j/' + encodeURIComponent(groupName);
+  if (includePin && plainPin) { try { u += '?k=' + encodeURIComponent(btoa(plainPin)); } catch (e) {} }
   return u;
 }
 
