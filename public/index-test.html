@@ -1155,10 +1155,14 @@
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
-        <!-- My devices — private trackers (e.g. a kid's watch) only you can see -->
+        <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you -->
         <div style="margin-top:14px">
-          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">⌚ My devices <span style="font-size:10px;color:var(--muted);font-weight:400">· private to you</span></div>
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">⌚ My devices <span style="font-size:10px;color:var(--muted);font-weight:400">· private to you &amp; family you share with</span></div>
           <div id="account-devices"></div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <input id="dshare-code-input" maxlength="6" placeholder="Have a share code?" autocapitalize="characters" autocomplete="off" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:.1em;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;padding:9px 11px" />
+            <button onclick="window._enterShareCode && window._enterShareCode()" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer;flex-shrink:0">Add</button>
+          </div>
         </div>
 
         <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
@@ -2097,7 +2101,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 218;
+var APP_BUILD = 219;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2472,6 +2476,7 @@ window._listenDevices = function () {
       try { _renderDevices(); } catch (e) {}
       try { _renderDeviceList(); } catch (e) {}
       try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
+      try { window._maybeAcceptPendingDshare && window._maybeAcceptPendingDshare(); } catch (e) {}
       try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
     });
   } catch (e) {}
@@ -2656,9 +2661,9 @@ window._syncDeviceMonitor = function () {
   var myUid = (typeof userId !== 'undefined' && userId) || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
   window._voiceMod().then(function (mod) {
     if (!mod.startDeviceMonitor) return;
-    var me = _myAcct(), dv = window._devicesAll || {}, owned = [];
+    var dv = window._devicesAll || {}, owned = [];
     Object.keys(dv).forEach(function (id) {
-      var d = dv[id] || {}; if (d.owner && d.owner === me) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
+      var d = dv[id] || {}; if (_canSeeDevice(d)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
     });
     var wantOn = window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
     if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
@@ -2679,25 +2684,43 @@ window._onDeviceTalking = function (ev) {
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
   var me = _myAcct(), devs = window._devicesAll || {}, now = Date.now();
-  var owned = [], unclaimed = [];
+  var owned = [], sharedMe = [], unclaimed = [];
   Object.keys(devs).forEach(function (id) {
     var d = devs[id] || {}, live = d.live || {};
     var fresh = live.ts && (now - live.ts) < 86400000;
-    if (d.owner) { if (d.owner === me) owned.push({ id: id, live: live }); }
-    else if (fresh) unclaimed.push({ id: id, live: live });
+    if (d.owner) {
+      if (d.owner === me) owned.push({ id: id, live: live, d: d });
+      else if (me && d.sharedWith && d.sharedWith[me]) sharedMe.push({ id: id, live: live, d: d });
+    } else if (fresh) unclaimed.push({ id: id, live: live });
   });
   var html = '';
   owned.forEach(function (o) {
-    html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">' +
+    var n = o.d.sharedWith ? Object.keys(o.d.sharedWith).length : 0;
+    var sub = (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · ' + (n ? ('shared with ' + n + ' ' + (n === 1 ? 'person' : 'people')) : 'only you can see it');
+    html += '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap">' +
       '<svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg>' +
-      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
-      '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · only you can see it</div></div>' +
-      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk to this device" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
-      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:11px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">Locate</button>' +
+      '<div style="flex:1;min-width:90px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + sub + '</div></div>' +
+      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
+      '<button onclick="window._shareDevice(\'' + o.id + '\')" title="Share with family" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:11px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">Share</button>' +
+      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer;flex-shrink:0">Map</button>' +
       '<button onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
   });
+  sharedMe.forEach(function (o) {
+    html += '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:rgba(63,185,80,0.08);border:1px solid #2ea043;border-radius:10px;margin-bottom:6px;flex-wrap:wrap">' +
+      '<svg class="licon" style="color:#3fb950;flex-shrink:0"><use href="#ic-pin"/></svg>' +
+      '<div style="flex:1;min-width:90px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· shared with you</span></div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + '</div></div>' +
+      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
+      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer;flex-shrink:0">Map</button>' +
+      '<button onclick="window._leaveSharedDevice(\'' + o.id + '\')" title="Stop following" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
+  });
+  var pend; try { pend = localStorage.getItem('gl_pending_dshare'); } catch (e) {}
+  if (pend && !me) {
+    html += '<div style="font-size:12px;color:var(--text);padding:10px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">A device was shared with you. <b>Sign in with Google above</b> to accept it.</div>';
+  }
   if (!me) {
-    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to claim a private device like a kid’s watch.</div>';
+    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to claim a private device like a kid’s watch, or accept one a family member shared.</div>';
   } else {
     unclaimed.forEach(function (u) {
       html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">' +
@@ -2708,6 +2731,106 @@ window._renderMyDevices = function () {
   }
   if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
   el.innerHTML = html;
+};
+// ── Family sharing: owner shares the watch to family by link/code; they get view + talk ──
+window._genShareCode = function () {
+  var c = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', s = '';
+  for (var i = 0; i < 6; i++) s += c.charAt(Math.floor(Math.random() * c.length));
+  return s;
+};
+window._copyText = function (txt, btn, label) {
+  try { if (navigator.clipboard) navigator.clipboard.writeText(txt); } catch (e) {}
+  try { toast(label || 'Copied'); } catch (e) {}
+};
+window._shareDevice = function (id) {
+  var me = _myAcct(), fb = window._fb;
+  if (!me) { try { toast('Sign in with Google first to share'); } catch (e) {} return; }
+  if (!fb) { try { toast('Not connected yet — try again'); } catch (e) {} return; }
+  var d = window._devicesAll[id] || {};
+  if (d.owner !== me) { try { toast('Only the owner can share this device'); } catch (e) {} return; }
+  var code = d.shareCode;
+  if (!code) {
+    code = window._genShareCode();
+    try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/shareCode'), code); } catch (e) {}
+    try { fb.set(fb.ref(fb.db, 'gl/_deviceShares/' + code), id); } catch (e) {}
+    d.shareCode = code;
+  }
+  _openShareModal(id, code);
+};
+function _openShareModal(id, code) {
+  var d = window._devicesAll[id] || {};
+  var nm = (d.live || {}).name || 'device';
+  var link = location.origin + '/?dshare=' + code;
+  var shared = d.sharedWith || {};
+  var rows = Object.keys(shared).map(function (acct) {
+    var s = shared[acct] || {};
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:9px;margin-bottom:6px">' +
+      '<svg class="licon licon-sm" style="color:#3fb950;flex-shrink:0"><use href="#ic-users"/></svg>' +
+      '<div style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(s.name || 'Family member') + '</div>' +
+      '<button onclick="window._revokeDeviceShare(\'' + id + '\',\'' + acct + '\')" style="background:none;border:1px solid var(--border);border-radius:7px;color:#e74c3c;font-size:12px;font-weight:700;padding:5px 10px;cursor:pointer">Remove</button>' +
+    '</div>';
+  }).join('') || '<div style="font-size:12px;color:var(--muted);padding:6px 2px">No one yet — send the link or code below.</div>';
+  var ov = document.getElementById('dshare-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'dshare-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:5200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:18px';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  var linkEsc = link.replace(/'/g, "\\'");
+  ov.innerHTML = '<div style="width:100%;max-width:380px;max-height:calc(var(--avh,1vh)*88);overflow-y:auto;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:16px">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:16px;font-weight:800;color:var(--text)">Share ' + _escHtml(nm) + '</div>' +
+    '<button onclick="var o=document.getElementById(\'dshare-overlay\');if(o)o.remove();" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">✕</button></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:13px">Family you share with can see this device on their map and talk to it. Only you can add or remove people.</div>' +
+    '<div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Share code</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:9px"><div style="flex:1;font-size:22px;font-weight:900;letter-spacing:.18em;color:#a78bfa;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 12px;text-align:center">' + code + '</div>' +
+    '<button onclick="window._copyText(\'' + code + '\',this,\'Code copied\')" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:0 14px;cursor:pointer">Copy</button></div>' +
+    '<button onclick="window._copyText(\'' + linkEsc + '\',this,\'Invite link copied\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-weight:700;font-size:13px;padding:10px;cursor:pointer;margin-bottom:6px">📋 Copy invite link</button>' +
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">They open the link, or enter the code under “My devices” on their Account page — while signed in with Google.</div>' +
+    '<div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">People with access</div>' + rows +
+  '</div>';
+  document.body.appendChild(ov);
+}
+window._revokeDeviceShare = function (id, acct) {
+  var fb = window._fb; if (!fb) return;
+  try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + acct)); } catch (e) {}
+  if (window._devicesAll[id] && window._devicesAll[id].sharedWith) delete window._devicesAll[id].sharedWith[acct];
+  try { _openShareModal(id, (window._devicesAll[id] || {}).shareCode); } catch (e) {}
+  try { _renderMyDevices(); } catch (e) {}
+  try { toast('Access removed'); } catch (e) {}
+};
+window._leaveSharedDevice = function (id) {
+  var me = _myAcct(), fb = window._fb; if (!me || !fb) return;
+  try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me)); } catch (e) {}
+  if (window._devicesAll[id] && window._devicesAll[id].sharedWith) delete window._devicesAll[id].sharedWith[me];
+  try { _renderMyDevices(); } catch (e) {}
+  try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+  try { toast('Stopped following'); } catch (e) {}
+};
+window._acceptDeviceShare = function (code) {
+  code = (code || '').trim().toUpperCase();
+  if (!code) { try { toast('Enter a share code'); } catch (e) {} return; }
+  var fb = window._fb, me = _myAcct();
+  if (!me) { try { localStorage.setItem('gl_pending_dshare', code); } catch (e) {} try { toast('Sign in with Google to accept the shared device'); } catch (e) {} try { _renderMyDevices(); } catch (e) {} return; }
+  if (!fb) { try { localStorage.setItem('gl_pending_dshare', code); } catch (e) {} return; }
+  fb.get(fb.ref(fb.db, 'gl/_deviceShares/' + code)).then(function (snap) {
+    var id = snap && snap.val();
+    if (!id) { try { toast('Share code not found'); } catch (e) {} return; }
+    var myNm = (function () { try { return localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })() || (typeof userName !== 'undefined' && userName) || 'Family';
+    try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me), { name: myNm, ts: Date.now() }); } catch (e) {}
+    try { localStorage.removeItem('gl_pending_dshare'); } catch (e) {}
+    try { toast('✓ Device shared with you — it’s on your map now'); } catch (e) {}
+    try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+  }).catch(function () { try { toast('Could not accept share'); } catch (e) {} });
+};
+window._maybeAcceptPendingDshare = function () {
+  var code; try { code = localStorage.getItem('gl_pending_dshare'); } catch (e) {}
+  if (code && _myAcct() && window._fb) window._acceptDeviceShare(code);
+};
+window._enterShareCode = function () {
+  var inp = document.getElementById('dshare-code-input');
+  var v = inp ? inp.value : '';
+  if (!v || !v.trim()) { try { toast('Enter a share code'); } catch (e) {} return; }
+  window._acceptDeviceShare(v);
+  if (inp) inp.value = '';
 };
 function _renderMyPeople() { _renderFriends(); }
 window._removeFriend = function (fid) {
@@ -3191,8 +3314,8 @@ function _syncSettings() {
   try {
     var dlRow = document.getElementById('set-devlisten-row');
     if (dlRow) {
-      var me0 = _myAcct(), dv0 = window._devicesAll || {};
-      var ownsDev = Object.keys(dv0).some(function (id) { return (dv0[id] || {}).owner === me0; });
+      var dv0 = window._devicesAll || {};
+      var ownsDev = Object.keys(dv0).some(function (id) { return _canSeeDevice(dv0[id] || {}); });
       dlRow.style.display = ownsDev ? 'flex' : 'none';
       _setPill('set-devlisten-pill', _devListenOn());
     }
@@ -4579,6 +4702,10 @@ function showJoinScreen() {
   function prefillName() {
     try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
   }
+
+  // ?dshare=<code> — a family member opened a device share link. Stash it; it's accepted
+  // once we know they're signed in (from _listenDevices / sign-in success).
+  try { var _dsc = new URLSearchParams(window.location.search).get('dshare'); if (_dsc) localStorage.setItem('gl_pending_dshare', _dsc); } catch (e) {}
 
   // ?fresh=1 — always show join screen, no group pre-fill
   if (new URLSearchParams(window.location.search).get('fresh')) {
@@ -10360,6 +10487,9 @@ document.addEventListener('click', function(e) {
       try { var ni = document.getElementById('inp-name'); if (ni && name()) ni.value = name(); } catch (e) {}
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
       try { if (window._watchInvites) window._watchInvites(); } catch (e) {}
+      // If they signed in to accept a shared device (opened a share link), grant it now.
+      try { if (window._maybeAcceptPendingDshare) window._maybeAcceptPendingDshare(); } catch (e) {}
+      try { if (window._renderMyDevices) window._renderMyDevices(); } catch (e) {}
       if (typeof toast === 'function') toast('Signed in as ' + (name() || 'you'), 2500);
     });
   }
