@@ -2092,7 +2092,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 208;
+var APP_BUILD = 209;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2527,6 +2527,28 @@ window._removeDevice = function (id) {
   try { toast('Device removed'); } catch (e) {}
   try { window._renderMyDevices(); } catch (e) {}
 };
+function _flyToDevice() {
+  var t = window._locateTarget; if (!t || typeof map === 'undefined' || !map) return;
+  try { _renderDevices(); } catch (e) {}
+  try { map.flyTo({ center: [t.lng, t.lat], zoom: 16 }); } catch (e) {}
+  try { toast((t.name || 'Device') + ' located'); } catch (e) {}
+}
+// "Locate" jumps the map to a device. If you're not on a map yet, it opens one by rejoining
+// your first favorite room, then flies to the device once that map loads.
+window._locateDevice = function (id) {
+  var d = (window._devicesAll[id] || {}).live || {};
+  if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('No location yet for this device'); } catch (e) {} return; }
+  window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
+  if (typeof map !== 'undefined' && map) { _flyToDevice(); return; }
+  var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
+  if (favs && favs.length) {
+    window._locatePending = true;
+    try { toast('Opening map…'); } catch (e) {}
+    try { _rejoinSavedGroup(favs[0], favs[0].replace(/^test_/, '').replace(/_/g, ' ')); } catch (e) { window._locatePending = false; }
+  } else {
+    try { toast('Join or create a room first, then tap Locate'); } catch (e) {}
+  }
+};
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
   var me = _myAcct(), devs = window._devicesAll || {}, now = Date.now();
@@ -2543,6 +2565,7 @@ window._renderMyDevices = function () {
       '<svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg>' +
       '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
       '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · only you can see it</div></div>' +
+      '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:11px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">Locate</button>' +
       '<button onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
   });
   if (!me) {
@@ -4189,7 +4212,7 @@ function enterMap(name, group, uid) {
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
-    try { setTimeout(function () { try { _renderDevices(); } catch (e) {} }, 1200); } catch (e) {}
+    try { setTimeout(function () { try { _renderDevices(); if (window._locatePending) { window._locatePending = false; _flyToDevice(); } } catch (e) {} }, 1400); } catch (e) {}
     try { listenVoiceLog(); } catch (e) {}
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
