@@ -2093,7 +2093,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 216;
+var APP_BUILD = 217;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2529,6 +2529,29 @@ window._renderDeviceList = function _renderDeviceList() {
     '</div>';
   });
   el.innerHTML = html;
+  try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {}
+};
+// People-count badge = room users + the private devices you can see (the watch counts).
+window._roomUserCount = 0;
+window._countVisibleDevices = function () {
+  var n = 0, dv = window._devicesAll || {};
+  try { Object.keys(dv).forEach(function (id) { if (_canSeeDevice(dv[id])) n++; }); } catch (e) {}
+  return n;
+};
+window._refreshPeopleBadge = function () {
+  var badge = document.getElementById('users-badge'); if (!badge) return;
+  var total = (window._roomUserCount || 0) + window._countVisibleDevices();
+  if (total > 0) {
+    var changed = badge.textContent !== String(total > 99 ? '99+' : total);
+    badge.textContent = total > 99 ? '99+' : total;
+    badge.style.display = 'block';
+    if (changed && window._lastUserCount != null && total !== window._lastUserCount) {
+      badge.classList.remove('count-pop'); void badge.offsetWidth; badge.classList.add('count-pop');
+    }
+  } else {
+    badge.style.display = 'none';
+  }
+  window._lastUserCount = total;
 };
 window._claimDevice = function (id) {
   var me = _myAcct();
@@ -6013,22 +6036,10 @@ function listenUsers() {
     const listEl = document.getElementById('user-list');
     listEl.innerHTML = '';
 
-    // Update member count badge on users button — pop it when the number changes.
-    var totalUsers = Object.keys(users).length;
-    var badge = document.getElementById('users-badge');
-    if (badge) {
-      if (totalUsers > 0) {
-        var changed = badge.textContent !== String(totalUsers > 99 ? '99+' : totalUsers);
-        badge.textContent = totalUsers > 99 ? '99+' : totalUsers;
-        badge.style.display = 'block';
-        if (changed && window._lastUserCount != null && totalUsers !== window._lastUserCount) {
-          badge.classList.remove('count-pop'); void badge.offsetWidth; badge.classList.add('count-pop');
-        }
-      } else {
-        badge.style.display = 'none';
-      }
-      window._lastUserCount = totalUsers;
-    }
+    // Update member count badge on users button — counts people PLUS the private
+    // devices you can see (the watch is a member too). _refreshPeopleBadge pops on change.
+    window._roomUserCount = Object.keys(users).length;
+    window._refreshPeopleBadge();
 
     // Remove markers for users fully gone from Firebase
     Object.keys(userMarkers).forEach(uid => {
