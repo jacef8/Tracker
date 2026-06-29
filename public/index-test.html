@@ -1974,6 +1974,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
       <span id="set-voice-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-caraudio-row" onclick="window._setToggleCarAudio()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
+      <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-bglocation-row" onclick="window._setToggleBgLocation && window._setToggleBgLocation()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep updating your dot when the app is closed. Turning this off removes the status-bar icon — you'll only update while the app is open.</div></div></div>
       <span id="set-bglocation-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2078,7 +2082,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 196;
+var APP_BUILD = 197;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2645,6 +2649,19 @@ function closeSettings() { document.getElementById('settings-sheet').style.displ
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
 // Default ON. When OFF: hide the 🎙 Talk buttons (via body.voice-off) and tear
 // down any open voice bar/connection.
+// Car-radio fix: keep voice on the media audio path so a vehicle's Bluetooth doesn't treat
+// push-to-talk as a phone call and mute the radio (native app only). Default ON.
+function _carAudioOn() { try { return localStorage.getItem('gl_car_audio') !== '0'; } catch (e) { return true; } }
+window._setToggleCarAudio = function () {
+  var on = !_carAudioOn();
+  try { localStorage.setItem('gl_car_audio', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-caraudio-pill', on); } catch (e) {}
+  try {
+    var a = window.GLAudioRouter;
+    if (a) { if (on && a.startMediaMode) a.startMediaMode(); else if (!on && a.stopMediaMode) a.stopMediaMode(); }
+  } catch (e) {}
+  toast(on ? 'Car radio stays on during voice' : 'Car-radio fix off');
+};
 function _voiceEnabled() { try { return localStorage.getItem('gltest_voice_off') !== '1'; } catch (e) { return true; } }
 function _applyVoicePref() {
   var on = _voiceEnabled();
@@ -2830,6 +2847,9 @@ function _syncSettings() {
   // Background-location on/off — native app only.
   var bglRow = document.getElementById('set-bglocation-row');
   if (bglRow) { bglRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-bglocation-pill', _bgLocationOn()); } catch (e) {} }
+  // Car-radio fix toggle — native app only.
+  var carRow = document.getElementById('set-caraudio-row');
+  if (carRow) { carRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-caraudio-pill', _carAudioOn()); } catch (e) {} }
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
   var bgRow = document.getElementById('set-bgtrack-row');

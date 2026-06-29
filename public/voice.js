@@ -39,6 +39,20 @@ function emit(evt) {
   listeners.forEach((cb) => { try { cb(evt); } catch (e) { /* ignore */ } });
 }
 
+// Native car-radio fix: ask the Android wrapper (window.GLAudioRouter, injected by
+// MainActivity) to keep voice on the MEDIA audio path so a vehicle's Bluetooth doesn't
+// treat push-to-talk as a phone call and mute the radio. No-op on the web, or if the user
+// turned it off (gl_car_audio === '0'). Safe to call repeatedly.
+function _carAudio(on) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('gl_car_audio') === '0') return;
+    const a = (typeof window !== 'undefined') && window.GLAudioRouter;
+    if (!a) return;
+    if (on) { if (a.startMediaMode) a.startMediaMode(); }
+    else { if (a.stopMediaMode) a.stopMediaMode(); }
+  } catch (e) { /* ignore */ }
+}
+
 export function onVoiceEvent(cb) {
   listeners.push(cb);
   return () => { listeners = listeners.filter((x) => x !== cb); };
@@ -91,6 +105,7 @@ export function leaveVoice() {
   room = null;
   session = null;
   micOn = false;
+  _carAudio(false);   // restore normal audio routing when we leave voice
   removeBar();
   emit({ type: 'left' });
 }
@@ -163,6 +178,7 @@ async function connectVoice() {
     updatePresence();
     updatePttButton();
     if (room.canPlaybackAudio === false) showAudioBlocked();
+    _carAudio(true);   // keep the car radio alive — don't let this read as a phone call
     emit({ type: 'joined', room: session.room });
   } catch (e) {
     console.error('[voice] connect failed', e);
