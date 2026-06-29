@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 214;
+var APP_BUILD = 215;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2583,6 +2583,24 @@ window._openMyMap = function (deviceId) {
     } else if (++tries > 50) clearInterval(iv);
   }, 150);
 };
+// Talk to a private device (the watch). It joins the device's own voice channel gv_dev_<id>_ALL —
+// the SAME room the watch's PTT uses — so you + the watch can talk. The device isn't a room member,
+// so this is how you reach it.
+window._talkToDevice = function (id) {
+  if (document.body.classList.contains('voice-off')) { try { toast('Turn Voice on first (Settings → Voice)'); } catch (e) {} return; }
+  var cfg = window.VOICE_CONFIG || {};
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn’t configured yet.'); return; }
+  var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
+  var roomId = 'gv_dev_' + id + '_ALL';
+  var myUid = (typeof userId !== 'undefined' && userId) || ''; if (!myUid) { try { myUid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
+  var myName = (typeof userName !== 'undefined' && userName) || ''; if (!myName) { try { myName = localStorage.getItem('gl_name') || 'Me'; } catch (e) { myName = 'Me'; } }
+  try { var m0 = window._voiceModSync; if (m0 && m0.unlockAudio) m0.unlockAudio(); } catch (e) {}   // unlock iOS audio in this tap
+  try { toast('Connecting to ' + nm + '…'); } catch (e) {}
+  window._voiceMod().then(function (mod) {
+    try { if (mod.unlockAudio) mod.unlockAudio(); } catch (e) {}
+    mod.openVoice({ room: roomId, identity: myUid, name: myName, partnerName: nm + ' · watch', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+  }).catch(function () { try { toast('Voice failed to load'); } catch (e) {} });
+};
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
   var me = _myAcct(), devs = window._devicesAll || {}, now = Date.now();
@@ -2599,6 +2617,7 @@ window._renderMyDevices = function () {
       '<svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg>' +
       '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
       '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · only you can see it</div></div>' +
+      '<button onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk to this device" style="background:#2ea043;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:6px 10px;cursor:pointer;flex-shrink:0"><svg class="licon licon-sm" style="vertical-align:-2px"><use href="#ic-mic"/></svg></button>' +
       '<button onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:11px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">Locate</button>' +
       '<button onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
   });
