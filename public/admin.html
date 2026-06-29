@@ -189,6 +189,7 @@
 
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
+  <div id="admin-devices"></div>
   <div class="group-subtabs">
     <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">On home &middot; <span id="gsub-active-n">0</span></button>
     <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Off home &middot; <span id="gsub-retired-n">0</span></button>
@@ -840,6 +841,32 @@ window.deleteNode = function(path, label) {
 
 // Close a room: eject everyone cleanly (their app shows "Room closed" and returns home),
 // then delete the room a few seconds later so nobody recreates it.
+// Re-favorite a room from admin (handy when you accidentally un-favorited a private room and
+// can't find it again). Writes your favorites to the cloud profile (gl/_users/<acct>/favs) so
+// the app's live-sync picks it up on all your signed-in devices, AND to this browser's
+// localStorage (admin shares the app's origin).
+window.adminFavoriteRoom = function(key, name) {
+  try {
+    var favs = []; try { favs = JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) {}
+    // Merge with whatever's already in your cloud profile so we don't drop favorites from other devices.
+    var acct = '';  try { acct = localStorage.getItem('gl_account_uid') || ''; } catch (e) {}
+    var cloudFavs = [];
+    try { var p = window._allDataSnapshot && window._allDataSnapshot._users && window._allDataSnapshot._users[acct]; if (p && p.favs) cloudFavs = JSON.parse(p.favs); } catch (e) {}
+    var seen = {}, merged = [];
+    favs.concat(cloudFavs).concat([key]).forEach(function(k){ if (k && !seen[k]) { seen[k] = 1; merged.push(k); } });
+    var out = JSON.stringify(merged);
+    try { localStorage.setItem('gl_favs', out); } catch (e) {}
+    var fb = window._fb;
+    if (acct && fb && fb.set && fb.ref && fb.db) {
+      fb.set(fb.ref(fb.db, 'gl/_users/' + acct + '/favs'), out);
+      addLog('Favorited "' + key + '" → synced to your account', 'warn');
+      alert('★ Favorited "' + name + '". It\'ll appear in your app under Favorites (synced to your devices).');
+    } else {
+      addLog('Favorited "' + key + '" → this browser only (not signed in)', 'warn');
+      alert('★ Favorited "' + name + '" in THIS browser. Sign in with Google in the app to sync it to your other devices.');
+    }
+  } catch (e) { alert('Favorite failed: ' + ((e && e.message) || e)); }
+};
 window.closeAndNukeRoom = function(key, name) {
   if (key && key.charAt(0) === '_') { alert('"' + key + '" is a system index node (profiles/presence), not a room — not deleting.'); return; }
   if (!confirm('Close and delete "' + name + '"?\n\nEveryone in it will be ejected to the home screen, and all its data is removed. Cannot be undone.')) return;
@@ -1080,6 +1107,31 @@ function renderAllData(all) {
 
 // All users seen in the last few minutes, across every group. Tap one to jump to their
 // group card.
+// Private devices (kid's watch etc.) live at gl/_devices/<id>, NOT in any room — so they never
+// show in the room/user lists or map. List them here so the admin can see + manage them.
+function renderAdminDevices(all) {
+  var el = document.getElementById('admin-devices'); if (!el) return;
+  var devs = (all && all._devices) || {};
+  var ids = Object.keys(devs);
+  if (!ids.length) { el.innerHTML = ''; return; }
+  var rows = ids.map(function(id){
+    var d = devs[id] || {}, live = d.live || {};
+    var nm = live.name || 'Device';
+    var owner = d.ownerName ? ('owned by ' + _esc(d.ownerName)) : '<span style="color:var(--accent2,#e0522b)">UNCLAIMED</span>';
+    var when = live.ts ? timeAgo(live.ts) : 'no fix yet';
+    var loc = (typeof live.lat === 'number') ? (live.lat.toFixed(5) + ', ' + live.lng.toFixed(5)) : 'no location';
+    var sharedN = d.sharedWith ? Object.keys(d.sharedWith).length : 0;
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,.06)">' +
+      '<span style="font-size:18px;flex-shrink:0">&#8986;</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;font-weight:700;color:var(--text)">' + _esc(nm) + ' <span style="font-size:10px;color:var(--muted)">' + id + '</span></div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + owner + (sharedN ? ' &middot; shared with ' + sharedN : '') + ' &middot; ' + loc + ' &middot; ' + when + '</div>' +
+      '</div>' +
+      '<button class="btn btn-warn" onclick="deleteNode(\'gl/_devices/' + id + '\',\'device ' + _esc(nm).replace(/'/g,"") + '\')">Delete</button>' +
+    '</div>';
+  }).join('');
+  el.innerHTML = '<div class="group-card" style="border-top-color:#7c3aed"><div class="group-name" style="margin-bottom:6px">&#8986; Private devices (' + ids.length + ')</div>' + rows + '</div>';
+}
 function renderActiveUsers(all) {
   var el = document.getElementById('active-users-list');
   if (!el) return;
@@ -1129,7 +1181,7 @@ function goToGroup(key) {
 
 function renderSummary(all) {
   if (!all || !Object.keys(all).length) return;
-  var entries = Object.entries(all);
+  var entries = Object.entries(all).filter(function(e){ return e[0] && e[0].charAt(0) !== '_'; });
   var totalGroups = entries.length;
   var totalUsers = 0, totalPins = 0, totalMsgs = 0;
   var pinTypes = {};
@@ -1678,6 +1730,7 @@ function loadAdmin() {
       // otherwise leave it stuck on "Connecting to Firebase…").
       try { renderSummary(all); } catch (e) { addLog('renderSummary error: ' + e.message, 'error'); }
       try { renderActiveUsers(all); } catch (e) { addLog('renderActiveUsers error: ' + e.message, 'error'); }
+      try { renderAdminDevices(all); } catch (e) { addLog('renderAdminDevices error: ' + e.message, 'error'); }
       // Live-refresh the Map (overview) tab if it's open
       try {
         if (document.getElementById('tab-overview').classList.contains('active')) renderOverview();
@@ -1688,7 +1741,7 @@ function loadAdmin() {
       var STALE_24H = 24 * 60 * 60 * 1000;
       var totalGroups=0, totalLive=0, totalPins=0, totalChats=0;
 
-      var entries = Object.entries(all).sort(function(a,b) { return a[0].localeCompare(b[0]); });
+      var entries = Object.entries(all).filter(function(e){ return e[0] && e[0].charAt(0) !== '_'; }).sort(function(a,b) { return a[0].localeCompare(b[0]); });
 
       if (!entries.length) {
         container.innerHTML = '<div class="empty">No groups in database.</div>';
@@ -1853,6 +1906,7 @@ function loadAdmin() {
           pinsHTML +
           msgsHTML +
           '<div class="btn-row">' +
+            '<button class="btn" onclick="adminFavoriteRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">&#9733; Favorite</button>' +
             '<button class="btn" onclick="setGroupHistory(\''+key+'\')">&#128221; Join/leave log</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/pins\',\'pins for '+displayName+'\')">Clear Pins</button>' +
             '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/chat\',\'chat for '+displayName+'\')">Clear Chat</button>' +
