@@ -65,6 +65,10 @@
   .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-bottom: 18px;
     background: var(--border); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
   .stat-card { padding: 13px 8px; text-align: center; background: var(--surface); min-width: 0; }
+  /* Subtle cue so it's obvious which stat cards open a panel when tapped. */
+  .stat-card.tappable { position: relative; }
+  .stat-card.tappable::after { content: '\203A'; position: absolute; top: 5px; right: 8px; color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1; opacity: .7; }
+  .stat-card.tappable:hover { background: #1c2230; }
   .stat-val { font-size: 23px; font-weight: 700; color: var(--accent); line-height: 1; }
   .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
@@ -152,19 +156,24 @@
 
 <div class="header">
   <div>
-    <h1>GroundLink Admin <span id="admin-ver" style="font-size:12px;font-weight:700;color:var(--accent);vertical-align:middle;letter-spacing:0;margin-left:4px"></span></h1>
-    <div class="sub" id="last-refresh">Connecting…</div>
+    <h1>GroundLink Admin</h1>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:3px;flex-wrap:wrap">
+      <span class="sub" id="last-refresh">Connecting…</span>
+      <span id="admin-ver" style="font-size:11px;font-weight:700;color:var(--accent)"></span>
+      <button id="hdr-force-btn" onclick="forceUpdateAll(this,'hdr-force-status')" title="Reload every open app to the latest deployed build" style="background:rgba(240,165,0,.14);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">&#128260; Push to all</button>
+      <span id="hdr-force-status" style="font-size:11px;font-weight:700"></span>
+    </div>
   </div>
   <a href="/" class="back-btn"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>App</a>
 </div>
 
 <div class="stats-row">
-  <div class="stat-card" onclick="statExpand('groups')" style="cursor:pointer" title="Tap for the full list"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups</div></div>
-  <div class="stat-card" onclick="statExpand('live')" style="cursor:pointer" title="Tap to see who's live"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups</div></div>
-  <div class="stat-card" onclick="statExpand('pins')" style="cursor:pointer" title="Tap for pins by group"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
-  <div class="stat-card" onclick="openMessagesReview()" style="cursor:pointer" title="Tap to review all messages"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
+  <div class="stat-card tappable" onclick="statExpand('groups')" style="cursor:pointer" title="Tap for the full list"><div class="stat-val" id="stat-groups">—</div><div class="stat-label">Total Groups</div></div>
+  <div class="stat-card tappable" onclick="statExpand('live')" style="cursor:pointer" title="Tap to see who's live"><div class="stat-val" id="stat-users" style="color:var(--green)">—</div><div class="stat-label">Live Groups</div></div>
+  <div class="stat-card tappable" onclick="statExpand('pins')" style="cursor:pointer" title="Tap for pins by group"><div class="stat-val" id="stat-pins">—</div><div class="stat-label">Pins</div></div>
+  <div class="stat-card tappable" onclick="openMessagesReview()" style="cursor:pointer" title="Tap to review all messages"><div class="stat-val" id="stat-chats">—</div><div class="stat-label">Messages</div></div>
   <div class="stat-card" title="Rooms held open by a signed-in owner or an expiry time"><div class="stat-val" id="stat-kept" style="color:var(--gold,#f0a500)">—</div><div class="stat-label">Kept Alive</div></div>
-  <div class="stat-card" onclick="openTransmissionsReview()" style="cursor:pointer" title="Tap to play / delete all transmissions"><div class="stat-val" id="stat-clips">—</div><div class="stat-label">Transmissions</div></div>
+  <div class="stat-card tappable" onclick="openTransmissionsReview()" style="cursor:pointer" title="Tap to play / delete all transmissions"><div class="stat-val" id="stat-clips">—</div><div class="stat-label">Transmissions</div></div>
 </div>
 <div id="stat-detail" style="display:none"></div>
 
@@ -193,13 +202,12 @@
   <button class="tab-btn active" onclick="switchTab('groups')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7a3 3 0 1 0 0-.01"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>Groups</button>
   <button class="tab-btn" onclick="switchTab('users')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Users</button>
   <button class="tab-btn" onclick="switchTab('overview')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Map</button>
-  <button class="tab-btn" onclick="switchTab('alldata')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>Data</button>
+  <button class="tab-btn" onclick="switchTab('alldata')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>System</button>
   <button class="tab-btn" onclick="switchTab('debug')"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="8" height="14" rx="4"/><path d="M12 6V3"/><path d="M5 9H2"/><path d="M22 9h-3"/><path d="M5 14H2"/><path d="M22 14h-3"/><path d="M9 4 7 2"/><path d="m15 4 2-2"/></svg>Troubleshoot</button>
 </div>
 
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
-  <div id="admin-devices"></div>
   <div class="group-subtabs">
     <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')">On home &middot; <span id="gsub-active-n">0</span></button>
     <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')">Off home &middot; <span id="gsub-retired-n">0</span></button>
@@ -262,6 +270,8 @@
 <!-- OVERVIEW TAB — all members + pins on one map -->
 <div class="tab-panel" id="tab-overview">
   <div id="ov-summary" style="margin-bottom:12px"></div>
+  <!-- Private devices (the watch) — they also plot on the map below -->
+  <div id="admin-devices"></div>
   <!-- Member list first so it's easy to reach without scrolling over the map -->
   <div id="ov-list" style="margin-bottom:16px"></div>
   <!-- Map + its layer toggles moved below the list -->
@@ -277,8 +287,26 @@
   <div id="ov-map" style="height:340px;border-radius:12px;overflow:hidden;background:#0d1117;border:1px solid var(--border)"></div>
 </div>
 
-<!-- ALL DATA TAB — replaced with useful summary + export -->
+<!-- SYSTEM TAB — ops first (maintenance, danger), then data export -->
 <div class="tab-panel" id="tab-alldata">
+
+  <!-- Maintenance — the thing you reach for right after deploying, so it leads. -->
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">&#128260; Maintenance</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">After you deploy a new build, push it to everyone who's currently using the app. They reload to the latest version and stay in their rooms.</div>
+    <button class="btn btn-warn" id="force-update-btn" onclick="forceUpdateAll(this)">&#128260; Force all users to update</button>
+    <div id="force-update-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
+  </div>
+
+  <!-- Danger zone -->
+  <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.3);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--danger);margin-bottom:4px">&#9888; Danger Zone</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">These actions affect ALL groups and cannot be undone</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups? Cannot be undone.')) clearAllPins()">&#128205; Clear All Pins Everywhere</button>
+      <button class="btn btn-danger" onclick="if(confirm('Delete ALL data for ALL groups? This nukes everything.')) nukeEverything()">&#128165; Nuke Everything</button>
+    </div>
+  </div>
 
   <!-- Export -->
   <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
@@ -291,27 +319,9 @@
   </div>
 
   <!-- Global pin type breakdown -->
-  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
     <div style="font-size:13px;font-weight:700;margin-bottom:10px">&#128205; Pin Types Across All Groups</div>
     <div id="pin-type-breakdown"></div>
-  </div>
-
-  <!-- Maintenance -->
-  <div style="background:rgba(13,17,23,0.88);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:13px;font-weight:700;margin-bottom:4px">&#128260; Maintenance</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">After you deploy a new build, push it to everyone who's currently using the app. They reload to the latest version and stay in their rooms.</div>
-    <button class="btn btn-warn" id="force-update-btn" onclick="forceUpdateAll(this)">&#128260; Force all users to update</button>
-    <div id="force-update-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
-  </div>
-
-  <!-- Danger zone -->
-  <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.3);border-radius:12px;padding:14px 16px">
-    <div style="font-size:13px;font-weight:700;color:var(--danger);margin-bottom:4px">&#9888; Danger Zone</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">These actions affect ALL groups and cannot be undone</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-danger" onclick="if(confirm('Clear ALL pins across ALL groups? Cannot be undone.')) clearAllPins()">&#128205; Clear All Pins Everywhere</button>
-      <button class="btn btn-danger" onclick="if(confirm('Delete ALL data for ALL groups? This nukes everything.')) nukeEverything()">&#128165; Nuke Everything</button>
-    </div>
   </div>
 
 </div>
@@ -909,26 +919,23 @@ window.closeAndNukeRoom = function(key, name) {
 // button look broken. Two-tap to confirm + an inline status line instead, and we await the write
 // so the feedback is honest (success vs failure).
 window._forceArmed = false;
-window.forceUpdateAll = function(btn) {
-  var status = document.getElementById('force-update-status');
+window.forceUpdateAll = function(btn, statusId) {
+  var status = document.getElementById(statusId || 'force-update-status');
   function say(msg, color) { if (status) { status.textContent = msg; status.style.color = color || 'var(--muted)'; } }
+  function restore() { if (btn && btn._origHtml != null) { btn.innerHTML = btn._origHtml; btn.style.background = ''; btn.style.color = ''; } }
   var fb = window._fb;
   if (!fb || !fb.set) { say('⚠ Not connected to the database yet — try again in a moment.', '#f85149'); return; }
   if (!window._forceArmed) {                       // first tap → arm
     window._forceArmed = true;
-    if (btn) { btn.textContent = '⚠ Tap again to confirm'; btn.style.background = '#f85149'; btn.style.color = '#fff'; }
+    if (btn) { if (btn._origHtml == null) btn._origHtml = btn.innerHTML; btn.textContent = '⚠ Tap again to confirm'; btn.style.background = '#f85149'; btn.style.color = '#fff'; }
     say('This reloads every open app. Tap again within 4s to send.', '#f0a500');
     clearTimeout(window._forceArmTimer);
-    window._forceArmTimer = setTimeout(function() {
-      window._forceArmed = false;
-      if (btn) { btn.innerHTML = '&#128260; Force all users to update'; btn.style.background = ''; btn.style.color = ''; }
-      say('', 'var(--muted)');
-    }, 4000);
+    window._forceArmTimer = setTimeout(function() { window._forceArmed = false; restore(); say('', 'var(--muted)'); }, 4000);
     return;
   }
   clearTimeout(window._forceArmTimer);             // second tap → send
   window._forceArmed = false;
-  if (btn) { btn.innerHTML = '&#128260; Force all users to update'; btn.style.background = ''; btn.style.color = ''; }
+  restore();
   say('Sending…', 'var(--muted)');
   try {
     var p = fb.set(fb.ref(fb.db, '_forceReload'), { ts: Date.now() });
