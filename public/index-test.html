@@ -1155,6 +1155,12 @@
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
+        <!-- My devices — private trackers (e.g. a kid's watch) only you can see -->
+        <div style="margin-top:14px">
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">⌚ My devices <span style="font-size:10px;color:var(--muted);font-weight:400">· private to you</span></div>
+          <div id="account-devices"></div>
+        </div>
+
         <button id="share-app-btn" style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
           <svg class="licon licon-sm"><use href="#ic-share"/></svg>
           Share GroundLink
@@ -2086,7 +2092,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 206;
+var APP_BUILD = 207;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2430,6 +2436,127 @@ window._acctAddFriend = function (uid) {
   var nm = (pres[uid] && pres[uid].name) || 'Friend';
   try { _toggleFriend(uid, nm); } catch (e) {}
   try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; window._acctPeopleSearch(q); } catch (e) {}
+};
+
+// ── PRIVATE DEVICES (e.g. a kid's GroundLink Watch) ───────────────────────────────
+// A device reports to gl/_devices/<id>/live and is INVISIBLE/unsearchable to everyone until
+// an account OWNER claims it. After that it renders only on the owner's map (+ anyone the
+// owner adds to sharedWith). Owner identity = the Google account uid (must be signed in).
+window._devicesAll = {};
+window._deviceMarkers = window._deviceMarkers || {};
+function _myAcct() { try { return localStorage.getItem('gl_account_uid') || localStorage.getItem('gl_profile_key') || ''; } catch (e) { return ''; } }
+function _canSeeDevice(d) {
+  var me = _myAcct(); if (!me || !d) return false;
+  return d.owner === me || !!(d.sharedWith && d.sharedWith[me]);
+}
+function _devAgo(ts) {
+  if (!ts) return 'never'; var s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago';
+}
+window._listenDevices = function () {
+  if (!db || window._devicesSubbed) return;
+  window._devicesSubbed = true;
+  try {
+    fbOnValue(fbRef(db, 'gl/_devices'), function (snap) {
+      window._devicesAll = snap.val() || {};
+      try { _renderDevices(); } catch (e) {}
+      try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
+    });
+  } catch (e) {}
+};
+function _renderDevices() {
+  if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
+  var devs = window._devicesAll || {}, seen = {};
+  Object.keys(devs).forEach(function (id) {
+    var d = devs[id] || {}, live = d.live;
+    if (!live || typeof live.lat !== 'number' || typeof live.lng !== 'number') return;
+    if (!_canSeeDevice(d)) return;
+    seen[id] = 1;
+    var nm = (live.name || d.ownerName || 'Device');
+    var mk = window._deviceMarkers[id];
+    if (!mk) {
+      var el = document.createElement('div');
+      el.style.cssText = 'width:30px;height:30px;border-radius:50%;background:#7c3aed;border:3px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 6px rgba(0,0,0,.55);cursor:pointer;font-size:15px';
+      el.textContent = '⌚';
+      mk = new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([live.lng, live.lat]).addTo(map);
+      mk._el = el;
+      window._deviceMarkers[id] = mk;
+      (function (id2) {
+        el.addEventListener('click', function () {
+          var dd = (window._devicesAll[id2] || {}).live || {};
+          try { map.flyTo({ center: [dd.lng, dd.lat], zoom: 16 }); } catch (e) {}
+          try { toast((dd.name || 'Device') + ' · watch · ' + _devAgo(dd.ts)); } catch (e) {}
+        });
+      })(id);
+    } else {
+      try { mk.setLngLat([live.lng, live.lat]); } catch (e) {}
+    }
+    try { mk._el.title = nm + ' · watch'; } catch (e) {}
+  });
+  Object.keys(window._deviceMarkers).forEach(function (id) {
+    if (!seen[id]) { try { window._deviceMarkers[id].remove(); } catch (e) {} delete window._deviceMarkers[id]; }
+  });
+}
+window._claimDevice = function (id) {
+  var me = _myAcct();
+  if (!me) { alert('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
+  if (!db) return;
+  var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
+  try {
+    fbSet(fbRef(db, 'gl/_devices/' + id + '/owner'), me);
+    fbSet(fbRef(db, 'gl/_devices/' + id + '/ownerName'), (typeof userName !== 'undefined' ? userName : '') || '');
+    fbSet(fbRef(db, 'gl/_devices/' + id + '/claimedAt'), Date.now());
+  } catch (e) {}
+  try { toast('Claimed ' + nm + ' — now private to you'); } catch (e) {}
+  try { window._renderMyDevices(); } catch (e) {}
+  try { _renderDevices(); } catch (e) {}
+};
+window._removeDevice = function (id) {
+  if (!db) return;
+  var nm = ((window._devicesAll[id] || {}).live || {}).name || 'this device';
+  var now = Date.now();
+  if (window._rmDevArmed !== id || now - (window._rmDevArmedAt || 0) > 4000) {
+    window._rmDevArmed = id; window._rmDevArmedAt = now;
+    try { toast('Tap ✕ again to remove ' + nm); } catch (e) {}
+    return;
+  }
+  window._rmDevArmed = null;
+  try { fbRemove(fbRef(db, 'gl/_devices/' + id)); } catch (e) {}
+  try { if (window._deviceMarkers[id]) { window._deviceMarkers[id].remove(); delete window._deviceMarkers[id]; } } catch (e) {}
+  try { toast('Device removed'); } catch (e) {}
+  try { window._renderMyDevices(); } catch (e) {}
+};
+window._renderMyDevices = function () {
+  var el = document.getElementById('account-devices'); if (!el) return;
+  var me = _myAcct(), devs = window._devicesAll || {}, now = Date.now();
+  var owned = [], unclaimed = [];
+  Object.keys(devs).forEach(function (id) {
+    var d = devs[id] || {}, live = d.live || {};
+    var fresh = live.ts && (now - live.ts) < 86400000;
+    if (d.owner) { if (d.owner === me) owned.push({ id: id, live: live }); }
+    else if (fresh) unclaimed.push({ id: id, live: live });
+  });
+  var html = '';
+  owned.forEach(function (o) {
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">' +
+      '<svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · only you can see it</div></div>' +
+      '<button onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">✕</button></div>';
+  });
+  if (!me) {
+    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to claim a private device like a kid’s watch.</div>';
+  } else {
+    unclaimed.forEach(function (u) {
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text)">New device: ' + _escHtml(u.live.name || 'Watch') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">Active ' + _devAgo(u.live.ts) + ' · claim to make it private to you</div></div>' +
+        '<button onclick="window._claimDevice(\'' + u.id + '\')" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:800;padding:7px 13px;cursor:pointer;flex-shrink:0">Claim</button></div>';
+    });
+  }
+  if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
+  el.innerHTML = html;
 };
 function _renderMyPeople() { _renderFriends(); }
 window._removeFriend = function (fid) {
@@ -3330,6 +3457,7 @@ function _renderAccountPage() {
   try { if (window._ensurePresenceSub) window._ensurePresenceSub(); } catch (e) {}  // so friends show before joining
   try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
   try { _renderFriends(); } catch (e) {}
+  try { if (window._listenDevices) _listenDevices(); window._renderMyDevices && _renderMyDevices(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -4060,6 +4188,8 @@ function enterMap(name, group, uid) {
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
+    try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
+    try { setTimeout(function () { try { _renderDevices(); } catch (e) {} }, 1200); } catch (e) {}
     try { listenVoiceLog(); } catch (e) {}
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
