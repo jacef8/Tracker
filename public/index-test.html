@@ -2086,7 +2086,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 205;
+var APP_BUILD = 206;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3459,6 +3459,8 @@ async function _unregisterFavSub(key) {
 
 // Home list filter: 'public' (the directory) or 'favorites' (your starred groups).
 var _homeFilter = 'public';
+// Land on YOUR rooms first when you have favorites (since favorites no longer show in Public).
+try { if (typeof _getFavs === 'function' && _getFavs().length) _homeFilter = 'favorites'; } catch (e) {}
 window._setHomeFilter = function(f) {
   _homeFilter = f;
   var pb = document.getElementById('home-filter-public'), fv = document.getElementById('home-filter-favs');
@@ -3466,6 +3468,7 @@ window._setHomeFilter = function(f) {
   if (fv) fv.classList.toggle('active', f === 'favorites');
   if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
 };
+try { window._setHomeFilter(_homeFilter); } catch (e) {}   // reflect the initial tab on the buttons
 
 // Room search: type any group name (including PRIVATE / dormant rooms that the directory
 // hides) to find and join it. While searching, the Public/Favorites chips are hidden.
@@ -3587,7 +3590,7 @@ function renderRoomList(all) {
     // Search mode skips this — the name match above already decided what's shown.
     if (!_searching) {
       if (_homeFilter === 'favorites') { if (!isFav) return; }
-      else { if (vis !== 'public' && !isFav) return; }
+      else { if (vis !== 'public' || isFav) return; }
     }
 
     rooms.push({ key: key, displayName: displayName, liveCount: liveCount, restingCount: restingCount, presentCount: presentCount, hasUsers: hasUsers, liveNames: liveNames, pins: pins, lastActive: lastSeen, lastStr: lastStr, config: config, vis: vis, isFav: isFav, keptUntil: keptUntil ? config.expires : 0 });
