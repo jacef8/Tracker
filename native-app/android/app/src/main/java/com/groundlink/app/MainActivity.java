@@ -1,8 +1,14 @@
 package com.groundlink.app;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -12,6 +18,85 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
+    private AudioRouter audioRouter;
+
+    // ── Car-radio fix ──────────────────────────────────────────────────────
+    // WebView voice (LiveKit/WebRTC) makes Chromium flip Android into
+    // MODE_IN_COMMUNICATION, which opens a Bluetooth HFP/SCO link — a car reads
+    // that as an incoming PHONE CALL and mutes the FM/media. While voice is active
+    // we hold MODE_NORMAL and tear down SCO, so receive audio plays over A2DP media
+    // and the radio keeps playing. The web app drives this via window.GLAudioRouter
+    // (voice.js calls startMediaMode() on connect, stopMediaMode() on leave). We
+    // re-assert whenever something flips the mode back.
+    static class AudioRouter {
+        private final Context ctx;
+        private final AudioManager am;
+        private final Handler handler = new Handler(Looper.getMainLooper());
+        private boolean active = false;
+        private Object modeListener; // AudioManager.OnModeChangedListener (API 31+)
+        private final Runnable poll = new Runnable() {
+            @Override public void run() {
+                if (!active) return;
+                applyOnce();
+                handler.postDelayed(this, 1500);
+            }
+        };
+
+        AudioRouter(Context c) {
+            ctx = c.getApplicationContext();
+            am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        }
+
+        @JavascriptInterface
+        public void startMediaMode() {
+            if (am == null) return;
+            handler.post(new Runnable() { @Override public void run() {
+                active = true;
+                applyOnce();
+                if (Build.VERSION.SDK_INT >= 31) {
+                    if (modeListener == null) {
+                        AudioManager.OnModeChangedListener l = new AudioManager.OnModeChangedListener() {
+                            @Override public void onModeChanged(int mode) {
+                                if (active && mode != AudioManager.MODE_NORMAL) applyOnce();
+                            }
+                        };
+                        modeListener = l;
+                        try { am.addOnModeChangedListener(ctx.getMainExecutor(), l); } catch (Exception e) {}
+                    }
+                } else {
+                    handler.removeCallbacks(poll);
+                    handler.postDelayed(poll, 1500);
+                }
+            }});
+        }
+
+        @JavascriptInterface
+        public void stopMediaMode() {
+            if (am == null) return;
+            handler.post(new Runnable() { @Override public void run() {
+                active = false;
+                handler.removeCallbacks(poll);
+                if (modeListener != null && Build.VERSION.SDK_INT >= 31) {
+                    try { am.removeOnModeChangedListener((AudioManager.OnModeChangedListener) modeListener); } catch (Exception e) {}
+                    modeListener = null;
+                }
+            }});
+        }
+
+        private void applyOnce() {
+            try {
+                if (am.getMode() != AudioManager.MODE_NORMAL) am.setMode(AudioManager.MODE_NORMAL);
+                if (Build.VERSION.SDK_INT >= 31) {
+                    try { am.clearCommunicationDevice(); } catch (Exception e) {}
+                } else {
+                    if (am.isBluetoothScoOn()) am.setBluetoothScoOn(false);
+                    try { am.stopBluetoothSco(); } catch (Exception e) {}
+                }
+            } catch (Exception e) {}
+        }
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -34,6 +119,13 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Exception e) {
             // Non-fatal — voice just won't have mic access until granted in app settings.
+        }
+        // Expose the car-radio audio router to the web app (voice.js).
+        try {
+            audioRouter = new AudioRouter(this);
+            this.getBridge().getWebView().addJavascriptInterface(audioRouter, "GLAudioRouter");
+        } catch (Exception e) {
+            // If the bridge/WebView isn't ready, voice still works — it just won't keep the radio on.
         }
         hideNavBar();
     }
