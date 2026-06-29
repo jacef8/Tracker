@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 207;
+var APP_BUILD = 208;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2466,11 +2466,11 @@ function _devAgo(ts) {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago';
 }
 window._listenDevices = function () {
-  if (!db || window._devicesSubbed) return;
+  var fb = window._fb; if (!fb || !fb.db || !fb.onValue || window._devicesSubbed) return;
   window._devicesSubbed = true;
   try {
-    fbOnValue(fbRef(db, 'gl/_devices'), function (snap) {
-      window._devicesAll = snap.val() || {};
+    fb.onValue(fb.ref(fb.db, 'gl/_devices'), function (snap) {
+      window._devicesAll = (snap && snap.val && snap.val()) || {};
       try { _renderDevices(); } catch (e) {}
       try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
     });
@@ -2512,19 +2512,19 @@ function _renderDevices() {
 window._claimDevice = function (id) {
   var me = _myAcct();
   if (!me) { alert('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
-  if (!db) return;
+  var fb = window._fb; if (!fb || !fb.db) return;
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   try {
-    fbSet(fbRef(db, 'gl/_devices/' + id + '/owner'), me);
-    fbSet(fbRef(db, 'gl/_devices/' + id + '/ownerName'), (typeof userName !== 'undefined' ? userName : '') || '');
-    fbSet(fbRef(db, 'gl/_devices/' + id + '/claimedAt'), Date.now());
+    fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/owner'), me);
+    fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/ownerName'), (typeof userName !== 'undefined' ? userName : '') || '');
+    fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/claimedAt'), Date.now());
   } catch (e) {}
   try { toast('Claimed ' + nm + ' — now private to you'); } catch (e) {}
   try { window._renderMyDevices(); } catch (e) {}
   try { _renderDevices(); } catch (e) {}
 };
 window._removeDevice = function (id) {
-  if (!db) return;
+  var fb = window._fb; if (!fb || !fb.db) return;
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'this device';
   var now = Date.now();
   if (window._rmDevArmed !== id || now - (window._rmDevArmedAt || 0) > 4000) {
@@ -2533,7 +2533,7 @@ window._removeDevice = function (id) {
     return;
   }
   window._rmDevArmed = null;
-  try { fbRemove(fbRef(db, 'gl/_devices/' + id)); } catch (e) {}
+  try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id)); } catch (e) {}
   try { if (window._deviceMarkers[id]) { window._deviceMarkers[id].remove(); delete window._deviceMarkers[id]; } } catch (e) {}
   try { toast('Device removed'); } catch (e) {}
   try { window._renderMyDevices(); } catch (e) {}
@@ -2609,7 +2609,7 @@ window._ensurePresenceSub = function (fb) {
     fb.onValue(fb.ref(fb.db, 'gl/_directory'), function (ds) { window._dirAll = ds.val() || {}; });
   } catch (e) {}
 };
-try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} }); } catch (e) {}
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} }); } catch (e) {}
 // Toast when a favorite enters a room (skips the first snapshot so we don't flood on join).
 function _checkPresenceAlerts(newPres) {
   var friends = _getFriends(), prev = window._prevPresence || {};
