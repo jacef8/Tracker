@@ -174,6 +174,14 @@ app.get('/.well-known/assetlinks.json', function(req, res) {
     }
   }]));
 });
+// Short room-invite link: /j/<room>[?k=<passcode>] → the app's room-join URL. Keeps shared
+// texts short. The App-Links intent-filter also claims this path, so installed apps open it
+// natively (the web app routes it client-side); browsers follow this 302 into the web app.
+app.get('/j/:room', function(req, res) {
+  var room = String(req.params.room || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+  var k = req.query.k ? '&k=' + encodeURIComponent(String(req.query.k)) : '';
+  res.redirect(302, '/?room=' + encodeURIComponent(room) + k);
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: function(res, filePath) {
     if (filePath.endsWith('sw.js')) {
