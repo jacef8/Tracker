@@ -1985,6 +1985,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
       <span id="set-voice-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-devlisten-row" onclick="window._setToggleDevListen && window._setToggleDevListen()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Auto-listen to my devices</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Hear your watch from any screen without tapping Talk, and get an alert when it talks. Active while the app is open.</div></div></div>
+      <span id="set-devlisten-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-caraudio-row" onclick="window._setToggleCarAudio()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2093,7 +2097,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 217;
+var APP_BUILD = 218;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2468,6 +2472,7 @@ window._listenDevices = function () {
       try { _renderDevices(); } catch (e) {}
       try { _renderDeviceList(); } catch (e) {}
       try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
+      try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
     });
   } catch (e) {}
 };
@@ -2635,6 +2640,41 @@ window._talkToDevice = function (id) {
     try { if (mod.unlockAudio) mod.unlockAudio(); } catch (e) {}
     mod.openVoice({ room: roomId, identity: myUid, name: myName, partnerName: nm + ' · watch', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
   }).catch(function () { try { toast('Voice failed to load'); } catch (e) {} });
+};
+// ── Auto-listen to my devices ───────────────────────────────────────────────
+window._devListenOn = function () { try { return localStorage.getItem('gl_dev_autolisten') !== '0'; } catch (e) { return true; } };
+window._setToggleDevListen = function () {
+  var on = !window._devListenOn();
+  try { localStorage.setItem('gl_dev_autolisten', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-devlisten-pill', on); } catch (e) {}
+  if (on) { try { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {} }
+  window._syncDeviceMonitor();
+  try { toast(on ? 'Auto-listening to your devices' : 'Auto-listen off'); } catch (e) {}
+};
+window._syncDeviceMonitor = function () {
+  var cfg = window.VOICE_CONFIG || {};
+  var myUid = (typeof userId !== 'undefined' && userId) || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
+  window._voiceMod().then(function (mod) {
+    if (!mod.startDeviceMonitor) return;
+    var me = _myAcct(), dv = window._devicesAll || {}, owned = [];
+    Object.keys(dv).forEach(function (id) {
+      var d = dv[id] || {}; if (d.owner && d.owner === me) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
+    });
+    var wantOn = window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
+    if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+    else if (mod.stopDeviceMonitor) mod.stopDeviceMonitor();
+  }).catch(function () {});
+};
+window._onDeviceTalking = function (ev) {
+  if (!ev || !ev.on) return;
+  var nm = (ev.name || 'A device');
+  try { toast('⌚ ' + nm + ' is talking'); } catch (e) {}
+  try {
+    if (window.Notification && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+      var n = new Notification('⌚ ' + nm + ' is talking', { body: 'Tap to open GroundLink and talk back', tag: 'dev-talk-' + ev.id, renotify: true });
+      n.onclick = function () { try { window.focus(); } catch (e) {} try { window._talkToDevice && window._talkToDevice(ev.id); } catch (e) {} try { n.close(); } catch (e) {} };
+    }
+  } catch (e) {}
 };
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
@@ -2980,6 +3020,7 @@ function _applyVoicePref() {
   if (!on && document.getElementById('gv-bar')) {
     try { import('./voice.js').then(function (m) { if (m.leaveVoice) m.leaveVoice(); }); } catch (e) {}
   }
+  try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
 }
 window._setToggleVoice = function () {
   var on = !_voiceEnabled();
@@ -3146,6 +3187,16 @@ function _syncSettings() {
   _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
   _setPill('set-voice-pill', _voiceEnabled());
+  // Auto-listen to my devices — only shown if you own at least one device (e.g. the watch).
+  try {
+    var dlRow = document.getElementById('set-devlisten-row');
+    if (dlRow) {
+      var me0 = _myAcct(), dv0 = window._devicesAll || {};
+      var ownsDev = Object.keys(dv0).some(function (id) { return (dv0[id] || {}).owner === me0; });
+      dlRow.style.display = ownsDev ? 'flex' : 'none';
+      _setPill('set-devlisten-pill', _devListenOn());
+    }
+  } catch (e) {}
   var cb = document.getElementById('toggle-parcels');
   _setPill('set-parcels-pill', !!(cb && cb.checked));
   var lp = document.getElementById('set-location-pill');
@@ -10735,6 +10786,7 @@ window._listenVoiceInvites = function () {
 // Clear our outgoing ping when we leave voice, so it doesn't linger.
 window._voiceMod().then(function (m) {
   if (m.onVoiceEvent) m.onVoiceEvent(function (ev) {
+    if (ev.type === 'deviceTalking') { try { window._onDeviceTalking && window._onDeviceTalking(ev); } catch (e) {} }
     if (ev.type === 'ptt' && window._evt) window._evt('🎙 PTT ' + (ev.on ? 'keyed (talking)' : 'released'));
     if (ev.type === 'joined' && window._evt) window._evt('🎙 voice connected (room ' + (ev.room || '') + ')');
     if (ev.type === 'error' && window._evt) window._evt('🎙 voice error: ' + (ev.message || ''));
