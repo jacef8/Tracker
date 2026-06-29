@@ -889,7 +889,7 @@
   }
   .room-item.peeking { border-color: var(--accent); background: rgba(240,165,0,0.06); }
   .room-item:active { border-color: var(--accent); }
-  .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .room-item-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
   .room-name { font-size: 15.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .room-meta { font-size: 12.5px; color: #a7b0bd; margin-top: 1px; }
   .room-join-btn {
@@ -2093,7 +2093,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 203;
+var APP_BUILD = 204;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3654,9 +3654,13 @@ function renderRoomList(all) {
         '<div class="room-name">' + room.displayName + lockIcon + privIcon + '</div>' +
         '<div class="room-meta">' + statusHTML + pinText + '</div>' +
       '</div>' +
-      '<button class="room-join-btn">Join</button>';
+      '<span class="room-join-arrow" aria-hidden="true" style="color:var(--muted);font-size:24px;line-height:1;flex-shrink:0;margin-left:4px">&#8250;</span>';
+    item.style.cursor = 'pointer';
     item.querySelector('.room-fav-btn').addEventListener('click', function(e) { window._toggleFav(room.key, room.displayName, e); });
-    item.querySelector('.room-join-btn').addEventListener('click', function() {
+    // The whole card is the Join button now (no separate Join button).
+    item.addEventListener('click', function(e) {
+      if (e.target.closest('.room-fav-btn')) return;       // the star handles itself
+      if (item._peeked) { item._peeked = false; return; }  // released a long-press peek, not a join tap
       document.getElementById('inp-group').value = room.displayName;
       var name = document.getElementById('inp-name').value.trim();
       if (name) {
@@ -3724,10 +3728,10 @@ function _attachRoomPeek(item, key, name) {
   function clearT() { if (timer) { clearTimeout(timer); timer = null; } }
   function end() { clearT(); if (item.classList.contains('peeking')) { item.classList.remove('peeking'); _hideRoomPeek(); } }
   item.addEventListener('pointerdown', function (e) {
-    if (e.target.closest('.room-join-btn, .room-fav-btn')) return;   // let the fav/join buttons work
+    if (e.target.closest('.room-fav-btn')) return;   // let the fav star work
     sx = e.clientX; sy = e.clientY; clearT();
     timer = setTimeout(function () {
-      timer = null; item.classList.add('peeking'); _showRoomPeek(key, name, sy);
+      timer = null; item._peeked = true; item.classList.add('peeking'); _showRoomPeek(key, name, sy);
       try { if (navigator.vibrate) navigator.vibrate(12); } catch (_) {}
     }, 420);
   });
