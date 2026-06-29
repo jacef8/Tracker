@@ -2099,7 +2099,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 209;
+var APP_BUILD = 210;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2354,7 +2354,11 @@ function _friendStatus(fid) {
 }
 function _friendsRowsHTML() {
   var friends = _getFriends();
-  var ids = Object.keys(friends).filter(function (f) { return f !== userId; });
+  // Never list YOURSELF (your own device id OR your account uid) — that showed your PC as an
+  // "offline favorite". Exclude both.
+  var _meAcct = (typeof _myAcct === 'function') ? _myAcct() : '';
+  var _meDev = ''; try { _meDev = localStorage.getItem('gl_uid') || ''; } catch (e) {}
+  var ids = Object.keys(friends).filter(function (f) { return f !== userId && f && f !== _meAcct && f !== _meDev; });
   if (!ids.length) return '<div style="padding:18px 14px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7">No favorites yet.<br>Tap the ☆ star next to someone in a room to add them.</div>';
   function rank(fid) { var s = _friendStatus(fid); return s.online ? (s.inMyRoom ? 1 : 0) : 2; }
   ids.sort(function (a, b) { return rank(a) - rank(b); });   // online-elsewhere, then in-room, then offline
