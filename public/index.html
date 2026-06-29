@@ -2090,7 +2090,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 200;
+var APP_BUILD = 201;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2399,6 +2399,15 @@ window._acctPeopleSearch = function (q) {
     var p = pres[uid] || {}; if (!p.name) return;
     people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
   });
+  // Global directory: every signed-in account, found even when offline (targets their last device).
+  var dir = window._dirAll || {};
+  Object.keys(dir).forEach(function (acct) {
+    var d = dir[acct] || {}; var dev = d.dev;
+    if (!dev || dev === me || seen[dev] || !d.name) return;
+    seen[dev] = 1;
+    var p = pres[dev];
+    people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
+  });
   people = people.filter(function (pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
   people.sort(function (a, b) { var r = (a.online ? 0 : 1) - (b.online ? 0 : 1); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
   if (!people.length) { el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:12px;text-align:center">No one matching &ldquo;' + _escHtml(q) + '&rdquo;.</div>'; return; }
@@ -2463,6 +2472,11 @@ window._ensurePresenceSub = function (fb) {
       try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
       try { _renderFriends(); } catch (e) {}
     });
+  } catch (e) {}
+  // Global account directory (name-only) → lets the people search find anyone who's ever
+  // signed in, even when they're offline. Empty/blocked = search just falls back to friends+online.
+  try {
+    fb.onValue(fb.ref(fb.db, 'gl/_directory'), function (ds) { window._dirAll = ds.val() || {}; });
   } catch (e) {}
 };
 try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} }); } catch (e) {}
@@ -7190,6 +7204,15 @@ function _renderInvitePeople(q) {
     if (!p.name) return;
     people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
   });
+  // Global directory: every signed-in account, so you can invite someone even if they're offline.
+  var _dir = window._dirAll || {};
+  Object.keys(_dir).forEach(function(acct) {
+    var d = _dir[acct] || {}; var dev = d.dev;
+    if (!dev || dev === me || seen[dev] || !d.name) return;
+    seen[dev] = 1;
+    var p = pres[dev];
+    people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
+  });
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
   function rank(pp) { return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3; }
   people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
@@ -9849,6 +9872,20 @@ document.addEventListener('click', function(e) {
       try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
       if (f.update) f.update(f.ref(f.db, 'gl/_users/' + u), prof);
       else f.set(f.ref(f.db, 'gl/_users/' + u), prof);
+      // Lightweight, name-only PUBLIC directory so the people search can find this account even
+      // when offline. Signed-in accounts only; keyed by account uid; `dev` = this device (the
+      // target for friend/invite, which are device-id based). No email/pins/tracks → minimal exposure.
+      try {
+        if (LS.get('gl_account') === 'google') {
+          var _dnm = name() || '';
+          var _ddev = LS.get('gl_uid') || '';
+          if (_dnm) {
+            var _dent = { name: _dnm, dev: _ddev, ts: (f.serverTimestamp ? f.serverTimestamp() : Date.now()) };
+            if (f.update) f.update(f.ref(f.db, 'gl/_directory/' + u), _dent);
+            else f.set(f.ref(f.db, 'gl/_directory/' + u), _dent);
+          }
+        }
+      } catch (e) {}
     } catch (e) {}
   }
   function pullProfile(u, cb) {
