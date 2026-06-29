@@ -2241,8 +2241,9 @@ function renderOverview() {
       ovStatPill(groupCount, 'Active groups') +
     '</div>';
 
-  // Member list (also serves as the live device/status detail)
-  var listHtml = members.map(function(m) {
+  // Member list — PEOPLE only. Devices (the watch) are still plotted on the map below and
+  // listed once in the "Private devices" section above, so we exclude them here (no double-listing).
+  var listHtml = members.filter(function(m) { return !m.isDevice; }).map(function(m) {
     var ageSec  = m.ts ? Math.floor((now - m.ts) / 1000) : null;
     var live    = m.ts && (now - m.ts) < OV_LIVE_MS;
     var hasLoc  = (m.lat != null && m.lng != null);
@@ -2263,7 +2264,7 @@ function renderOverview() {
       '</div>';
   }).join('');
   document.getElementById('ov-list').innerHTML =
-    members.length ? listHtml : '<div class="empty">No members in any group right now.</div>';
+    listHtml ? listHtml : '<div class="empty">No members in any group right now.</div>';
 
   // Collect pins across all groups
   var pins = [];
