@@ -474,12 +474,18 @@ function renderDeviceDebug() {
   if (!el) return;
   var all = window._allDataSnapshot || {};
   var now = Date.now();
-  var rows = [];
+  // One card per DEVICE, not per room: the same device leaves a diag under its uid in every
+  // room it's visited. Collapse by uid, keeping the most recent report — kills the duplicates.
+  var byUid = {};
   Object.keys(all).forEach(function(gk) {
     var diag = all[gk] && all[gk].diag;
     if (!diag) return;
-    Object.keys(diag).forEach(function(uid) { rows.push({ gk: gk, uid: uid, d: diag[uid] || {} }); });
+    Object.keys(diag).forEach(function(uid) {
+      var d = diag[uid] || {};
+      if (!byUid[uid] || (d.ts || 0) > (byUid[uid].d.ts || 0)) byUid[uid] = { gk: gk, uid: uid, d: d };
+    });
   });
+  var rows = Object.keys(byUid).map(function(u) { return byUid[u]; });
   if (!rows.length) {
     el.innerHTML = '<div class="empty">No device reports yet. A member needs to be in a room on build 24+ for their app to start reporting.</div>';
     return;
@@ -559,9 +565,15 @@ function clearStaleDevices() {
 function clearOneDevice(gk, uid) {
   var fb = window._fb;
   if (!fb || !fb.remove) return;
-  try { fb.remove(fb.ref(fb.db, 'gl/' + gk + '/diag/' + uid)); } catch (e) {}
   var all = window._allDataSnapshot || {};
-  if (all[gk] && all[gk].diag) delete all[gk].diag[uid];
+  // Remove this device's diag from EVERY room it reported in, so the (deduped) card doesn't
+  // immediately reappear from another room's lingering copy.
+  Object.keys(all).forEach(function(g) {
+    if (all[g] && all[g].diag && all[g].diag[uid]) {
+      try { fb.remove(fb.ref(fb.db, 'gl/' + g + '/diag/' + uid)); } catch (e) {}
+      delete all[g].diag[uid];
+    }
+  });
   renderDeviceDebug();
 }
 
@@ -2150,6 +2162,23 @@ function renderOverview() {
       });
     });
   });
+  // Private devices (the watch) live at gl/_devices/<id>, NOT in any room — add them so they
+  // show on the admin map + list too. Marked isDevice for a distinct ⌚ marker.
+  var _ovDevs = all._devices || {};
+  Object.keys(_ovDevs).forEach(function(id) {
+    if (!id || id.charAt(0) === '_') return;
+    var d = _ovDevs[id] || {}, lv = d.live || {};
+    members.push({
+      group: 'device' + (d.ownerName ? ' · ' + d.ownerName : (d.owner ? ' · owned' : ' · unclaimed')),
+      uid: id,
+      name: (lv.name || d.ownerName || 'Device') + ' ⌚',
+      lat: (typeof lv.lat === 'number') ? lv.lat : null,
+      lng: (typeof lv.lng === 'number') ? lv.lng : null,
+      accuracy: lv.accuracy || 0,
+      ts: lv.ts || 0,
+      isDevice: true
+    });
+  });
   members.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); }); // most recent first
 
   var liveCount  = members.filter(function(m) { return m.ts && (now - m.ts) < OV_LIVE_MS; }).length;
@@ -2213,7 +2242,12 @@ function renderOverview() {
         if (m.lat == null || m.lng == null) return;
         var live = m.ts && (now - m.ts) < OV_LIVE_MS;
         var el = document.createElement('div');
-        el.style.cssText = 'width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.6);background:' + (live ? '#2ecc71' : '#9aa4b2');
+        if (m.isDevice) {
+          el.style.cssText = 'width:20px;height:20px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.6);background:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:11px';
+          el.textContent = '⌚';
+        } else {
+          el.style.cssText = 'width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.6);background:' + (live ? '#2ecc71' : '#9aa4b2');
+        }
         var popup = new mapboxgl.Popup({ offset: 14, closeButton: false })
           .setHTML('<div style="font-weight:700;color:#111">' + ovEsc(m.name) + '</div>' +
                    '<div style="font-size:11px;color:#555">' + ovEsc(m.group) + ' &middot; ' + timeAgo(m.ts) + '</div>');
