@@ -1843,6 +1843,7 @@
       <button id="channel-btn" onclick="window._toggleOpenChannel && window._toggleOpenChannel()" title="Open the always-on group channel — everyone who opens it hears each other live" style="flex:1;padding:11px 8px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Open channel</button>
       <button onclick="window._openVoicePicker && window._openVoicePicker()" style="flex:1;padding:11px 8px;background:transparent;border:1px solid var(--accent);border-radius:10px;font-size:14px;font-weight:800;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Choose people</button>
     </div>
+    <div id="device-list"></div>
     <div id="user-list"></div>
   </div>
   <div id="tab-friends" style="display:none">
@@ -2092,7 +2093,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 215;
+var APP_BUILD = 216;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2465,6 +2466,7 @@ window._listenDevices = function () {
     fb.onValue(fb.ref(fb.db, 'gl/_devices'), function (snap) {
       window._devicesAll = (snap && snap.val && snap.val()) || {};
       try { _renderDevices(); } catch (e) {}
+      try { _renderDeviceList(); } catch (e) {}
       try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
     });
   } catch (e) {}
@@ -2489,8 +2491,12 @@ function _renderDevices() {
       (function (id2) {
         el.addEventListener('click', function () {
           var dd = (window._devicesAll[id2] || {}).live || {};
-          try { map.flyTo({ center: [dd.lng, dd.lat], zoom: 16 }); } catch (e) {}
-          try { toast((dd.name || 'Device') + ' · watch · ' + _devAgo(dd.ts)); } catch (e) {}
+          var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
+            '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#6e7681;font-weight:600">· watch</span></div>' +
+            '<div style="font-size:11px;color:#6e7681;margin:2px 0 9px">last seen ' + _devAgo(dd.ts) + '</div>' +
+            '<button onclick="window._talkToDevice(\x27' + id2 + '\x27)" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
+          '</div>';
+          try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '240px' }).setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map); } catch (e) {}
         });
       })(id);
     } else {
@@ -2502,6 +2508,28 @@ function _renderDevices() {
     if (!seen[id]) { try { window._deviceMarkers[id].remove(); } catch (e) {} delete window._deviceMarkers[id]; }
   });
 }
+// Show owned/shared private devices (e.g. the watch) as member-style rows at the top of the
+// People drawer, each with a Talk button — so a device acts just like any other member.
+window._renderDeviceList = function _renderDeviceList() {
+  var el = document.getElementById('device-list'); if (!el) return;
+  var devs = window._devicesAll || {};
+  var html = '';
+  Object.keys(devs).forEach(function (id) {
+    var d = devs[id] || {}; if (!_canSeeDevice(d)) return;
+    var live = d.live || {};
+    var nm = live.name || d.ownerName || 'Device';
+    var online = live.ts && (Date.now() - live.ts) < 120000;
+    html += '<div style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--border,#1f2630)">' +
+      '<span style="width:34px;height:34px;border-radius:50%;background:#7c3aed;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">⌚</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--text,#e6edf3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(nm) + ' <span style="font-size:10px;color:var(--muted,#8b949e);font-weight:600">· watch</span></div>' +
+        '<div style="font-size:11px;color:' + (online ? '#3fb950' : 'var(--muted,#8b949e)') + '">' + (live.ts ? ((online ? 'live · ' : 'last seen ') + _devAgo(live.ts)) : 'no location yet') + '</div>' +
+      '</div>' +
+      '<button onclick="window._talkToDevice(\'' + id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:8px 12px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="15" height="15" fill="#fff" style="flex-shrink:0"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 11a7 7 0 0 1-6 6.92V21h-2v-3.08A7 7 0 0 1 5 11h2a5 5 0 0 0 10 0h2z"/></svg>Talk</button>' +
+    '</div>';
+  });
+  el.innerHTML = html;
+};
 window._claimDevice = function (id) {
   var me = _myAcct();
   if (!me) { alert('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
@@ -2615,7 +2643,6 @@ window._renderMyDevices = function () {
         '<button onclick="window._claimDevice(\'' + u.id + '\')" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:800;padding:7px 13px;cursor:pointer;flex-shrink:0">Claim</button></div>';
     });
   }
-  if (owned.length) html = '<button onclick="window._openMyMap()" style="width:100%;padding:10px;margin-bottom:8px;background:#7c3aed;border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:800;cursor:pointer">&#128506;&#65039; Open my map</button>' + html;
   if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
   el.innerHTML = html;
 };
