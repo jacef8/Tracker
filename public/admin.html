@@ -841,6 +841,7 @@ window.deleteNode = function(path, label) {
 // Close a room: eject everyone cleanly (their app shows "Room closed" and returns home),
 // then delete the room a few seconds later so nobody recreates it.
 window.closeAndNukeRoom = function(key, name) {
+  if (key && key.charAt(0) === '_') { alert('"' + key + '" is a system index node (profiles/presence), not a room — not deleting.'); return; }
   if (!confirm('Close and delete "' + name + '"?\n\nEveryone in it will be ejected to the home screen, and all its data is removed. Cannot be undone.')) return;
   var fb = window._fb;
   if (!fb) return;
@@ -1469,6 +1470,7 @@ function _signalClosed(keys) {
 // Signal closed, wait a beat for clients to stand down, then remove the rooms for good.
 function _closeThenRemove(keys, doneCb) {
   var fb = window._fb;
+  keys = (keys || []).filter(function(k) { return k && k.charAt(0) !== '_'; });   // never delete index nodes (_users/_presence/…)
   _signalClosed(keys);
   var done = 0, fail = 0, errMsg = '', pending = keys.length;
   function finish() { doneCb(done, fail, errMsg); }
