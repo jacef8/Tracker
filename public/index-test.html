@@ -2116,7 +2116,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 226;
+var APP_BUILD = 227;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2750,6 +2750,52 @@ window._onDeviceTalking = function (ev) {
     }
   } catch (e) {}
 };
+// One place for everything about a device — opened by tapping its row. Owner sees share +
+// schedule + remove; a shared member sees talk/locate + stop-following. Toggles are the global
+// voice/visibility prefs, surfaced here for convenience.
+window._openDeviceSheet = function (id) {
+  var d = window._devicesAll[id] || {}, me = _myAcct(), owner = (d.owner === me);
+  var live = d.live || {}, nm = live.name || d.ownerName || 'Device';
+  var online = live.ts && (Date.now() - live.ts) < 120000;
+  var statusTxt = live.ts ? ((online ? 'Live · ' : 'Last seen ') + _devAgo(live.ts)) : 'No location yet';
+  var n = d.sharedWith ? Object.keys(d.sharedWith).length : 0;
+  var reopen = "window._openDeviceSheet('" + id + "')";
+  var closeJs = "var o=document.getElementById('dsheet-overlay');if(o)o.remove();";
+  function trow(label, desc, on, fn) {
+    return '<div onclick="window.' + fn + '();' + reopen + '" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+      '<div style="min-width:0"><div style="font-size:14px;font-weight:600;color:var(--text)">' + label + '</div><div style="font-size:11px;color:var(--muted);margin-top:2px">' + desc + '</div></div>' +
+      '<span style="flex-shrink:0;font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:' + (on ? '#13361f' : 'var(--border)') + ';color:' + (on ? '#3fb950' : 'var(--muted)') + '">' + (on ? 'ON' : 'OFF') + '</span></div>';
+  }
+  var html = '<div data-act="noop" style="width:100%;max-width:440px;max-height:calc(var(--avh,1vh)*90);overflow-y:auto;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px)">' +
+    '<div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">' +
+      '<span style="width:40px;height:40px;border-radius:50%;background:#7c3aed;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">⌚</span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:17px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(nm) + '</div>' +
+      '<div style="font-size:12px;color:' + (online ? '#3fb950' : 'var(--muted)') + '">' + statusTxt + (owner ? (n ? ' · shared with ' + n : '') : ' · shared with you') + '</div></div>' +
+      '<button onclick="' + closeJs + '" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">✕</button></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:14px">' +
+      '<button onclick="' + closeJs + 'window._talkToDevice(\'' + id + '\')" style="flex:1;background:#2ea043;border:none;border-radius:11px;color:#fff;font-weight:800;font-size:15px;padding:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk</button>' +
+      '<button onclick="' + closeJs + 'window._locateDevice(\'' + id + '\')" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:11px;color:var(--text);font-weight:700;font-size:15px;padding:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg>Map</button>' +
+    '</div>';
+  if (owner) {
+    html += '<button onclick="window._shareDevice(\'' + id + '\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px;padding:12px 13px;cursor:pointer;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between"><span><svg class="licon licon-sm" style="vertical-align:-2px;margin-right:7px"><use href="#ic-share"/></svg>Family access' + (n ? ' (' + n + ')' : '') + '</span><span style="color:var(--muted)">›</span></button>' +
+      '<button onclick="window._deviceSchedule(\'' + id + '\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px;padding:12px 13px;cursor:pointer;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between"><span>🌙 Battery schedule</span><span style="color:var(--muted)">›</span></button>';
+  }
+  html += '<div style="font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Voice &amp; visibility</div>' +
+    trow('Auto-listen', 'Hear it from any screen, no tapping Talk', window._devListenOn(), '_setToggleDevListen') +
+    trow('Show on every map', 'Otherwise only My Map / per-room', window._secDevAllOn(), '_setToggleSecDevAll') +
+    trow('Hear others on the channel', 'Also hear family talking to it', window._hearOthersOn(), '_setToggleHearOthers') +
+    '<div style="margin-top:8px">' +
+    (owner
+      ? '<button onclick="' + closeJs + 'window._removeDevice(\'' + id + '\')" style="width:100%;background:none;border:1px solid var(--border);border-radius:10px;color:#e74c3c;font-weight:700;font-size:14px;padding:12px;cursor:pointer">Remove device</button>'
+      : '<button onclick="' + closeJs + 'window._leaveSharedDevice(\'' + id + '\')" style="width:100%;background:none;border:1px solid var(--border);border-radius:10px;color:#e74c3c;font-weight:700;font-size:14px;padding:12px;cursor:pointer">Stop following</button>') +
+    '</div></div>';
+  var ov = document.getElementById('dsheet-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'dsheet-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:5100;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML = html;
+  document.body.appendChild(ov);
+};
 window._renderMyDevices = function () {
   var el = document.getElementById('account-devices'); if (!el) return;
   if (!window._devHapticBound) {   // light haptic on any device action button (Android; no-op on iOS)
@@ -2770,26 +2816,21 @@ window._renderMyDevices = function () {
   });
   var html = '';
   var _db = 'width:34px;height:34px;padding:0;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center';
-  owned.forEach(function (o) {
-    var n = o.d.sharedWith ? Object.keys(o.d.sharedWith).length : 0;
-    var sub = (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + ' · ' + (n ? ('shared with ' + n) : 'private to you');
-    html += '<div style="display:flex;align-items:center;gap:6px;padding:9px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">' +
-      '<div style="flex:1;min-width:56px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· watch</span></div>' +
+  // Tappable rows → device detail sheet. Just a quick Talk button + chevron; everything else
+  // (share, schedule, toggles, remove) lives in the sheet so the row stays clean.
+  function _devRow(o, shared) {
+    var n = !shared && o.d.sharedWith ? Object.keys(o.d.sharedWith).length : 0;
+    var sub = (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + (shared ? ' · shared with you' : ' · ' + (n ? ('shared with ' + n) : 'private to you'));
+    return '<div onclick="window._openDeviceSheet(\'' + o.id + '\')" style="display:flex;align-items:center;gap:9px;padding:10px 11px;background:' + (shared ? 'rgba(63,185,80,0.08)' : 'var(--bg)') + ';border:1px solid ' + (shared ? '#2ea043' : 'var(--border)') + ';border-radius:10px;margin-bottom:6px;cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+      '<span style="width:30px;height:30px;border-radius:50%;background:#7c3aed;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">⌚</span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· ' + (shared ? 'shared' : 'watch') + '</span></div>' +
       '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + sub + '</div></div>' +
-      '<button class="dev-act" onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
-      '<button class="dev-act" onclick="window._shareDevice(\'' + o.id + '\')" title="Share with family" style="background:#7c3aed;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-share"/></svg></button>' +
-      '<button class="dev-act" onclick="window._deviceSchedule(\'' + o.id + '\')" title="Battery schedule" style="background:none;border:1px solid var(--border);color:var(--text);font-size:14px;' + _db + '">🌙</button>' +
-      '<button class="dev-act" onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);color:var(--text);' + _db + '"><svg class="licon licon-sm"><use href="#ic-pin"/></svg></button>' +
-      '<button class="dev-act" onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);color:#e74c3c;font-size:13px;font-weight:800;' + _db + '">✕</button></div>';
-  });
-  sharedMe.forEach(function (o) {
-    html += '<div style="display:flex;align-items:center;gap:6px;padding:9px 10px;background:rgba(63,185,80,0.08);border:1px solid #2ea043;border-radius:10px;margin-bottom:6px">' +
-      '<div style="flex:1;min-width:56px"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(o.live.name || 'Device') + ' <span style="font-size:10px;color:var(--muted)">· shared</span></div>' +
-      '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (o.live.ts ? 'Last seen ' + _devAgo(o.live.ts) : 'No location yet') + '</div></div>' +
-      '<button class="dev-act" onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
-      '<button class="dev-act" onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);color:var(--text);' + _db + '"><svg class="licon licon-sm"><use href="#ic-pin"/></svg></button>' +
-      '<button class="dev-act" onclick="window._leaveSharedDevice(\'' + o.id + '\')" title="Stop following" style="background:none;border:1px solid var(--border);color:#e74c3c;font-size:13px;font-weight:800;' + _db + '">✕</button></div>';
-  });
+      '<button class="dev-act" onclick="event.stopPropagation();window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
+      '<span style="color:var(--muted);font-size:20px;padding:0 1px;flex-shrink:0">›</span>' +
+    '</div>';
+  }
+  owned.forEach(function (o) { html += _devRow(o, false); });
+  sharedMe.forEach(function (o) { html += _devRow(o, true); });
   var pend; try { pend = localStorage.getItem('gl_pending_dshare'); } catch (e) {}
   if (pend && !me) {
     html += '<div style="font-size:12px;color:var(--text);padding:10px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">A device was shared with you. <b>Sign in with Google above</b> to accept it.</div>';
