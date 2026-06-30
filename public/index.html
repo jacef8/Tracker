@@ -2116,7 +2116,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 221;
+var APP_BUILD = 222;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2414,6 +2414,17 @@ window._acctPeopleSearch = function (q) {
   var el = document.getElementById('account-friends'); if (!el) return;
   q = String(q || '').trim().toLowerCase();
   if (!q) { el.innerHTML = _friendsRowsHTML(); return; }
+  // The global directory (everyone who's signed in) drives finding offline people by name.
+  // If it hasn't streamed in yet, fetch it on demand, then re-run this search.
+  if ((!window._dirAll || !Object.keys(window._dirAll).length) && window._fb && window._fb.get && !window._dirLoading) {
+    window._dirLoading = true;
+    try {
+      window._fb.get(window._fb.ref(window._fb.db, 'gl/_directory')).then(function (ds) {
+        window._dirAll = ds.val() || {}; window._dirLoading = false;
+        try { var inp = document.getElementById('acct-friend-search'); if (inp && inp.value) window._acctPeopleSearch(inp.value); } catch (e) {}
+      }).catch(function () { window._dirLoading = false; });
+    } catch (e) { window._dirLoading = false; }
+  }
   var friends = _getFriends();
   var pres = window._presenceAll || {};
   var me = null; try { me = localStorage.getItem('gl_uid'); } catch (e) {} if (!me) me = (typeof userId !== 'undefined') ? userId : null;
@@ -7687,6 +7698,16 @@ function _renderInvitePeople(q) {
   var listEl = document.getElementById('invite-pick-list');
   if (!listEl) return;
   q = String(q || '').trim().toLowerCase();
+  // Lazy-load the directory so offline people are findable by name even if it hasn't streamed in.
+  if (q && (!window._dirAll || !Object.keys(window._dirAll).length) && window._fb && window._fb.get && !window._dirLoading) {
+    window._dirLoading = true;
+    try {
+      window._fb.get(window._fb.ref(window._fb.db, 'gl/_directory')).then(function (ds) {
+        window._dirAll = ds.val() || {}; window._dirLoading = false;
+        try { var inp = document.getElementById('invite-search'); _renderInvitePeople(inp ? inp.value : q); } catch (e) {}
+      }).catch(function () { window._dirLoading = false; });
+    } catch (e) { window._dirLoading = false; }
+  }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
   var me = null; try { me = localStorage.getItem('gl_uid'); } catch (e) {}
