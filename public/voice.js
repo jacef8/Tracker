@@ -53,20 +53,6 @@ function _carAudio(on) {
   } catch (e) { /* ignore */ }
 }
 
-// Best-effort: route a remote <audio> element to the phone's LOUDSPEAKER instead of the
-// earpiece. Android treats WebRTC as a call and defaults to the earpiece; many modern
-// WebViews expose the speaker as a selectable audio-output sink, so we pick it explicitly.
-// No-op where setSinkId / output-device selection isn't supported (native routing covers it).
-async function _toSpeaker(el) {
-  try {
-    if (!el || typeof el.setSinkId !== 'function') return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-    const outs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput');
-    const spk = outs.find((d) => /speakerphone|speaker/i.test(d.label || ''));
-    if (spk && spk.deviceId) { try { await el.setSinkId(spk.deviceId); } catch (e) {} }
-  } catch (e) { /* unsupported — native routing handles it */ }
-}
-
 export function onVoiceEvent(cb) {
   listeners.push(cb);
   return () => { listeners = listeners.filter((x) => x !== cb); };
@@ -171,7 +157,6 @@ export async function startDeviceMonitor(opts) {
         if (!monHearOthers && participant && participant.identity !== id) return;
         const el = track.attach(); el.autoplay = true; el.setAttribute('playsinline', '');
         ensureAudioSink().appendChild(el);
-        _toSpeaker(el);   // force loudspeaker, not earpiece
       });
       r.on(RoomEvent.TrackUnsubscribed, (track) => {
         if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
@@ -230,7 +215,6 @@ async function connectVoice() {
       el.autoplay = true;
       el.setAttribute('playsinline', '');
       ensureAudioSink().appendChild(el);
-      _toSpeaker(el);   // force loudspeaker, not earpiece
     }
   });
   room.on(RoomEvent.TrackUnsubscribed, (track) => {
