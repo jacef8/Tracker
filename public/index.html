@@ -2124,7 +2124,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 225;
+var APP_BUILD = 226;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2647,7 +2647,7 @@ window._refreshPeopleBadge = function () {
 };
 window._claimDevice = function (id) {
   var me = _myAcct();
-  if (!me) { alert('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
+  if (!me) { toast('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
   var fb = window._fb; if (!fb || !fb.db) return;
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   var onm = (typeof userName !== 'undefined' && userName) || '';
@@ -2721,7 +2721,7 @@ window._openMyMap = function (deviceId) {
 window._talkToDevice = function (id) {
   if (document.body.classList.contains('voice-off')) { try { toast('Turn Voice on first (Settings → Voice)'); } catch (e) {} return; }
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn’t configured yet.'); return; }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn’t configured yet.'); return; }
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   var roomId = 'gv_dev_' + id + '_ALL';
   var myUid = (typeof userId !== 'undefined' && userId) || ''; if (!myUid) { try { myUid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
@@ -2987,13 +2987,39 @@ window._enterShareCode = function () {
   window._acceptDeviceShare(v);
   if (inp) inp.value = '';
 };
+// WebView-safe confirm — window.confirm() silently returns false in the native Android shell,
+// which made destructive buttons look dead. DOM modal + callback. opts:{title,yes,no,danger,mid,onMid}.
+window._confirm = function (msg, onYes, opts) {
+  opts = opts || {};
+  var ov = document.getElementById('gl-confirm-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'gl-confirm-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:6200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:22px';
+  function close() { try { ov.remove(); } catch (e) {} }
+  ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+  var hasMid = !!(opts.mid && opts.onMid);
+  var yesBg = opts.danger ? '#e11d2e' : '#2e6be6';
+  var btns = (hasMid
+    ? '<button id="glc-yes" style="width:100%;padding:12px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;margin-bottom:8px">' + _escHtml(opts.yes || 'Yes') + '</button>' +
+      '<button id="glc-mid" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px">' + _escHtml(opts.mid) + '</button>' +
+      '<button id="glc-no" style="width:100%;padding:12px;background:none;border:none;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer">' + _escHtml(opts.no || 'Cancel') + '</button>'
+    : '<div style="display:flex;gap:8px"><button id="glc-no" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer">' + _escHtml(opts.no || 'Cancel') + '</button>' +
+      '<button id="glc-yes" style="flex:1;padding:11px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">' + _escHtml(opts.yes || 'Yes') + '</button></div>');
+  ov.innerHTML = '<div style="width:100%;max-width:340px;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:18px">' +
+    (opts.title ? '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px">' + _escHtml(opts.title) + '</div>' : '') +
+    '<div style="font-size:14px;color:var(--text);line-height:1.45;margin-bottom:16px;white-space:pre-line">' + _escHtml(msg) + '</div>' + btns + '</div>';
+  document.body.appendChild(ov);
+  var y = ov.querySelector('#glc-yes'); if (y) y.addEventListener('click', function () { close(); try { if (onYes) onYes(); } catch (e) {} });
+  var n = ov.querySelector('#glc-no'); if (n) n.addEventListener('click', close);
+  if (hasMid) { var md = ov.querySelector('#glc-mid'); if (md) md.addEventListener('click', function () { close(); try { opts.onMid(); } catch (e) {} }); }
+};
 function _renderMyPeople() { _renderFriends(); }   // back-compat alias for existing callers
 window._removeFriend = function (fid) {
   var m = _getFriends(); var nm = m[fid];
-  if (!confirm('Remove ' + (nm || 'this person') + ' from your favorites?')) return;
-  delete m[fid]; _setFriends(m);
-  _renderFriends();
-  try { toast('Removed from favorites'); } catch (e) {}
+  _confirm('Remove ' + (nm || 'this person') + ' from your favorites?', function () {
+    delete m[fid]; _setFriends(m);
+    _renderFriends();
+    try { toast('Removed from favorites'); } catch (e) {}
+  });
 };
 window._peopleTab = function (which) {
   var friends = which === 'friends';
@@ -3810,7 +3836,7 @@ function escapeHtmlJs(s) { return String(s).replace(/[&<>"']/g, function (ch) { 
 
 function sendSOS() {
   if (!groupName || !userId) { toast('Join a group first'); return; }
-  if (!confirm('Send an SOS alert to everyone in your group?')) return;
+  if (!sendSOS._ok) { _confirm('Send an SOS alert to everyone in your group?', function () { sendSOS._ok = true; try { sendSOS(); } finally { sendSOS._ok = false; } }, { danger: true, yes: 'Send SOS' }); return; }
   try { if (typeof window._bsWake === 'function') window._bsWake(); } catch (e) {} // never let battery saver delay an SOS
   const loc = window._lastGPS;
   if (loc && db) {
@@ -3892,30 +3918,28 @@ window._acctDeleteGroup = function(key, disp) {
     try { if (window._unregisterFavSub) window._unregisterFavSub(key); } catch (e) {}
     _renderAccountPage();
   };
+  var justRemove = function() { removeFromList(); try { toast('Removed from your groups'); } catch (e) {} };
   var myUid = '';
   try { myUid = (getSavedSession() || {}).uid || ''; } catch (e) {}
   if (!fb || !fb.get || !myUid) {
-    if (confirm('Remove "' + disp + '" from your groups?')) { removeFromList(); try { toast('Removed from your groups'); } catch (e) {} }
+    _confirm('Remove "' + disp + '" from your groups?', justRemove, { yes: 'Remove' });
     return;
   }
   fb.get(fb.ref(fb.db, 'gl/' + key + '/config/owner')).then(function(snap) {
     var owner = (snap && snap.exists && snap.exists()) ? snap.val() : null;
     if (owner && owner === myUid) {
-      if (confirm('You own "' + disp + '". Delete the WHOLE room for everyone? This erases its pins, chat and trails.\n\n(Tap Cancel to just take it off your own list.)')) {
+      // Owner gets a clean 3-way choice instead of stacked confirms.
+      _confirm('You own "' + disp + '". Deleting it erases its pins, chat and trails for everyone.', function() {
         try { fb.set(fb.ref(fb.db, 'gl/' + key + '/closed'), { ts: Date.now(), by: myUid, byOwner: true }); } catch (e) {}
         setTimeout(function() { try { fb.remove(fb.ref(fb.db, 'gl/' + key)); } catch (e) {} }, 3000);
         removeFromList();
         try { toast('Room deleted for everyone'); } catch (e) {}
-      } else if (confirm('Take "' + disp + '" off your groups list?')) {
-        removeFromList(); try { toast('Removed from your groups'); } catch (e) {}
-      }
+      }, { title: 'Remove "' + disp + '"?', danger: true, yes: 'Delete for everyone', mid: 'Just remove from my list', onMid: justRemove, no: 'Cancel' });
     } else {
-      if (confirm('Remove "' + disp + '" from your groups?\n\n(The room itself stays — others can still use it.)')) {
-        removeFromList(); try { toast('Removed from your groups'); } catch (e) {}
-      }
+      _confirm('Remove "' + disp + '" from your groups? The room itself stays — others can still use it.', justRemove, { yes: 'Remove' });
     }
   }).catch(function() {
-    if (confirm('Remove "' + disp + '" from your groups?')) { removeFromList(); try { toast('Removed from your groups'); } catch (e) {} }
+    _confirm('Remove "' + disp + '" from your groups?', justRemove, { yes: 'Remove' });
   });
 };
 function _renderAccountPage() {
@@ -6312,9 +6336,10 @@ function toggleBreadcrumbs() {
 function clearMyTrail() {
   if (!groupName || !userId || !db) { toast('Join a group first'); return; }
   try { if (navigator.vibrate) navigator.vibrate(40); } catch (e) {}
-  if (!confirm('Clear your breadcrumb trail from the map now?')) return;
-  fbRemove(fbRef(db, 'gl/' + groupName + '/trails/' + userId));
-  toast('Your breadcrumb trail cleared');
+  _confirm('Clear your breadcrumb trail from the map now?', function () {
+    fbRemove(fbRef(db, 'gl/' + groupName + '/trails/' + userId));
+    toast('Your breadcrumb trail cleared');
+  });
 }
 
 // Breadcrumb button — tap toggles recording, long-press (hold) clears your trail
@@ -7105,35 +7130,37 @@ window._cancelMovePin = function(){ _clearMoveMarker(); var bar=document.getElem
 document.getElementById('clear-my-pins-btn').addEventListener('click', () => {
   const mine = Object.entries(lastPins).filter(([, p]) => p.droppedBy === userId);
   if (!mine.length) { toast('You have no pins to clear'); return; }
-  if (!confirm(`Remove your ${mine.length} pin${mine.length > 1 ? 's' : ''}?`)) return;
-  mine.forEach(([pid]) => fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`)));
-  toast(`Cleared ${mine.length} pin${mine.length > 1 ? 's' : ''}`);
+  _confirm(`Remove your ${mine.length} pin${mine.length > 1 ? 's' : ''}?`, () => {
+    mine.forEach(([pid]) => fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`)));
+    toast(`Cleared ${mine.length} pin${mine.length > 1 ? 's' : ''}`);
+  }, { danger: true, yes: 'Remove' });
 });
 
 document.getElementById('clear-all-pins-btn').addEventListener('click', () => {
   const count = Object.keys(lastPins).length;
   if (!count) { toast('No pins to clear'); return; }
-  if (!confirm(`Delete ALL ${count} pins for everyone in this group? This cannot be undone.`)) return;
-  if (!confirm('Are you sure? This clears the map for everyone.')) return;
-  fbRemove(fbRef(db, `gl/${groupName}/pins`));
-  toast('All pins cleared');
+  _confirm(`Delete ALL ${count} pins for everyone in this group? This clears the map for everyone and can't be undone.`, () => {
+    fbRemove(fbRef(db, `gl/${groupName}/pins`));
+    toast('All pins cleared');
+  }, { danger: true, yes: 'Delete all' });
 });
 (function(){
   var cm=document.getElementById('pf-clear-mine'), ca=document.getElementById('pf-clear-all');
   if(cm) cm.addEventListener('click', function(){
     var mine=Object.entries(lastPins).filter(function(e){return e[1].droppedBy===userId;});
     if(!mine.length){ toast('You have no pins to clear'); return; }
-    if(!confirm('Remove your '+mine.length+' pin'+(mine.length>1?'s':'')+'?')) return;
-    mine.forEach(function(e){ fbRemove(fbRef(db, 'gl/'+groupName+'/pins/'+e[0])); });
-    toast('Cleared '+mine.length+' pin'+(mine.length>1?'s':''));
+    _confirm('Remove your '+mine.length+' pin'+(mine.length>1?'s':'')+'?', function(){
+      mine.forEach(function(e){ fbRemove(fbRef(db, 'gl/'+groupName+'/pins/'+e[0])); });
+      toast('Cleared '+mine.length+' pin'+(mine.length>1?'s':''));
+    }, { danger: true, yes: 'Remove' });
   });
   if(ca) ca.addEventListener('click', function(){
     var count=Object.keys(lastPins).length;
     if(!count){ toast('No pins to clear'); return; }
-    if(!confirm('Delete ALL '+count+' pins for everyone in this group? This cannot be undone.')) return;
-    if(!confirm('Are you sure? This clears the map for everyone.')) return;
-    fbRemove(fbRef(db, 'gl/'+groupName+'/pins'));
-    toast('All pins cleared');
+    _confirm('Delete ALL '+count+' pins for everyone in this group? This clears the map for everyone and can’t be undone.', function(){
+      fbRemove(fbRef(db, 'gl/'+groupName+'/pins'));
+      toast('All pins cleared');
+    }, { danger: true, yes: 'Delete all' });
   });
 })();
 
@@ -8054,7 +8081,7 @@ function _updateOfflineEst() {
 // Enter "frame the area" mode: close the layers sheet so the map is fully visible,
 // switch to Aerial, and float a small bar with a LIVE size estimate as you pan/zoom.
 window._startOfflineMode = function () {
-  if (!map || !window.caches) { alert('Offline caching isn\'t supported in this browser.'); return; }
+  if (!map || !window.caches) { toast('Offline caching isn\'t supported in this browser.'); return; }
   if (typeof closeLayerSheet === 'function') closeLayerSheet();
   var btn = document.querySelector('.layer-base-btn[data-style="usgs-aerial"]');
   if (btn && !btn.classList.contains('active')) setBaseLayer(btn);
@@ -8127,9 +8154,11 @@ window._confirmOfflineDownload = async function () {
   _setOfflineStatus((stopped ? 'Stopped — kept ' : 'Saved "' + name + '" — ') + done + ' tiles (' + (bytes / 1048576).toFixed(1) + ' MB)' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : '') + (capped ? ' — hit ' + capMB + ' MB cap' : '') + (failed ? ', ' + failed + ' failed' : '') + '. Airplane-mode + pan here to test.');
   if (window._evt) window._evt('offline area "' + name + '" ' + (stopped ? 'stopped' : 'saved') + ': ' + done + ' tiles ~' + Math.round(bytes / 1048576) + 'MB' + (parcelKeys.length ? ' + ' + parcelKeys.length + ' parcel tiles' : ''));
 };
-window._deleteOfflineArea = async function (id) {
+window._deleteOfflineArea = function (id) {
   var a = _getAreas().filter(function (x) { return x.id === id; })[0];
-  if (!confirm('Delete offline area "' + (a ? a.name : id) + '"? Its tiles will no longer work offline.')) return;
+  _confirm('Delete offline area "' + (a ? a.name : id) + '"? Its tiles will no longer work offline.', function () { _doDeleteOfflineArea(id, a); }, { danger: true, yes: 'Delete' });
+};
+window._doDeleteOfflineArea = async function (id, a) {
   try { if (window.caches) await caches.delete('gltiles_' + id); } catch (e) {}
   // Drop this area's parcel tiles too — but keep any still claimed by another saved area.
   if (a && a.parcelKeys && a.parcelKeys.length) {
@@ -9241,12 +9270,13 @@ window._renameTrack = function(id){
   });
 };
 window._deleteTrack = function(id){
-  try { if (!confirm('Delete this track? This cannot be undone.')) return; } catch(e){}
+  _confirm('Delete this track? This cannot be undone.', function(){
   var arr=getSavedTracks().filter(function(t){ return t.id!==id; }); setSavedTracks(arr);
   if (window._shownTrackId===id) _clearSavedTrack();
   document.getElementById('track-detail-drawer').classList.remove('open');
   renderTracks();
   try { toast('Track deleted'); } catch(e){}
+  }, { danger: true, yes: 'Delete' });
 };
 window._closeTrackDetail = function(){ document.getElementById('track-detail-drawer').classList.remove('open'); };
 window._shareTrack = function(id){ try { toast('Track sharing is coming in the next update'); } catch(e){} };
@@ -9294,7 +9324,7 @@ window._trkPrompt=function(title, defVal, onSave, onCancel){
 })();
 window._trkConfirm=function(title, sub, onYes){
   var m=document.getElementById('trk-confirm-modal');
-  if(!m){ if(confirm(title)) { if(onYes) onYes(); } return; }
+  if(!m){ _confirm(title, onYes); return; }
   var t=document.getElementById('trk-confirm-title'), s=document.getElementById('trk-confirm-sub');
   if(t) t.textContent=title||'Are you sure?'; if(s) s.textContent=sub||'';
   window._trkConfirmCb=onYes||null;
@@ -10041,11 +10071,12 @@ window._onGeoPdfPicked = async function(inp){
   } catch(e){ try{ toast('Could not import this PDF', 4000); }catch(_){} }
 };
 window._deleteOverlay = function(id){
-  try{ if(!confirm('Delete this imported map?')) return; }catch(e){}
+  _confirm('Delete this imported map?', function(){
   try{ toggleOverlay(id,false); }catch(e){}
   window.GL_OVERLAYS=(window.GL_OVERLAYS||[]).filter(function(o){return o.id!==id;});
   _ovDeleteRec(id).then(function(){ _renderUserOverlays(); });
   try{ toast('Map deleted'); }catch(e){}
+  }, { danger: true, yes: 'Delete' });
 };
 function _ovRow(o){
   return '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">'+
@@ -10864,7 +10895,7 @@ function _gvGroupRoomId(uids) {
 // ── Talk to SEVERAL: pick a subset of members and voice just them ───
 window._openVoicePicker = function () {
   if (document.body.classList.contains('voice-off')) return;
-  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  if (!userId || !groupName) { toast('Join a group first.'); return; }
   var users = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
   var ids = Object.keys(users).filter(function (u) { return u !== userId && users[u] && users[u].name && users[u].conn !== false; });
   if (!ids.length) { toast('No one else in the room to call'); return; }
@@ -10896,7 +10927,7 @@ window._startVoicePick = function () {
 };
 async function _openVoiceToSelected(uids, names) {
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) return;
   var roomId = _gvGroupRoomId(uids);
   // Ping each selected member so their app auto-joins the same shared room.
@@ -10910,15 +10941,15 @@ async function _openVoiceToSelected(uids, names) {
   try {
     var mod = await window._voiceMod();
     mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member', partnerName: label, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
-  } catch (e) { console.error('[voice] group-of-some open failed', e); alert('Voice failed to load: ' + e.message); }
+  } catch (e) { console.error('[voice] group-of-some open failed', e); toast('Voice failed to load: ' + e.message); }
 }
 
 // ── Initiator: tap 🎙 → ping the target + open voice (mic ready) ───
 window._openVoiceTo = async function (uid, name) {
   if (document.body.classList.contains('voice-off')) return; // voice disabled here
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
-  if (!userId || !groupName) { alert('Join a group first, then tap a member to talk.'); return; }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
+  if (!userId || !groupName) { toast('Join a group first, then tap a member to talk.'); return; }
   _closePeopleDrawer();   // get the People panel out of the way so the voice bar is clear
   var roomId = _gvRoomId(uid);
   // Ping the other device so it auto-joins (if it has voice on).
@@ -10933,7 +10964,7 @@ window._openVoiceTo = async function (uid, name) {
     var mod = await window._voiceMod();
     mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
       partnerName: name, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
-  } catch (e) { console.error('[voice] open failed', e); alert('Voice failed to load: ' + e.message); }
+  } catch (e) { console.error('[voice] open failed', e); toast('Voice failed to load: ' + e.message); }
 };
 
 // ── Group all-call (M2): one shared room for the whole group ───
@@ -10942,8 +10973,8 @@ window._openVoiceTo = async function (uid, name) {
 window._openVoiceToGroup = async function () {
   if (document.body.classList.contains('voice-off')) return;
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
-  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
+  if (!userId || !groupName) { toast('Join a group first.'); return; }
   _closePeopleDrawer();
   var roomId = 'gv_' + groupName + '_ALL';
   try {
@@ -10956,7 +10987,7 @@ window._openVoiceToGroup = async function () {
     var mod = await window._voiceMod();
     mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
       partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
-  } catch (e) { console.error('[voice] group open failed', e); alert('Voice failed to load: ' + e.message); }
+  } catch (e) { console.error('[voice] group open failed', e); toast('Voice failed to load: ' + e.message); }
 };
 
 // ── ALWAYS-OPEN GROUP CHANNEL ───────────────────────────────────────
@@ -10981,7 +11012,7 @@ window._updateChannelBtn = function () {
 
 async function _joinOpenChannel() {
   var cfg = window.VOICE_CONFIG || {};
-  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { alert('Voice isn\'t configured yet.'); return; }
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) return;
   var roomId = _channelRoomId();
   try {
@@ -10999,7 +11030,7 @@ async function _joinOpenChannel() {
 
 window._toggleOpenChannel = async function () {
   if (document.body.classList.contains('voice-off')) { toast('Turn Voice on first (Settings → Voice)'); return; }
-  if (!userId || !groupName) { alert('Join a group first.'); return; }
+  if (!userId || !groupName) { toast('Join a group first.'); return; }
   if (_openChannelOn()) {
     try { localStorage.setItem('gl_open_channel', '0'); } catch (e) {}
     window._inOpenChannel = false;
