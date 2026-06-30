@@ -1170,8 +1170,9 @@
         <div style="margin-top:14px">
           <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">⌚ My devices <span style="font-size:10px;color:var(--muted);font-weight:400">· private to you &amp; family you share with</span></div>
           <div id="account-devices"></div>
-          <div style="display:flex;gap:6px;margin-top:8px">
-            <input id="dshare-code-input" maxlength="6" placeholder="Have a share code?" autocapitalize="characters" autocomplete="off" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:.1em;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;padding:9px 11px" />
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Add a device — enter the <b>link code</b> shown on its screen:</div>
+          <div style="display:flex;gap:6px;margin-top:5px">
+            <input id="dshare-code-input" maxlength="6" placeholder="Device code" autocapitalize="characters" autocomplete="off" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:.1em;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;padding:9px 11px" />
             <button onclick="window._enterShareCode && window._enterShareCode()" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer;flex-shrink:0">Add</button>
           </div>
         </div>
@@ -2127,7 +2128,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 229;
+var APP_BUILD = 230;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2872,16 +2873,12 @@ window._renderMyDevices = function () {
     html += '<div style="font-size:12px;color:var(--text);padding:10px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">A device was shared with you. <b>Sign in with Google above</b> to accept it.</div>';
   }
   if (!me) {
-    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to claim a private device like a kid’s watch, or accept one a family member shared.</div>';
-  } else {
-    unclaimed.forEach(function (u) {
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">' +
-        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text)">New device: ' + _escHtml(u.live.name || 'Watch') + '</div>' +
-        '<div style="font-size:11px;color:var(--muted)">Active ' + _devAgo(u.live.ts) + ' · claim to make it private to you</div></div>' +
-        '<button onclick="window._claimDevice(\'' + u.id + '\')" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:800;padding:7px 13px;cursor:pointer;flex-shrink:0">Claim</button></div>';
-    });
+    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to add a private device like a kid’s watch using its code.</div>';
   }
-  if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
+  // NOTE: devices are NO LONGER openly claimable. A device only appears here once you've added
+  // it with the code shown on its screen (see the "Add a device" box below) — so a stranger
+  // with the app can never see or claim your watch.
+  if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Open GroundLink Watch, read the <b>link code</b> on its screen, and enter it below to add it.</div>';
   el.innerHTML = html;
 };
 // ── Battery schedule: owner sets active hours; the watch polls gl/_devices/<id>/sched and
@@ -3022,13 +3019,20 @@ window._acceptDeviceShare = function (code) {
   if (!fb) { try { localStorage.setItem('gl_pending_dshare', code); } catch (e) {} return; }
   fb.get(fb.ref(fb.db, 'gl/_deviceShares/' + code)).then(function (snap) {
     var id = snap && snap.val();
-    if (!id) { try { toast('Share code not found'); } catch (e) {} return; }
-    var myNm = (function () { try { return localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })() || (typeof userName !== 'undefined' && userName) || 'Family';
-    try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me), { name: myNm, ts: Date.now() }); } catch (e) {}
-    try { localStorage.removeItem('gl_pending_dshare'); } catch (e) {}
-    try { toast('✓ Device shared with you — it’s on your map now'); } catch (e) {}
-    try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
-  }).catch(function () { try { toast('Could not accept share'); } catch (e) {} });
+    if (!id) { try { toast('Code not found — check the code on the device'); } catch (e) {} return; }
+    // The code is the ONLY way onto a device. First valid entry CLAIMS it (you become owner);
+    // after it's owned, the same code grants VIEW access (how the owner adds family).
+    fb.get(fb.ref(fb.db, 'gl/_devices/' + id + '/owner')).then(function (osnap) {
+      var owner = osnap && osnap.val();
+      try { localStorage.removeItem('gl_pending_dshare'); } catch (e) {}
+      if (!owner) { try { window._claimDevice(id); } catch (e) {} return; }   // unclaimed → become owner
+      if (owner === me) { try { toast('This device is already yours'); } catch (e) {} return; }
+      var myNm = (function () { try { return localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })() || (typeof userName !== 'undefined' && userName) || 'Family';
+      try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me), { name: myNm, ts: Date.now() }); } catch (e) {}
+      try { toast('✓ Device shared with you — it’s on your map now'); } catch (e) {}
+      try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+    }).catch(function () { try { toast('Could not add device'); } catch (e) {} });
+  }).catch(function () { try { toast('Could not add device'); } catch (e) {} });
 };
 window._maybeAcceptPendingDshare = function () {
   var code; try { code = localStorage.getItem('gl_pending_dshare'); } catch (e) {}

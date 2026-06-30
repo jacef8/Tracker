@@ -3,6 +3,7 @@ package com.groundlink.app;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -86,14 +87,59 @@ public class MainActivity extends BridgeActivity {
 
         private void applyOnce() {
             try {
-                if (am.getMode() != AudioManager.MODE_NORMAL) am.setMode(AudioManager.MODE_NORMAL);
-                if (Build.VERSION.SDK_INT >= 31) {
-                    try { am.clearCommunicationDevice(); } catch (Exception e) {}
+                if (hasExternalAudioOut()) {
+                    // A car/Bluetooth or wired output is connected: hold MODE_NORMAL and tear down
+                    // SCO so a vehicle plays voice as A2DP media and the FM/radio isn't muted.
+                    if (am.getMode() != AudioManager.MODE_NORMAL) am.setMode(AudioManager.MODE_NORMAL);
+                    if (Build.VERSION.SDK_INT >= 31) {
+                        try { am.clearCommunicationDevice(); } catch (Exception e) {}
+                    } else {
+                        if (am.isBluetoothScoOn()) am.setBluetoothScoOn(false);
+                        try { am.stopBluetoothSco(); } catch (Exception e) {}
+                    }
                 } else {
-                    if (am.isBluetoothScoOn()) am.setBluetoothScoOn(false);
-                    try { am.stopBluetoothSco(); } catch (Exception e) {}
+                    // No external audio device → force the phone's built-in LOUDSPEAKER. Android
+                    // treats WebRTC as a call and defaults voice to the EARPIECE; this pushes it
+                    // to the speaker so the walkie-talkie is hands-free.
+                    if (Build.VERSION.SDK_INT >= 31) {
+                        try {
+                            AudioDeviceInfo spk = findOutput(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
+                            AudioDeviceInfo cur = am.getCommunicationDevice();
+                            if (spk != null && (cur == null || cur.getType() != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)) {
+                                am.setCommunicationDevice(spk);
+                            }
+                        } catch (Exception e) {}
+                    } else {
+                        if (!am.isSpeakerphoneOn()) am.setSpeakerphoneOn(true);
+                    }
                 }
             } catch (Exception e) {}
+        }
+
+        // Is any Bluetooth (car/headset) or wired output currently connected?
+        private boolean hasExternalAudioOut() {
+            try {
+                for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+                    switch (d.getType()) {
+                        case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                        case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                        case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                        case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                        case AudioDeviceInfo.TYPE_USB_HEADSET:
+                            return true;
+                    }
+                }
+            } catch (Exception e) {}
+            return false;
+        }
+
+        private AudioDeviceInfo findOutput(int type) {
+            try {
+                for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+                    if (d.getType() == type) return d;
+                }
+            } catch (Exception e) {}
+            return null;
         }
     }
 
