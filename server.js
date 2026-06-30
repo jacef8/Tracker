@@ -37,6 +37,37 @@ try {
   }
 } catch (e) { console.warn('FCM init failed:', e.message); }
 
+// ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
+// The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
+// FCM (no notification UI) to the device's token, which the watch's WakeMessagingService
+// handles — connecting voice or grabbing a GPS fix — so the watch can sleep when idle.
+async function getDeviceToken(device) {
+  try {
+    const r = await fetch(DB_URL + '/gl/_devices/' + encodeURIComponent(device) + '/fcmToken.json');
+    const t = await r.json();
+    return (typeof t === 'string' && t) ? t : null;
+  } catch (e) { return null; }
+}
+app.post('/wake-device', async function(req, res) {
+  if (!fcmAdmin) return res.json({ ok: false, reason: 'fcm-not-configured' });
+  const b = req.body || {};
+  const device = String(b.device || '');
+  const type = String(b.type || 'voice');
+  let token = String(b.token || '');           // caller may pass it directly; else we look it up
+  if (!token && device) token = (await getDeviceToken(device)) || '';
+  if (!token) return res.json({ ok: false, reason: 'no-token' });
+  try {
+    await fcmAdmin.messaging().send({
+      token: token,
+      data: { type: type, ts: String(Date.now()) },
+      android: { priority: 'high' }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false, reason: e.message });
+  }
+});
+
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', async function(req, res) {
