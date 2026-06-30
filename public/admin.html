@@ -1191,16 +1191,16 @@ function renderAdminDevices(all) {
     var when = live.ts ? timeAgo(live.ts) : 'no fix yet';
     var loc = (typeof live.lat === 'number') ? (live.lat.toFixed(5) + ', ' + live.lng.toFixed(5)) : 'no location';
     var sharedN = d.sharedWith ? Object.keys(d.sharedWith).length : 0;
-    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,.06)">' +
+    var hasLoc = (typeof live.lat === 'number');
+    // Whole row taps to fly the map to the device — exactly like tapping a member row.
+    return '<div' + (hasLoc ? ' onclick="ovFlyTo(' + live.lng + ',' + live.lat + ')" title="Zoom the map to this device"' : '') +
+      ' style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,.06)' + (hasLoc ? ';cursor:pointer' : '') + '">' +
       '<span style="font-size:18px;flex-shrink:0">&#8986;</span>' +
       '<div style="flex:1;min-width:0">' +
         '<div style="font-size:13px;font-weight:700;color:var(--text)">' + _esc(nm) + ' <span style="font-size:10px;color:var(--muted)">' + id + '</span></div>' +
         '<div style="font-size:11px;color:var(--muted)">' + owner + (sharedN ? ' &middot; shared with ' + sharedN : '') + ' &middot; ' + loc + ' &middot; ' + when + '</div>' +
       '</div>' +
-      (typeof live.lat === 'number'
-        ? '<button onclick="ovFlyTo(' + live.lng + ',' + live.lat + ')" title="Zoom the map to this device" style="background:#7c3aed;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;padding:6px 12px;cursor:pointer;flex-shrink:0">Locate</button>'
-        : '') +
-      '<button class="btn btn-warn" onclick="deleteNode(\'gl/_devices/' + id + '\',\'device ' + _esc(nm).replace(/'/g,"") + '\')">Delete</button>' +
+      '<button class="btn btn-warn" onclick="event.stopPropagation(); deleteNode(\'gl/_devices/' + id + '\',\'device ' + _esc(nm).replace(/'/g,"") + '\')">Delete</button>' +
     '</div>';
   }).join('');
   el.innerHTML = '<div class="group-card" style="border-top-color:#7c3aed"><div class="group-name" style="margin-bottom:6px">&#8986; Private devices (' + ids.length + ')</div>' + rows + '</div>';
