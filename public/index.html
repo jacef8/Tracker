@@ -2127,7 +2127,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 228;
+var APP_BUILD = 229;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2689,9 +2689,18 @@ function _flyToDevice() {
 }
 // "Locate" jumps the map to a device. If you're not on a map yet, it opens one by rejoining
 // your first favorite room, then flies to the device once that map loads.
+// Push-to-wake: nudge a sleeping watch (silent FCM via the server) so it connects voice / sends a
+// fresh GPS fix on demand. Best-effort — if the watch is already awake this is a harmless no-op.
+window._wakeDevice = function (id, type) {
+  try {
+    var token = ((window._devicesAll[id] || {}).fcmToken) || '';
+    fetch('/wake-device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: id, token: token, type: type || 'voice' }) }).catch(function () {});
+  } catch (e) {}
+};
 window._locateDevice = function (id) {
+  try { window._wakeDevice(id, 'locate'); } catch (e) {}   // ask the watch for a fresh fix
   var d = (window._devicesAll[id] || {}).live || {};
-  if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('No location yet for this device'); } catch (e) {} return; }
+  if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('Waking the watch for a fresh location…'); } catch (e) {} return; }
   // Already on a GroundLink map (in a room)? fly to the device's ⌚ there.
   if (typeof map !== 'undefined' && map && typeof groupName !== 'undefined' && groupName) {
     window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
@@ -2727,6 +2736,7 @@ window._talkToDevice = function (id) {
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn’t configured yet.'); return; }
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   var roomId = 'gv_dev_' + id + '_ALL';
+  try { window._wakeDevice(id, 'voice'); } catch (e) {}   // wake the watch so it connects to hear you
   var myUid = (typeof userId !== 'undefined' && userId) || ''; if (!myUid) { try { myUid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
   var myName = (typeof userName !== 'undefined' && userName) || ''; if (!myName) { try { myName = localStorage.getItem('gl_name') || 'Me'; } catch (e) { myName = 'Me'; } }
   try { var m0 = window._voiceModSync; if (m0 && m0.unlockAudio) m0.unlockAudio(); } catch (e) {}   // unlock iOS audio in this tap
