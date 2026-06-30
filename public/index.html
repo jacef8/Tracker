@@ -2124,7 +2124,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 224;
+var APP_BUILD = 225;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2171,22 +2171,16 @@ window.addEventListener('beforeinstallprompt', e => {
 });
 
 // Share — native share sheet, falls back to clipboard. Callable from any button.
-window._shareApp = async function() {
-  const shareData = {
+window._shareApp = function() {
+  // Routed through the SAME _nativeShare helper as room + device sharing, so every share in the
+  // app behaves identically (native share sheet → Web Share → clipboard fallback).
+  var data = {
     title: 'GroundLink',
     text: 'Live satellite map for your group — real-time positions, shared pins, and chat. No account needed. Open the link to install (Android) or add to your Home Screen (iPhone):',
     url: 'https://tracker-production-3b03.up.railway.app/download'
   };
-  try {
-    var _cap = window.Capacitor || {};
-    var _SharePlugin = _cap.Plugins && _cap.Plugins.Share;
-    if (_isNativeApp() && _SharePlugin && _SharePlugin.share) {
-      await _SharePlugin.share({ title: shareData.title, text: shareData.text + ' ' + shareData.url, url: shareData.url, dialogTitle: 'Share GroundLink' });
-      return;
-    }
-    if (navigator.share) { await navigator.share(shareData); }
-    else { await navigator.clipboard.writeText(shareData.url); toast('Link copied — paste it to share'); }
-  } catch (e) {}
+  if (window._nativeShare) window._nativeShare(data, 'Link copied — paste it to share');
+  else { try { if (navigator.clipboard) navigator.clipboard.writeText(data.url); toast('Link copied — paste it to share'); } catch (e) {} }
 };
 document.getElementById('share-app-btn').addEventListener('click', function() { window._shareApp(); });
 
@@ -2910,7 +2904,7 @@ window._shareDevice = function (id) {
 function _openShareModal(id, code) {
   var d = window._devicesAll[id] || {};
   var nm = (d.live || {}).name || 'device';
-  var link = location.origin + '/?dshare=' + code;
+  var link = location.origin + '/d/' + code;   // short, clean, deep-links into the app
   var shared = d.sharedWith || {};
   var rows = Object.keys(shared).map(function (acct) {
     var s = shared[acct] || {};
@@ -2930,15 +2924,26 @@ function _openShareModal(id, code) {
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:16px;font-weight:800;color:var(--text)">Share ' + _escHtml(nm) + '</div>' +
     '<button onclick="var o=document.getElementById(\'dshare-overlay\');if(o)o.remove();" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">✕</button></div>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:13px">Family you share with can see this device on their map and talk to it. Only you can add or remove people.</div>' +
-    '<div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Share code</div>' +
-    '<div style="display:flex;gap:8px;margin-bottom:9px"><div style="flex:1;font-size:22px;font-weight:900;letter-spacing:.18em;color:#a78bfa;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 12px;text-align:center">' + code + '</div>' +
-    '<button onclick="window._copyText(\'' + code + '\',this,\'Code copied\')" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:0 14px;cursor:pointer">Copy</button></div>' +
-    '<button onclick="window._copyText(\'' + linkEsc + '\',this,\'Invite link copied\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-weight:700;font-size:13px;padding:10px;cursor:pointer;margin-bottom:6px">📋 Copy invite link</button>' +
-    '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">They open the link, or enter the code under “My devices” on their Account page — while signed in with Google.</div>' +
+    '<button onclick="window._shareDeviceLink(\'' + id + '\')" style="width:100%;background:#7c3aed;border:none;border-radius:11px;color:#fff;font-weight:800;font-size:15px;padding:13px;cursor:pointer;margin-bottom:9px;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm" style="width:17px;height:17px"><use href="#ic-share"/></svg>Send invite</button>' +
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Picks a contact and texts them a tap-to-join link. They just open it (signed in with Google) — no code to type.</div>' +
+    '<div style="font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Or share the code manually</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:14px"><div style="flex:1;font-size:20px;font-weight:900;letter-spacing:.18em;color:#a78bfa;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 12px;text-align:center">' + code + '</div>' +
+    '<button onclick="window._copyText(\'' + code + '\',this,\'Code copied\')" style="background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-weight:700;font-size:13px;padding:0 14px;cursor:pointer">Copy</button></div>' +
     '<div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">People with access</div>' + rows +
   '</div>';
   document.body.appendChild(ov);
 }
+// Fire the OS share sheet with a clean tap-to-join link (no code typing for the recipient).
+window._shareDeviceLink = function (id) {
+  var d = window._devicesAll[id] || {};
+  var code = d.shareCode;
+  if (!code) { try { toast('Generating a code — tap Send again'); } catch (e) {} try { window._shareDevice(id); } catch (e) {} return; }
+  var nm = (d.live || {}).name || 'my device';
+  var url = location.origin + '/d/' + code;
+  var text = 'I shared "' + nm + '" with you on GroundLink — open this to see it on your map and talk to it (sign in with Google first):';
+  if (window._nativeShare) window._nativeShare({ title: 'GroundLink — ' + nm, text: text, url: url }, 'Invite link copied');
+  else { try { if (navigator.clipboard) navigator.clipboard.writeText(url); toast('Invite link copied'); } catch (e) {} }
+};
 window._revokeDeviceShare = function (id, acct) {
   var fb = window._fb; if (!fb) return;
   try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + acct)); } catch (e) {}
@@ -4855,6 +4860,14 @@ function showJoinScreen() {
       if (!url) return;
       var u;
       try { u = new URL(url); } catch (e) { return; }
+      // Device-share link: ?dshare=<code> or the short /d/<code> form.
+      var dshare = u.searchParams.get('dshare');
+      if (!dshare) { var dm = u.pathname.match(/^\/d\/([^\/?#]+)/); if (dm) dshare = decodeURIComponent(dm[1]); }
+      if (dshare) {
+        var dtarget = '/?dshare=' + encodeURIComponent(dshare);
+        if (dtarget !== window.location.pathname + window.location.search) window.location.replace(dtarget);
+        return;
+      }
       var room = u.searchParams.get('room');
       var k = u.searchParams.get('k');
       // Short link form: /j/<room>  (?k=<passcode> optional)
