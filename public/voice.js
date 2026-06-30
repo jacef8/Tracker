@@ -115,6 +115,7 @@ export function leaveVoice() {
 // you HEAR the watch from any screen without tapping Talk, and get a "talking" event
 // for an alert. Runs as SEPARATE LiveKit rooms so it never disturbs the main voice bar.
 let monRooms = {};   // deviceId -> { room, name, talking }
+let monHearOthers = true;   // play other people talking to the device, not just the device itself
 
 async function mintToken(endpoint, roomName, identity, name) {
   const res = await fetch(endpoint, {
@@ -129,8 +130,9 @@ async function mintToken(endpoint, roomName, identity, name) {
 
 // devices: [{ id, name }]. Reconciles: joins new ones, drops removed ones, leaves the rest.
 export async function startDeviceMonitor(opts) {
-  const { devices, identity, livekitUrl, tokenEndpoint } = opts || {};
+  const { devices, identity, livekitUrl, tokenEndpoint, hearOthers } = opts || {};
   if (!devices || !livekitUrl || !tokenEndpoint || !identity) return;
+  monHearOthers = (hearOthers !== false);   // false = only play the DEVICE's own audio, not other people
   const wanted = {};
   devices.forEach((d) => { if (d && d.id) wanted[d.id] = d.name || 'device'; });
   // Drop monitors no longer wanted.
@@ -146,10 +148,13 @@ export async function startDeviceMonitor(opts) {
     try {
       const token = await mintToken(tokenEndpoint, roomName, monIdentity, 'monitor');
       const r = new Room();
-      r.on(RoomEvent.TrackSubscribed, (track) => {
+      r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
         if (track.kind !== Track.Kind.Audio) return;
         // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
         if (session && session.room === roomName) return;
+        // When "hear others" is off, only play the DEVICE itself (its identity === the device id),
+        // not other family members talking to it on the shared channel.
+        if (!monHearOthers && participant && participant.identity !== id) return;
         const el = track.attach(); el.autoplay = true; el.setAttribute('playsinline', '');
         ensureAudioSink().appendChild(el);
       });

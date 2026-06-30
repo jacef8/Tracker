@@ -2000,6 +2000,14 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Auto-listen to my devices</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Hear your watch from any screen without tapping Talk, and get an alert when it talks. Active while the app is open.</div></div></div>
       <span id="set-devlisten-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-secdevall-row" onclick="window._setToggleSecDevAll && window._setToggleSecDevAll()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show my devices on every map</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Always show your private devices (like the watch) on every group map. Off = only on My Map, or where you turn it on per-room.</div></div></div>
+      <span id="set-secdevall-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
+    <div id="set-hearothers-row" onclick="window._setToggleHearOthers && window._setToggleHearOthers()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Hear others on the device channel</div><div style="font-size:11px;color:var(--muted);margin-top:2px">On = you also hear family members talking to your device (e.g. the watch). Off = you only hear the device itself.</div></div></div>
+      <span id="set-hearothers-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-caraudio-row" onclick="window._setToggleCarAudio()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2108,7 +2116,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 222;
+var APP_BUILD = 223;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2363,7 +2371,10 @@ function _friendsRowsHTML() {
   // "offline favorite". Exclude both.
   var _meAcct = (typeof _myAcct === 'function') ? _myAcct() : '';
   var _meDev = ''; try { _meDev = localStorage.getItem('gl_uid') || ''; } catch (e) {}
-  var ids = Object.keys(friends).filter(function (f) { return f !== userId && f && f !== _meAcct && f !== _meDev; });
+  // Also exclude the device your OWN account is recorded under in the directory — signing in on
+  // a different device than the one in the directory was leaking "yourself" into favorites.
+  var _meDirDev = ''; try { var _dd = (window._dirAll || {})[_meAcct]; if (_dd && _dd.dev) _meDirDev = _dd.dev; } catch (e) {}
+  var ids = Object.keys(friends).filter(function (f) { return f && f !== userId && f !== _meAcct && f !== _meDev && f !== _meDirDev; });
   if (!ids.length) return '<div style="padding:18px 14px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7">No favorites yet.<br>Tap the ☆ star next to someone in a room to add them.</div>';
   function rank(fid) { var s = _friendStatus(fid); return s.online ? (s.inMyRoom ? 1 : 0) : 2; }
   ids.sort(function (a, b) { return rank(a) - rank(b); });
@@ -2430,9 +2441,10 @@ window._acctPeopleSearch = function (q) {
   });
   // Global directory: every signed-in account, found even when offline (targets their last device).
   var dir = window._dirAll || {};
+  var meAcct = (typeof _myAcct === 'function') ? _myAcct() : '';
   Object.keys(dir).forEach(function (acct) {
     var d = dir[acct] || {}; var dev = d.dev;
-    if (!dev || dev === me || seen[dev] || !d.name) return;
+    if (!dev || dev === me || acct === meAcct || seen[dev] || !d.name) return;   // never show yourself
     seen[dev] = 1;
     var p = pres[dev];
     people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
@@ -2464,7 +2476,11 @@ window._acctPeopleSearch = function (q) {
 // then refresh the search results so the row flips to ★/remove.
 window._acctAddFriend = function (uid) {
   var pres = window._presenceAll || {};
-  var nm = (pres[uid] && pres[uid].name) || 'Friend';
+  var nm = (pres[uid] && pres[uid].name) || '';
+  // Offline people aren't in presence — pull their name from the directory so the favorite
+  // shows their real name (e.g. "Laura Ford") instead of the generic "Friend".
+  if (!nm) { var dir = window._dirAll || {}; Object.keys(dir).forEach(function (acct) { var d = dir[acct] || {}; if (d.dev === uid && d.name) nm = d.name; }); }
+  if (!nm) nm = 'Friend';
   try { _toggleFriend(uid, nm); } catch (e) {}
   try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; window._acctPeopleSearch(q); } catch (e) {}
 };
@@ -2503,7 +2519,27 @@ window._listenDevices = function () {
 // you flip "Show secure devices here" in Room Info (per-room, off by default).
 window._secDevOn = function () {
   if (typeof groupName === 'undefined' || !groupName) return true;   // My Map / no room
+  try { if (localStorage.getItem('gl_secdev_all') === '1') return true; } catch (e) {}   // global: show on every map
   try { return localStorage.getItem('gl_secdev_' + groupName) === '1'; } catch (e) { return false; }
+};
+window._secDevAllOn = function () { try { return localStorage.getItem('gl_secdev_all') === '1'; } catch (e) { return false; } };
+window._setToggleSecDevAll = function () {
+  var on = !window._secDevAllOn();
+  try { localStorage.setItem('gl_secdev_all', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-secdevall-pill', on); } catch (e) {}
+  try { _renderDevices(); } catch (e) {}
+  try { _renderDeviceList(); } catch (e) {}
+  try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {}
+  try { toast(on ? 'Your devices now show on every map' : 'Devices hidden on group maps (turn on per-room in Room Info)'); } catch (e) {}
+};
+// Whether to ALSO hear other family members talking to your device, or just the device itself.
+window._hearOthersOn = function () { try { return localStorage.getItem('gl_dev_hear_others') !== '0'; } catch (e) { return true; } };
+window._setToggleHearOthers = function () {
+  var on = !window._hearOthersOn();
+  try { localStorage.setItem('gl_dev_hear_others', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-hearothers-pill', on); } catch (e) {}
+  window._voiceMod().then(function (mod) { if (mod.stopDeviceMonitor) mod.stopDeviceMonitor(); window._syncDeviceMonitor(); }).catch(function () {});
+  try { toast(on ? 'You’ll hear everyone on the device channel' : 'You’ll only hear the device itself'); } catch (e) {}
 };
 window._toggleSecureDevices = function () {
   if (typeof groupName === 'undefined' || !groupName) return;        // nothing to toggle on My Map
@@ -2705,7 +2741,7 @@ window._syncDeviceMonitor = function () {
       var d = dv[id] || {}; if (_canSeeDevice(d)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
     });
     var wantOn = window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
-    if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+    if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, hearOthers: window._hearOthersOn() });
     else if (mod.stopDeviceMonitor) mod.stopDeviceMonitor();
   }).catch(function () {});
 };
@@ -3370,6 +3406,10 @@ function _syncSettings() {
       var ownsDev = Object.keys(dv0).some(function (id) { return _canSeeDevice(dv0[id] || {}); });
       dlRow.style.display = ownsDev ? 'flex' : 'none';
       _setPill('set-devlisten-pill', _devListenOn());
+      var sdaRow = document.getElementById('set-secdevall-row');
+      if (sdaRow) { sdaRow.style.display = ownsDev ? 'flex' : 'none'; _setPill('set-secdevall-pill', window._secDevAllOn()); }
+      var hoRow = document.getElementById('set-hearothers-row');
+      if (hoRow) { hoRow.style.display = ownsDev ? 'flex' : 'none'; _setPill('set-hearothers-pill', window._hearOthersOn()); }
     }
   } catch (e) {}
   var cb = document.getElementById('toggle-parcels');
