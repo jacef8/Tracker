@@ -2124,7 +2124,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 223;
+var APP_BUILD = 224;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2807,6 +2807,7 @@ window._renderMyDevices = function () {
       '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + sub + '</div></div>' +
       '<button class="dev-act" onclick="window._talkToDevice(\'' + o.id + '\')" title="Talk" style="background:#2ea043;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-mic"/></svg></button>' +
       '<button class="dev-act" onclick="window._shareDevice(\'' + o.id + '\')" title="Share with family" style="background:#7c3aed;border:none;color:#fff;' + _db + '"><svg class="licon licon-sm"><use href="#ic-share"/></svg></button>' +
+      '<button class="dev-act" onclick="window._deviceSchedule(\'' + o.id + '\')" title="Battery schedule" style="background:none;border:1px solid var(--border);color:var(--text);font-size:14px;' + _db + '">🌙</button>' +
       '<button class="dev-act" onclick="window._locateDevice(\'' + o.id + '\')" title="Show on map" style="background:none;border:1px solid var(--border);color:var(--text);' + _db + '"><svg class="licon licon-sm"><use href="#ic-pin"/></svg></button>' +
       '<button class="dev-act" onclick="window._removeDevice(\'' + o.id + '\')" title="Remove" style="background:none;border:1px solid var(--border);color:#e74c3c;font-size:13px;font-weight:800;' + _db + '">✕</button></div>';
   });
@@ -2834,6 +2835,52 @@ window._renderMyDevices = function () {
   }
   if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Start GroundLink Watch on the device and it’ll show up here to claim.</div>';
   el.innerHTML = html;
+};
+// ── Battery schedule: owner sets active hours; the watch polls gl/_devices/<id>/sched and
+// runs voice only during those hours (conserves otherwise). ───────────────────────────────
+window._deviceSchedule = function (id) {
+  var me = _myAcct(), fb = window._fb;
+  if (!me) { try { toast('Sign in with Google first'); } catch (e) {} return; }
+  if (!fb) { try { toast('Not connected yet'); } catch (e) {} return; }
+  var d = window._devicesAll[id] || {};
+  if (d.owner !== me) { try { toast('Only the owner can set this'); } catch (e) {} return; }
+  _openSchedModal(id, d.sched || {});
+};
+function _hourOpts(sel) {
+  var h = '';
+  for (var i = 0; i < 24; i++) {
+    var lab = (i === 0 ? '12 AM' : i < 12 ? i + ' AM' : i === 12 ? '12 PM' : (i - 12) + ' PM');
+    h += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + lab + '</option>';
+  }
+  return h;
+}
+function _openSchedModal(id, sc) {
+  var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
+  var on = !!sc.on, start = (sc.start != null ? sc.start : 7), end = (sc.end != null ? sc.end : 21);
+  var ov = document.getElementById('dsched-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'dsched-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:5200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:18px';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML = '<div style="width:100%;max-width:360px;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:16px">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:16px;font-weight:800;color:var(--text)">🌙 Battery schedule</div>' +
+    '<button onclick="var o=document.getElementById(\'dsched-overlay\');if(o)o.remove();" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">✕</button></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:13px">Save battery on <b>' + _escHtml(nm) + '</b> by running voice only during active hours. Outside them it conserves — it drops the voice connection (location keeps reporting), so it isn’t instantly reachable then. Takes up to a minute to switch.</div>' +
+    '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-bottom:10px;cursor:pointer"><span style="font-size:14px;font-weight:600;color:var(--text)">Use a schedule</span><input type="checkbox" id="dsched-on"' + (on ? ' checked' : '') + ' style="width:20px;height:20px"></label>' +
+    '<div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px"><div style="flex:1"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Voice ON from</div><select id="dsched-start" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:9px">' + _hourOpts(start) + '</select></div>' +
+    '<div style="flex:1"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">until</div><select id="dsched-end" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:9px">' + _hourOpts(end) + '</select></div></div>' +
+    '<button onclick="window._saveDeviceSched(\'' + id + '\')" style="width:100%;background:#7c3aed;border:none;border-radius:10px;color:#fff;font-weight:800;font-size:14px;padding:12px;cursor:pointer">Save</button>' +
+  '</div>';
+  document.body.appendChild(ov);
+}
+window._saveDeviceSched = function (id) {
+  var fb = window._fb; if (!fb) return;
+  var on = !!(document.getElementById('dsched-on') || {}).checked;
+  var start = parseInt((document.getElementById('dsched-start') || {}).value || '7', 10);
+  var end = parseInt((document.getElementById('dsched-end') || {}).value || '21', 10);
+  try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/sched'), { on: on, start: start, end: end }); } catch (e) {}
+  if (window._devicesAll[id]) window._devicesAll[id].sched = { on: on, start: start, end: end };
+  var ov = document.getElementById('dsched-overlay'); if (ov) ov.remove();
+  try { toast(on ? 'Schedule saved — voice runs during the set hours' : 'Schedule off — voice always on'); } catch (e) {}
 };
 // ── Family sharing: owner shares the watch to family by link/code; they get view + talk ──
 window._genShareCode = function () {
