@@ -182,6 +182,12 @@ app.get('/j/:room', function(req, res) {
   var k = req.query.k ? '&k=' + encodeURIComponent(String(req.query.k)) : '';
   res.redirect(302, '/?room=' + encodeURIComponent(room) + k);
 });
+// Short device-share link: /d/<code> → the app's accept-device URL. Same idea as /j/ — keeps
+// the texted link short + clean, App-Links opens it natively, browsers 302 into the web app.
+app.get('/d/:code', function(req, res) {
+  var code = String(req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  res.redirect(302, '/?dshare=' + encodeURIComponent(code));
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: function(res, filePath) {
     if (filePath.endsWith('sw.js')) {
