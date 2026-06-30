@@ -168,6 +168,7 @@ export async function startDeviceMonitor(opts) {
       });
       await r.connect(livekitUrl, token);
       try { await r.startAudio(); } catch (e) {}
+      _carAudio(true);   // route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece
       if (monRooms[id]) monRooms[id].room = r; else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
     } catch (e) {
       console.error('[voice] device monitor failed for ' + id, e);
