@@ -2120,7 +2120,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 231;
+var APP_BUILD = 232;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2681,6 +2681,22 @@ window._wakeDevice = function (id, type) {
     fetch('/wake-device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: id, token: token, type: type || 'voice' }) }).catch(function () {});
   } catch (e) {}
 };
+// Keep an on-demand watch ALIVE while you're actively looking at it: ping every ~15s so its
+// service stays awake + its location stays fresh. When you leave the map or background the app,
+// the pings stop and the watch sleeps to save battery (paired with the watch's idle self-stop).
+window._pingVisibleDevices = function () {
+  try {
+    if (typeof document !== 'undefined' && document.hidden) return;   // only while the app is in front
+    if (typeof map === 'undefined' || !map) return;                   // only while a map is open
+    if (!window._wakeDevice) return;
+    if (window._secDevOn && !window._secDevOn()) return;              // devices are shown on this map
+    var devs = window._devicesAll || {};
+    Object.keys(devs).forEach(function (id) {
+      try { if (_canSeeDevice(devs[id])) window._wakeDevice(id, 'locate'); } catch (e) {}
+    });
+  } catch (e) {}
+};
+try { if (!window._devicePinger) window._devicePinger = setInterval(function () { window._pingVisibleDevices(); }, 15000); } catch (e) {}
 window._locateDevice = function (id) {
   try { window._wakeDevice(id, 'locate'); } catch (e) {}   // ask the watch for a fresh fix
   var d = (window._devicesAll[id] || {}).live || {};
