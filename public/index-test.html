@@ -148,6 +148,10 @@
   .btn-primary:active { opacity: .82; }
   #share-app-btn:hover { border-color: var(--accent); color: var(--accent); }
   #share-app-btn:active { border-color: var(--accent); color: var(--accent); opacity: .8; }
+  /* My Map: hide Mapbox's raw geolocate dot/ring — we render our own smooth marker instead. */
+  body.solo-mode .mapboxgl-user-location-dot,
+  body.solo-mode .mapboxgl-user-location-dot::before,
+  body.solo-mode .mapboxgl-user-location-accuracy-circle { display: none !important; }
 
   /* ── Install banner (shown before install) ── */
   #install-banner {
@@ -2120,7 +2124,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 233;
+var APP_BUILD = 234;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6121,6 +6125,30 @@ function startLocationSharing() {
     // Track recorder: capture this fix into the active recording (works even if location hidden / in background).
     try { if (window._trackRec) window._trackRecOnFix(pos, now); } catch (e) {}
 
+    // My Map (personal, no room): render YOUR dot with the SAME smooth marker + glide as the
+    // room maps (was Mapbox's raw geolocate dot, which jumps). No room to write to, so stop here.
+    if (window._soloMode || !groupName) {
+      try {
+        if (typeof map !== 'undefined' && map) {
+          if (!userMarkers[userId]) {
+            var _meEl = document.createElement('div');
+            Object.assign(_meEl.style, {
+              width: '44px', height: '44px', borderRadius: '50%', background: '#f0a500',
+              border: '4px solid #f0a500', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '14px', fontWeight: '800', color: '#000', fontFamily: 'system-ui, sans-serif',
+              boxShadow: '0 2px 14px rgba(0,0,0,.7), 0 0 0 2px rgba(0,0,0,.4)', userSelect: 'none'
+            });
+            _meEl.textContent = initials(userName);
+            userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+            userMarkers[userId]._el = _meEl;
+          } else {
+            _animateMarker(userMarkers[userId], lng, lat);
+          }
+        }
+      } catch (e) {}
+      return;
+    }
+
     // Location hidden: stay in the room as a no-GPS member, broadcast no real position
     if (locationHidden) {
       fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), {
@@ -6497,7 +6525,7 @@ function listenUsers() {
 
     // Update member count badge on users button — counts people PLUS the private
     // devices you can see (the watch is a member too). _refreshPeopleBadge pops on change.
-    window._roomUserCount = Object.keys(users).length;
+    window._roomUserCount = Object.keys(users).filter(function (u) { return u !== userId; }).length;   // count others, not yourself
     window._refreshPeopleBadge();
 
     // Remove markers for users fully gone from Firebase
@@ -6675,7 +6703,7 @@ function listenUsers() {
           setTimeout(function() { window._followUser(uid, data.name); }, 1100);
         }
       });
-      listEl.appendChild(row);
+      if (!isMine) listEl.appendChild(row);   // you're already on the map — don't list yourself
     });
   });
 }
@@ -9568,6 +9596,7 @@ window._enterSoloMap = function() {
 window._exitSoloMap = function() {
   window._soloMode = false;
   document.body.classList.remove('solo-mode');
+  try { if (userMarkers[userId]) { userMarkers[userId].remove(); delete userMarkers[userId]; } } catch (e) {}  // drop the My-Map self dot
   try { if (window._soloPop) { window._soloPop.remove(); window._soloPop = null; } } catch (e) {}
   try { if (map && map.getSource('pins')) map.getSource('pins').setData({ type: 'FeatureCollection', features: [] }); } catch (e) {}
   lastPins = {};

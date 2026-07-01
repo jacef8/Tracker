@@ -55,19 +55,16 @@ public class MainActivity extends BridgeActivity {
             handler.post(new Runnable() { @Override public void run() {
                 active = true;
                 applyOnce();
-                if (Build.VERSION.SDK_INT >= 31) {
-                    if (modeListener == null) {
-                        AudioManager.OnModeChangedListener l = new AudioManager.OnModeChangedListener() {
-                            @Override public void onModeChanged(int mode) {
-                                if (active && mode != AudioManager.MODE_NORMAL) applyOnce();
-                            }
-                        };
-                        modeListener = l;
-                        try { am.addOnModeChangedListener(ctx.getMainExecutor(), l); } catch (Exception e) {}
-                    }
-                } else {
-                    handler.removeCallbacks(poll);
-                    handler.postDelayed(poll, 1500);
+                // Re-assert continuously — WebRTC/Chromium keep flipping the audio mode, so a light
+                // 1.5s poll (plus the mode-change listener on API 31+) keeps our routing pinned.
+                handler.removeCallbacks(poll);
+                handler.postDelayed(poll, 1500);
+                if (Build.VERSION.SDK_INT >= 31 && modeListener == null) {
+                    AudioManager.OnModeChangedListener l = new AudioManager.OnModeChangedListener() {
+                        @Override public void onModeChanged(int mode) { if (active) applyOnce(); }
+                    };
+                    modeListener = l;
+                    try { am.addOnModeChangedListener(ctx.getMainExecutor(), l); } catch (Exception e) {}
                 }
             }});
         }
@@ -82,6 +79,12 @@ public class MainActivity extends BridgeActivity {
                     try { am.removeOnModeChangedListener((AudioManager.OnModeChangedListener) modeListener); } catch (Exception e) {}
                     modeListener = null;
                 }
+                // Voice is done → hand the phone back to normal audio.
+                try {
+                    if (Build.VERSION.SDK_INT >= 31) { try { am.clearCommunicationDevice(); } catch (Exception e) {} }
+                    else { if (am.isSpeakerphoneOn()) am.setSpeakerphoneOn(false); }
+                    if (am.getMode() != AudioManager.MODE_NORMAL) am.setMode(AudioManager.MODE_NORMAL);
+                } catch (Exception e) {}
             }});
         }
 
@@ -98,9 +101,11 @@ public class MainActivity extends BridgeActivity {
                         try { am.stopBluetoothSco(); } catch (Exception e) {}
                     }
                 } else {
-                    // No external audio device → force the phone's built-in LOUDSPEAKER. Android
-                    // treats WebRTC as a call and defaults voice to the EARPIECE; this pushes it
-                    // to the speaker so the walkie-talkie is hands-free.
+                    // No external audio device → force COMMUNICATION mode + the built-in LOUDSPEAKER.
+                    // WebRTC otherwise flip-flops between a media stream (speaker) and a voice stream
+                    // (earpiece); pinning MODE_IN_COMMUNICATION + speakerphone keeps the walkie-talkie
+                    // consistently loud on the phone's own speaker.
+                    if (am.getMode() != AudioManager.MODE_IN_COMMUNICATION) am.setMode(AudioManager.MODE_IN_COMMUNICATION);
                     if (Build.VERSION.SDK_INT >= 31) {
                         try {
                             AudioDeviceInfo spk = findOutput(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
@@ -109,20 +114,21 @@ public class MainActivity extends BridgeActivity {
                                 am.setCommunicationDevice(spk);
                             }
                         } catch (Exception e) {}
-                    } else {
-                        if (!am.isSpeakerphoneOn()) am.setSpeakerphoneOn(true);
                     }
+                    // setSpeakerphoneOn works on every version and is a harmless belt-and-suspenders.
+                    try { if (!am.isSpeakerphoneOn()) am.setSpeakerphoneOn(true); } catch (Exception e) {}
                 }
             } catch (Exception e) {}
         }
 
-        // Is any Bluetooth (car/headset) or wired output currently connected?
+        // Is a real MEDIA audio device (car stereo / earbuds / wired / USB) connected? We deliberately
+        // do NOT count TYPE_BLUETOOTH_SCO — a paired smartwatch shows up as SCO but the user still
+        // wants voice on the phone's own speaker, not diverted to the watch.
         private boolean hasExternalAudioOut() {
             try {
                 for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
                     switch (d.getType()) {
                         case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
-                        case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
                         case AudioDeviceInfo.TYPE_WIRED_HEADSET:
                         case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
                         case AudioDeviceInfo.TYPE_USB_HEADSET:
