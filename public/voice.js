@@ -293,8 +293,8 @@ function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
   if (!btn) return;
   btn.classList.toggle('gv-keyed', micOn);
-  btn.title = micOn ? 'On air — release to stop' : 'Hold to talk';
-  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'HOLD';
+  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk';
+  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'TAP';
   setTx(micOn);
 }
 
@@ -466,12 +466,11 @@ function renderBar() {
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
 
   const ptt = barEl.querySelector('#gv-ptt');
-  const _pttDown = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(true); };
-  const _pttUp = (e) => { e.stopPropagation(); setPtt(false); };
-  ptt.addEventListener('pointerdown', _pttDown);
-  ptt.addEventListener('pointerup', _pttUp);
-  ptt.addEventListener('pointerleave', _pttUp);   // slide finger off = release
-  ptt.addEventListener('pointercancel', _pttUp);
+  // TAP to toggle (matches the watch): tap once to go on-air, tap again to stop — no holding.
+  // Fire on pointerdown so the user gesture is still live for getUserMedia (a plain 'click'
+  // several awaits later can lose the gesture on some mobile browsers).
+  const _pttToggle = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(!micOn); };
+  ptt.addEventListener('pointerdown', _pttToggle);
   ptt.addEventListener('contextmenu', (e) => e.preventDefault());  // no long-press menu on mobile
   updatePttButton();
   barEl.querySelector('#gv-log').addEventListener('click', (e) => { e.stopPropagation(); try { if (window._openVoiceLog) window._openVoiceLog(); } catch (_) {} });
