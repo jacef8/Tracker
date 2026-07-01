@@ -1170,6 +1170,12 @@
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
+        <!-- Muted people/devices — hidden entirely when the list is empty -->
+        <div id="account-muted-section" style="margin-top:14px;display:none">
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">🔇 Muted</div>
+          <div id="account-muted"></div>
+        </div>
+
         <!-- Your signed-in devices (this account) — live: online / which room / talking -->
         <div style="margin-top:14px">
           <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">📲 Your devices <span style="font-size:10px;color:var(--muted);font-weight:400">· everything on this account, live</span></div>
@@ -2138,7 +2144,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 236;
+var APP_BUILD = 237;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2346,6 +2352,37 @@ function _isOffCenter(lngLat, marginPx) {
 function _getFriends() { try { return JSON.parse(localStorage.getItem('gl_friends') || '{}'); } catch (e) { return {}; } }
 function _setFriends(m) { try { localStorage.setItem('gl_friends', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFriend(uid) { return !!_getFriends()[uid]; }
+
+// ── Mute: silence a specific person or device — no audio, no "is talking" alert, no auto-join
+// from them. They are NOT told; nothing changes on their side. Syncs across your devices
+// (same account) via the profile, like friends/favs. Keyed by uid (member id or device id).
+function _getMuted() { try { return JSON.parse(localStorage.getItem('gl_muted') || '{}'); } catch (e) { return {}; } }
+function _setMuted(m) { try { localStorage.setItem('gl_muted', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
+window._isMuted = function (uid) { return !!_getMuted()[uid]; };
+window._toggleMute = function (uid, name) {
+  var m = _getMuted(), was = !!m[uid];
+  if (was) delete m[uid]; else m[uid] = { name: name || '', ts: Date.now() };
+  _setMuted(m);
+  try { toast(was ? '🔔 Unmuted ' + (name || 'them') : '🔇 Muted ' + (name || 'them') + ' — you won’t hear or be notified by them'); } catch (e) {}
+  try { window._renderFriends && window._renderFriends(); } catch (e) {}
+  try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
+  try { window._renderMutedList && window._renderMutedList(); } catch (e) {}
+  try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+  return !was;
+};
+window._renderMutedList = function () {
+  var el = document.getElementById('account-muted'); if (!el) return;
+  var m = _getMuted(), ids = Object.keys(m);
+  if (!ids.length) { el.innerHTML = ''; var sec = document.getElementById('account-muted-section'); if (sec) sec.style.display = 'none'; return; }
+  var sec2 = document.getElementById('account-muted-section'); if (sec2) sec2.style.display = '';
+  var rows = ids.sort(function (a, b) { return (m[b].ts || 0) - (m[a].ts || 0); }).map(function (uid) {
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+      '<span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔇 ' + _escHtml(m[uid].name || 'Muted') + '</span>' +
+      '<button onclick="window._toggleMute(\'' + uid + '\',' + JSON.stringify(m[uid].name || '') + ')" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer">Unmute</button>' +
+    '</div>';
+  }).join('');
+  el.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">' + rows + '</div>';
+};
 window._toggleFriend = function(uid, name, ev) {
   if (ev) ev.stopPropagation();
   var m = _getFriends(); var nowFriend;
@@ -2793,7 +2830,7 @@ window._syncDeviceMonitor = function () {
     if (!mod.startDeviceMonitor) return;   // older cached voice module — skip
     var dv = window._devicesAll || {}, owned = [];
     Object.keys(dv).forEach(function (id) {
-      var d = dv[id] || {}; if (_canSeeDevice(d)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
+      var d = dv[id] || {}; if (_canSeeDevice(d) && !window._isMuted(id)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
     });
     var wantOn = window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
     if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, hearOthers: window._hearOthersOn() });
@@ -2804,6 +2841,7 @@ window._syncDeviceMonitor = function () {
 // plays through the monitor; this just surfaces an alert so you notice.
 window._onDeviceTalking = function (ev) {
   if (!ev || !ev.on) return;   // alert only on the START of a transmission
+  if (ev.id && window._isMuted(ev.id)) return;   // muted — no alert
   var nm = (ev.name || 'A device');
   try { toast('⌚ ' + nm + ' is talking'); } catch (e) {}
   try {
@@ -2843,10 +2881,14 @@ window._openDeviceSheet = function (id) {
     html += '<button onclick="window._shareDevice(\'' + id + '\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px;padding:12px 13px;cursor:pointer;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between"><span><svg class="licon licon-sm" style="vertical-align:-2px;margin-right:7px"><use href="#ic-share"/></svg>Family access' + (n ? ' (' + n + ')' : '') + '</span><span style="color:var(--muted)">›</span></button>' +
       '<button onclick="window._deviceSchedule(\'' + id + '\')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px;padding:12px 13px;cursor:pointer;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between"><span>🌙 Battery schedule</span><span style="color:var(--muted)">›</span></button>';
   }
+  var _muted = window._isMuted(id);
   html += '<div style="font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Voice &amp; visibility</div>' +
     trow('Auto-listen', 'Hear it from any screen, no tapping Talk', window._devListenOn(), '_setToggleDevListen') +
     trow('Show on every map', 'Otherwise only My Map / per-room', window._secDevAllOn(), '_setToggleSecDevAll') +
     trow('Hear others on the channel', 'Also hear family talking to it', window._hearOthersOn(), '_setToggleHearOthers') +
+    '<div onclick="window._toggleMute(\'' + id + '\',' + JSON.stringify(nm) + ');' + reopen + '" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+      '<div style="min-width:0"><div style="font-size:14px;font-weight:600;color:var(--text)">🔇 Mute this device</div><div style="font-size:11px;color:var(--muted);margin-top:2px">No audio or alerts from it, silently</div></div>' +
+      '<span style="flex-shrink:0;font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:' + (_muted ? '#3a1616' : 'var(--border)') + ';color:' + (_muted ? '#f85149' : 'var(--muted)') + '">' + (_muted ? 'MUTED' : 'OFF') + '</span></div>' +
     '<div style="margin-top:8px">' +
     (owner
       ? '<button onclick="' + closeJs + 'window._removeDevice(\'' + id + '\')" style="width:100%;background:none;border:1px solid var(--border);border-radius:10px;color:#e74c3c;font-weight:700;font-size:14px;padding:12px;cursor:pointer">Remove device</button>'
@@ -4100,6 +4142,7 @@ function _renderAccountPage() {
   try { _renderFriends(); } catch (e) {}
   try { if (window._listenDevices) _listenDevices(); window._renderMyDevices && _renderMyDevices(); } catch (e) {}
   try { window._subMySessions && window._subMySessions(); window._renderMySessions && window._renderMySessions(); } catch (e) {}
+  try { window._renderMutedList && window._renderMutedList(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -6795,6 +6838,7 @@ function listenUsers() {
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
+          (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:0;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '">' + (window._isMuted(uid) ? '🔇' : '🔊') + '</button>' : '') +
           ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
@@ -6804,6 +6848,14 @@ function listenUsers() {
       if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       var _frb = row.querySelector('.ufriend-btn');
       if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
+      var _mub = row.querySelector('.umute-btn');
+      if (_mub) _mub.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var nowMuted = window._toggleMute(uid, data.name);
+        e.currentTarget.textContent = nowMuted ? '🔇' : '🔊';
+        e.currentTarget.style.color = nowMuted ? '#f85149' : 'var(--muted)';
+        e.currentTarget.title = nowMuted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
+      });
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
       var _ob = row.querySelector('.uowner-btn');
@@ -10723,6 +10775,7 @@ document.addEventListener('click', function(e) {
       name:       name(),
       nameCustom: LS.get('gl_name_custom') === '1',
       friends:    LS.get('gl_friends') || '{}',
+      muted:      LS.get('gl_muted') || '{}',
       favs:       LS.get('gl_favs') || '[]',
       colors:     LS.get('gl_user_colors') || '{}',
       pins:       LS.get('gl_saved_pins') || '[]',
@@ -10772,6 +10825,7 @@ document.addEventListener('click', function(e) {
       if (p.name)    LS.set('gl_name', p.name);
       if (p.nameCustom != null) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
+      if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
       if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
       if (p.colors)  LS.set('gl_user_colors', typeof p.colors === 'string' ? p.colors : JSON.stringify(p.colors));
       if (p.mycolor) LS.set('gl_mycolor', p.mycolor);
@@ -11322,6 +11376,7 @@ window._listenVoiceInvites = function () {
       if (Date.now() - (inv.ts || 0) > 60000) return;                // stale ping (widened for slow delivery / clock skew)
       if (inv.ts <= _gvLastPingTs) return;                           // already handled
       _gvLastPingTs = inv.ts;
+      if (inv.from && window._isMuted(inv.from)) return;             // muted — ignore entirely, no popup, no join
       // Log on the RECEIVE side so diagnostics show the ping actually reached THIS device
       // (previously only the Android auto-join logged, so an iPhone that got the ping but
       // showed no prompt was indistinguishable from one that never got it).
@@ -11338,6 +11393,14 @@ window._listenVoiceInvites = function () {
           partnerName: inv.fromName || 'member', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined voice from ' + (inv.fromName || 'member'));
+        // Same "who's talking" alert devices already get — Android auto-joins silently otherwise.
+        try { toast('🎙 ' + (inv.fromName || 'Someone') + ' wants to talk'); } catch (e) {}
+        try {
+          if (window.Notification && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+            var n1 = new Notification('🎙 ' + (inv.fromName || 'Someone') + ' is talking', { body: 'Tap to open GroundLink', tag: 'voice-' + (inv.from || 'p'), renotify: true });
+            n1.onclick = function () { try { window.focus(); } catch (e) {} try { n1.close(); } catch (e) {} };
+          }
+        } catch (e) {}
       } catch (e) { console.error('[voice] auto-join failed', e); window._showIncomingVoice(inv.room, inv.fromName); }
     });
     // Group all-call broadcast — every member auto-joins the one shared group room.
@@ -11360,6 +11423,15 @@ window._listenVoiceInvites = function () {
           partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined GROUP voice from ' + (inv.fromName || 'member'));
+        if (!(inv.from && window._isMuted(inv.from))) {
+          try { toast('🎙 Group channel — ' + (inv.fromName || 'Someone') + ' started talking'); } catch (e) {}
+          try {
+            if (window.Notification && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+              var n2 = new Notification('🎙 Group voice active', { body: (inv.fromName || 'Someone') + ' started talking — tap to open', tag: 'voice-group', renotify: true });
+              n2.onclick = function () { try { window.focus(); } catch (e) {} try { n2.close(); } catch (e) {} };
+            }
+          } catch (e) {}
+        }
       } catch (e) { console.error('[voice] group auto-join failed', e); window._showIncomingVoice(inv.room, (inv.fromName || 'Someone') + ' (group)'); }
     });
   } catch (e) {}

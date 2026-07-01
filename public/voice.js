@@ -208,9 +208,11 @@ async function connectVoice() {
 
   room = new Room();
 
-  // Remote audio: attach each subscribed audio track to a hidden <audio> element.
-  room.on(RoomEvent.TrackSubscribed, (track) => {
+  // Remote audio: attach each subscribed audio track to a hidden <audio> element. Skip anyone
+  // the user has MUTED (silence-only: their track just never plays — they aren't told).
+  room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
     if (track.kind === Track.Kind.Audio) {
+      if (participant && window._isMuted && window._isMuted(participant.identity)) return;
       const el = track.attach();
       el.autoplay = true;
       el.setAttribute('playsinline', '');
