@@ -1,0 +1,67 @@
+workflows:
+  ios-testflight:
+    name: GroundLink iOS - TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: groundlink_asc
+    environment:
+      vars:
+        XCODE_WORKSPACE: "native-app/ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+        BUNDLE_ID: "com.groundlink.app"
+      node: 20
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events: []          # manual only — builds are started by hand (or by API) so a
+                           # native iOS release only ships when we actually mean it to,
+                           # not on every web-only commit to this repo.
+    scripts:
+      - name: Install npm dependencies
+        script: |
+          cd native-app
+          npm ci
+
+      - name: Add the iOS platform (first run only)
+        script: |
+          cd native-app
+          if [ ! -d ios ]; then
+            npm install @capacitor/ios
+            npx cap add ios
+          fi
+
+      - name: Sync Capacitor web assets/config into the iOS project
+        script: |
+          cd native-app
+          npx cap sync ios
+
+      - name: Install CocoaPods dependencies
+        script: |
+          cd native-app/ios/App
+          pod install
+
+      - name: Set up code signing (Automatic signing via App Store Connect)
+        script: |
+          xcode-project use-profiles
+
+      - name: Increment the build number to the next TestFlight build
+        script: |
+          cd native-app/ios/App
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo 0)
+          agvtool new-version -all $((LATEST + 1))
+
+      - name: Build the .ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - native-app/ios/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
