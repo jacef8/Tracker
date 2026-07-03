@@ -53,6 +53,21 @@ function _carAudio(on) {
   } catch (e) { /* ignore */ }
 }
 
+// startMediaMode() runs a continuous 1.5s native poll re-asserting audio routing — meant to
+// last only as long as a voice session is actually open. Every call site used to turn it ON
+// but only the main Talk bar ever turned it back OFF, so the FIRST time the auto-listen
+// monitor connected (which happens automatically in the background any time you own a
+// device), the poll started running forever — even fully idle, even after the monitor
+// disconnected — repeatedly touching system audio APIs and fighting things like Android
+// Auto's own audio routing (reported as periodic music "ducking" every few seconds).
+// Recomputing from real state on every change, rather than tracking on/off deltas, means it's
+// impossible for this to drift out of sync again.
+function _syncCarAudio() {
+  const talkActive = !!(session && room);
+  const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
+  _carAudio(talkActive || monitorActive);
+}
+
 export function onVoiceEvent(cb) {
   listeners.push(cb);
   return () => { listeners = listeners.filter((x) => x !== cb); };
@@ -106,7 +121,7 @@ export function leaveVoice() {
   room = null;
   session = null;
   micOn = false;
-  _carAudio(false);   // restore normal audio routing when we leave voice
+  _syncCarAudio();   // restore normal audio routing UNLESS a device monitor is still active
   removeBar();
   emit({ type: 'left' });
 }
@@ -166,15 +181,19 @@ async function connectOneMonitor(id, name) {
     r.on(RoomEvent.Disconnected, () => {
       const slot = monRooms[id];
       if (slot && slot.room === r) delete monRooms[id];
+      _syncCarAudio();   // this room just went away — turn car-audio mode off unless something else needs it
       setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, 4000);
     });
     await r.connect(opts.livekitUrl, token);
     try { await r.startAudio(); } catch (e) {}
-    _carAudio(true);   // route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece
-    if (monRooms[id]) monRooms[id].room = r; else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
+    // Route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece —
+    // but only while a session is genuinely active (_syncCarAudio checks real state, so this
+    // never ends up stuck running when nothing needs it, unlike an unconditional _carAudio(true)).
+    if (monRooms[id]) { monRooms[id].room = r; _syncCarAudio(); } else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
   } catch (e) {
     console.error('[voice] device monitor failed for ' + id, e);
     delete monRooms[id];
+    _syncCarAudio();
     setTimeout(() => { try { connectOneMonitor(id, name); } catch (e2) {} }, 4000);
   }
 }
@@ -187,10 +206,12 @@ export async function startDeviceMonitor(opts) {
   const wanted = {};
   devices.forEach((d) => { if (d && d.id) wanted[d.id] = d.name || 'device'; });
   monWanted = wanted;
-  // Drop monitors no longer wanted.
+  // Drop monitors no longer wanted. (monWanted is already updated above, so the Disconnected
+  // handler's own reconnect-check correctly no-ops for these instead of reviving them.)
   Object.keys(monRooms).forEach((id) => {
     if (!wanted[id]) { try { monRooms[id].room && monRooms[id].room.disconnect(); } catch (e) {} delete monRooms[id]; }
   });
+  _syncCarAudio();
   // Add monitors for newly-wanted devices.
   for (const id of Object.keys(wanted)) {
     if (monRooms[id]) { monRooms[id].name = wanted[id]; continue; }
@@ -199,8 +220,12 @@ export async function startDeviceMonitor(opts) {
 }
 
 export function stopDeviceMonitor() {
+  monWanted = {};   // clear FIRST — .disconnect() below fires the Disconnected handler, whose
+                     // own reconnect-check reads this; otherwise a stray reconnect could fire
+                     // seconds after auto-listen was explicitly turned off.
   Object.keys(monRooms).forEach((id) => { try { monRooms[id].room && monRooms[id].room.disconnect(); } catch (e) {} });
   monRooms = {};
+  _syncCarAudio();
 }
 
 export function deviceMonitorIds() { return Object.keys(monRooms); }
@@ -275,7 +300,7 @@ async function connectVoice() {
     updatePresence();
     updatePttButton();
     if (room.canPlaybackAudio === false) showAudioBlocked();
-    _carAudio(true);   // keep the car radio alive — don't let this read as a phone call
+    _syncCarAudio();   // keep the car radio alive — don't let this read as a phone call
     emit({ type: 'joined', room: session.room });
   } catch (e) {
     console.error('[voice] connect failed', e);
