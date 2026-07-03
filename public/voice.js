@@ -129,12 +129,64 @@ async function mintToken(endpoint, roomName, identity, name) {
 }
 
 // devices: [{ id, name }]. Reconciles: joins new ones, drops removed ones, leaves the rest.
+let monLastOpts = null;   // last {livekitUrl, tokenEndpoint, identity, hearOthers} — needed to reconnect a dropped monitor
+let monWanted = {};       // last-known wanted set (id -> name) — a disconnect handler only reconnects if still wanted
+
+async function connectOneMonitor(id, name) {
+  const opts = monLastOpts; if (!opts) return;
+  if (!monWanted[id]) return;   // no longer an owned/shared device — don't reconnect
+  monRooms[id] = { room: null, name: name, talking: monRooms[id] ? monRooms[id].talking : false };
+  const roomName = 'gv_dev_' + id + '_ALL';
+  const monIdentity = opts.identity + '__mon';   // distinct identity so it never kicks your Talk session
+  try {
+    const token = await mintToken(opts.tokenEndpoint, roomName, monIdentity, 'monitor');
+    const r = new Room();
+    r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      if (track.kind !== Track.Kind.Audio) return;
+      // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
+      if (session && session.room === roomName) return;
+      // When "hear others" is off, only play the DEVICE itself (its identity === the device id),
+      // not other family members talking to it on the shared channel.
+      if (!monHearOthers && participant && participant.identity !== id) return;
+      const el = track.attach(); el.autoplay = true; el.setAttribute('playsinline', '');
+      ensureAudioSink().appendChild(el);
+    });
+    r.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
+    });
+    r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      const on = speakers.some((p) => p.identity && p.identity !== monIdentity);
+      const slot = monRooms[id]; if (!slot) return;
+      if (on !== slot.talking) { slot.talking = on; emit({ type: 'deviceTalking', id, name: slot.name, on }); }
+    });
+    // SELF-HEALING: this connection previously had no way to recover from a drop — once the
+    // room disconnected (a network blip, a server-side idle-room timeout, anything), the
+    // "auto-listen" monitor just stayed dead until the app was fully restarted. Now a drop
+    // clears the slot and retries after a short delay, same as the main Talk bar already does.
+    r.on(RoomEvent.Disconnected, () => {
+      const slot = monRooms[id];
+      if (slot && slot.room === r) delete monRooms[id];
+      setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, 4000);
+    });
+    await r.connect(opts.livekitUrl, token);
+    try { await r.startAudio(); } catch (e) {}
+    _carAudio(true);   // route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece
+    if (monRooms[id]) monRooms[id].room = r; else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
+  } catch (e) {
+    console.error('[voice] device monitor failed for ' + id, e);
+    delete monRooms[id];
+    setTimeout(() => { try { connectOneMonitor(id, name); } catch (e2) {} }, 4000);
+  }
+}
+
 export async function startDeviceMonitor(opts) {
   const { devices, identity, livekitUrl, tokenEndpoint, hearOthers } = opts || {};
   if (!devices || !livekitUrl || !tokenEndpoint || !identity) return;
   monHearOthers = (hearOthers !== false);   // false = only play the DEVICE's own audio, not other people
+  monLastOpts = { livekitUrl, tokenEndpoint, identity, hearOthers };
   const wanted = {};
   devices.forEach((d) => { if (d && d.id) wanted[d.id] = d.name || 'device'; });
+  monWanted = wanted;
   // Drop monitors no longer wanted.
   Object.keys(monRooms).forEach((id) => {
     if (!wanted[id]) { try { monRooms[id].room && monRooms[id].room.disconnect(); } catch (e) {} delete monRooms[id]; }
@@ -142,38 +194,7 @@ export async function startDeviceMonitor(opts) {
   // Add monitors for newly-wanted devices.
   for (const id of Object.keys(wanted)) {
     if (monRooms[id]) { monRooms[id].name = wanted[id]; continue; }
-    monRooms[id] = { room: null, name: wanted[id], talking: false };   // reserve slot (avoid double-join races)
-    const roomName = 'gv_dev_' + id + '_ALL';
-    const monIdentity = identity + '__mon';   // distinct identity so it never kicks your Talk session
-    try {
-      const token = await mintToken(tokenEndpoint, roomName, monIdentity, 'monitor');
-      const r = new Room();
-      r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
-        if (track.kind !== Track.Kind.Audio) return;
-        // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
-        if (session && session.room === roomName) return;
-        // When "hear others" is off, only play the DEVICE itself (its identity === the device id),
-        // not other family members talking to it on the shared channel.
-        if (!monHearOthers && participant && participant.identity !== id) return;
-        const el = track.attach(); el.autoplay = true; el.setAttribute('playsinline', '');
-        ensureAudioSink().appendChild(el);
-      });
-      r.on(RoomEvent.TrackUnsubscribed, (track) => {
-        if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
-      });
-      r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-        const on = speakers.some((p) => p.identity && p.identity !== monIdentity);
-        const slot = monRooms[id]; if (!slot) return;
-        if (on !== slot.talking) { slot.talking = on; emit({ type: 'deviceTalking', id, name: slot.name, on }); }
-      });
-      await r.connect(livekitUrl, token);
-      try { await r.startAudio(); } catch (e) {}
-      _carAudio(true);   // route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece
-      if (monRooms[id]) monRooms[id].room = r; else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
-    } catch (e) {
-      console.error('[voice] device monitor failed for ' + id, e);
-      delete monRooms[id];
-    }
+    await connectOneMonitor(id, wanted[id]);
   }
 }
 
