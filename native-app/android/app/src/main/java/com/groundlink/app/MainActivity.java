@@ -93,12 +93,21 @@ public class MainActivity extends BridgeActivity {
                 if (hasExternalAudioOut()) {
                     // A car/Bluetooth or wired output is connected: hold MODE_NORMAL and tear down
                     // SCO so a vehicle plays voice as A2DP media and the FM/radio isn't muted.
+                    // Every call here is guarded (only touch the system API if something is
+                    // actually different from what we want) EXCEPT this one used to be
+                    // unconditional -- calling clearCommunicationDevice() every single 1.5s
+                    // cycle even when there was nothing to clear, which briefly interrupts the
+                    // active audio route each time. That's the likely cause of periodic music
+                    // "ducking" reported on Android Auto: this poll runs continuously the whole
+                    // time voice/auto-listen is connected in a car, which is most of a drive.
                     if (am.getMode() != AudioManager.MODE_NORMAL) am.setMode(AudioManager.MODE_NORMAL);
                     if (Build.VERSION.SDK_INT >= 31) {
-                        try { am.clearCommunicationDevice(); } catch (Exception e) {}
+                        try { if (am.getCommunicationDevice() != null) am.clearCommunicationDevice(); } catch (Exception e) {}
                     } else {
-                        if (am.isBluetoothScoOn()) am.setBluetoothScoOn(false);
-                        try { am.stopBluetoothSco(); } catch (Exception e) {}
+                        if (am.isBluetoothScoOn()) {
+                            am.setBluetoothScoOn(false);
+                            try { am.stopBluetoothSco(); } catch (Exception e) {}
+                        }
                     }
                 } else {
                     // No external audio device → force COMMUNICATION mode + the built-in LOUDSPEAKER.
