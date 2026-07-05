@@ -192,7 +192,10 @@ async function connectOneMonitor(id, name) {
       _syncCarAudio();   // this room just went away — turn car-audio mode off unless something else needs it
       setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, 4000);
     });
-    await r.connect(opts.livekitUrl, token);
+    // Force TURN-relay ICE: cellular carrier NAT/firewalls routinely let the signaling
+    // WebSocket through but block direct/STUN UDP media, so audio never flows even though
+    // "connected" fires. Relay-only always looks like ordinary outbound traffic to any NAT.
+    await r.connect(opts.livekitUrl, token, { rtcConfig: { iceTransportPolicy: 'relay' } });
     try { await r.startAudio(); } catch (e) {}
     // Route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece —
     // but only while a session is genuinely active (_syncCarAudio checks real state, so this
@@ -307,7 +310,8 @@ async function connectVoice() {
   room.on(RoomEvent.Disconnected, () => { setTalker('disconnected', '#8b949e'); });
 
   try {
-    await room.connect(session.livekitUrl, token);
+    // Same TURN-relay force as the device-monitor path above — see comment there.
+    await room.connect(session.livekitUrl, token, { rtcConfig: { iceTransportPolicy: 'relay' } });
     // Don't grab the mic here — connect() is several awaits past the original tap,
     // so the user gesture is gone and getUserMedia would be blocked with no prompt.
     // The mic is acquired on the user's first PTT tap instead (a live gesture).
