@@ -130,19 +130,26 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {}
         }
 
-        // Is a real MEDIA audio device (car stereo / earbuds / wired / USB) connected? We deliberately
-        // do NOT count TYPE_BLUETOOTH_SCO — a paired smartwatch shows up as SCO but the user still
-        // wants voice on the phone's own speaker, not diverted to the watch.
+        // Is a real MEDIA audio device (car stereo / earbuds / wired / USB / Android Auto)
+        // connected? Originally an ALLOWLIST of specific types (Bluetooth A2DP, wired headset,
+        // etc) — but a truck's Android Auto can connect via other types too (USB accessory mode,
+        // dock, automotive bus, BLE audio), and missing even one meant the app wrongly concluded
+        // "no car connected" and forced communication/call mode — reported as "Android Auto still
+        // thinks it's a phone call." Flipped to a DENYLIST instead: anything that ISN'T the
+        // phone's own built-in speaker/earpiece (or the watch's Bluetooth SCO link, or an internal
+        // virtual device) counts as external, so no future car connection type can slip through.
         private boolean hasExternalAudioOut() {
             try {
                 for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
                     switch (d.getType()) {
-                        case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
-                        case AudioDeviceInfo.TYPE_WIRED_HEADSET:
-                        case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
-                        case AudioDeviceInfo.TYPE_USB_HEADSET:
-                            return true;
+                        case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                        case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE:
+                        case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:   // a paired smartwatch — user wants the phone speaker, not diverted
+                        case AudioDeviceInfo.TYPE_TELEPHONY:
+                        case AudioDeviceInfo.TYPE_REMOTE_SUBMIX:   // internal (screen recording etc), not a real output
+                            continue;
                     }
+                    return true;   // anything else — A2DP, wired, USB, dock, automotive bus, BLE audio, Android Auto — is external
                 }
             } catch (Exception e) {}
             return false;
