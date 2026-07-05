@@ -156,6 +156,14 @@ async function connectOneMonitor(id, name) {
   try {
     const token = await mintToken(opts.tokenEndpoint, roomName, monIdentity, 'monitor');
     const r = new Room();
+    // Engage car-audio protection BEFORE connecting (direct call, not _syncCarAudio — this
+    // room isn't recorded as "active" in monRooms until after connect succeeds below, so the
+    // state-check wouldn't see it yet). Chromium's WebRTC can grab a Bluetooth SCO "call" link
+    // to a paired car within milliseconds of connect(), faster than a reactive poll can catch —
+    // so our native side needs to already be holding the right mode before that happens, not
+    // fix it up afterward. _syncCarAudio() below reconciles the definitive state once we know
+    // whether this connection actually succeeded.
+    _carAudio(true);
     r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind !== Track.Kind.Audio) return;
       // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
@@ -253,6 +261,13 @@ async function connectVoice() {
   }
 
   room = new Room();
+  // Engage car-audio protection BEFORE connecting — not after. Chromium's WebRTC engine makes
+  // its OWN automatic Bluetooth/communication-mode routing decision as a side effect of
+  // room.connect()/getUserMedia, and it can grab an SCO "call" link to a paired car within
+  // milliseconds — faster than our native poll could react to it afterward. Doing this first
+  // means our native side is already holding the correct mode before WebRTC ever gets a chance
+  // to make its own call-like routing decision, instead of reacting after the fact.
+  _syncCarAudio();
 
   // Remote audio: attach each subscribed audio track to a hidden <audio> element. Skip anyone
   // the user has MUTED (silence-only: their track just never plays — they aren't told).
