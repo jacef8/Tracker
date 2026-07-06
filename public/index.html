@@ -2152,7 +2152,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 246;
+var APP_BUILD = 247;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2808,6 +2808,11 @@ window._talkToDevice = function (id) {
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn’t configured yet.'); return; }
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   var roomId = 'gv_dev_' + id + '_ALL';
+  // One-off diagnostic: records the EXACT room name this device computed, so it can be compared
+  // directly against what the watch itself logs when it connects. If a device/uid mismatch ever
+  // made these differ, the watch could connect successfully forever while the phone looks in a
+  // completely different room and never sees it — no amount of waiting would ever fix that.
+  try { if (db) fbSet(fbRef(db, 'gl/_devices/' + id + '/phoneConnectLog'), { room: roomId, requestedId: id, ts: Date.now() }); } catch (e) {}
   try { window._wakeDevice(id, 'voice'); } catch (e) {}   // wake the watch so it connects to hear you
   var myUid = (typeof userId !== 'undefined' && userId) || ''; if (!myUid) { try { myUid = localStorage.getItem('gl_uid') || ''; } catch (e) {} }
   var myName = (typeof userName !== 'undefined' && userName) || ''; if (!myName) { try { myName = localStorage.getItem('gl_name') || 'Me'; } catch (e) { myName = 'Me'; } }
