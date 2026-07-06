@@ -64,7 +64,15 @@ function _carAudio(on) {
 // impossible for this to drift out of sync again.
 function _syncCarAudio() {
   const talkActive = !!(session && room);
-  const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
+  // Only genuine, ACTIVE speech should force communication-mode audio — not merely having an
+  // auto-listen connection open. Auto-listen is DESIGNED to stay silently connected in the
+  // background the whole time the app is open (that's the entire point of the feature), so
+  // gating on "a monitor room is connected" meant the phone was pinned in MODE_IN_COMMUNICATION
+  // continuously any time GroundLink was merely open — even fully idle — which blocks OTHER
+  // apps' microphone/speech-to-text access system-wide. Gating on "someone is actually talking
+  // right now" (monRooms[id].talking, toggled by ActiveSpeakersChanged) fixes that while still
+  // protecting the audio route for the real duration of playback.
+  const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room && monRooms[id].talking);
   _carAudio(talkActive || monitorActive);
 }
 
@@ -180,7 +188,11 @@ async function connectOneMonitor(id, name) {
     r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
       const on = speakers.some((p) => p.identity && p.identity !== monIdentity);
       const slot = monRooms[id]; if (!slot) return;
-      if (on !== slot.talking) { slot.talking = on; emit({ type: 'deviceTalking', id, name: slot.name, on }); }
+      if (on !== slot.talking) {
+        slot.talking = on;
+        emit({ type: 'deviceTalking', id, name: slot.name, on });
+        _syncCarAudio();   // engage car-audio protection only for the actual duration of real speech
+      }
     });
     // SELF-HEALING: this connection previously had no way to recover from a drop — once the
     // room disconnected (a network blip, a server-side idle-room timeout, anything), the
