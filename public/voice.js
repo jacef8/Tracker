@@ -437,10 +437,16 @@ function _onClipStop() {
 
 function updatePresence() {
   if (barEl && barEl._audioBlocked) return; // don't clobber the tap-to-hear prompt
-  const remotes = room && room.remoteParticipants ? Array.from(room.remoteParticipants.values()) : [];
+  // Auto-listen ("__mon") connections are a background listening artifact, not a real person —
+  // their display name is the literal internal string 'monitor'. Without this filter, if you (or
+  // anyone) had auto-listen on for this device, that connection showed up here as a phantom
+  // participant named "monitor", which is exactly the confusing "monitor in room" text reported.
+  const remotes = room && room.remoteParticipants
+    ? Array.from(room.remoteParticipants.values()).filter((p) => !String(p.identity || '').endsWith('__mon'))
+    : [];
   const names = remotes.map((p) => p.name || p.identity);
   if (names.length === 0) setTalker('waiting for others…', '#8b949e');
-  else setTalker('✓ ' + names.join(', ') + ' in room', '#8b949e');
+  else setTalker('✓ Connected — ' + names.join(', '), '#8b949e');
 }
 
 // ── Autoplay blocked: show a tap target that resumes audio ──────────────────
