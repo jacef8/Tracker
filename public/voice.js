@@ -192,10 +192,12 @@ async function connectOneMonitor(id, name) {
       _syncCarAudio();   // this room just went away — turn car-audio mode off unless something else needs it
       setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, 4000);
     });
-    // Force TURN-relay ICE: cellular carrier NAT/firewalls routinely let the signaling
-    // WebSocket through but block direct/STUN UDP media, so audio never flows even though
-    // "connected" fires. Relay-only always looks like ordinary outbound traffic to any NAT.
-    await r.connect(opts.livekitUrl, token, { rtcConfig: { iceTransportPolicy: 'relay' } });
+    // NOT forcing iceTransportPolicy:'relay' here — decompiling the Android SDK's equivalent
+    // merge logic proved that supplying a custom rtcConfig makes it skip loading the server's
+    // real TURN credentials (that only happens on the "no custom config" path). A relay-only
+    // config with no servers to relay through is strictly worse than the default, since it also
+    // excludes host candidates. Default connect() lets the SDK load the real server ICE list.
+    await r.connect(opts.livekitUrl, token);
     try { await r.startAudio(); } catch (e) {}
     // Route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece —
     // but only while a session is genuinely active (_syncCarAudio checks real state, so this
@@ -310,8 +312,8 @@ async function connectVoice() {
   room.on(RoomEvent.Disconnected, () => { setTalker('disconnected', '#8b949e'); });
 
   try {
-    // Same TURN-relay force as the device-monitor path above — see comment there.
-    await room.connect(session.livekitUrl, token, { rtcConfig: { iceTransportPolicy: 'relay' } });
+    // Not forcing iceTransportPolicy:'relay' — see comment in the device-monitor path above.
+    await room.connect(session.livekitUrl, token);
     // Don't grab the mic here — connect() is several awaits past the original tap,
     // so the user gesture is gone and getUserMedia would be blocked with no prompt.
     // The mic is acquired on the user's first PTT tap instead (a live gesture).
