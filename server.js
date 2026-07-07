@@ -177,14 +177,42 @@ app.get('/join', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.redirect('/?fresh=1');
 });
+
+// ─── Admin/test gate ─────────────────────────────────────────────────
+// These used to be "secret URL" only — no real check, and express.static below
+// serves every file in public/ by its literal name, so /admin.html and
+// /index-test.html were ALSO directly reachable, completely bypassing the
+// /777 and /test888 aliases even if those had a check. Both the aliases AND
+// the raw filenames now go through the same auth gate, registered before
+// express.static so these explicit routes win.
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || '';
+function requireAdminAuth(req, res, next) {
+  if (!ADMIN_PASS) {
+    // Fail CLOSED: an unset password must never silently mean "wide open."
+    return res.status(503).send('Admin/test access is not configured. Set ADMIN_PASS on the server.');
+  }
+  const hdr = req.headers.authorization || '';
+  const m = /^Basic (.+)$/.exec(hdr);
+  if (m) {
+    const decoded = Buffer.from(m[1], 'base64').toString('utf8');
+    const idx = decoded.indexOf(':');
+    const user = idx >= 0 ? decoded.slice(0, idx) : decoded;
+    const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
+    if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="GroundLink Admin"');
+  return res.status(401).send('Authentication required.');
+}
+
 // Admin route
-app.get('/777', function(req, res) {
+app.get(['/777', '/admin.html'], requireAdminAuth, function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 // Test environment — secret path (same style as the /777 admin route)
 // Access: /test888
-app.get('/test888', function(req, res) {
+app.get(['/test888', '/index-test.html'], requireAdminAuth, function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index-test.html'));
 });
