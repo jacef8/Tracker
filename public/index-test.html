@@ -2124,7 +2124,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 248;
+var APP_BUILD = 249;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2384,16 +2384,16 @@ function _friendsRowsHTML() {
     var s = _friendStatus(fid);
     var nm = s.name || friends[fid] || 'Friend';
     var roomDisp = s.online ? _prettyGroup(s.roomKey) : '';
-    var statusTxt = s.inMyRoom ? 'In your room' : s.online ? 'In “' + roomDisp + '”' : 'Offline';
+    var statusTxt = s.inMyRoom ? 'In your room' : s.online ? 'In “' + escapeHtmlJs(roomDisp) + '”' : 'Offline';
     var statusCol = s.inMyRoom ? '#f0a500' : s.online ? '#3fb950' : 'var(--muted)';
     var safeRoom = s.online ? String(s.roomKey).replace(/'/g, '') : '';
     var safeDisp = roomDisp.replace(/'/g, '');
     var joinBtn = (s.online && !s.inMyRoom) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
     var rmBtn = '<button onclick="window._removeFriend(\'' + fid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">✕</button>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:' + (s.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (s.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + initials(nm) + '</div>' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (s.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (s.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</div>' +
         '<div style="min-width:0;flex:1">' +
-          '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm + '</div>' +
+          '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</div>' +
           '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
         '</div>' + joinBtn + rmBtn +
       '</div>';
@@ -2466,7 +2466,7 @@ window._acctPeopleSearch = function (q) {
       ? '<button onclick="window._removeFriend(\'' + pp.uid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">&times;</button>'
       : '<button onclick="window._acctAddFriend(\'' + pp.uid + '\')" title="Add to favorites" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer;flex-shrink:0;white-space:nowrap">&#9733; Add</button>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + initials(pp.name) + '</div>' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(pp.name)) + '</div>' +
         '<div style="min-width:0;flex:1">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
           '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
@@ -4022,7 +4022,7 @@ function _renderAccountPage() {
         var disp = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
         var row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-bottom:6px';
-        row.innerHTML = '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + disp + '</div></div>' +
+        row.innerHTML = '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(disp) + '</div></div>' +
           '<button type="button" class="acct-rejoin" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;padding:6px 13px;cursor:pointer">Rejoin</button>' +
           '<button type="button" class="acct-del" title="Remove or delete this group" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;display:flex;align-items:center"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>';
         row.querySelector('.acct-rejoin').onclick = function() { _rejoinSavedGroup(key, disp); };
@@ -4283,7 +4283,7 @@ function renderRoomList(all) {
     var restHTML = room.restingCount > 0 ? ' <span style="color:#2ec4b6;font-weight:700">&middot; ' + room.restingCount + ' resting</span>' : '';
     var statusHTML = room.liveCount > 0
       ? '<span style="color:#3fb950;font-weight:700">' + room.liveCount + ' online</span>' + restHTML
-        + (room.liveNames.length ? ' &middot; ' + room.liveNames.slice(0, 3).join(', ') + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
+        + (room.liveNames.length ? ' &middot; ' + escapeHtmlJs(room.liveNames.slice(0, 3).join(', ')) + (room.liveNames.length > 3 ? '&hellip;' : '') : '')
       : room.restingCount > 0
         ? '<span style="color:#2ec4b6;font-weight:700">' + room.restingCount + ' resting</span>'
         : room.hasUsers > 0
@@ -4294,7 +4294,7 @@ function renderRoomList(all) {
     item.innerHTML =
       '<button class="room-fav-btn" title="Favorite" style="background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:' + (room.isFav ? 'var(--accent)' : 'var(--muted)') + ';padding:0 8px 0 0;flex-shrink:0">' + (room.isFav ? '★' : '☆') + '</button>' +
       '<div class="room-item-left">' +
-        '<div class="room-name">' + room.displayName + lockIcon + privIcon + '</div>' +
+        '<div class="room-name">' + escapeHtmlJs(room.displayName) + lockIcon + privIcon + '</div>' +
         '<div class="room-meta">' + statusHTML + pinText + '</div>' +
       '</div>' +
       '<span class="room-join-arrow" aria-hidden="true" style="color:var(--muted);font-size:24px;line-height:1;flex-shrink:0;margin-left:4px">&#8250;</span>';
@@ -5390,10 +5390,10 @@ function initMap() {
           .setHTML(
             '<div style="position:relative;padding-right:20px">' +
             '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
-            '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
-            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
-            (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + acres + '</div>' : '') +
-            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + val + '</div>' : '') +
+            '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(owner) + '</div>' +
+            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
+            (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(acres) + '</div>' : '') +
+            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + escapeHtmlJs(val) + '</div>' : '') +
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
@@ -5426,10 +5426,10 @@ function initMap() {
           .setHTML(
             '<div style="position:relative;padding-right:20px">' +
             '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
-            '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + owner + '</div>' +
-            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + address + '</div>' : '') +
-            (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + acres + '</div>' : '') +
-            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + val + '</div>' : '') +
+            '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(owner) + '</div>' +
+            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
+            (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(acres) + '</div>' : '') +
+            (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + escapeHtmlJs(val) + '</div>' : '') +
             '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
@@ -6640,7 +6640,7 @@ function listenUsers() {
           '<div style="display:flex;align-items:center;gap:12px">' +
             '<div style="min-width:0;flex:1">' +
               '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>' : '') + '</div>' +
-              '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px">' + _withDev(data) + '</div>' +
+              '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px">' + escapeHtmlJs(_withDev(data)) + '</div>' +
               '<div style="font-size:12px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _sub + '</div>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">' + _msFollow + _msNav + '</div>' +
@@ -6668,9 +6668,9 @@ function listenUsers() {
       row.className = 'user-item';
       row.style.opacity = opacity;
       row.innerHTML =
-        '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + initials(data.name) + '</div>' +
+        '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + escapeHtmlJs(initials(data.name)) + '</div>' +
         '<div style="min-width:0">' +
-          '<div class="uname">' + _withDev(data) + (isMine ? ' (you)' : '') + '</div>' +
+          '<div class="uname">' + escapeHtmlJs(_withDev(data)) + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Resting (battery saver) · ' + timeLabel : 'Last seen: ' + timeLabel) +
             ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
@@ -6947,7 +6947,7 @@ function showSOSBanner(name, lat, lng) {
   var hasLoc = (typeof lat === 'number' && typeof lng === 'number' && (lat || lng));
   b.innerHTML =
     '<span style="display:flex;color:#fff"><svg class="licon licon-lg"><use href="#ic-alert"/></svg></span>' +
-    '<div style="flex:1;min-width:0"><div style="font-size:15px">' + (name || 'Someone') + ' needs help</div>' +
+    '<div style="flex:1;min-width:0"><div style="font-size:15px">' + escapeHtmlJs(name || 'Someone') + ' needs help</div>' +
     '<div style="font-size:11px;font-weight:500;opacity:.9">SOS alert' + (hasLoc ? ' · tap Go to locate' : ' · no GPS location') + '</div></div>' +
     (hasLoc ? '<button id="sos-go" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:8px 14px;font-weight:800;cursor:pointer">Go</button>' : '') +
     '<button id="sos-x" style="display:flex;align-items:center;background:rgba(255,255,255,.25);color:#fff;border:none;border-radius:8px;padding:8px 11px;font-weight:800;cursor:pointer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>';
@@ -7121,11 +7121,11 @@ window._showPinPopup = function(pid, lngLat) {
     : '';
   var saved = (typeof _isPinSaved === 'function') && _isPinSaved(pid);
   var html =
-    '<div class="pop-cat" style="color:' + color + '">' + pin.cat + '</div>' +
-    (pin.label ? '<div class="pop-label">' + pin.label + '</div>' : '') +
+    '<div class="pop-cat" style="color:' + color + '">' + escapeHtmlJs(pin.cat) + '</div>' +
+    (pin.label ? '<div class="pop-label">' + escapeHtmlJs(pin.label) + '</div>' : '') +
     distHTML +
     '<div class="pop-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
-    '<div class="pop-meta">By ' + (pin.name || '?') + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+    '<div class="pop-meta">By ' + escapeHtmlJs(pin.name || '?') + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
     '<div class="pop-actions">' +
       '<button class="pop-btn pop-edit" onclick="window._navigateTo(' + pin.lat + ',' + pin.lng + ',\'' + (pin.cat||'Pin').replace(/'/g,'') + '\')">Navigate</button>' +
       '<button class="pop-btn" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
@@ -7298,10 +7298,10 @@ function renderPinFeed(pins) {
         def.label +
       '</div>' +
       '<div class="pin-feed-body">' +
-        '<div class="pin-feed-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
-        (pin.label ? '<div class="pin-feed-label">' + pin.label + '</div>' : '') +
+        '<div class="pin-feed-cat" style="color:' + def.color + '">' + escapeHtmlJs(pin.cat) + '</div>' +
+        (pin.label ? '<div class="pin-feed-label">' + escapeHtmlJs(pin.label) + '</div>' : '') +
         distHTML +
-        '<div class="pin-feed-meta">' + (isMine ? 'You' : pin.name) + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
+        '<div class="pin-feed-meta">' + (isMine ? 'You' : escapeHtmlJs(pin.name)) + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
       '</div>' +
       '<button class="pin-feed-star" onclick="event.stopPropagation();window._feedToggleSave(\'' + pid + '\')" title="Save to My Pins" style="background:none;border:none;cursor:pointer;padding:6px 4px;display:flex;align-items:center;align-self:center"><svg class="licon" style="color:' + (_isPinSaved(pid) ? '#f0a500' : 'rgba(255,255,255,.4)') + '"><use href="#ic-star"/></svg></button>' +
       '<div class="pin-feed-arrow">\u203a</div>';
@@ -7365,10 +7365,10 @@ function renderPinList(pins) {
         <span style="font-size:14px;line-height:1">${def.label}</span>
       </div>
       <div class="pin-list-body">
-        <div class="pin-list-cat" style="color:${color}">${pin.cat}${isMine ? ' <span class="pin-list-mine">· MINE</span>' : ''}</div>
-        ${pin.label ? '<div class="pin-list-desc">' + pin.label + '</div>' : ''}
+        <div class="pin-list-cat" style="color:${color}">${escapeHtmlJs(pin.cat)}${isMine ? ' <span class="pin-list-mine">· MINE</span>' : ''}</div>
+        ${pin.label ? '<div class="pin-list-desc">' + escapeHtmlJs(pin.label) + '</div>' : ''}
         ${distStr ? `<div class="pin-list-dist" style="display:flex;align-items:center;gap:4px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg>${distStr} · ${bearStr}</div>` : ''}
-        <div class="pin-list-meta">By ${pin.name} · ${timeAgo(pin.ts)} · ${new Date(pin.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="pin-list-meta">By ${escapeHtmlJs(pin.name)} · ${timeAgo(pin.ts)} · ${new Date(pin.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
         <div class="pin-list-meta" style="font-family:monospace;font-size:10px">${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}</div>
       </div>
       <div class="pin-list-actions">
@@ -7544,7 +7544,7 @@ function listenChat() {
       const canDel = isMine || window._isRoomOwner;
       const div = document.createElement('div');
       div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
-      div.innerHTML = (isMine ? '' : '<div class="sender">' + m.name + '</div>') + m.text +
+      div.innerHTML = (isMine ? '' : '<div class="sender">' + escapeHtmlJs(m.name) + '</div>') + escapeHtmlJs(m.text) +
         (canDel ? ' <button class="msg-del" data-k="' + m._key + '" title="Delete message" style="margin-left:6px;background:none;border:none;color:rgba(230,237,243,.45);font-size:12px;line-height:1;cursor:pointer;padding:0 2px;vertical-align:middle">&#10005;</button>' : '');
       container.appendChild(div);
     });
@@ -8275,7 +8275,7 @@ function _renderOfflineAreas() {
     areas.slice().sort(function (a, b) { return b.ts - a.ts; }).map(function (a) {
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">' +
         '<div onclick="window._goToOfflineArea && window._goToOfflineArea(\'' + a.id + '\')" style="min-width:0;flex:1;cursor:pointer" title="Show this area on the map">' +
-          '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📍 ' + (a.name || 'Area').replace(/</g, '&lt;') + '</div>' +
+          '<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📍 ' + escapeHtmlJs(a.name || 'Area') + '</div>' +
           '<div style="font-size:11px;color:var(--muted)">' + _fmtMB(a.bytes || 0) + ' · ' + (a.count || 0) + ' tiles' + (a.parcelKeys && a.parcelKeys.length ? ' · parcels ✓' : '') + '</div>' +
         '</div>' +
         '<button onclick="window._deleteOfflineArea(\'' + a.id + '\')" title="Delete this area" style="background:none;border:none;color:#f85149;font-size:17px;cursor:pointer;padding:4px 7px;flex-shrink:0;line-height:1">✕</button>' +
@@ -9482,9 +9482,9 @@ window._svOpenShareTargets = function() {
   var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var rows = '';
-  if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + groupName.replace(/_/g, ' ') + ' — current room');
-  favs.forEach(function(k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + k.replace(/^test_/, '').replace(/_/g, ' ')); });
-  Object.keys(friends).forEach(function(uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + (friends[uid] || 'Friend')); });
+  if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + escapeHtmlJs(groupName.replace(/_/g, ' ')) + ' — current room');
+  favs.forEach(function(k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + escapeHtmlJs(k.replace(/^test_/, '').replace(/_/g, ' '))); });
+  Object.keys(friends).forEach(function(uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend')); });
   if (!rows) rows = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;line-height:1.5">No destinations yet.<br>Favorite a group, or star people inside a room, to share to them.</div>';
   var ov = document.createElement('div');
   ov.id = '_sv-share-modal';
@@ -9620,8 +9620,8 @@ window._soloPinPopup = function(feature, lngLat) {
     .setLngLat(lngLat || [p.lng, p.lat])
     .setHTML(
       '<div style="padding:2px">' +
-      '<div style="font-size:12px;font-weight:700;color:' + def.color + ';margin-bottom:3px">' + (def.emoji || '') + ' ' + p.cat + '</div>' +
-      (p.label ? '<div style="font-size:13px;color:#e6edf3;margin-bottom:3px">' + p.label + '</div>' : '') +
+      '<div style="font-size:12px;font-weight:700;color:' + def.color + ';margin-bottom:3px">' + (def.emoji || '') + ' ' + escapeHtmlJs(p.cat) + '</div>' +
+      (p.label ? '<div style="font-size:13px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(p.label) + '</div>' : '') +
       (dist ? '<div style="font-size:11px;color:#c2ccd6;margin-bottom:8px">&#128205; ' + dist + '</div>' : '<div style="margin-bottom:8px"></div>') +
       '<div style="display:flex;gap:6px">' +
         '<button onclick="window._navigateTo(' + p.lat + ',' + p.lng + ',\'' + _lbl + '\')" style="flex:1;background:#f0a500;border:none;border-radius:7px;color:#000;font-size:12px;font-weight:700;padding:7px;cursor:pointer">Navigate</button>' +
@@ -9744,8 +9744,8 @@ function _renderSavedOnMap() {
       var m = new mapboxgl.Marker({ element: el, anchor:'bottom' }).setLngLat([pin.lng, pin.lat]).addTo(map);
       if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
         m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
-          '<div style="font-weight:800;font-size:12px;color:#111">' + (pin.label || pin.cat) + '</div>' +
-          (pin.coll ? '<div style="font-size:11px;color:#555">' + pin.coll + '</div>' : '')));
+          '<div style="font-weight:800;font-size:12px;color:#111">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
+          (pin.coll ? '<div style="font-size:11px;color:#555">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
       }
       window._savedMapMarkers.push(m);
     } catch(e){}
@@ -9798,12 +9798,12 @@ function _renderSavedFilterChips(pins) {
   collNames.forEach(function(cn) {
     var fv = 'coll:' + cn;
     html += '<button class="sv-chip' + (_savedFilter === fv ? ' active' : '') +
-            '" onclick="window.setSavedFilter(\'' + fv.replace(/'/g, "\\'") + '\')">&#128193; ' + cn + ' (' + colls[cn] + ')</button>';
+            '" onclick="window.setSavedFilter(\'' + fv.replace(/'/g, "\\'") + '\')">&#128193; ' + escapeHtmlJs(cn) + ' (' + colls[cn] + ')</button>';
   });
   cats.forEach(function(c) {
     html += '<button class="sv-chip' + (_savedFilter === c ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + c.replace(/'/g, "\\'") + '\')">' +
-            c + ' (' + present[c] + ')</button>';
+            escapeHtmlJs(c) + ' (' + present[c] + ')</button>';
   });
   bar.innerHTML = html;
 }
@@ -9888,8 +9888,8 @@ function renderSavedPins() {
       (selMode ? '<div style="flex-shrink:0;width:22px;height:22px;border-radius:50%;border:2px solid ' + (isSel ? 'var(--accent)' : 'var(--border)') + ';background:' + (isSel ? 'var(--accent)' : 'transparent') + ';display:flex;align-items:center;justify-content:center;color:#000;font-weight:800;font-size:13px">' + (isSel ? '&#10003;' : '') + '</div>' : '') +
       '<div class="sv-dot" style="background:' + def.color + '">' + (def.emoji || def.label) + '</div>' +
       '<div class="sv-body">' +
-        '<div class="sv-cat" style="color:' + def.color + '">' + pin.cat + '</div>' +
-        (pin.label ? '<div class="sv-label">' + pin.label + '</div>' : '') +
+        '<div class="sv-cat" style="color:' + def.color + '">' + escapeHtmlJs(pin.cat) + '</div>' +
+        (pin.label ? '<div class="sv-label">' + escapeHtmlJs(pin.label) + '</div>' : '') +
         (dist ? '<div class="sv-meta">&#128205; ' + dist + '</div>' : '') +
         '<div class="sv-meta">Saved ' + (typeof timeAgo === 'function' ? timeAgo(pin.savedAt) : '') + '</div>' +
       '</div>' +
@@ -9912,7 +9912,7 @@ function renderSavedPins() {
     list.appendChild(card);
   });
   if (!shown) {
-    list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No ' + _savedFilter + ' pins saved.</div>';
+    list.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No ' + escapeHtmlJs(_savedFilter) + ' pins saved.</div>';
   }
   _updateSavedFoot(shown);
   _syncShowMapBtn();
@@ -10990,8 +10990,8 @@ window._openVoicePicker = function () {
     var nm = String(users[u].name || 'Member');
     return '<label style="display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;-webkit-tap-highlight-color:transparent">' +
         '<input type="checkbox" class="vpick-cb" value="' + u + '" data-name="' + nm.replace(/"/g, '') + '" onchange="window._updateVoicePickCount()" style="width:19px;height:19px;accent-color:#f0a500;flex-shrink:0" />' +
-        '<span style="width:30px;height:30px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:var(--text);flex-shrink:0">' + initials(nm) + '</span>' +
-        '<span style="font-size:14px;font-weight:600;color:var(--text);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm + '</span>' +
+        '<span style="width:30px;height:30px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:var(--text);flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</span>' +
+        '<span style="font-size:14px;font-weight:600;color:var(--text);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</span>' +
       '</label>';
   }).join('');
   _updateVoicePickCount();
