@@ -26,7 +26,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut }
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut, signInAnonymously }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
@@ -61,6 +61,14 @@
     const auth = getAuth(app);
     window._fb.auth = auth;
     window._fb.authApi = { GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut };
+    // Silent anonymous auth — kicked off as early as possible so it has the best chance of
+    // resolving before the user reaches the join screen. This gives every device a REAL,
+    // cryptographically-issued Firebase uid with zero visible change to the join flow (no
+    // login screen, nothing to tap) — genUid() below prefers this uid once it's ready.
+    // Explicit Google sign-in (the existing account feature) still works on top of this.
+    if (!auth.currentUser) {
+      signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
+    }
     window.dispatchEvent(new Event('gl-auth-ready'));
   } catch (e) { console.warn('auth init', e); }
 </script>
@@ -2124,7 +2132,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 249;
+var APP_BUILD = 250;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3146,7 +3154,19 @@ function _updateMarkerSpeed(el, data) {
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
 }
+// Prefers the real, cryptographically-issued Firebase anonymous-auth uid (kicked off at
+// module load, near the top of the file) — a NEW session created once that's resolved gets
+// an id nobody can forge, closing the "edit localStorage to impersonate someone" gap for
+// future sessions. Falls back to the old weak Math.random()-based id only if auth hasn't
+// resolved yet (e.g. offline, or the very first instant of a brand-new page load) so the
+// app never hangs waiting on it — this is a client-side improvement only for now; existing
+// saved sessions keep their old id unchanged, and database rules don't yet enforce
+// auth.uid match (that needs a migration path for already-established sessions first).
 function genUid() {
+  try {
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    if (u && u.uid) return u.uid;
+  } catch (e) {}
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
 }
 // Per-device label (phone / tablet / PC), auto-detected once, so one person's
