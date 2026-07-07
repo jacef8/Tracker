@@ -5,7 +5,41 @@ const app     = express();
 const PORT    = process.env.PORT || 3000;
 const CURRENT_VERSION = '1.7';
 
+// Railway sits in front of this app as a proxy — without this, req.ip is the proxy's own
+// address for every request, making per-IP rate limiting useless (everyone looks like the
+// same "client").
+app.set('trust proxy', true);
+
 app.use(express.json({ limit: '64kb' }));
+
+// ─── Rate limiting ───────────────────────────────────────────────────
+// Lightweight in-memory limiter (no new dependency) -- fine for a single Railway instance.
+// /wake-device and /push had NO abuse protection at all: anyone who knew a device id or
+// group name could spam FCM wake-pushes or notifications at it indefinitely, draining FCM
+// quota or harassing real users. Fixed-window per-IP counter, generous enough for normal
+// use (a family actively tapping Talk/Locate) but caps abusive spamming.
+const rateLimitBuckets = new Map(); // ip -> { count, resetAt }
+function rateLimit(maxRequests, windowMs) {
+  return function(req, res, next) {
+    const ip = req.ip || 'unknown';
+    const now = Date.now();
+    let bucket = rateLimitBuckets.get(ip);
+    if (!bucket || now > bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      rateLimitBuckets.set(ip, bucket);
+    }
+    bucket.count++;
+    if (bucket.count > maxRequests) {
+      return res.status(429).json({ ok: false, reason: 'rate-limited' });
+    }
+    next();
+  };
+}
+// Sweep stale buckets periodically so the Map doesn't grow unbounded over time.
+setInterval(function() {
+  const now = Date.now();
+  for (const [ip, b] of rateLimitBuckets) { if (now > b.resetAt) rateLimitBuckets.delete(ip); }
+}, 5 * 60 * 1000).unref();
 
 // ─── Web Push (VAPID) ──────────────────────────────────────────────
 // Only VAPID_PRIVATE must be set as an env var on the host; the public key
@@ -48,7 +82,7 @@ async function getDeviceToken(device) {
     return (typeof t === 'string' && t) ? t : null;
   } catch (e) { return null; }
 }
-app.post('/wake-device', async function(req, res) {
+app.post('/wake-device', rateLimit(20, 60000), async function(req, res) {
   if (!fcmAdmin) return res.json({ ok: false, reason: 'fcm-not-configured' });
   const b = req.body || {};
   const device = String(b.device || '');
@@ -70,7 +104,7 @@ app.post('/wake-device', async function(req, res) {
 
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
-app.post('/push', async function(req, res) {
+app.post('/push', rateLimit(30, 60000), async function(req, res) {
   if (!pushReady && !fcmAdmin) return res.json({ ok: false, reason: 'push-not-configured' });
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
