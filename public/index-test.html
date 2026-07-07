@@ -66,6 +66,29 @@
     // cryptographically-issued Firebase uid with zero visible change to the join flow (no
     // login screen, nothing to tap) — genUid() below prefers this uid once it's ready.
     // Explicit Google sign-in (the existing account feature) still works on top of this.
+    //
+    // Re-key any EXISTING saved session (gltest_uid in storage, from before anonymous auth
+    // existed, or from a join that raced ahead of auth resolving) to the real uid the moment
+    // it becomes available — this script block runs before the rest of the page, so it wins
+    // that race in all but an extremely slow network. One-time re-key, not a live identity
+    // swap: this doesn't touch an ALREADY-active room membership mid-session (that would risk
+    // a momentary duplicate-presence glitch) — it only affects what the NEXT join/rejoin reads.
+    // Any position already written under the old id is simply superseded by the next position
+    // update (a live-location app, not a history-per-id one); existing chat messages keep their
+    // original, now-orphaned sender id, same as a one-time device swap would look like. Rules
+    // still don't enforce auth.uid match yet — that's the next step, once this has had time to
+    // actually converge existing sessions in the field.
+    function _reconcileAuthIdentity(u) {
+      try {
+        if (!u || !u.uid) return;
+        var current = localStorage.getItem('gltest_uid');
+        if (current && current !== u.uid) {
+          localStorage.setItem('gltest_uid', u.uid);
+          sessionStorage.setItem('gltest_uid', u.uid);
+        }
+      } catch (e) {}
+    }
+    onAuthStateChanged(auth, (u) => { if (u) _reconcileAuthIdentity(u); });
     if (!auth.currentUser) {
       signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
     }
@@ -2132,7 +2155,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 250;
+var APP_BUILD = 251;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
