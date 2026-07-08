@@ -31,6 +31,7 @@ let listeners = [];       // onVoiceEvent subscribers
 let barEl = null;         // docked bar DOM root
 let audioSink = null;     // hidden container that holds remote <audio> elements
 let micOn = false;        // toggle PTT state: true = transmitting (open mic)
+let remoteTalking = false; // true while a REMOTE participant is actively speaking in the main Talk bar
 // ── Transmission recording: each PTT press is captured as a short clip and handed
 // to the page (window._onVoiceClip) so missed transmissions can be replayed later.
 let _rec = null, _recChunks = [], _recStart = 0, _recCap = null;
@@ -63,7 +64,16 @@ function _carAudio(on) {
 // Recomputing from real state on every change, rather than tracking on/off deltas, means it's
 // impossible for this to drift out of sync again.
 function _syncCarAudio() {
-  const talkActive = !!(session && room);
+  // Only genuine, ACTIVE speech should force communication-mode audio — not merely having a
+  // Talk session or an auto-listen connection open. This used to be `!!(session && room)`,
+  // meaning simply having the Talk bar open (regardless of whether anyone was actually
+  // speaking) kept the phone pinned in MODE_IN_COMMUNICATION continuously — the SAME
+  // mic-blocking bug already fixed for auto-listen (see monitorActive below), just via a
+  // different path, which is why the fix for auto-listen alone didn't fully resolve the
+  // "blocks speech-to-text" report. Gating on real speech (micOn = I'm transmitting,
+  // remoteTalking = someone else is) fixes both paths the same way, while still protecting
+  // the audio route for the actual duration of a real conversation.
+  const talkActive = !!(session && room) && (micOn || remoteTalking);
   // Only genuine, ACTIVE speech should force communication-mode audio — not merely having an
   // auto-listen connection open. Auto-listen is DESIGNED to stay silently connected in the
   // background the whole time the app is open (that's the entire point of the feature), so
@@ -118,6 +128,7 @@ export function openVoice(opts) {
     partnerName: partnerName || 'member', livekitUrl, tokenEndpoint, listen: !!listen,
   };
   micOn = false;
+  remoteTalking = false;
   renderBar();
   setTalker('connecting…', '#8b949e');
   connectVoice();
@@ -129,6 +140,7 @@ export function leaveVoice() {
   room = null;
   session = null;
   micOn = false;
+  remoteTalking = false;
   _syncCarAudio();   // restore normal audio routing UNLESS a device monitor is still active
   removeBar();
   emit({ type: 'left' });
@@ -304,6 +316,9 @@ async function connectVoice() {
   // Talker indicator: who is actively speaking; falls back to presence otherwise.
   room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
     const remote = speakers.find((p) => p.identity !== session.identity);
+    const wasTalking = remoteTalking;
+    remoteTalking = !!remote;
+    if (remoteTalking !== wasTalking) _syncCarAudio();
     if (remote) {
       const who = (remote.name || remote.identity);
       setTalker('◉ ' + who + ' talking', '#00e676');
@@ -353,6 +368,7 @@ async function setPtt(on) {
   try { micPromise = room.localParticipant.setMicrophoneEnabled(on); }
   catch (e) { micPromise = Promise.reject(e); }
   micOn = on;                                    // reflect keyed state immediately (snappy)
+  _syncCarAudio();   // engage/release car-audio protection for the actual duration of transmitting
   updatePttButton();
   // Ping the room so members with the app backgrounded get a "someone's talking"
   // notification (they can't hear live audio when the app is closed). Page debounces.
@@ -364,7 +380,7 @@ async function setPtt(on) {
     console.error('[voice] mic set failed', e);
     setTalker('⚠ mic blocked — allow it in browser/app settings', '#f85149');
     emit({ type: 'error', message: 'mic: ' + ((e && e.message) || e) });
-    micOn = false; updatePttButton();
+    micOn = false; _syncCarAudio(); updatePttButton();
     return;
   }
   if (on) { try { await room.startAudio(); } catch (e) {} _startClipRecording(); }   // mic live → start capturing
