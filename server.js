@@ -221,11 +221,55 @@ app.get('/join', function(req, res) {
 // express.static so these explicit routes win.
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || '';
+const ADMIN_COOKIE = 'gl_admin_session';
+// In-memory only — resets on server restart (a re-login via ?key= is a trivial ask for the
+// one admin using this). No need for persistence for a single-operator convenience mechanism.
+const validAdminSessions = new Set();
+
+function checkAdminCreds(user, pass) {
+  return !!ADMIN_PASS && user === ADMIN_USER && pass === ADMIN_PASS;
+}
+function parseCookieHeader(str) {
+  const out = {};
+  String(str || '').split(';').forEach(function (pair) {
+    const idx = pair.indexOf('=');
+    if (idx < 0) return;
+    const k = pair.slice(0, idx).trim();
+    const v = pair.slice(idx + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  });
+  return out;
+}
+// HTTP Basic Auth requires the CLIENT to natively support a 401/WWW-Authenticate
+// challenge-response. A Capacitor WebView does NOT do this out of the box (no
+// onReceivedHttpAuthRequest handling in the native app) — every request from the native app was
+// silently failing this challenge forever, which looked exactly like a stuck cache bug (the app
+// just kept showing whatever page last loaded successfully, before this auth gate existed) rather
+// than an auth failure. Cookie-based login works transparently in ANY client with zero special
+// handling, since it's just an ordinary query param + Set-Cookie response.
 function requireAdminAuth(req, res, next) {
   if (!ADMIN_PASS) {
     // Fail CLOSED: an unset password must never silently mean "wide open."
     return res.status(503).send('Admin/test access is not configured. Set ADMIN_PASS on the server.');
   }
+  // 1) Already-established cookie session.
+  const cookies = parseCookieHeader(req.headers.cookie);
+  if (cookies[ADMIN_COOKIE] && validAdminSessions.has(cookies[ADMIN_COOKIE])) return next();
+  // 2) One-time login via query param (?key=PASSWORD or ?key=USER:PASSWORD) — sets the cookie for
+  // all future requests, from any client including the native app.
+  if (req.query.key) {
+    const raw = String(req.query.key);
+    const sep = raw.indexOf(':');
+    const user = sep >= 0 ? raw.slice(0, sep) : ADMIN_USER;
+    const pass = sep >= 0 ? raw.slice(sep + 1) : raw;
+    if (checkAdminCreds(user, pass)) {
+      const token = require('crypto').randomBytes(24).toString('hex');
+      validAdminSessions.add(token);
+      res.setHeader('Set-Cookie', ADMIN_COOKIE + '=' + token + '; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax');
+      return next();
+    }
+  }
+  // 3) Still support classic HTTP Basic Auth too (e.g. direct curl access) — no regression there.
   const hdr = req.headers.authorization || '';
   const m = /^Basic (.+)$/.exec(hdr);
   if (m) {
@@ -233,7 +277,7 @@ function requireAdminAuth(req, res, next) {
     const idx = decoded.indexOf(':');
     const user = idx >= 0 ? decoded.slice(0, idx) : decoded;
     const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
-    if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
+    if (checkAdminCreds(user, pass)) return next();
   }
   res.setHeader('WWW-Authenticate', 'Basic realm="GroundLink Admin"');
   return res.status(401).send('Authentication required.');
