@@ -63,6 +63,35 @@ function _carAudio(on) {
 // Auto's own audio routing (reported as periodic music "ducking" every few seconds).
 // Recomputing from real state on every change, rather than tracking on/off deltas, means it's
 // impossible for this to drift out of sync again.
+// _syncCarAudio() used to call _carAudio(false) IMMEDIATELY the instant nobody was "actively
+// talking" — but LiveKit's ActiveSpeakersChanged naturally flickers true/false several times a
+// SECOND during continuous speech (brief pauses between words/syllables cross the detection
+// threshold), so every micro-pause tore the native audio route all the way down to MODE_NORMAL
+// and straight back up to MODE_IN_COMMUNICATION a moment later. Confirmed via the phone's own
+// audio-routing debug log: dozens of start/stop-media-mode calls within a few seconds of one
+// continuous test, with the OS audio mode visibly bouncing 0→3→0→3 — reported independently as
+// both "choppy audio" and "the volume level flickering up and down" (changing audio mode swaps
+// which stream the volume rocker controls). Turning ON stays instant — no reason to delay
+// engaging the route the moment real speech starts. Turning OFF is debounced so a brief
+// mid-sentence pause doesn't tear the whole route down and rebuild it a moment later.
+const CAR_AUDIO_OFF_DEBOUNCE_MS = 700;
+let _carAudioOffTimer = null;
+let _carAudioWantOn = false;
+
+function _setCarAudio(on) {
+  if (on) {
+    if (_carAudioOffTimer) { clearTimeout(_carAudioOffTimer); _carAudioOffTimer = null; }
+    if (!_carAudioWantOn) { _carAudioWantOn = true; _carAudio(true); }
+  } else {
+    if (!_carAudioWantOn || _carAudioOffTimer) return;   // already off, or already debouncing
+    _carAudioOffTimer = setTimeout(() => {
+      _carAudioOffTimer = null;
+      _carAudioWantOn = false;
+      _carAudio(false);
+    }, CAR_AUDIO_OFF_DEBOUNCE_MS);
+  }
+}
+
 function _syncCarAudio() {
   // Only genuine, ACTIVE speech should force communication-mode audio — not merely having a
   // Talk session or an auto-listen connection open. This used to be `!!(session && room)`,
@@ -83,7 +112,7 @@ function _syncCarAudio() {
   // right now" (monRooms[id].talking, toggled by ActiveSpeakersChanged) fixes that while still
   // protecting the audio route for the real duration of playback.
   const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room && monRooms[id].talking);
-  _carAudio(talkActive || monitorActive);
+  _setCarAudio(talkActive || monitorActive);
 }
 
 export function onVoiceEvent(cb) {
@@ -183,7 +212,7 @@ async function connectOneMonitor(id, name) {
     // so our native side needs to already be holding the right mode before that happens, not
     // fix it up afterward. _syncCarAudio() below reconciles the definitive state once we know
     // whether this connection actually succeeded.
-    _carAudio(true);
+    _setCarAudio(true);
     r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind !== Track.Kind.Audio) return;
       // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
