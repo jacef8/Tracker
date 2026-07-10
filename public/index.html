@@ -2123,7 +2123,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 263;
+var APP_BUILD = 264;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3486,59 +3486,7 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
-function openSettings() {
-  // TEMPORARY diagnostic — confirms whether this function is actually being invoked on a real
-  // device where Chrome DevTools isn't reachable. Writes to Firebase so it's checkable via a
-  // plain curl regardless of platform. Remove once the "settings buttons not working" report
-  // is resolved.
-  try {
-    var uid = (typeof userId !== 'undefined' && userId) || (function(){ try { return localStorage.getItem('gl_uid'); } catch(e){ return 'unknown'; } })();
-    fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/openSettingsLog/' + Date.now() + '.json', {
-      method: 'PUT', body: JSON.stringify({ ts: Date.now(), uid: uid, ua: navigator.userAgent.slice(0,120) })
-    }).catch(function(){});
-  } catch (e) {}
-  var el = document.getElementById('settings-sheet');
-  try {
-    fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/openSettingsLog2/' + Date.now() + '.json', {
-      method: 'PUT', body: JSON.stringify({ found: !!el, beforeDisplay: el ? getComputedStyle(el).display : 'no-el' })
-    }).catch(function(){});
-  } catch (e) {}
-  el.style.display = 'block';
-  _syncSettings();
-  // TEMPORARY — walk the ancestor chain checking for anything that could keep this invisible
-  // despite display:block on the element itself (a hidden ancestor, zero opacity/size, etc).
-  try {
-    var chain = [];
-    var node = el;
-    var depth = 0;
-    while (node && node !== document.body && depth < 15) {
-      var cs = getComputedStyle(node);
-      var r = node.getBoundingClientRect();
-      chain.push({
-        tag: node.tagName, id: node.id || null, cls: (node.className || '').toString().slice(0, 40),
-        display: cs.display, visibility: cs.visibility, opacity: cs.opacity,
-        w: r.width, h: r.height, transform: cs.transform !== 'none' ? cs.transform : undefined
-      });
-      node = node.parentElement;
-      depth++;
-    }
-    var elCs = getComputedStyle(el);
-    var elR = el.getBoundingClientRect();
-    fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/openSettingsLog3/' + Date.now() + '.json', {
-      method: 'PUT', body: JSON.stringify({
-        afterDisplay: elCs.display, afterVisibility: elCs.visibility, afterOpacity: elCs.opacity,
-        rect: { w: elR.width, h: elR.height, x: elR.x, y: elR.y },
-        chain: chain
-      })
-    }).catch(function(){});
-  } catch (e) {
-    try {
-      fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/openSettingsLog3err/' + Date.now() + '.json', {
-        method: 'PUT', body: JSON.stringify({ err: e.message })
-      }).catch(function(){});
-    } catch (e2) {}
-  }
-}
+function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); }
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
