@@ -121,6 +121,24 @@ function _syncCarAudio() {
   // protecting the audio route for the real duration of playback.
   const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room && monRooms[id].talking);
   _setCarAudio(talkActive || monitorActive);
+  _syncVoiceService();
+}
+
+// Native foreground service (window.GLAudioRouter.startVoiceService/stopVoiceService) that keeps
+// the app's voice pipeline alive and RECEIVING while backgrounded — a real Android requirement,
+// not just an audio-routing nicety like _carAudio above. Deliberately broader than talkActive/
+// monitorActive: this needs to stay up for the WHOLE time any room is connected (including
+// silent auto-listen monitors), not just during active speech bursts, since the point is
+// reliable reception for the whole session. No debounce needed — unlike car-audio mode there's
+// no per-flicker teardown cost, and a connected room doesn't flap the way "is talking" does.
+function _syncVoiceService() {
+  try {
+    const a = (typeof window !== 'undefined') && window.GLAudioRouter;
+    if (!a) return;
+    const anyRoomConnected = !!(session && room) || Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
+    if (anyRoomConnected) { if (a.startVoiceService) a.startVoiceService(); }
+    else { if (a.stopVoiceService) a.stopVoiceService(); }
+  } catch (e) { /* ignore */ }
 }
 
 export function onVoiceEvent(cb) {
