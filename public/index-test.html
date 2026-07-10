@@ -986,9 +986,15 @@
     </div>
 
     <!-- Swipe pager: Quick join ⇄ Account -->
-    <div id="join-tabs" style="display:flex;gap:4px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:4px;margin-top:2px">
+    <div id="join-tabs" style="display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:4px;margin-top:2px">
       <button type="button" class="jtab active" data-panel="0" onclick="window._goPanel(0)">Quick join</button>
       <button type="button" class="jtab" data-panel="1" onclick="window._goPanel(1)">Account&nbsp;<span id="pager-acct-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#3fb950;box-shadow:0 0 6px #3fb950"></span></button>
+      <!-- Settings is a global overlay (position:fixed;inset:0), not scoped to being inside a
+           room/map — this button reaches it directly from Home instead of requiring a room to
+           be open first, which every row inside it already tolerates (room-specific toggles like
+           "Share my location"/"Announce when I join" just persist a preference with no active
+           room, verified via toggleLocationShare's own no-room early-return). -->
+      <button type="button" title="Settings" aria-label="Settings" onclick="openSettings()" style="background:none;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;padding:8px;margin-left:2px;flex-shrink:0"><svg class="licon licon-sm"><use href="#ic-gear"/></svg></button>
     </div>
 
     <div id="join-pager">
@@ -2092,7 +2098,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 259;
+var APP_BUILD = 260;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {

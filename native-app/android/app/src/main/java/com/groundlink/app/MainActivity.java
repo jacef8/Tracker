@@ -2,6 +2,7 @@ package com.groundlink.app;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
@@ -17,6 +18,9 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BridgeActivity {
 
@@ -36,6 +40,11 @@ public class MainActivity extends BridgeActivity {
         private final Handler handler = new Handler(Looper.getMainLooper());
         private boolean active = false;
         private Object modeListener; // AudioManager.OnModeChangedListener (API 31+)
+        // Only re-logged when the external/internal classification actually CHANGES (or on the
+        // first applyOnce() of a session) — the poll runs every 1.5s the whole time voice is
+        // connected, and logging every tick would burn through the rotating slot log in seconds.
+        private Boolean lastLoggedExternal = null;
+        private String lastExternalType = null; // set as a side effect of hasExternalAudioOut()
         private final Runnable poll = new Runnable() {
             @Override public void run() {
                 if (!active) return;
@@ -49,11 +58,36 @@ public class MainActivity extends BridgeActivity {
             am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
         }
 
+        // Tied to "any voice room connected" (see voice.js _syncVoiceService), not to active
+        // speech like startMediaMode/stopMediaMode above — the goal here is reliable background
+        // RECEPTION for the whole session, not just audio-routing correctness during a burst.
+        @JavascriptInterface
+        public void startVoiceService() {
+            try { VoiceForegroundService.start(ctx); } catch (Exception e) {}
+        }
+
+        @JavascriptInterface
+        public void stopVoiceService() {
+            try { VoiceForegroundService.stop(ctx); } catch (Exception e) {}
+        }
+
+        // User setting (Settings → "Voice notification icon"). The foreground service itself
+        // can't be hidden entirely — that's the whole OS-level trade-off for staying alive
+        // unthrottled in the background — but its notification's IMPORTANCE can be lowered to
+        // MIN, which removes the status-bar icon specifically while the service keeps running.
+        // Stored so VoiceForegroundService can read it independently of any particular JS call.
+        @JavascriptInterface
+        public void setVoiceNotificationVisible(boolean visible) {
+            try { VoiceForegroundService.setIconVisible(ctx, visible); } catch (Exception e) {}
+        }
+
         @JavascriptInterface
         public void startMediaMode() {
             if (am == null) return;
+            logAudio("start-media-mode sdk=" + Build.VERSION.SDK_INT);
             handler.post(new Runnable() { @Override public void run() {
                 active = true;
+                lastLoggedExternal = null;   // force a fresh log line for this session
                 applyOnce();
                 // Re-assert continuously — WebRTC/Chromium keep flipping the audio mode, so a light
                 // 1.5s poll (plus the mode-change listener on API 31+) keeps our routing pinned.
@@ -72,6 +106,7 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void stopMediaMode() {
             if (am == null) return;
+            logAudio("stop-media-mode");
             handler.post(new Runnable() { @Override public void run() {
                 active = false;
                 handler.removeCallbacks(poll);
@@ -90,7 +125,15 @@ public class MainActivity extends BridgeActivity {
 
         private void applyOnce() {
             try {
-                if (hasExternalAudioOut()) {
+                boolean external = hasExternalAudioOut();
+                boolean justChanged = (lastLoggedExternal == null || lastLoggedExternal != external);
+                lastLoggedExternal = external;
+                if (justChanged) {
+                    logAudio("applyOnce external=" + external
+                        + (external ? " type=" + lastExternalType : "")
+                        + " modeBefore=" + am.getMode());
+                }
+                if (external) {
                     // A car/Bluetooth or wired output is connected: hold MODE_NORMAL and tear down
                     // SCO so a vehicle plays voice as A2DP media and the FM/radio isn't muted.
                     // Every call here is guarded (only touch the system API if something is
@@ -115,17 +158,29 @@ public class MainActivity extends BridgeActivity {
                     // (earpiece); pinning MODE_IN_COMMUNICATION + speakerphone keeps the walkie-talkie
                     // consistently loud on the phone's own speaker.
                     if (am.getMode() != AudioManager.MODE_IN_COMMUNICATION) am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    String setResult = "n/a(pre-31)";
                     if (Build.VERSION.SDK_INT >= 31) {
                         try {
                             AudioDeviceInfo spk = findOutput(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
                             AudioDeviceInfo cur = am.getCommunicationDevice();
-                            if (spk != null && (cur == null || cur.getType() != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)) {
-                                am.setCommunicationDevice(spk);
+                            if (spk == null) {
+                                setResult = "no-speaker-device-found";
+                            } else if (cur == null || cur.getType() != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                                boolean ok = am.setCommunicationDevice(spk);
+                                AudioDeviceInfo after = am.getCommunicationDevice();
+                                setResult = "setCommunicationDevice(ok=" + ok + ") after=" + (after != null ? after.getType() : "null");
+                            } else {
+                                setResult = "already-speaker";
                             }
-                        } catch (Exception e) {}
+                        } catch (Exception e) { setResult = "threw:" + e.getMessage(); }
                     }
-                    // setSpeakerphoneOn works on every version and is a harmless belt-and-suspenders.
                     try { if (!am.isSpeakerphoneOn()) am.setSpeakerphoneOn(true); } catch (Exception e) {}
+                    if (justChanged) {
+                        // Fires once per session, right after the attempt, with the ACTUAL result —
+                        // this is the line that answers "did forcing the speaker really take
+                        // effect" instead of assuming it did.
+                        logAudio("applyOnce result=" + setResult + " speakerphoneOnAfter=" + am.isSpeakerphoneOn());
+                    }
                 }
             } catch (Exception e) {}
         }
@@ -139,6 +194,7 @@ public class MainActivity extends BridgeActivity {
         // phone's own built-in speaker/earpiece (or the watch's Bluetooth SCO link, or an internal
         // virtual device) counts as external, so no future car connection type can slip through.
         private boolean hasExternalAudioOut() {
+            lastExternalType = null;
             try {
                 for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
                     switch (d.getType()) {
@@ -149,10 +205,41 @@ public class MainActivity extends BridgeActivity {
                         case AudioDeviceInfo.TYPE_REMOTE_SUBMIX:   // internal (screen recording etc), not a real output
                             continue;
                     }
+                    lastExternalType = String.valueOf(d.getType());   // which type actually tripped this — diagnostic only
                     return true;   // anything else — A2DP, wired, USB, dock, automotive bus, BLE audio, Android Auto — is external
                 }
             } catch (Exception e) {}
             return false;
+        }
+
+        // Rotating 40-slot debug log at gl/_debug/phoneAudioLog/<slot> — mirrors the watch's own
+        // voiceLog pattern (gl rules are wide open, no auth needed). Lets audio-routing decisions
+        // be pulled and read after the fact instead of needing a live logcat session, which is
+        // exactly what made diagnosing the watch's cellular-vs-Bluetooth confusion tractable.
+        private void logAudio(String event) {
+            new Thread(() -> {
+                try {
+                    SharedPreferences p = ctx.getSharedPreferences("groundlink_audio_dbg", Context.MODE_PRIVATE);
+                    int n = p.getInt("slotCounter", 0);
+                    p.edit().putInt("slotCounter", n + 1).apply();
+                    int slot = n % 40;
+                    String json = "{\"ts\":" + System.currentTimeMillis() + ",\"event\":\""
+                        + event.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+                    HttpURLConnection c = (HttpURLConnection) new URL(
+                        "https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/phoneAudioLog/" + slot + ".json"
+                    ).openConnection();
+                    c.setRequestMethod("PUT");
+                    c.setDoOutput(true);
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(8000);
+                    c.setRequestProperty("Content-Type", "application/json");
+                    try (java.io.OutputStream os = c.getOutputStream()) {
+                        os.write(json.getBytes(StandardCharsets.UTF_8));
+                    }
+                    c.getInputStream().close();
+                    c.disconnect();
+                } catch (Exception e) { /* best-effort diagnostic only */ }
+            }).start();
         }
 
         private AudioDeviceInfo findOutput(int type) {
