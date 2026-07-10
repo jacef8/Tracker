@@ -136,8 +136,18 @@ function _syncVoiceService() {
     const a = (typeof window !== 'undefined') && window.GLAudioRouter;
     if (!a) return;
     const anyRoomConnected = !!(session && room) || Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
-    if (anyRoomConnected) { if (a.startVoiceService) a.startVoiceService(); }
-    else { if (a.stopVoiceService) a.stopVoiceService(); }
+    if (anyRoomConnected) {
+      if (a.startVoiceService) a.startVoiceService();
+      // Push the current notification-visibility preference every time the service (re)starts —
+      // it may have been changed in a PRIOR session, and the native side has no other way to
+      // learn it until the toggle itself is next clicked.
+      try {
+        const iconOn = (typeof localStorage === 'undefined') || localStorage.getItem('gl_voice_notif_icon') !== '0';
+        if (a.setVoiceNotificationVisible) a.setVoiceNotificationVisible(iconOn);
+      } catch (e) { /* ignore */ }
+    } else if (a.stopVoiceService) {
+      a.stopVoiceService();
+    }
   } catch (e) { /* ignore */ }
 }
 

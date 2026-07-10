@@ -1984,6 +1984,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-voicenotif-row" onclick="window._setToggleVoiceNotifIcon()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice notification icon</div><div style="font-size:11px;color:var(--muted);margin-top:2px">A status-bar icon shows while voice is connected so audio keeps working in the background. Turn off to hide the icon — background voice still runs.</div></div></div>
+      <span id="set-voicenotif-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-bglocation-row" onclick="window._setToggleBgLocation && window._setToggleBgLocation()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep updating your dot when the app is closed. Turning this off removes the status-bar icon — you'll only update while the app is open.</div></div></div>
       <span id="set-bglocation-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2088,7 +2092,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 257;
+var APP_BUILD = 258;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3339,6 +3343,20 @@ window._setToggleCarAudio = function () {
   } catch (e) {}
   toast(on ? 'Car radio stays on during voice' : 'Car-radio fix off');
 };
+// Voice notification icon: the foreground service that keeps background voice reception
+// working REQUIRES a notification to exist (that's the OS-level trade-off for staying alive
+// unthrottled) — but its status-bar ICON specifically can be hidden by lowering the
+// notification's importance, same idea as the existing background-location status-bar icon.
+// Default ON (icon shown). Native side rebuilds the notification channel on change since
+// Android channel importance can't be changed in place once created.
+function _voiceNotifIconOn() { try { return localStorage.getItem('gl_voice_notif_icon') !== '0'; } catch (e) { return true; } }
+window._setToggleVoiceNotifIcon = function () {
+  var on = !_voiceNotifIconOn();
+  try { localStorage.setItem('gl_voice_notif_icon', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-voicenotif-pill', on); } catch (e) {}
+  try { var a = window.GLAudioRouter; if (a && a.setVoiceNotificationVisible) a.setVoiceNotificationVisible(on); } catch (e) {}
+  toast(on ? 'Voice notification icon on' : 'Voice notification icon hidden — background voice still runs');
+};
 function _voiceEnabled() { try { return localStorage.getItem('gltest_voice_off') !== '1'; } catch (e) { return true; } }
 function _applyVoicePref() {
   var on = _voiceEnabled();
@@ -3550,6 +3568,9 @@ function _syncSettings() {
   // Car-radio fix toggle — native app only.
   var carRow = document.getElementById('set-caraudio-row');
   if (carRow) { carRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-caraudio-pill', _carAudioOn()); } catch (e) {} }
+  // Voice notification icon toggle — native app only.
+  var vnRow = document.getElementById('set-voicenotif-row');
+  if (vnRow) { vnRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-voicenotif-pill', _voiceNotifIconOn()); } catch (e) {} }
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
   var bgRow = document.getElementById('set-bgtrack-row');
