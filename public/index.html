@@ -2123,7 +2123,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 264;
+var APP_BUILD = 265;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3486,7 +3486,15 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
-function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); }
+function openSettings() {
+  document.getElementById('settings-sheet').style.display = 'block';
+  _syncSettings();
+  // Confirmed via real-device testing on Android 16: this style change can update the DOM
+  // correctly (display:block, visible, correct on-screen bounds) while the WebView compositor
+  // never actually repaints — a platform bug, not a JS one. forceRepaint() is a native-side
+  // workaround (invalidate + a brief layer-type bounce); harmless no-op on web/other platforms.
+  try { if (window.GLAudioRouter && window.GLAudioRouter.forceRepaint) window.GLAudioRouter.forceRepaint(); } catch (e) {}
+}
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
