@@ -74,7 +74,15 @@ function _carAudio(on) {
 // which stream the volume rocker controls). Turning ON stays instant — no reason to delay
 // engaging the route the moment real speech starts. Turning OFF is debounced so a brief
 // mid-sentence pause doesn't tear the whole route down and rebuild it a moment later.
-const CAR_AUDIO_OFF_DEBOUNCE_MS = 700;
+//
+// 700ms fixed the within-utterance flicker but was too short for PTT specifically: separate
+// walkie-talkie transmissions naturally have gaps well over 700ms (release button, think, press
+// again), so the route was tearing down between EVERY transmission and starting the next one on
+// whatever the OS defaults to (earpiece) until re-forced — reported as "starts on earpiece, then
+// moves to speaker, on every new transmission". 10s bridges a normal back-and-forth exchange
+// while still releasing MODE_IN_COMMUNICATION (and its mic-blocking side effect on other apps —
+// see monitorActive below) within seconds of the conversation actually ending, not indefinitely.
+const CAR_AUDIO_OFF_DEBOUNCE_MS = 10000;
 let _carAudioOffTimer = null;
 let _carAudioWantOn = false;
 
