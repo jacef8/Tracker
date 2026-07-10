@@ -455,8 +455,8 @@ function updatePttButton() {
   const btn = barEl && barEl.querySelector('#gv-ptt');
   if (!btn) return;
   btn.classList.toggle('gv-keyed', micOn);
-  btn.title = micOn ? 'On air — tap to stop' : 'Tap to talk';
-  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'TAP';
+  btn.title = micOn ? 'On air — release to stop' : 'Hold to talk';
+  var hint = btn.querySelector('.gv-ptt-hint'); if (hint) hint.textContent = micOn ? 'ON AIR' : 'HOLD';
   setTx(micOn);
 }
 
@@ -627,18 +627,29 @@ function renderBar() {
       <div class="gv-name">${escapeHtml(session.partnerName)}</div>
       <div class="gv-talker" id="gv-talker"></div>
     </div>
-    <button id="gv-ptt" title="Tap to talk (don't hold)" aria-label="Tap to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">TAP</span></button>
+    <button id="gv-ptt" title="Hold to talk" aria-label="Hold to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">HOLD</span></button>
     <button class="gv-icon" id="gv-log" title="Missed transmissions" aria-label="Transmissions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;display:block"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg><span class="gv-badge" id="gv-log-badge"></span></button>
     <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
   document.body.appendChild(barEl);
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
 
   const ptt = barEl.querySelector('#gv-ptt');
-  // TAP to toggle (matches the watch): tap once to go on-air, tap again to stop — no holding.
-  // Fire on pointerdown so the user gesture is still live for getUserMedia (a plain 'click'
-  // several awaits later can lose the gesture on some mobile browsers).
-  const _pttToggle = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(!micOn); };
-  ptt.addEventListener('pointerdown', _pttToggle);
+  // HOLD to talk (phone only — the watch keeps its own tap-to-toggle, unrelated code path):
+  // press starts transmitting, release stops. setPointerCapture on press guarantees the
+  // matching pointerup/pointercancel still reaches THIS element even if the finger slides off
+  // the button before releasing — without it, a slide-off would leave the mic stuck open with
+  // no way to release it short of leaving the room. Fires on pointerdown (not 'click') so the
+  // user gesture is still live for getUserMedia — a plain 'click' several awaits later can lose
+  // the gesture on some mobile browsers.
+  const _pttDown = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    try { ptt.setPointerCapture(e.pointerId); } catch (_) {}
+    setPtt(true);
+  };
+  const _pttUp = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(false); };
+  ptt.addEventListener('pointerdown', _pttDown);
+  ptt.addEventListener('pointerup', _pttUp);
+  ptt.addEventListener('pointercancel', _pttUp);
   ptt.addEventListener('contextmenu', (e) => e.preventDefault());  // no long-press menu on mobile
   updatePttButton();
   barEl.querySelector('#gv-log').addEventListener('click', (e) => { e.stopPropagation(); try { if (window._openVoiceLog) window._openVoiceLog(); } catch (_) {} });
