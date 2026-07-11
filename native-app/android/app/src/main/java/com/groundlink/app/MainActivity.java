@@ -10,10 +10,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
-import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
@@ -55,41 +53,9 @@ public class MainActivity extends BridgeActivity {
             }
         };
 
-        private final WebView webView;
-
-        AudioRouter(Context c, WebView wv) {
+        AudioRouter(Context c) {
             ctx = c.getApplicationContext();
             am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
-            webView = wv;
-        }
-
-        // Confirmed via real-device testing (adb input tap + Firebase-logged DOM state) on an
-        // Android 16 device: a JS style mutation (e.g. settings-sheet display:none -> block) can
-        // update the DOM/CSSOM correctly -- getComputedStyle shows display:block, opacity:1,
-        // visibility:visible, correct on-screen bounds -- while the WebView's compositor never
-        // actually repaints the screen, even after a forced scroll. This is a WebView renderer bug,
-        // not anything wrong in our JS. Forcing View.invalidate() (and, as a stronger fallback,
-        // briefly toggling the WebView's layer type to bounce it out of hardware-accelerated
-        // compositing and back) is the standard native-side workaround for a WebView stuck in
-        // exactly this state. Called from JS right after any full-screen sheet's display is
-        // flipped, so the user never has to manually force-close/reopen the app to see it.
-        @JavascriptInterface
-        public void forceRepaint() {
-            if (webView == null) return;
-            webView.post(new Runnable() {
-                @Override public void run() {
-                    try {
-                        webView.invalidate();
-                        int prevLayerType = webView.getLayerType();
-                        webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-                        webView.post(new Runnable() {
-                            @Override public void run() {
-                                try { webView.setLayerType(prevLayerType, null); webView.invalidate(); } catch (Exception e) {}
-                            }
-                        });
-                    } catch (Exception e) {}
-                }
-            });
         }
 
         // Tied to "any voice room connected" (see voice.js _syncVoiceService), not to active
@@ -311,7 +277,7 @@ public class MainActivity extends BridgeActivity {
         }
         // Expose the car-radio audio router to the web app (voice.js).
         try {
-            audioRouter = new AudioRouter(this, this.getBridge().getWebView());
+            audioRouter = new AudioRouter(this);
             this.getBridge().getWebView().addJavascriptInterface(audioRouter, "GLAudioRouter");
         } catch (Exception e) {
             // If the bridge/WebView isn't ready, voice still works — it just won't keep the radio on.

@@ -1957,7 +1957,14 @@
 </div>
 
 <!-- ══ SETTINGS SHEET ════════════════════════════════════════════════ -->
-<div id="settings-sheet" style="display:none;position:fixed;inset:0;z-index:500">
+<!-- z-index 950, not the original 500: #join-screen (the Home/Quick-join/Account card) is
+     z-index:900, so this sheet used to open perfectly (correct DOM state, correct visible
+     styling, correct on-screen bounds — confirmed via real-device testing) while rendering
+     completely UNDERNEATH the Home screen, invisible until navigating away from Home into a
+     room/map (which hides #join-screen). Never surfaced before because every other sheet that
+     shares this same latent z-index gap was only ever opened from within a room/map, where
+     #join-screen is already hidden — Settings is the first one made reachable from Home itself. -->
+<div id="settings-sheet" style="display:none;position:fixed;inset:0;z-index:950">
   <div style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeSettings()"></div>
   <div style="position:absolute;left:0;right:0;bottom:0;max-height:85vh;overflow-y:auto;background:rgba(22,27,34,0.62);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top-left-radius:18px;border-top-right-radius:18px;border-top:2px solid rgba(240,165,0,0.55);box-shadow:0 -8px 40px rgba(0,0,0,0.6);padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 20px)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -2123,7 +2130,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 265;
+var APP_BUILD = 266;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3486,15 +3493,7 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
-function openSettings() {
-  document.getElementById('settings-sheet').style.display = 'block';
-  _syncSettings();
-  // Confirmed via real-device testing on Android 16: this style change can update the DOM
-  // correctly (display:block, visible, correct on-screen bounds) while the WebView compositor
-  // never actually repaints — a platform bug, not a JS one. forceRepaint() is a native-side
-  // workaround (invalidate + a brief layer-type bounce); harmless no-op on web/other platforms.
-  try { if (window.GLAudioRouter && window.GLAudioRouter.forceRepaint) window.GLAudioRouter.forceRepaint(); } catch (e) {}
-}
+function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); }
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
