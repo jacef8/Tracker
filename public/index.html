@@ -2130,7 +2130,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 267;
+var APP_BUILD = 268;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2630,6 +2630,7 @@ function _renderDevices() {
             // falls back to _deviceMarkers when the id isn't a room member).
             '<button onclick="window._followUser(\'' + id2 + '\',\'' + dName + '\')" style="flex:1;background:' + (dIsLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
             '</div>' +
+            '<div style="margin-top:8px">' + _gfExclButtonHtml(id2, dName) + '</div>' +
           '</div>';
           try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px' }).setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map); } catch (e) {}
         });
@@ -6816,6 +6817,7 @@ function listenUsers() {
         var _msNav = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
+        var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
         userMarkers[uid]._sheetHTML =
@@ -6825,6 +6827,7 @@ function listenUsers() {
               '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>' : '') + '</div>' +
               '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px">' + escapeHtmlJs(_withDev(data)) + '</div>' +
               '<div style="font-size:12px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _sub + '</div>' +
+              (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">' + _msFollow + _msNav + '</div>' +
           '</div>';
@@ -10475,17 +10478,46 @@ window._closeMemberSheet = function() {
   document.body.classList.remove('member-open');
   try { map.flyTo({ padding: { top: 0, left: 0, right: 0, bottom: 0 }, duration: 400 }); } catch (e) {}
 };
+// Per-device preference (not synced — each viewer decides what THEIR OWN "Follow group" fits
+// around): should this member/device count toward the group's bounds? Default included; opt out
+// per id. Shared by people (userMarkers) and devices (_deviceMarkers) since both use the same id
+// namespace for their marker keys.
+window._groupFollowExcluded = function (id) {
+  try { return localStorage.getItem('gl_gf_excl_' + id) === '1'; } catch (e) { return false; }
+};
+// Small standalone toggle button (not the Settings-page ON/OFF-pill-next-to-label row pattern —
+// this lives in the compact member-sheet/device-popup button column, so it restyles itself
+// directly rather than a separate pill element).
+function _gfExclButtonHtml(id, name) {
+  var excluded = window._groupFollowExcluded(id);
+  return '<button id="gf-excl-btn-' + id + '" onclick="window._toggleGroupFollowExcl(\'' + id + '\',\'' + name + '\')" ' +
+    'style="padding:6px 10px;background:none;border:1px solid var(--border);border-radius:9px;font-size:11px;font-weight:700;' +
+    'color:' + (excluded ? 'var(--muted)' : '#3fb950') + ';cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px">' +
+    '<span style="width:7px;height:7px;border-radius:50%;background:' + (excluded ? 'var(--muted)' : '#3fb950') + ';flex-shrink:0"></span>' +
+    (excluded ? 'Excluded from group' : 'In Follow group') +
+  '</button>';
+}
+window._toggleGroupFollowExcl = function (id, name) {
+  var excluded = !window._groupFollowExcluded(id);
+  try { localStorage.setItem('gl_gf_excl_' + id, excluded ? '1' : '0'); } catch (e) {}
+  try {
+    var btn = document.getElementById('gf-excl-btn-' + id);
+    if (btn) btn.outerHTML = _gfExclButtonHtml(id, name);
+  } catch (e) {}
+  toast(excluded ? (name || 'They') + ' excluded from Follow group' : (name || 'They') + ' included in Follow group', 2600);
+};
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
   Object.keys(userMarkers).forEach(function(uid) {
+    if (window._groupFollowExcluded(uid)) return;
     try { var ll = userMarkers[uid].getLngLat(); pts.push([ll.lng, ll.lat]); } catch (e) {}
   });
   // Devices (the watch) are a SEPARATE marker set from people — include them too, so "Follow
   // group" actually keeps the whole group (people + visible devices) in view, not just people.
   try {
     var _dm = window._deviceMarkers || {};
-    Object.keys(_dm).forEach(function (id) { try { var dl = _dm[id].getLngLat(); pts.push([dl.lng, dl.lat]); } catch (e) {} });
+    Object.keys(_dm).forEach(function (id) { if (window._groupFollowExcluded(id)) return; try { var dl = _dm[id].getLngLat(); pts.push([dl.lng, dl.lat]); } catch (e) {} });
   } catch (e) {}
   if (window._lastGPS) pts.push([window._lastGPS.lng, window._lastGPS.lat]);
   if (!pts.length) return false;
