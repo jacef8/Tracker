@@ -2098,7 +2098,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 266;
+var APP_BUILD = 267;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2550,16 +2550,28 @@ function _renderDevices() {
       (function (id2) {
         el.addEventListener('click', function () {
           var dd = (window._devicesAll[id2] || {}).live || {};
+          var dIsLive = dd.ts && (Date.now() - dd.ts) < 120000;
+          var dName = (dd.name || 'Device').replace(/'/g, '');
           var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
             '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#6e7681;font-weight:600">· watch</span></div>' +
             '<div style="font-size:11px;color:#6e7681;margin:2px 0 9px">last seen ' + _devAgo(dd.ts) + '</div>' +
-            '<button onclick="window._talkToDevice(\x27' + id2 + '\x27)" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
+            '<div style="display:flex;gap:6px">' +
+            '<button onclick="window._talkToDevice(\x27' + id2 + '\x27)" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
+            // Same "follow this map marker continuously" mechanism as a human room member's
+            // "Follow Live" button (window._followUser is generic on the marker id — it already
+            // falls back to _deviceMarkers when the id isn't a room member).
+            '<button onclick="window._followUser(\x27' + id2 + '\x27,\x27' + dName + '\x27)" style="flex:1;background:' + (dIsLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
+            '</div>' +
           '</div>';
-          try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '240px' }).setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map); } catch (e) {}
+          try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px' }).setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map); } catch (e) {}
         });
       })(id);
     } else {
       try { mk.setLngLat([live.lng, live.lat]); } catch (e) {}
+      // Same "recenter on every fresh fix" behavior a followed PERSON gets (see the per-user
+      // update loop) — otherwise following a device would only recenter every 3s via the
+      // periodic doFollow() tick instead of the instant the watch reports a new position.
+      try { if (typeof followUid !== 'undefined' && followUid === id) _followRecenter(live.lng, live.lat); } catch (e) {}
     }
     try { mk._el.title = nm + ' · watch'; } catch (e) {}
   });
@@ -9969,6 +9981,9 @@ window._followUser = function(uid, name) {
     } else {
       var m = userMarkers[uid];
       if (m) { var ol = m.getLngLat(); target = [ol.lng, ol.lat]; }
+      // Devices (the watch) render on a separate marker dictionary from room members — fall
+      // back to it so a device can be followed the exact same way as a person.
+      else { var dm = window._deviceMarkers && window._deviceMarkers[uid]; if (dm) { var dl = dm.getLngLat(); target = [dl.lng, dl.lat]; } }
     }
     // Set zoom only on the first centering; after that keep the user's chosen zoom so
     // they can zoom out (or in) freely while still being followed. On the periodic tick,
