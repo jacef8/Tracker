@@ -2098,7 +2098,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 268;
+var APP_BUILD = 269;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2748,6 +2748,15 @@ window._setToggleDevListen = function () {
   window._syncDeviceMonitor();
   try { toast(on ? 'Auto-listening to your devices' : 'Auto-listen off'); } catch (e) {}
 };
+// Reconcile the monitor with current state: ON when toggle on + voice not disabled + you own
+// devices + the app is actually in the foreground. That last condition matters: the watch itself
+// only stays awake while the phone keeps re-pinging it (see _pingVisibleDevices, also
+// foreground-gated), so a monitor left running in the background just holds a LiveKit connection
+// open — and keeps the watch awake — for nobody, burning both battery and billed minutes for
+// hours at a stretch (found via the LiveKit dashboard: single sessions of 200-400+ min with only
+// the monitor's own "participant" ever present). Incoming PTT from people still works in the
+// background via the separate always-on voice service; this only affects the "listen to my
+// paired device" monitor specifically.
 window._syncDeviceMonitor = function () {
   var cfg = window.VOICE_CONFIG || {};
   var myUid = (typeof userId !== 'undefined' && userId) || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
@@ -2757,11 +2766,16 @@ window._syncDeviceMonitor = function () {
     Object.keys(dv).forEach(function (id) {
       var d = dv[id] || {}; if (_canSeeDevice(d)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
     });
-    var wantOn = window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
+    var inForeground = typeof document === 'undefined' || !document.hidden;
+    var wantOn = inForeground && window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
     if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, hearOthers: window._hearOthersOn() });
     else if (mod.stopDeviceMonitor) mod.stopDeviceMonitor();
   }).catch(function () {});
 };
+// Re-reconcile the instant the app is backgrounded or foregrounded, instead of waiting for the
+// next device-list update — otherwise the monitor (and the watch it keeps awake) could sit
+// connected for hours after you background the app.
+try { document.addEventListener('visibilitychange', function () { try { window._syncDeviceMonitor(); } catch (e) {} }); } catch (e) {}
 window._onDeviceTalking = function (ev) {
   if (!ev || !ev.on) return;
   var nm = (ev.name || 'A device');
