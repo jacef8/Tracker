@@ -86,12 +86,27 @@ const CAR_AUDIO_OFF_DEBOUNCE_MS = 10000;
 let _carAudioOffTimer = null;
 let _carAudioWantOn = false;
 
-function _setCarAudio(on) {
+function _setCarAudio(on, immediate) {
   if (on) {
     if (_carAudioOffTimer) { clearTimeout(_carAudioOffTimer); _carAudioOffTimer = null; }
     if (!_carAudioWantOn) { _carAudioWantOn = true; _carAudio(true); }
   } else {
-    if (!_carAudioWantOn || _carAudioOffTimer) return;   // already off, or already debouncing
+    if (!_carAudioWantOn) return;   // already off
+    // Normally debounced (see CAR_AUDIO_OFF_DEBOUNCE_MS above) so a brief mid-sentence pause
+    // doesn't tear the route down. But that's a plain setTimeout, and Android pauses the
+    // WebView's JS (pending timers included) the moment the app backgrounds — so backgrounding
+    // right after talking could freeze this timer mid-countdown, leaving the phone pinned in
+    // MODE_IN_COMMUNICATION (blocking the mic for every OTHER app) for as long as GroundLink
+    // sits in the background. `immediate` (passed from the visibilitychange handler right
+    // before that freeze can happen) skips the debounce entirely — nothing benefits from
+    // waiting once nobody's watching the screen anyway.
+    if (immediate) {
+      if (_carAudioOffTimer) { clearTimeout(_carAudioOffTimer); _carAudioOffTimer = null; }
+      _carAudioWantOn = false;
+      _carAudio(false);
+      return;
+    }
+    if (_carAudioOffTimer) return;   // already debouncing
     _carAudioOffTimer = setTimeout(() => {
       _carAudioOffTimer = null;
       _carAudioWantOn = false;
@@ -100,7 +115,7 @@ function _setCarAudio(on) {
   }
 }
 
-function _syncCarAudio() {
+function _syncCarAudio(immediate) {
   // Only genuine, ACTIVE speech should force communication-mode audio — not merely having a
   // Talk session or an auto-listen connection open. This used to be `!!(session && room)`,
   // meaning simply having the Talk bar open (regardless of whether anyone was actually
@@ -120,8 +135,17 @@ function _syncCarAudio() {
   // right now" (monRooms[id].talking, toggled by ActiveSpeakersChanged) fixes that while still
   // protecting the audio route for the real duration of playback.
   const monitorActive = Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room && monRooms[id].talking);
-  _setCarAudio(talkActive || monitorActive);
+  _setCarAudio(talkActive || monitorActive, immediate);
   _syncVoiceService();
+}
+
+// Called from the app's visibilitychange handler right before the WebView can be paused by
+// Android — forces the car-audio-off debounce to resolve NOW instead of possibly freezing
+// mid-countdown in the background. See the `immediate` comment in _setCarAudio for why this
+// matters: a stuck debounce there means the microphone stays blocked for every other app on the
+// phone for as long as GroundLink sits in the background.
+export function flushCarAudioForBackground() {
+  try { _syncCarAudio(true); } catch (e) {}
 }
 
 // Native foreground service (window.GLAudioRouter.startVoiceService/stopVoiceService) that keeps
