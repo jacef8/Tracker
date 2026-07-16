@@ -2098,7 +2098,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 269;
+var APP_BUILD = 270;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2776,6 +2776,17 @@ window._syncDeviceMonitor = function () {
 // next device-list update — otherwise the monitor (and the watch it keeps awake) could sit
 // connected for hours after you background the app.
 try { document.addEventListener('visibilitychange', function () { try { window._syncDeviceMonitor(); } catch (e) {} }); } catch (e) {}
+// Force the car-audio-off debounce to resolve NOW, right before Android can pause the WebView's
+// JS (including that very timer) — otherwise a background right after talking could leave the
+// phone stuck in communication-mode audio, blocking the microphone for every OTHER app, for as
+// long as GroundLink sits in the background. Foreground side needs no equivalent: _syncCarAudio
+// already re-runs from real state on the next voice event.
+try {
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) return;
+    window._voiceMod().then(function (mod) { if (mod.flushCarAudioForBackground) mod.flushCarAudioForBackground(); }).catch(function () {});
+  });
+} catch (e) {}
 window._onDeviceTalking = function (ev) {
   if (!ev || !ev.on) return;
   var nm = (ev.name || 'A device');
