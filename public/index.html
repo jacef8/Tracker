@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 276;
+var APP_BUILD = 277;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10817,6 +10817,14 @@ document.addEventListener('click', function(e) {
 
 <!-- ══ GLAuth — durable identity: Google sign-in + guest backup/restore code ══ -->
 <script>
+// TEMPORARY: unconditional ping, no dependency on anything else in this file — confirms
+// whether this whole script block even runs at all, since the last diagnostic (routed
+// through refreshUI + the Firebase SDK) came back completely empty.
+try {
+  fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/appleSignInLog/9.json', {
+    method: 'PUT', body: JSON.stringify({ step: 'glauth-script-loaded', ts: Date.now() })
+  }).catch(function () {});
+} catch (e) {}
 (function () {
   var LS = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -11138,11 +11146,15 @@ document.addEventListener('click', function(e) {
   // way to see device console output without a Mac/Xcode. Same rotating-log pattern already
   // used for the watch/phone voice bugs, just keyed under a fixed shared path since we don't
   // have a stable signed-in identity yet at this point in the flow.
+  // Plain REST PUT — deliberately NOT going through the Firebase JS SDK (db/fbSet/fbRef),
+  // since the last log attempt came back completely empty, which is consistent with those
+  // not being ready yet when this ran. A raw fetch() has zero dependency on any other
+  // subsystem's init order, so this should log unconditionally the instant it's called.
   function _appleLog(step, detail) {
     try {
-      if (!db || !fbSet || !fbRef) return;
       var slot = Date.now() % 10;
-      fbSet(fbRef(db, 'gl/_debug/appleSignInLog/' + slot), { step: step, detail: String(detail == null ? '' : detail), ts: Date.now() }).catch(function () {});
+      var body = JSON.stringify({ step: step, detail: String(detail == null ? '' : detail), ts: Date.now() });
+      fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/appleSignInLog/' + slot + '.json', { method: 'PUT', body: body }).catch(function () {});
     } catch (e) {}
   }
   function signInApple() {
