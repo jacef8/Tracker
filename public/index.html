@@ -173,8 +173,8 @@
   /* Grouped sub-sections on the front page — visually separates "join an existing group"
      from "start a new one" so the same-looking text boxes aren't all one undifferentiated
      stack. (Not to be confused with .join-card, which is the single outer floating panel.) */
-  .join-section { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px 12px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; gap: 8px; }
-  .join-section-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--text); }
+  .join-section { border: 1px solid rgba(240,165,0,0.3); border-radius: 12px; padding: 11px 12px 12px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; gap: 8px; }
+  .join-section-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; letter-spacing: .01em; color: #d4dbe4; }
   .input-icon-wrap { position: relative; display: flex; align-items: center; }
   .input-icon-wrap > .input-icon { position: absolute; left: 13px; color: var(--muted); pointer-events: none; }
   .input-icon-wrap > input { padding-left: 40px !important; }
@@ -1074,6 +1074,13 @@
             <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
           </div>
           <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a room name or select one above</div>
+          <!-- Only applies to a BRAND-NEW room name (handleJoin gates this the same way it
+               gates the public/private prompt) — an existing room's circle status isn't
+               changeable from here. -->
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent">
+            <input type="checkbox" id="inp-make-circle" style="width:16px;height:16px;flex-shrink:0;accent-color:var(--accent)" />
+            Make this a Family Circle — a permanent group where everyone's location always shows, in any room
+          </label>
           <button class="btn-primary" id="join-btn" style="margin-top:2px">Open Map →</button>
         </div>
 
@@ -2161,7 +2168,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 288;
+var APP_BUILD = 289;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4274,6 +4281,17 @@ function _getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') ||
 function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 
+// ── Family Circles (device-local membership cache) ──────────────────────────
+// A Circle is an ordinary room (config.circle + config.persistent) with an added
+// PERMANENT roster (gl/<key>/members/<uid>, separate from the live/connection-based
+// `users` node) so background location keeps flowing to it regardless of which room
+// (if any) is currently open. This local cache is what onGpsFix's fan-out reads from;
+// _setCircles also pushes into the signed-in profile sync (window._glSync), same as
+// friends/favorites, so circle membership follows the account across devices.
+function _getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
+function _setCircles(m) { try { localStorage.setItem('gl_circles', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
+function _isCircleMember(key) { return !!_getCircles()[key]; }
+
 // ── Account page: stats · map color · your groups · quick settings ──────────
 window._myColor = (function(){ try { return localStorage.getItem('gl_mycolor') || ''; } catch (e) { return ''; } })();
 var ACCT_COLORS = ['#f0a500','#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#e74c3c','#1abc9c','#e91e63','#00bcd4'];
@@ -4948,6 +4966,20 @@ function enterMap(name, group, uid) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (_) {}
       window._pendingVisibility = null;
     }
+    // Creator asked for this brand-new group to be a Family Circle — mark it persistent
+    // (reuses the same "never expires" logic renderRoomList() already applies to
+    // favorited/private rooms) and seed the PERMANENT roster. Unlike the live `users`
+    // node, `members` is never touched by connect/disconnect — it's what onGpsFix's
+    // fan-out (below) checks to decide which circles a location fix should also reach.
+    if (window._pendingCircle) {
+      try {
+        fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
+        fbSet(fbRef(db, 'gl/' + groupName + '/config/circle'), true);
+        fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+        var _circles = _getCircles(); _circles[groupName] = group; _setCircles(_circles);
+      } catch (_) {}
+      window._pendingCircle = null;
+    }
     // ── Room ownership ────────────────────────────────────────────────
     // Track who owns this room. If no owner has ever been recorded (older
     // rooms created before this feature), the first person to open it claims it.
@@ -5241,6 +5273,16 @@ function showJoinScreen() {
   // "Active" presence — app open, not in any room. Force null explicitly since groupName may
   // still hold the room just left at this exact point.
   try { window._assertPresence(null); } catch (e) {}
+  // Family Circles: if you belong to one, your location should keep flowing to it even
+  // sitting on the home screen with no room open — same pipeline My Map already starts
+  // on its own (beginLocation → onGpsFix's fan-out), just triggered here too so a circle
+  // member doesn't have to specifically open My Map for it to kick in.
+  try {
+    if (window._gpsWatchId == null && Object.keys(_getCircles()).length) {
+      if (!userId) { var _cs = getSavedSession(); userId = _cs.uid || genUid(); userName = userName || _cs.name || 'Me'; }
+      beginLocation();
+    }
+  } catch (e) {}
   // Pre-fill the name from the last session so returning users can join a room in one
   // tap without re-typing their name (and so an empty name doesn't silently block join).
   try {
@@ -5451,8 +5493,11 @@ function handleJoin() {
   // Only prompt when we actually have the directory loaded and the group truly isn't in it,
   // so we never overwrite an existing group's visibility.
   if (window._lastGlSnap && !window._lastGlSnap[gkey] && !window._inviteRoom) {
+    var makeCircle = false;
+    try { makeCircle = !!document.getElementById('inp-make-circle').checked; } catch (e) {}
     _askVisibility(group, function(vis) {
       window._pendingVisibility = vis;
+      window._pendingCircle = makeCircle;
       checkGroupPasscode(name, group, uid, invitePin);
     });
     return;
@@ -6556,11 +6601,26 @@ function startLocationSharing() {
 
     // Write real GPS position — clears the claiming placeholder. Speed is always written
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
-    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+    var _fixPayload = {
       lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(accuracy * 3.28084), ts: now,
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
-    });
+    };
+    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
+    // Family Circles: a circle is a permanent membership, independent of whatever room
+    // (if any) is currently open — fan this same fix out to every circle so background
+    // location keeps updating there too, whether you're in a different room or no room
+    // at all. This one function is the single place both foreground watchPosition and the
+    // native background-geolocation plugin funnel fixes through, so no separate background
+    // wiring is needed for circles to get the same "always on" behavior rooms don't have.
+    try {
+      var _circleKeys = Object.keys(_getCircles());
+      for (var _ci = 0; _ci < _circleKeys.length; _ci++) {
+        var _ck = _circleKeys[_ci];
+        if (_ck === groupName) continue; // already written above, skip the duplicate
+        fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
+      }
+    } catch (e) {}
     // Touch the session log (throttled to 60s) so the admin Users tab tracks movement + duration.
     try {
       if (window._sessionId && (now - (window._sessionTouch || 0) > 60000)) {
