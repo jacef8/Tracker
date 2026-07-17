@@ -170,6 +170,14 @@
   .join-input::placeholder { color: #7d8794; }
   .join-input:focus { border-color: var(--accent); }
   .join-hint { font-size: 12.5px; color: #a7b0bd; margin-top: 6px; line-height: 1.5; }
+  /* Grouped sub-sections on the front page — visually separates "join an existing group"
+     from "start a new one" so the same-looking text boxes aren't all one undifferentiated
+     stack. (Not to be confused with .join-card, which is the single outer floating panel.) */
+  .join-section { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px 12px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; gap: 8px; }
+  .join-section-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--text); }
+  .input-icon-wrap { position: relative; display: flex; align-items: center; }
+  .input-icon-wrap > .input-icon { position: absolute; left: 13px; color: var(--muted); pointer-events: none; }
+  .input-icon-wrap > input { padding-left: 40px !important; }
   .btn-primary {
     width: 100%; padding: 12px;
     background: var(--accent); border: none; border-radius: var(--radius);
@@ -988,6 +996,8 @@
   <symbol id="ic-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polygon points="16 8 10.5 10.5 8 16 13.5 13.5 16 8"/></symbol>
   <symbol id="ic-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></symbol>
   <symbol id="ic-history" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
 </svg>
 
 <!-- ══ JOIN SCREEN ═══════════════════════════════════════════════════ -->
@@ -1034,30 +1044,38 @@
 
         <div>
           <div class="field-label">Your name</div>
-          <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+          <div class="input-icon-wrap">
+            <svg class="licon licon-sm input-icon"><use href="#ic-user"/></svg>
+            <input class="join-input" id="inp-name" placeholder="e.g. Jace" maxlength="24" autocomplete="off" />
+          </div>
           <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
         </div>
 
         <!-- Active rooms list -->
-        <div id="room-list-section">
-          <div class="field-label" style="margin-bottom:2px">Tap a group to join</div>
-          <input id="room-search" type="search" inputmode="search" autocomplete="off" placeholder="Search any group by name (incl. private)…" oninput="window._setRoomSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
-          <div id="home-filter" style="display:flex;gap:6px;margin-bottom:4px">
+        <div id="room-list-section" class="join-section">
+          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-search"/></svg>Join a group</div>
+          <div class="input-icon-wrap">
+            <svg class="licon licon-sm input-icon"><use href="#ic-search"/></svg>
+            <input id="room-search" type="search" inputmode="search" autocomplete="off" placeholder="Search any group by name (incl. private)…" oninput="window._setRoomSearch(this.value)" style="width:100%;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
+          </div>
+          <div id="home-filter" style="display:flex;gap:6px">
             <button id="home-filter-public" class="active" onclick="window._setHomeFilter('public')" type="button">Public</button>
             <button id="home-filter-favs" onclick="window._setHomeFilter('favorites')" type="button">&#9733; Favorites</button>
           </div>
           <div id="room-list"><div class="room-loading">Loading groups…</div></div>
         </div>
 
-        <div class="divider-or">or start a new room</div>
+        <div class="divider-or">or</div>
 
-        <div>
-          <div class="field-label">Room name</div>
-          <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
-          <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a room name or select one above</div>
+        <div class="join-section">
+          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-plus"/></svg>Start a new group</div>
+          <div class="input-icon-wrap">
+            <svg class="licon licon-sm input-icon"><use href="#ic-plus"/></svg>
+            <input class="join-input" id="inp-group" placeholder="e.g. LibertyHunt" maxlength="40" autocomplete="off" />
+          </div>
+          <div id="group-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Enter a room name or select one above</div>
+          <button class="btn-primary" id="join-btn" style="margin-top:2px">Open Map →</button>
         </div>
-
-        <button class="btn-primary" id="join-btn">Open Map →</button>
 
         <!-- Share GroundLink — prominent + ALWAYS visible (kept out of the short-screen hide rule below) -->
         <button type="button" id="front-share-btn" onclick="window._shareApp()" style="width:100%;padding:12px;margin-top:2px;background:rgba(240,165,0,.12);border:1px solid var(--accent);border-radius:var(--radius);color:var(--accent);font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share GroundLink</button>
@@ -2143,7 +2161,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 286;
+var APP_BUILD = 287;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
