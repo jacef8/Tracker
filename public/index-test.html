@@ -2104,7 +2104,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 272;
+var APP_BUILD = 273;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10914,6 +10914,17 @@ document.addEventListener('click', function(e) {
   // only — Apple's own account is handled entirely on-device via ASAuthorizationController,
   // there's no web/Android path configured (that needs a separate Services ID + verified
   // domain, which we haven't set up).
+  // TEMPORARY diagnostic breadcrumbs — first real on-device test of this flow, and there's no
+  // way to see device console output without a Mac/Xcode. Same rotating-log pattern already
+  // used for the watch/phone voice bugs, just keyed under a fixed shared path since we don't
+  // have a stable signed-in identity yet at this point in the flow.
+  function _appleLog(step, detail) {
+    try {
+      if (!db || !fbSet || !fbRef) return;
+      var slot = Date.now() % 10;
+      fbSet(fbRef(db, 'gl/_debug/appleSignInLog/' + slot), { step: step, detail: String(detail == null ? '' : detail), ts: Date.now() }).catch(function () {});
+    } catch (e) {}
+  }
   function signInApple() {
     var f = window._fb;
     if (!f || !f.auth || !f.authApi) { if (typeof toast === 'function') toast('Sign-in not ready — try again in a moment', 2600); return; }
@@ -10921,15 +10932,23 @@ document.addEventListener('click', function(e) {
     var cap = window.Capacitor;
     var FA = cap && cap.Plugins && cap.Plugins.FirebaseAuthentication;
     if (!FA || !FA.signInWithApple) { if (typeof toast === 'function') toast('Update the app to use Sign in with Apple', 3000); return; }
+    _appleLog('start');
     FA.signInWithApple().then(function (res) {
       var cred = res && res.credential;
       var idToken = cred && cred.idToken;
+      _appleLog('native-returned', 'idToken=' + (idToken ? 'present(' + idToken.length + 'ch)' : 'MISSING') + ' nonce=' + (cred && cred.nonce ? 'present' : 'MISSING') + ' user=' + !!(res && res.user));
       if (!idToken) throw new Error('no idToken');
       var provider = new A.OAuthProvider('apple.com');
       var fbCred = provider.credential({ idToken: idToken, rawNonce: cred.nonce });
       return A.signInWithCredential(f.auth, fbCred);
-    }).then(function (uc) { afterFirebaseUser(uc.user); })
-      .catch(function (e) { console.warn('native apple', e); if (typeof toast === 'function') toast('Apple sign-in failed', 2600); });
+    }).then(function (uc) {
+      _appleLog('firebase-signin-success', uc && uc.user && uc.user.uid);
+      afterFirebaseUser(uc.user);
+    }).catch(function (e) {
+      _appleLog('error', ((e && e.code) || '') + ' ' + ((e && e.message) || e));
+      console.warn('native apple', e);
+      if (typeof toast === 'function') toast('Apple sign-in failed', 2600);
+    });
   }
 
   function signOutUser() {
