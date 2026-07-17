@@ -2104,7 +2104,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 280;
+var APP_BUILD = 281;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2328,13 +2328,31 @@ window._toggleFriend = function(uid, name, ev) {
 // so existence + a room == in that room. No timestamp gate — that wrongly marked
 // long-running sessions "offline" after 6 minutes.
 function _presenceOnline(p) { return !!(p && p.room); }
+// Shared presence writer — "in a room" (room set) or "app open, no room" (room:null).
+// Called on room-entry (with the room name) and from showJoinScreen() (with null).
+window._assertPresence = function (roomOverride) {
+  try {
+    var fb = window._fb; if (!fb || !fb.db) return;
+    var uid = (typeof userId !== 'undefined' && userId) || (function () { try { return localStorage.getItem('gltest_uid') || localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
+    if (!uid) return;
+    var nm = (typeof userName !== 'undefined' && userName) || (function () { try { return localStorage.getItem('gltest_name') || localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })();
+    var room = (roomOverride !== undefined) ? roomOverride : ((typeof groupName !== 'undefined' && groupName) ? groupName : null);
+    var presRef = fb.ref(fb.db, 'gltest/_presence/' + uid);
+    fb.onDisconnect(presRef).remove();
+    fb.set(presRef, { room: room, name: nm, ts: fb.serverTimestamp() });
+    if (!window._presenceTimer) window._presenceTimer = setInterval(function () { try { window._assertPresence(); } catch (e) {} }, 120000);
+  } catch (e) {}
+};
 // A favorite's status, robust to a missing presence entry: prefer the global presence
 // index; if it's absent, fall back to "in YOUR room" when they have a live marker on your
 // map — so an in-room favorite never shows offline (even if their app is on an older build).
 function _friendStatus(fid) {
   var p = (window._presenceAll || {})[fid];
-  if (_presenceOnline(p)) return { online: true, inMyRoom: (typeof groupName !== 'undefined') && p.room === groupName, roomKey: p.room, name: p.name };
-  if ((typeof groupName !== 'undefined') && groupName && typeof userMarkers !== 'undefined' && userMarkers[fid]) return { online: true, inMyRoom: true, roomKey: groupName, name: null };
+  // "active" = app open at all (a presence entry exists, room or not) — "online" stays
+  // specifically "in a room" since that's what the Join button / inMyRoom logic needs.
+  if (_presenceOnline(p)) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && p.room === groupName, roomKey: p.room, name: p.name };
+  if (p) return { online: false, active: true, inMyRoom: false, roomKey: '', name: p.name };   // app open, no room
+  if ((typeof groupName !== 'undefined') && groupName && typeof userMarkers !== 'undefined' && userMarkers[fid]) return { online: true, active: true, inMyRoom: true, roomKey: groupName, name: null };
   // Fallback (works without the presence index): find the friend in any room's member list
   // from the loaded room-list snapshot. Catches no-GPS members (no map dot) too.
   var snap = window._lastGlSnap;
@@ -2342,10 +2360,10 @@ function _friendStatus(fid) {
     for (var g in snap) {
       if (!g || g.charAt(0) === '_') continue;
       var u = snap[g] && snap[g].users && snap[g].users[fid];
-      if (u && u.conn !== false) return { online: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
+      if (u && u.conn !== false) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
     }
   }
-  return { online: false, inMyRoom: false, roomKey: '', name: null };
+  return { online: false, active: false, inMyRoom: false, roomKey: '', name: null };
 }
 function _friendsRowsHTML() {
   var friends = _getFriends();
@@ -2358,20 +2376,20 @@ function _friendsRowsHTML() {
   var _meDirDev = ''; try { var _dd = (window._dirAll || {})[_meAcct]; if (_dd && _dd.dev) _meDirDev = _dd.dev; } catch (e) {}
   var ids = Object.keys(friends).filter(function (f) { return f && f !== userId && f !== _meAcct && f !== _meDev && f !== _meDirDev; });
   if (!ids.length) return '<div style="padding:18px 14px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7">No favorites yet.<br>Tap the ☆ star next to someone in a room to add them.</div>';
-  function rank(fid) { var s = _friendStatus(fid); return s.online ? (s.inMyRoom ? 1 : 0) : 2; }
-  ids.sort(function (a, b) { return rank(a) - rank(b); });
+  function rank(fid) { var s = _friendStatus(fid); return s.online ? (s.inMyRoom ? 1 : 0) : s.active ? 2 : 3; }
+  ids.sort(function (a, b) { return rank(a) - rank(b); });   // online-elsewhere, then in-room, then active, then offline
   return ids.map(function (fid) {
     var s = _friendStatus(fid);
     var nm = s.name || friends[fid] || 'Friend';
     var roomDisp = s.online ? _prettyGroup(s.roomKey) : '';
-    var statusTxt = s.inMyRoom ? 'In your room' : s.online ? 'In “' + escapeHtmlJs(roomDisp) + '”' : 'Offline';
-    var statusCol = s.inMyRoom ? '#f0a500' : s.online ? '#3fb950' : 'var(--muted)';
+    var statusTxt = s.inMyRoom ? 'In your room' : s.online ? 'In “' + escapeHtmlJs(roomDisp) + '”' : s.active ? 'Active' : 'Offline';
+    var statusCol = s.inMyRoom ? '#f0a500' : s.online ? '#3fb950' : s.active ? '#58a6ff' : 'var(--muted)';
     var safeRoom = s.online ? String(s.roomKey).replace(/'/g, '') : '';
     var safeDisp = roomDisp.replace(/'/g, '');
     var joinBtn = (s.online && !s.inMyRoom) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
     var rmBtn = '<button onclick="window._removeFriend(\'' + fid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">✕</button>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:' + (s.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (s.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</div>' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (s.online ? '#13361f' : s.active ? '#0d2b47' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (s.online ? '#3fb950' : s.active ? '#58a6ff' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</div>' +
         '<div style="min-width:0;flex:1">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</div>' +
           '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
@@ -2414,12 +2432,13 @@ window._acctPeopleSearch = function (q) {
   Object.keys(friends).forEach(function (uid) {
     if (uid === me) return; seen[uid] = 1;
     var p = pres[uid];
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), room: p && p.room });
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), active: !!(p && !p.room), room: p && p.room });
   });
   Object.keys(pres).forEach(function (uid) {
     if (seen[uid] || uid === me) return;
     var p = pres[uid] || {}; if (!p.name) return;
-    people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+    seen[uid] = 1;   // otherwise the directory loop below re-adds this same device a second time
+    people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, active: !p.room, room: p.room });
   });
   // Global directory: every signed-in account, found even when offline (targets their last device).
   var dir = window._dirAll || {};
@@ -2429,16 +2448,17 @@ window._acctPeopleSearch = function (q) {
     if (!dev || dev === me || acct === meAcct || seen[dev] || !d.name) return;   // never show yourself
     seen[dev] = 1;
     var p = pres[dev];
-    people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
+    people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), active: !!(p && !p.room), room: p && p.room });
   });
   people = people.filter(function (pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
-  people.sort(function (a, b) { var r = (a.online ? 0 : 1) - (b.online ? 0 : 1); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
+  people.sort(function (a, b) { var r = rankPp(a) - rankPp(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
+  function rankPp(pp) { return pp.online ? 0 : pp.active ? 1 : 2; }
   if (!people.length) { el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:12px;text-align:center">No one matching &ldquo;' + _escHtml(q) + '&rdquo;.</div>'; return; }
   el.innerHTML = people.slice(0, 40).map(function (pp) {
     var inMine = pp.room && inRoom && pp.room === inRoom;
     var disp = pp.online ? _prettyGroup(pp.room) : '';
-    var statusTxt = inMine ? 'In your room' : pp.online ? 'In &ldquo;' + _escHtml(disp) + '&rdquo;' : 'Offline';
-    var statusCol = inMine ? '#f0a500' : pp.online ? '#3fb950' : 'var(--muted)';
+    var statusTxt = inMine ? 'In your room' : pp.online ? 'In &ldquo;' + _escHtml(disp) + '&rdquo;' : pp.active ? 'Active' : 'Offline';
+    var statusCol = inMine ? '#f0a500' : pp.online ? '#3fb950' : pp.active ? '#58a6ff' : 'var(--muted)';
     var safeRoom = pp.online ? String(pp.room).replace(/'/g, '') : '';
     var safeDisp = disp.replace(/'/g, '');
     var joinBtn = (pp.online && !inMine) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
@@ -2446,7 +2466,7 @@ window._acctPeopleSearch = function (q) {
       ? '<button onclick="window._removeFriend(\'' + pp.uid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">&times;</button>'
       : '<button onclick="window._acctAddFriend(\'' + pp.uid + '\')" title="Add to favorites" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer;flex-shrink:0;white-space:nowrap">&#9733; Add</button>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(pp.name)) + '</div>' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : pp.active ? '#0d2b47' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : pp.active ? '#58a6ff' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(pp.name)) + '</div>' +
         '<div style="min-width:0;flex:1">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
           '<div style="font-size:12px;color:' + statusCol + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statusTxt + '</div>' +
@@ -4699,15 +4719,7 @@ function enterMap(name, group, uid) {
         // Re-assert presence on (re)connect so a resolved blip doesn't leave conn:false behind.
         try { fb.update(_meRef, { conn: true, discTs: 0 }); } catch (_) {}
         // Global presence index — lets your favorites see which room you're in (and you, theirs).
-        try {
-          var _presRef = fb.ref(fb.db, 'gltest/_presence/' + userId);
-          fb.onDisconnect(_presRef).remove();
-          fb.set(_presRef, { room: groupName, name: userName, ts: fb.serverTimestamp() });
-          // Re-assert every 2 min so a transient drop can't orphan us as "offline" to friends.
-          if (!window._presenceTimer) window._presenceTimer = setInterval(function () {
-            try { if (groupName && userId) fb.set(fb.ref(fb.db, 'gltest/_presence/' + userId), { room: groupName, name: userName, ts: fb.serverTimestamp() }); } catch (e) {}
-          }, 120000);
-        } catch (_) {}
+        try { window._assertPresence(); } catch (_) {}
       });
     } catch (_) {}
     // Drive the friends lists + alerts off the global presence index (subscribes once).
@@ -4922,6 +4934,7 @@ function showJoinScreen() {
   document.getElementById('join-screen').style.display = 'flex';
   try { window._maybeOnboard && window._maybeOnboard(); } catch (e) {}
   try { if (window._sizePagerSoon) window._sizePagerSoon(); } catch (e) {}
+  try { window._assertPresence(null); } catch (e) {}
   // Pre-fill the name from the last session so returning users can join a room in one
   // tap without re-typing their name (and so an empty name doesn't silently block join).
   try {
