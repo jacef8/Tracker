@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 278;
+var APP_BUILD = 279;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10822,7 +10822,7 @@ document.addEventListener('click', function(e) {
 // through refreshUI + the Firebase SDK) came back completely empty.
 try {
   fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/appleSignInLog/9.json', {
-    method: 'PUT', body: JSON.stringify({ step: 'glauth-script-loaded', ts: Date.now() })
+    method: 'PUT', body: JSON.stringify({ step: 'glauth-script-loaded', ts: Date.now(), build: (typeof APP_BUILD !== 'undefined' ? APP_BUILD : 'n/a') })
   }).catch(function () {});
 } catch (e) {}
 (function () {
@@ -11160,7 +11160,10 @@ try {
   function _appleLog(step, detail) {
     try {
       var slot = Date.now() % 10;
-      var body = JSON.stringify({ step: step, detail: String(detail == null ? '' : detail), ts: Date.now() });
+      // Stamp the running build number on every entry — a PWA service worker can serve stale
+      // cached JS, and without this there's no way to tell "still broken" apart from "still
+      // running the old code" from the log alone.
+      var body = JSON.stringify({ step: step, detail: String(detail == null ? '' : detail), ts: Date.now(), build: (typeof APP_BUILD !== 'undefined' ? APP_BUILD : 'n/a') });
       fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/appleSignInLog/' + slot + '.json', { method: 'PUT', body: body }).catch(function () {});
     } catch (e) {}
   }
