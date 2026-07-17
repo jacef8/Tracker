@@ -2161,7 +2161,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 287;
+var APP_BUILD = 288;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5384,9 +5384,16 @@ function showJoinScreen() {
     var groupKey = s.group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
     fb.onValue(fb.ref(fb.db, 'gl/' + groupKey), function(snap) {
       var groupExists = snap.exists();
+      // A favorited/private/kept-alive group is a "long-term" group — the 2-hour session
+      // window only exists to stop a one-off public room you joined once from silently
+      // pulling you back in forever. For a group you've deliberately kept, always resume
+      // straight onto the map instead of bouncing back to the join screen after a couple hours.
+      var groupData = (snap.exists && snap.exists()) ? snap.val() : null;
+      var config = (groupData && groupData.config) || {};
+      var isLongTerm = _isFav(groupKey) || !!config.persistent || config.visibility === 'private';
 
-      if (sessionFresh && groupExists) {
-        // Session is fresh and group exists — auto-rejoin
+      if ((sessionFresh || isLongTerm) && groupExists) {
+        // Session is fresh (or this is a long-term group) and it still exists — auto-rejoin
         enterMap(s.name, s.group, s.uid);
       } else {
         // Show join screen — name pre-filled, group NOT pre-filled
