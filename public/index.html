@@ -1079,6 +1079,12 @@
               <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
               Sign in with Google
             </button>
+            <!-- iOS only (App Review 4.8 requires this alongside Google) — shown/hidden by
+                 refreshUI() based on _isIOS(), no Services ID configured for web/Android. -->
+            <button id="btn-apple" type="button" onclick="window.GLAuth && GLAuth.signInApple()" style="display:none;width:100%;padding:11px;background:#000;border:none;border-radius:var(--radius);color:#fff;font-size:14px;font-weight:700;cursor:pointer;align-items:center;justify-content:center;gap:9px;margin-top:8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" style="flex-shrink:0"><path d="M16.365 1.43c0 1.14-.417 2.02-1.25 2.75-.833.73-1.76 1.14-2.78 1.05-.12-1.1.35-2.06 1.17-2.79.83-.73 1.86-1.13 3.09-1.13.03.04.05.08.07.12zM20.5 17.34c-.32.73-.7 1.42-1.15 2.07-.6.87-1.09 1.47-1.47 1.8-.59.55-1.22.83-1.9.85-.49.01-1.07-.14-1.75-.44-.68-.31-1.3-.46-1.87-.46-.6 0-1.24.15-1.94.46-.7.31-1.26.46-1.69.47-.65.03-1.29-.26-1.92-.87-.41-.35-.93-.98-1.55-1.88-.66-.96-1.21-2.08-1.63-3.37-.45-1.39-.68-2.73-.68-4.03 0-1.49.32-2.77.97-3.85.51-.87 1.19-1.55 2.04-2.05.85-.5 1.77-.76 2.77-.77.52 0 1.2.16 2.04.48.84.32 1.38.48 1.62.48.18 0 .78-.19 1.79-.56 .96-.34 1.77-.48 2.44-.43 1.8.15 3.16.86 4.06 2.13-1.61.98-2.41 2.35-2.4 4.11.02 1.37.51 2.51 1.48 3.42.44.42.93.75 1.48.98-.12.35-.25.68-.39 1z"/></svg>
+              Sign in with Apple
+            </button>
             <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:9px;line-height:1.5">Free, and keeps your name, friends &amp; favorites on every device you use.</div>
           </div>
           <!-- Signed-in view -->
@@ -2130,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 271;
+var APP_BUILD = 272;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6092,6 +6098,14 @@ function _isNativeApp() {
     }
   } catch (e) {}
   return false;
+}
+// Sign in with Apple is only configured for the native iOS app (see signInApple in the GLAuth
+// module) — no Services ID/verified-domain setup exists for a web or Android path.
+function _isIOS() {
+  try {
+    var c = window.Capacitor;
+    return !!(c && typeof c.getPlatform === 'function' && c.getPlatform() === 'ios');
+  } catch (e) { return false; }
 }
 // Background-location sharing preference (native only, default ON). When OFF we never
 // start the foreground service, so Android shows no persistent status-bar notification —
@@ -10985,6 +10999,8 @@ document.addEventListener('click', function(e) {
     var guestEl = document.getElementById('acct-guest');
     if (inEl)    inEl.style.display = signedIn ? 'flex' : 'none';
     if (guestEl) guestEl.style.display = signedIn ? 'none' : 'block';
+    var appleBtn = document.getElementById('btn-apple');
+    if (appleBtn) appleBtn.style.display = (!signedIn && typeof _isIOS === 'function' && _isIOS()) ? 'flex' : 'none';
     if (signedIn) {
       var nEl = document.getElementById('acct-name');  if (nEl) nEl.textContent = name() || 'Signed in';
       var eEl = document.getElementById('acct-email'); if (eEl) eEl.textContent = LS.get('gl_email') || '';
@@ -11008,6 +11024,11 @@ document.addEventListener('click', function(e) {
             '<svg width="16" height="16" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>' +
             'Sign in with Google' +
           '</button>' +
+          (_isIOS() ?
+            '<button onclick="window.GLAuth && GLAuth.signInApple()" style="width:100%;padding:10px;background:#000;border:none;border-radius:10px;color:#fff;font-size:13.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px">' +
+              '<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff" style="flex-shrink:0"><path d="M16.365 1.43c0 1.14-.417 2.02-1.25 2.75-.833.73-1.76 1.14-2.78 1.05-.12-1.1.35-2.06 1.17-2.79.83-.73 1.86-1.13 3.09-1.13.03.04.05.08.07.12zM20.5 17.34c-.32.73-.7 1.42-1.15 2.07-.6.87-1.09 1.47-1.47 1.8-.59.55-1.22.83-1.9.85-.49.01-1.07-.14-1.75-.44-.68-.31-1.3-.46-1.87-.46-.6 0-1.24.15-1.94.46-.7.31-1.26.46-1.69.47-.65.03-1.29-.26-1.92-.87-.41-.35-.93-.98-1.55-1.88-.66-.96-1.21-2.08-1.63-3.37-.45-1.39-.68-2.73-.68-4.03 0-1.49.32-2.77.97-3.85.51-.87 1.19-1.55 2.04-2.05.85-.5 1.77-.76 2.77-.77.52 0 1.2.16 2.04.48.84.32 1.38.48 1.62.48.18 0 .78-.19 1.79-.56 .96-.34 1.77-.48 2.44-.43 1.8.15 3.16.86 4.06 2.13-1.61.98-2.41 2.35-2.4 4.11.02 1.37.51 2.51 1.48 3.42.44.42.93.75 1.48.98-.12.35-.25.68-.39 1z"/></svg>' +
+              'Sign in with Apple' +
+            '</button>' : '') +
           '<div style="font-size:11px;color:#a7b0bd;text-align:center;margin-top:5px">or stay a guest — signing in saves your groups across devices</div>';
       }
     }
@@ -11090,6 +11111,29 @@ document.addEventListener('click', function(e) {
       });
   }
 
+  // Apple requires this alongside Google (App Review Guideline 4.8: any app offering a
+  // third-party sign-in must offer Sign in with Apple as an equivalent option). Native-iOS
+  // only — Apple's own account is handled entirely on-device via ASAuthorizationController,
+  // there's no web/Android path configured (that needs a separate Services ID + verified
+  // domain, which we haven't set up).
+  function signInApple() {
+    var f = window._fb;
+    if (!f || !f.auth || !f.authApi) { if (typeof toast === 'function') toast('Sign-in not ready — try again in a moment', 2600); return; }
+    var A = f.authApi;
+    var cap = window.Capacitor;
+    var FA = cap && cap.Plugins && cap.Plugins.FirebaseAuthentication;
+    if (!FA || !FA.signInWithApple) { if (typeof toast === 'function') toast('Update the app to use Sign in with Apple', 3000); return; }
+    FA.signInWithApple().then(function (res) {
+      var cred = res && res.credential;
+      var idToken = cred && cred.idToken;
+      if (!idToken) throw new Error('no idToken');
+      var provider = new A.OAuthProvider('apple.com');
+      var fbCred = provider.credential({ idToken: idToken, rawNonce: cred.nonce });
+      return A.signInWithCredential(f.auth, fbCred);
+    }).then(function (uc) { afterFirebaseUser(uc.user); })
+      .catch(function (e) { console.warn('native apple', e); if (typeof toast === 'function') toast('Apple sign-in failed', 2600); });
+  }
+
   function signOutUser() {
     var f = window._fb;
     try { if (f && f.auth && f.authApi) f.authApi.signOut(f.auth); } catch (e) {}
@@ -11120,7 +11164,7 @@ document.addEventListener('click', function(e) {
   else window.addEventListener('gl-auth-ready', wireAuth);
 
   window.GLAuth = {
-    signInGoogle: signInGoogle, signOutUser: signOutUser,
+    signInGoogle: signInGoogle, signInApple: signInApple, signOutUser: signOutUser,
     refreshUI: refreshUI, sync: pushProfile
   };
 })();
