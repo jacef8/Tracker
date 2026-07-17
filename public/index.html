@@ -26,7 +26,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut, signInAnonymously }
+  import { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut, signInAnonymously }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
@@ -60,7 +60,7 @@
   try {
     const auth = getAuth(app);
     window._fb.auth = auth;
-    window._fb.authApi = { GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut };
+    window._fb.authApi = { GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut };
     // Silent anonymous auth — kicked off as early as possible so it has the best chance of
     // resolving before the user reaches the join screen. This gives every device a REAL,
     // cryptographically-issued Firebase uid with zero visible change to the join flow (no
@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 277;
+var APP_BUILD = 278;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11106,12 +11106,19 @@ try {
       var cap = window.Capacitor;
       var FA = cap && cap.Plugins && cap.Plugins.FirebaseAuthentication;
       if (FA && FA.signInWithGoogle) {
+        _appleLog('google-start');
         FA.signInWithGoogle().then(function (res) {
           var idToken = res && res.credential && res.credential.idToken;
+          _appleLog('google-native-returned', 'idToken=' + (idToken ? 'present(' + idToken.length + 'ch)' : 'MISSING') + ' user=' + !!(res && res.user));
           if (!idToken) throw new Error('no idToken');
           return A.signInWithCredential(f.auth, A.GoogleAuthProvider.credential(idToken));
-        }).then(function (uc) { afterFirebaseUser(uc.user); })
-          .catch(function (e) { console.warn('native google', e); if (typeof toast === 'function') toast('Google sign-in failed', 2600); });
+        }).then(function (uc) {
+          _appleLog('google-firebase-signin-success', uc && uc.user && uc.user.uid);
+          afterFirebaseUser(uc.user);
+        }).catch(function (e) {
+          _appleLog('google-error', ((e && e.code) || '') + ' ' + ((e && e.message) || e));
+          console.warn('native google', e); if (typeof toast === 'function') toast('Google sign-in failed', 2600);
+        });
       } else {
         if (typeof toast === 'function') toast('Update the app to use Google sign-in', 3000);
       }
