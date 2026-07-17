@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 274;
+var APP_BUILD = 275;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11000,7 +11000,19 @@ document.addEventListener('click', function(e) {
     if (inEl)    inEl.style.display = signedIn ? 'flex' : 'none';
     if (guestEl) guestEl.style.display = signedIn ? 'none' : 'block';
     var appleBtn = document.getElementById('btn-apple');
-    if (appleBtn) appleBtn.style.display = (!signedIn && typeof _isIOS === 'function' && _isIOS()) ? 'flex' : 'none';
+    var iosCheck = (!signedIn && typeof _isIOS === 'function' && _isIOS());
+    if (appleBtn) appleBtn.style.display = iosCheck ? 'flex' : 'none';
+    // TEMPORARY: the Apple button stayed hidden even after a delayed re-check, so log the
+    // actual state instead of continuing to guess at why _isIOS() reads false.
+    try {
+      if (typeof _appleLog === 'function') {
+        var c = window.Capacitor;
+        _appleLog('ui-check', 'hasCapacitor=' + !!c + ' getPlatformType=' + (c ? typeof c.getPlatform : 'n/a')
+          + ' platform=' + (c && typeof c.getPlatform === 'function' ? c.getPlatform() : 'n/a')
+          + ' isNative=' + (typeof _isNativeApp === 'function' ? _isNativeApp() : 'n/a')
+          + ' UA=' + (navigator.userAgent || '').slice(0, 60));
+      }
+    } catch (e) {}
     if (signedIn) {
       var nEl = document.getElementById('acct-name');  if (nEl) nEl.textContent = name() || 'Signed in';
       var eEl = document.getElementById('acct-email'); if (eEl) eEl.textContent = LS.get('gl_email') || '';
