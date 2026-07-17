@@ -2104,7 +2104,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 282;
+var APP_BUILD = 283;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2312,6 +2312,32 @@ function _isOffCenter(lngLat, marginPx) {
 function _getFriends() { try { return JSON.parse(localStorage.getItem('gl_friends') || '{}'); } catch (e) { return {}; } }
 function _setFriends(m) { try { localStorage.setItem('gl_friends', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFriend(uid) { return !!_getFriends()[uid]; }
+// Someone who's favorited under an old device (reinstalled, switched phones, etc.) would
+// otherwise sit forever as a dead "offline" favorite while their NEW device shows up
+// separately in search as a fresh, un-favorited person — same human, two stale-looking rows.
+// gltest/_devOwner (written by pushProfile) maps a device uid → the account it's signed into;
+// cross-referencing it against gltest/_directory's CURRENT device for that account lets us
+// detect "this favorite moved" and quietly re-key it, so the favorites list self-heals.
+window._reconcileFriends = function () {
+  try {
+    var dirAll = window._dirAll, devOwner = window._devOwnerAll;
+    if (!dirAll || !devOwner) return;   // wait for both indexes to be loaded
+    var friends = _getFriends(), changed = false;
+    Object.keys(friends).forEach(function (uid) {
+      var owner = devOwner[uid]; var acct = owner && owner.acct; if (!acct) return;
+      var d = dirAll[acct]; if (!d || !d.dev || d.dev === uid) return;   // already current
+      if (friends[d.dev]) return;   // the new device is already its own separate favorite — leave both, don't clobber
+      friends[d.dev] = d.name || friends[uid];
+      delete friends[uid];
+      changed = true;
+    });
+    if (changed) {
+      _setFriends(friends);
+      try { _renderFriends(); } catch (e) {}
+      try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; if (q) window._acctPeopleSearch(q); } catch (e) {}
+    }
+  } catch (e) {}
+};
 window._toggleFriend = function(uid, name, ev) {
   if (ev) ev.stopPropagation();
   var m = _getFriends(); var nowFriend;
@@ -2418,7 +2444,7 @@ window._acctPeopleSearch = function (q) {
   if ((!window._dirAll || !Object.keys(window._dirAll).length) && window._fb && window._fb.get && !window._dirLoading) {
     window._dirLoading = true;
     try {
-      window._fb.get(window._fb.ref(window._fb.db, 'gl/_directory')).then(function (ds) {
+      window._fb.get(window._fb.ref(window._fb.db, 'gltest/_directory')).then(function (ds) {
         window._dirAll = ds.val() || {}; window._dirLoading = false;
         try { var inp = document.getElementById('acct-friend-search'); if (inp && inp.value) window._acctPeopleSearch(inp.value); } catch (e) {}
       }).catch(function () { window._dirLoading = false; });
@@ -3125,12 +3151,17 @@ window._ensurePresenceSub = function (fb) {
   fb = fb || window._fb; if (!fb) return;
   window._presenceSubbed = true;
   try {
-    fb.onValue(fb.ref(fb.db, 'gltest/_directory'), function (ds) { window._dirAll = ds.val() || {}; });
+    fb.onValue(fb.ref(fb.db, 'gltest/_directory'), function (ds) { window._dirAll = ds.val() || {}; try { window._reconcileFriends(); } catch (e) {} });
     fb.onValue(fb.ref(fb.db, 'gltest/_presence'), function (ps) {
       window._presenceAll = ps.val() || {};
       try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
       try { _renderFriends(); } catch (e) {}
     });
+  } catch (e) {}
+  // Reverse index device→account (see pushProfile) — lets favorites survive someone switching
+  // to a new device/reinstall instead of leaving a stale duplicate next to a fresh one.
+  try {
+    fb.onValue(fb.ref(fb.db, 'gltest/_devOwner'), function (ds) { window._devOwnerAll = ds.val() || {}; try { window._reconcileFriends(); } catch (e) {} });
   } catch (e) {}
 };
 try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} }); } catch (e) {}
@@ -7891,7 +7922,7 @@ function _renderInvitePeople(q) {
   if (q && (!window._dirAll || !Object.keys(window._dirAll).length) && window._fb && window._fb.get && !window._dirLoading) {
     window._dirLoading = true;
     try {
-      window._fb.get(window._fb.ref(window._fb.db, 'gl/_directory')).then(function (ds) {
+      window._fb.get(window._fb.ref(window._fb.db, 'gltest/_directory')).then(function (ds) {
         window._dirAll = ds.val() || {}; window._dirLoading = false;
         try { var inp = document.getElementById('invite-search'); _renderInvitePeople(inp ? inp.value : q); } catch (e) {}
       }).catch(function () { window._dirLoading = false; });
@@ -10694,6 +10725,10 @@ try {
             var _dent = { name: _dnm, dev: _ddev, ts: (f.serverTimestamp ? f.serverTimestamp() : Date.now()) };
             if (f.update) f.update(f.ref(f.db, 'gltest/_directory/' + u), _dent);
             else f.set(f.ref(f.db, 'gltest/_directory/' + u), _dent);
+            // Reverse index device→account: lets us recognize "this old favorited device uid
+            // and that new one are the same signed-in person" when they switch/reinstall devices,
+            // so a favorite doesn't go permanently stale next to a fresh, un-favorited duplicate.
+            if (_ddev) { try { if (f.update) f.update(f.ref(f.db, 'gltest/_devOwner/' + _ddev), { acct: u }); else f.set(f.ref(f.db, 'gltest/_devOwner/' + _ddev), { acct: u }); } catch (e) {} }
           }
         }
       } catch (e) {}
