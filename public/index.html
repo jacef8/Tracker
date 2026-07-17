@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 283;
+var APP_BUILD = 284;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2374,13 +2374,35 @@ function _isFriend(uid) { return !!_getFriends()[uid]; }
 window._reconcileFriends = function () {
   try {
     var dirAll = window._dirAll, devOwner = window._devOwnerAll;
-    if (!dirAll || !devOwner) return;   // wait for both indexes to be loaded
+    if (!dirAll) return;   // directory must be loaded; devOwner (below) is used opportunistically
     var friends = _getFriends(), changed = false;
+    var me = ''; try { me = localStorage.getItem('gl_uid') || ''; } catch (e) {}
+    // Pass 1: exact device→account reverse-index match — only covers a device switch that
+    // happened AFTER gl/_devOwner started being written (build 283+); no history before that.
     Object.keys(friends).forEach(function (uid) {
-      var owner = devOwner[uid]; var acct = owner && owner.acct; if (!acct) return;
+      if (uid === me) return;
+      var owner = devOwner && devOwner[uid]; var acct = owner && owner.acct; if (!acct) return;
       var d = dirAll[acct]; if (!d || !d.dev || d.dev === uid) return;   // already current
       if (friends[d.dev]) return;   // the new device is already its own separate favorite — leave both, don't clobber
       friends[d.dev] = d.name || friends[uid];
+      delete friends[uid];
+      changed = true;
+    });
+    // Pass 2: name fallback for switches that happened BEFORE the reverse index existed (no
+    // history to look up for those old uids). Only merges when exactly one directory account
+    // has that exact name, so two different people who happen to share a name are never conflated.
+    var nameCounts = {};
+    Object.keys(dirAll).forEach(function (acct) {
+      var nm = ((dirAll[acct] || {}).name || '').trim().toLowerCase(); if (!nm) return;
+      nameCounts[nm] = (nameCounts[nm] || 0) + 1;
+    });
+    Object.keys(friends).forEach(function (uid) {
+      if (uid === me) return;
+      var nm = (friends[uid] || '').trim().toLowerCase(); if (!nm || nameCounts[nm] !== 1) return;
+      var match = null;
+      Object.keys(dirAll).forEach(function (acct) { if (((dirAll[acct] || {}).name || '').trim().toLowerCase() === nm) match = dirAll[acct]; });
+      if (!match || !match.dev || match.dev === uid || friends[match.dev]) return;
+      friends[match.dev] = match.name || friends[uid];
       delete friends[uid];
       changed = true;
     });
