@@ -2136,7 +2136,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 273;
+var APP_BUILD = 274;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11035,6 +11035,12 @@ document.addEventListener('click', function(e) {
     try { var ni = document.getElementById('inp-name'); if (ni && !ni.value && name()) ni.value = name(); } catch (e) {}
   }
   window.addEventListener('DOMContentLoaded', refreshUI);
+  // Re-check shortly after: the app loads from a remote URL (not bundled locally), so
+  // Capacitor's native bridge (window.Capacitor) can finish initializing slightly AFTER
+  // DOMContentLoaded fires — the Google button has no platform check so this race never
+  // showed before, but the Apple button's _isIOS() check can read false on that first pass
+  // and never get re-evaluated. This catches it without needing a real event to hook.
+  setTimeout(refreshUI, 1200);
 
   function isNative() {
     try { return typeof _isNativeApp === 'function' ? _isNativeApp()
