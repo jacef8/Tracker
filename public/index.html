@@ -2168,7 +2168,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 289;
+var APP_BUILD = 290;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3410,6 +3410,21 @@ window._renderMySessions = function () {
   var s = window._mySessions || {}, now = Date.now(), rows = '';
   if (typeof s !== 'object') s = {};   // defensive: a corrupted flat record must never render as fields-as-devices
   Object.keys(s).forEach(function (k) { if (!s[k] || typeof s[k] !== 'object') delete s[k]; });
+  // Sessions never expire on write (every device just keeps heartbeating its own id forever) — a
+  // browser tab closed without a clean disconnect, or an old reinstall, sits here dead forever.
+  // Quietly drop anything untouched for 30+ days instead of piling up as more "Device" rows.
+  var STALE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+  try {
+    var fb = window._fb, acct2 = (typeof _myAcct === 'function') ? _myAcct() : '';
+    if (fb && acct2) {
+      Object.keys(s).forEach(function (id) {
+        if (id !== userId && s[id].ts && (now - s[id].ts) > STALE_SESSION_MS) {
+          try { fb.remove(fb.ref(fb.db, 'gl/_users/' + acct2 + '/sessions/' + id)); } catch (e) {}
+          delete s[id];
+        }
+      });
+    }
+  } catch (e) {}
   Object.keys(s).sort(function (a, b) { return (s[b].ts || 0) - (s[a].ts || 0); }).forEach(function (id) {
     var d = s[id] || {};
     var online = d.ts && (now - d.ts) < 70000;    // heartbeat within ~70s
@@ -3418,9 +3433,13 @@ window._renderMySessions = function () {
     var icon = /tablet/.test(dev) ? '▦' : /pc|desktop|mac|windows|computer/.test(dev) ? '🖥️' : /watch/.test(dev) ? '⌚' : '📱';
     var col = d.talking ? '#ff453a' : online ? '#3fb950' : '#8b949e';
     var status = d.talking ? ('🔊 Talking' + (d.room ? ' · ' + d.room : '')) : online ? (d.room ? 'In ' + d.room : 'Online') : ('Offline · ' + (typeof _devAgo === 'function' ? _devAgo(d.ts) : 'a while ago'));
+    // _withDev combines name + device label ("Jace Ford · tablet") — using just d.name here hid
+    // the device label almost always (every session has a name, so d.name || d.dev never fell
+    // through), making every one of a person's devices look like an identical duplicate row.
+    var label = _withDev(d) || d.name || d.dev || 'Device';
     rows += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)">' +
       '<span style="width:32px;height:32px;border-radius:8px;background:var(--bg2,#0d1117);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">' + icon + '</span>' +
-      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(d.name || d.dev || 'Device') + (isThis ? ' <span style="font-size:10px;color:var(--muted);font-weight:400">· this device</span>' : '') + '</div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) + (isThis ? ' <span style="font-size:10px;color:var(--muted);font-weight:400">· this device</span>' : '') + '</div>' +
         '<div style="font-size:11px;color:' + col + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(status) + '</div></div>' +
       (online && !isThis && d.room ? '<button onclick="window._joinDeviceRoom(\'' + _escHtml(d.room) + '\')" style="background:' + (d.talking ? '#2ea043' : 'var(--bg)') + ';border:1px solid ' + (d.talking ? '#2ea043' : 'var(--border)') + ';border-radius:8px;color:' + (d.talking ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">' + (d.talking ? 'Listen' : 'Join') + '</button>' : '') +
     '</div>';

@@ -255,6 +255,16 @@ async function mintToken(endpoint, roomName, identity, name) {
 // devices: [{ id, name }]. Reconciles: joins new ones, drops removed ones, leaves the rest.
 let monLastOpts = null;   // last {livekitUrl, tokenEndpoint, identity, hearOthers} — needed to reconnect a dropped monitor
 let monWanted = {};       // last-known wanted set (id -> name) — a disconnect handler only reconnects if still wanted
+// Consecutive-failure count per device (token mint / connect throwing, e.g. LiveKit project out
+// of minutes). A device stuck failing forever (not a fleeting blip) used to retry on a flat 4s
+// timer while ALSO re-engaging the preemptive car-audio call below on every single attempt — the
+// off side is debounced 10s (see _setCarAudio), so a 4s retry cadence kept cancelling that
+// debounce before it ever fired, leaving the native audio-routing poll running continuously with
+// no WebRTC audio ever actually flowing. That's the exact "periodic ducking" failure mode this
+// file's own _carAudio comment already documents, just reached via infinite connect failures
+// instead of a live idle connection. Backing off + skipping the preemptive call once failures are
+// clearly not transient fixes it without touching the real, working reconnect-after-a-blip path.
+let monRetryCount = {};
 
 async function connectOneMonitor(id, name) {
   const opts = monLastOpts; if (!opts) return;
@@ -272,7 +282,10 @@ async function connectOneMonitor(id, name) {
     // so our native side needs to already be holding the right mode before that happens, not
     // fix it up afterward. _syncCarAudio() below reconciles the definitive state once we know
     // whether this connection actually succeeded.
-    _setCarAudio(true);
+    // Skip once this device has already failed 3+ times in a row: at that point this isn't the
+    // fleeting blip the preemptive call exists for, and re-engaging it on every retry is what
+    // pins the native audio route on indefinitely (see monRetryCount comment above).
+    if ((monRetryCount[id] || 0) < 3) _setCarAudio(true);
     r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind !== Track.Kind.Audio) return;
       // If you're actively in THIS device's Talk channel, that bar already plays it — skip to avoid echo.
@@ -311,6 +324,7 @@ async function connectOneMonitor(id, name) {
     // config with no servers to relay through is strictly worse than the default, since it also
     // excludes host candidates. Default connect() lets the SDK load the real server ICE list.
     await r.connect(opts.livekitUrl, token);
+    monRetryCount[id] = 0;   // a real connection landed — this device isn't in a failure loop anymore
     try { await r.startAudio(); } catch (e) {}
     // Route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece —
     // but only while a session is genuinely active (_syncCarAudio checks real state, so this
@@ -320,7 +334,12 @@ async function connectOneMonitor(id, name) {
     console.error('[voice] device monitor failed for ' + id, e);
     delete monRooms[id];
     _syncCarAudio();
-    setTimeout(() => { try { connectOneMonitor(id, name); } catch (e2) {} }, 4000);
+    // Exponential backoff (4s/8s/16s/32s, capped at 60s) once failures stack up — a project out
+    // of LiveKit minutes fails every attempt, so a flat 4s retry forever both hammers the token
+    // endpoint and (see monRetryCount above) never lets the car-audio route actually turn off.
+    monRetryCount[id] = (monRetryCount[id] || 0) + 1;
+    const delay = Math.min(4000 * Math.pow(2, Math.min(monRetryCount[id] - 1, 4)), 60000);
+    setTimeout(() => { try { connectOneMonitor(id, name); } catch (e2) {} }, delay);
   }
 }
 
