@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 325;
+var APP_BUILD = 326;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3845,6 +3845,7 @@ window._riToggleCircle = function () {
       fbSet(fbRef(db, 'gltest/' + groupName + '/config/visibility'), 'private');
       fbSet(fbRef(db, 'gltest/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
       var circles = _getCircles(); circles[groupName] = label; _setCircles(circles);
+      try { _registerFavSub(groupName, label, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
       window._roomVisibility = 'private';
       try {
         if (window._lastGlSnap && window._lastGlSnap[groupName]) {
@@ -4397,6 +4398,10 @@ window._leaveCircle = function (key, name) {
     var fb = window._fb;
     try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gltest/' + key + '/members/' + userId)); } catch (e) {}
     var circles = _getCircles(); delete circles[key]; _setCircles(circles);
+    // Only drop the notification subscription if they haven't ALSO separately favorited this
+    // room — favSubs is a single shared entry per room, not tracked by which feature asked for
+    // it, so unregistering unconditionally here would wrongly silence a still-active favorite.
+    try { if (typeof _isFav !== 'function' || !_isFav(key)) _unregisterFavSub(key); } catch (e) {}
     try { delete window._circleUsersAll[key]; } catch (e) {}
     try { window._renderCircleSwitcher(); _renderCircles(); } catch (e) {}
     toast('Left "' + name + '"', 2400);
@@ -4623,6 +4628,11 @@ async function _registerAllFavSubs() {
   try {
     var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
     for (var i = 0; i < favs.length; i++) { try { await _registerFavSub(favs[i], null, true); } catch (e) {} }
+  } catch (e) {}
+  try {
+    var circles = (typeof _getCircles === 'function') ? _getCircles() : {};
+    var keys = Object.keys(circles);
+    for (var j = 0; j < keys.length; j++) { try { await _registerFavSub(keys[j], circles[keys[j]], true); } catch (e) {} }
   } catch (e) {}
 }
 async function _unregisterFavSub(key) {
@@ -8780,6 +8790,7 @@ window._acceptCircleInvite = function(key) {
   try { f.remove(f.ref(f.db, 'gltest/_invites/' + uid + '/' + key)); } catch (e) {}
   try { f.set(f.ref(f.db, 'gltest/' + inv.key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: inv.from || null }); } catch (e) {}
   var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
+  try { _registerFavSub(inv.key, inv.room || inv.key, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
   // Circles work with no GPS watch running yet if this is accepted from a cold home screen —
   // the same proactive start showJoinScreen() already does for an existing circle member.
   try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
