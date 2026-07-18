@@ -59,17 +59,34 @@ if (VAPID_PRIVATE) {
 // ─── FCM (native app push) via Firebase Admin ──────────────────────
 // Set FIREBASE_SERVICE_ACCOUNT (the whole service-account JSON) on the host.
 let fcmAdmin = null;
+let adminDb = null;
 try {
   const svc = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (svc) {
     const admin = require('firebase-admin');
-    admin.initializeApp({ credential: admin.credential.cert(JSON.parse(svc)) });
+    admin.initializeApp({ credential: admin.credential.cert(JSON.parse(svc)), databaseURL: DB_URL });
     fcmAdmin = admin;
+    adminDb = admin.database(); // superuser access — bypasses security rules, used for all
+                                 // server-side gl/ reads below now that the DB requires auth != null
     console.log('FCM (Firebase Admin) ready');
   } else {
     console.warn('FIREBASE_SERVICE_ACCOUNT not set — native FCM push disabled');
   }
 } catch (e) { console.warn('FCM init failed:', e.message); }
+
+// Server-side gl/ read/delete helper — uses the Admin SDK (bypasses rules) when available,
+// falling back to a raw unauthenticated REST call otherwise (only works if the database still
+// permits unauthenticated reads; since rules now require auth != null, that fallback is really
+// just "fail the same way an anonymous client would" for a deployment with no service account).
+async function _dbGet(path) {
+  if (adminDb) { const snap = await adminDb.ref(path).once('value'); return snap.val(); }
+  const r = await fetch(DB_URL + '/' + path + '.json');
+  return await r.json();
+}
+async function _dbDelete(path) {
+  if (adminDb) { await adminDb.ref(path).remove(); return; }
+  await fetch(DB_URL + '/' + path + '.json', { method: 'DELETE' });
+}
 
 // ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
 // The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
@@ -77,8 +94,7 @@ try {
 // handles — connecting voice or grabbing a GPS fix — so the watch can sleep when idle.
 async function getDeviceToken(device) {
   try {
-    const r = await fetch(DB_URL + '/gl/_devices/' + encodeURIComponent(device) + '/fcmToken.json');
-    const t = await r.json();
+    const t = await _dbGet('gl/_devices/' + encodeURIComponent(device) + '/fcmToken');
     return (typeof t === 'string' && t) ? t : null;
   } catch (e) { return null; }
 }
@@ -120,16 +136,16 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
     group: group,
     url:   b.url   || '/'
   });
-  const groupBase = DB_URL + '/' + ns + '/' + encodeURIComponent(group);
+  const groupBase = ns + '/' + group;
   const base = groupBase + '/pushSubs';
   try {
     // Members currently in the room.
-    const subs = (await (await fetch(base + '.json')).json()) || {};
+    const subs = (await _dbGet(base)) || {};
     // For join/leave activity, ALSO notify people who favorited this group but aren't
     // in the room right now (their subscriptions live at gl/<group>/favSubs).
     let favs = {};
     if (b.toFavs) {
-      try { favs = (await (await fetch(groupBase + '/favSubs.json')).json()) || {}; } catch (e) { favs = {}; }
+      try { favs = (await _dbGet(groupBase + '/favSubs')) || {}; } catch (e) { favs = {}; }
     }
     // Merge by uid so someone who's both a member and a favoriter is notified once.
     const targets = {};
@@ -158,7 +174,7 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
             sent++;
           } catch (err) {
             if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-              try { await fetch(from + '/' + uid + '.json', { method: 'DELETE' }); } catch (e2) {}
+              try { await _dbDelete(from + '/' + uid); } catch (e2) {}
             }
           }
         }
@@ -176,7 +192,7 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
         } catch (err) {
           const code = (err && err.errorInfo && err.errorInfo.code) || (err && err.code) || '';
           if (/not-registered|invalid-registration-token|invalid-argument/i.test(code)) {
-            try { await fetch(from + '/' + uid + '/fcm.json', { method: 'DELETE' }); } catch (e2) {}
+            try { await _dbDelete(from + '/' + uid + '/fcm'); } catch (e2) {}
           }
         }
       }
