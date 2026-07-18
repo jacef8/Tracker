@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 317;
+var APP_BUILD = 318;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4523,6 +4523,29 @@ function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 function _getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
 function _setCircles(m) { try { localStorage.setItem('gl_circles', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }
 function _isCircleMember(key) { return !!_getCircles()[key]; }
+// Prompt a non-member who just entered an EXISTING Crew room to become a permanent member.
+// Today the only other way in is the separate invite picker — without this, someone who opens
+// a shared Crew link (or an older room that later became a Crew) is stuck as an ephemeral
+// visitor: their location shows here only while they happen to be in this room, and never
+// again once they leave. Asked at most once per room per device — a "Not now" is respected,
+// not re-nagged every time they come back.
+window._promptJoinCrew = function (key, label) {
+  if (!key || _isCircleMember(key)) return;
+  var askedKey = 'gl_crew_asked_' + key;
+  try { if (localStorage.getItem(askedKey) === '1') return; } catch (e) {}
+  try { localStorage.setItem(askedKey, '1'); } catch (e) {}
+  _confirm(
+    'This is a Crew — accept to always show up here for each other, no matter what other room you\'re in or if the app\'s in the background, even after you leave this room.',
+    function () {
+      try { fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+      var circles = _getCircles(); circles[key] = label || key; _setCircles(circles);
+      try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
+      try { window._renderCircleSwitcher(); } catch (e) {}
+      toast('You’re in the Crew now — you’ll always show up here, no matter what other room you\'re in', 3200);
+    },
+    { title: 'Join this Crew?', yes: 'Join', no: 'Not now' }
+  );
+};
 // Home-screen "My Circles" section: each circle you belong to, with a live-count peek, a way to
 // jump straight into its room (full chat/pins/voice — a circle IS a room), and a way to invite
 // someone — none of which require actually "joining" first, since that's the whole point.
@@ -5331,22 +5354,17 @@ function enterMap(name, group, uid) {
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
-    // Notify anyone currently in this room the moment it becomes a Crew — even without the
-    // converter explicitly inviting them. _riToggleCircle already offers to invite whoever's
-    // present at that exact moment, but only reaches people the converter picked; this passively
-    // tells EVERYONE else already here too, so they at least know to check Room Info if they
-    // want to join, rather than the room silently changing status under them.
-    window._circleFlagKnown = null;   // null until the first snapshot loads, so a room that's ALREADY a Crew never fires this on simple entry
+    // Offer anyone who isn't already a permanent member the chance to join, the moment this
+    // room's Crew status is known — whether that's because you just walked in (e.g. a shared
+    // link to an existing Crew) or because someone converted the room to a Crew while you were
+    // already sitting in it. _riToggleCircle already offers to invite whoever's present at the
+    // exact moment of conversion, but only reaches people the converter picked; this reaches
+    // everyone else too, with an actual way to accept (Room Info itself has no join button for
+    // a Crew you're not already in).
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/circle'), function (snap) {
         var val = !!(snap && snap.val && snap.val());
-        var isFirst = (window._circleFlagKnown === null);
-        var was = window._circleFlagKnown;
-        window._circleFlagKnown = val;
-        if (isFirst) return;
-        if (val && !was && !window._justMadeThisACircle) {
-          toast('👪 This room just became a Crew — check Room Info if you want to join', 5000);
-        }
+        if (val && !window._justMadeThisACircle) { try { window._promptJoinCrew(groupName, group); } catch (e) {} }
       });
     } catch (e) {}
     // Track visibility so the owner's Room Info toggle reflects the live value.
