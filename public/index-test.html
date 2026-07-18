@@ -2169,7 +2169,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 295;
+var APP_BUILD = 296;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3768,23 +3768,48 @@ window._riToggleCircle = function () {
   if (!groupName || !db) return;
   if (_riIsCircle()) return;
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
-  _confirm('Make "' + label + '" a Circle? Everyone in it will always show up for each other, in any room, from now on. This can\'t be undone.', function () {
+  _confirm('Make "' + label + '" a Circle? Everyone in it will always show up for each other, in any room, from now on — this also makes the room private, so only people you invite can find it. This can\'t be undone.', function () {
     try {
       fbSet(fbRef(db, 'gltest/' + groupName + '/config/persistent'), true);
       fbSet(fbRef(db, 'gltest/' + groupName + '/config/circle'), true);
+      // A Circle's own room continuously carries every member's live location (the fan-out
+      // writes there regardless of whether they're actually present) — leaving it public would
+      // let any stranger who finds the room see all of that just by joining. Force private
+      // directly (not via the owner-gated _setRoomVisibility) since anyone can convert a room
+      // per the no-owner-gate design, and this lock is an inherent safety consequence of that
+      // action, not a separate visibility decision someone else should be able to block.
+      fbSet(fbRef(db, 'gltest/' + groupName + '/config/visibility'), 'private');
       fbSet(fbRef(db, 'gltest/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
       var circles = _getCircles(); circles[groupName] = label; _setCircles(circles);
+      window._roomVisibility = 'private';
       try {
         if (window._lastGlSnap && window._lastGlSnap[groupName]) {
           window._lastGlSnap[groupName].config = window._lastGlSnap[groupName].config || {};
           window._lastGlSnap[groupName].config.circle = true;
           window._lastGlSnap[groupName].config.persistent = true;
+          window._lastGlSnap[groupName].config.visibility = 'private';
         }
       } catch (e) {}
     } catch (e) {}
     try { window._renderMyCirclesHome(); _renderCircles(); } catch (e) {}
     _renderRiCircle();
-    toast('“' + label + '” is now a Circle', 3000);
+    try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}   // refresh the visibility row too
+    toast('“' + label + '” is now a Circle (and now private)', 3200);
+    // Anyone ELSE currently live in the room got no automatic membership or notification —
+    // that's deliberate (nobody should be silently opted into permanent tracking just for
+    // having been in the room at the wrong moment). But re-finding them in the invite picker
+    // is friction the converter shouldn't have to repeat, so offer it right away instead.
+    try {
+      var liveUsers = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+      var hereCount = Object.keys(liveUsers).filter(function (uid) { return uid !== userId; }).length;
+      if (hereCount > 0) {
+        setTimeout(function () {
+          _confirm(hereCount + (hereCount === 1 ? ' person is' : ' people are') + ' here right now — invite ' + (hereCount === 1 ? 'them' : 'them all') + ' to the Circle too?', function () {
+            window._openCircleInvitePicker(groupName, label);
+          }, { yes: 'Invite them', no: 'Not now' });
+        }, 700);
+      }
+    } catch (e) {}
   }, { yes: 'Make it a Circle' });
 };
 function renderRoomInfoOwner() {
@@ -5562,6 +5587,15 @@ function handleJoin() {
   if (window._lastGlSnap && !window._lastGlSnap[gkey] && !window._inviteRoom) {
     var makeCircle = false;
     try { makeCircle = !!document.getElementById('inp-make-circle').checked; } catch (e) {}
+    // A Circle's own room continuously carries every member's live location (that's the whole
+    // fan-out mechanism) — a PUBLIC circle room would let any stranger who finds it see all of
+    // that just by joining. Skip the public/private prompt entirely and go straight to private.
+    if (makeCircle) {
+      window._pendingVisibility = 'private';
+      window._pendingCircle = true;
+      checkGroupPasscode(name, group, uid, invitePin);
+      return;
+    }
     _askVisibility(group, function(vis) {
       window._pendingVisibility = vis;
       window._pendingCircle = makeCircle;
@@ -8390,8 +8424,13 @@ function _renderInvitePeople(q) {
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
   var circleMode = window._invitePickerMode === 'circle';
   var circleMembers = window._circleInviteMembers || {};
+  var circleTarget = window._circleInviteTarget;
   function rank(pp) {
-    if (circleMode) return circleMembers[pp.uid] ? 0 : pp.online ? 1 : pp.friend ? 2 : 3;
+    if (circleMode) {
+      if (circleMembers[pp.uid]) return 0;
+      if (circleTarget && pp.room && pp.room === circleTarget.key) return 1;   // here in this room right now
+      return pp.online ? 2 : pp.friend ? 3 : 4;
+    }
     return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3;
   }
   people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
@@ -8404,8 +8443,10 @@ function _renderInvitePeople(q) {
   listEl.innerHTML = people.slice(0, 40).map(function(pp) {
     var alreadyMember = circleMode && !!circleMembers[pp.uid];
     var inMyRoom = !circleMode && pp.room && groupName && pp.room === groupName;
+    var hereNow = circleMode && !alreadyMember && circleTarget && pp.room && pp.room === circleTarget.key;
     var already = circleMode ? alreadyMember : inMyRoom;
     var status = already ? (circleMode ? '<span style="color:#3fb950;font-weight:700">already in this Circle</span>' : '<span style="color:#3fb950;font-weight:700">in this room</span>')
+      : hereNow ? '<span style="color:#a78bfa;font-weight:700">here now</span>'
       : pp.online ? '<span style="color:#3fb950;font-weight:700">online</span>'
       : pp.friend ? '<span style="color:var(--muted)">friend · offline</span>'
       : '<span style="color:var(--muted)">offline</span>';
