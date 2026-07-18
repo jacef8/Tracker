@@ -1093,7 +1093,7 @@
                changeable from here. -->
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent">
             <input type="checkbox" id="inp-make-circle" style="width:16px;height:16px;flex-shrink:0;accent-color:var(--accent)" />
-            <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Family Circle — always-on location, any room</span>
+            <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Circle — always-on location, any room</span>
           </label>
           <button class="btn-primary" id="join-btn" style="margin-top:2px">Open Map →</button>
         </div>
@@ -1975,6 +1975,14 @@
       <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
       <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen for quick rejoin</div></div>
     </div>
+    <!-- Turn an already-existing room into a Circle (a Circle is otherwise only offered as a
+         checkbox when creating a BRAND-NEW group). One-way: once a room is a Circle, other people
+         may already hold a permanent membership in it, so there's no clean "undo" exposed here —
+         see window._riToggleCircle. -->
+    <div id="ri-circle-row" onclick="window._riToggleCircle && window._riToggleCircle()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Make this a Circle</div><div id="ri-circle-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Everyone here always shows up for each other, in any room</div></div></div>
+      <span id="ri-circle-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div id="ri-secdev-row" onclick="window._toggleSecureDevices && window._toggleSecureDevices()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show secure devices here</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Put your private devices (like the watch) on THIS group's map. Off by default — they always show on My Map.</div></div></div>
       <span id="ri-secdev-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
@@ -2190,7 +2198,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 293;
+var APP_BUILD = 294;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3857,6 +3865,7 @@ function openRoomInfo() {
   var ownerActions = document.getElementById('ri-owner-actions');
   if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
   try { _renderRiFav(); } catch (e) {}
+  try { _renderRiCircle(); } catch (e) {}
   try { _renderRoomExpire(); } catch (e) {}
   // "Show secure devices here" — only relevant if you actually have a private device to show.
   var sdRow = document.getElementById('ri-secdev-row');
@@ -3930,6 +3939,52 @@ window._riToggleFav = function() {
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   try { window._toggleFav(groupName, label); } catch (e) {}
   _renderRiFav();
+};
+// Is THIS room already a Circle, per the live room-list snapshot (authoritative — someone else
+// may have converted it since you last loaded it), falling back to the local membership cache
+// if that snapshot hasn't streamed in yet.
+function _riIsCircle() {
+  try {
+    var cfg = window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config;
+    if (cfg && cfg.circle) return true;
+  } catch (e) {}
+  try { return _isCircleMember(groupName); } catch (e) { return false; }
+}
+function _renderRiCircle() {
+  var on = _riIsCircle();
+  var pill = document.getElementById('ri-circle-pill');
+  var sub = document.getElementById('ri-circle-sub');
+  if (pill) { pill.textContent = on ? 'ON' : 'OFF'; pill.style.background = on ? 'rgba(167,139,250,.18)' : 'var(--border)'; pill.style.color = on ? '#a78bfa' : 'var(--muted)'; }
+  if (sub) sub.textContent = on ? 'This room is a Circle — you always show up for each other, in any room' : 'Everyone here always shows up for each other, in any room';
+}
+// One-way: turning this on for an EXISTING room is the same conversion a brand-new group's
+// "Make this a Circle" checkbox does at creation, just applied after the fact. No "undo" here —
+// once it's a Circle, other people may already hold a permanent gl/<key>/members entry, and
+// silently ripping that away for everyone else isn't something a single member should be able
+// to trigger by mistake. Leaving one's own Circle membership is a separate, per-person action
+// (Account page's "Leave" button).
+window._riToggleCircle = function () {
+  if (!groupName || !db) return;
+  if (_riIsCircle()) return;
+  var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  _confirm('Make "' + label + '" a Circle? Everyone in it will always show up for each other, in any room, from now on. This can\'t be undone.', function () {
+    try {
+      fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
+      fbSet(fbRef(db, 'gl/' + groupName + '/config/circle'), true);
+      fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+      var circles = _getCircles(); circles[groupName] = label; _setCircles(circles);
+      try {
+        if (window._lastGlSnap && window._lastGlSnap[groupName]) {
+          window._lastGlSnap[groupName].config = window._lastGlSnap[groupName].config || {};
+          window._lastGlSnap[groupName].config.circle = true;
+          window._lastGlSnap[groupName].config.persistent = true;
+        }
+      } catch (e) {}
+    } catch (e) {}
+    try { window._renderMyCirclesHome(); _renderCircles(); } catch (e) {}
+    _renderRiCircle();
+    toast('“' + label + '” is now a Circle', 3000);
+  }, { yes: 'Make it a Circle' });
 };
 function renderRoomInfoOwner() {
   var sheet = document.getElementById('room-info-sheet');
@@ -8666,7 +8721,7 @@ function _renderInviteInbox() {
     // "join" it for location to flow both ways. See window._acceptCircleInvite.
     box.innerHTML =
       '<div style="background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
-        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#a78bfa;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to their <strong style="color:#a78bfa">' + _escHtml(inv.room || 'Family Circle') + '</strong> — you\'ll always show up for each other, no need to join anything</div>' +
+        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#a78bfa;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to their <strong style="color:#a78bfa">' + _escHtml(inv.room || 'Circle') + '</strong> — you\'ll always show up for each other, no need to join anything</div>' +
         '<div style="display:flex;gap:8px;margin-top:9px">' +
           '<button onclick="window._acceptCircleInvite(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:#a78bfa;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Accept</button>' +
           '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
