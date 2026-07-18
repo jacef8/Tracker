@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 308;
+var APP_BUILD = 309;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5144,6 +5144,10 @@ function enterMap(name, group, uid) {
   userName  = name;
   groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
   userId    = uid;
+  // Clear the previous room's passcode state immediately — it's corrected async by the
+  // config/pin listener below, but without this reset a stale true/pin from the last
+  // room briefly leaks into this room's invite text (and Firebase writes).
+  window._roomHasPin = false; window._roomPlainPin = null;
   try { window._writeSession && window._writeSession(); } catch (e) {}   // userId is finally real — report this device now
 
   saveSession(name, group, uid);
@@ -11412,7 +11416,7 @@ window._openSetPasscode = function() {
       window._roomPlainPin = pin; // remember plaintext this session so invites can include it
       try { localStorage.setItem('gl_pin_' + group, pin); } catch (e) {}
       hashPin(pin).then(function(hash) {
-        fbSet(fbRef(db, 'gl/' + group + '/config'), { pin: hash });
+        window._fb.update(fbRef(db, 'gl/' + group + '/config'), { pin: hash });
         toast('Passcode set for ' + group);
       });
     }
