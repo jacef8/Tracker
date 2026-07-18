@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 311;
+var APP_BUILD = 312;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4228,9 +4228,26 @@ function sendSOS() {
 // resolves gets permission-denied and stays denied (RTDB doesn't auto-retry listeners on a
 // later auth change, unlike Firestore), so every read has to wait here or it silently never loads.
 function _fbAuthReady() { return !window._fb || !window._fb.auth || !!window._fb.auth.currentUser; }
+// auth.currentUser going truthy doesn't guarantee the DATABASE connection has itself finished
+// applying that token yet (a brief internal gap) — a listener registered inside that gap still
+// gets silently, permanently denied. A get() round-trip only resolves once the server has
+// actually accepted the authenticated connection, so use one as a one-time canary before letting
+// any real listener register; cached forever after (and shared across concurrent callers) so it
+// only costs one extra read per page load, not one per waitForFirebase() call.
+var _fbReadReady = false, _fbReadPromise = null;
+function _verifyFbRead() {
+  if (_fbReadReady) return Promise.resolve();
+  if (_fbReadPromise) return _fbReadPromise;
+  _fbReadPromise = window._fb.get(window._fb.ref(window._fb.db, 'gltest/_debug'))
+    .then(function () { _fbReadReady = true; })
+    .catch(function () { return new Promise(function (res) { setTimeout(res, 400); }).then(function () { _fbReadReady = true; }); });
+  return _fbReadPromise;
+}
 function waitForFirebase(cb) {
-  if (window._fb && _fbAuthReady()) { cb(window._fb); return; }
-  const t = setInterval(() => { if (window._fb && _fbAuthReady()) { clearInterval(t); cb(window._fb); } }, 80);
+  if (window._fb && _fbAuthReady()) { _verifyFbRead().then(function () { cb(window._fb); }); return; }
+  const t = setInterval(() => {
+    if (window._fb && _fbAuthReady()) { clearInterval(t); _verifyFbRead().then(function () { cb(window._fb); }); }
+  }, 80);
 }
 
 // ══ ROOM LIST ════════════════════════════════════════════════════
