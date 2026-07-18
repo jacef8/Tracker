@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 314;
+var APP_BUILD = 315;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2738,17 +2738,60 @@ function _devAgo(ts) {
   if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago';
   if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago';
 }
+// Rather than scanning EVERY device ever registered (gl/_devices root), look up just the ids
+// this account owns or has been shared (gl/_deviceOwners/<me>, gl/_deviceSharedWithMe/<me>) and
+// subscribe to only those individual gl/_devices/<id> records. An unclaimed device (no owner
+// yet) is in neither index, so its data never reaches this client at all — matching the existing
+// "invisible until claimed" design intent, but now actually true client-side too, not just
+// filtered out after the fact by _canSeeDevice().
+window._deviceOwnerIds = {};
+window._deviceSharedIds = {};
+window._deviceSubs = {};
+function _renderDevicesAll() {
+  try { _renderDevices(); } catch (e) {}
+  try { _renderDeviceList(); } catch (e) {}
+  try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
+  try { window._maybeAcceptPendingDshare && window._maybeAcceptPendingDshare(); } catch (e) {}
+  try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+}
+function _ensureDeviceSub(id) {
+  var fb = window._fb;
+  if (window._deviceSubs[id] || !fb) return;
+  try {
+    window._deviceSubs[id] = fb.onValue(fb.ref(fb.db, 'gl/_devices/' + id), function (dsnap) {
+      var val = dsnap && dsnap.val && dsnap.val();
+      if (val) window._devicesAll[id] = val; else delete window._devicesAll[id];
+      _renderDevicesAll();
+    }) || true;
+  } catch (e) {}
+}
+function _removeDeviceSub(id) {
+  try { if (typeof window._deviceSubs[id] === 'function') window._deviceSubs[id](); } catch (e) {}
+  delete window._deviceSubs[id];
+  delete window._devicesAll[id];
+}
+function _reconcileDeviceSubs() {
+  var union = {};
+  Object.keys(window._deviceOwnerIds).forEach(function (id) { union[id] = true; });
+  Object.keys(window._deviceSharedIds).forEach(function (id) { union[id] = true; });
+  Object.keys(union).forEach(_ensureDeviceSub);
+  Object.keys(window._deviceSubs).forEach(function (id) { if (!union[id]) _removeDeviceSub(id); });
+  _renderDevicesAll();
+}
 window._listenDevices = function () {
   var fb = window._fb; if (!fb || !fb.db || !fb.onValue || window._devicesSubbed) return;
+  var me = _myAcct(); if (!me) return;   // no Google account → nothing to own/be shared, same as before
   window._devicesSubbed = true;
   try {
-    fb.onValue(fb.ref(fb.db, 'gl/_devices'), function (snap) {
-      window._devicesAll = (snap && snap.val && snap.val()) || {};
-      try { _renderDevices(); } catch (e) {}
-      try { _renderDeviceList(); } catch (e) {}
-      try { window._renderMyDevices && window._renderMyDevices(); } catch (e) {}
-      try { window._maybeAcceptPendingDshare && window._maybeAcceptPendingDshare(); } catch (e) {}
-      try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
+    fb.onValue(fb.ref(fb.db, 'gl/_deviceOwners/' + me), function (snap) {
+      window._deviceOwnerIds = (snap && snap.val && snap.val()) || {};
+      _reconcileDeviceSubs();
+    });
+  } catch (e) {}
+  try {
+    fb.onValue(fb.ref(fb.db, 'gl/_deviceSharedWithMe/' + me), function (snap) {
+      window._deviceSharedIds = (snap && snap.val && snap.val()) || {};
+      _reconcileDeviceSubs();
     });
   } catch (e) {}
 };
