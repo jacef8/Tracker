@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 307;
+var APP_BUILD = 308;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6757,7 +6757,8 @@ window._maybeShowBgSetup = function() {
   try { state = localStorage.getItem('gl_bg_setup') || ''; ts = parseInt(localStorage.getItem('gl_bg_setup_ts') || '0'); } catch (e) {}
   var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
   if (state === 'done' && !permProblem) return;
-  if (state === 'snooze' && (Date.now() - ts) < 12 * 60 * 60 * 1000 && !permProblem) return;
+  // Re-prompt once a day (was 12h) until background location is actually granted.
+  if (state === 'snooze' && (Date.now() - ts) < 24 * 60 * 60 * 1000 && !permProblem) return;
   window._openBgSetup();
 };
 
