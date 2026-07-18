@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 310;
+var APP_BUILD = 311;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4223,9 +4223,14 @@ function sendSOS() {
 }
 
 // ══ WAIT FOR FIREBASE ════════════════════════════════════════════
+// Also waits for anonymous/Google sign-in to resolve (not just window._fb existing) — database
+// rules require auth != null to read, and a Realtime Database listener started before that
+// resolves gets permission-denied and stays denied (RTDB doesn't auto-retry listeners on a
+// later auth change, unlike Firestore), so every read has to wait here or it silently never loads.
+function _fbAuthReady() { return !window._fb || !window._fb.auth || !!window._fb.auth.currentUser; }
 function waitForFirebase(cb) {
-  if (window._fb) { cb(window._fb); return; }
-  const t = setInterval(() => { if (window._fb) { clearInterval(t); cb(window._fb); } }, 80);
+  if (window._fb && _fbAuthReady()) { cb(window._fb); return; }
+  const t = setInterval(() => { if (window._fb && _fbAuthReady()) { clearInterval(t); cb(window._fb); } }, 80);
 }
 
 // ══ ROOM LIST ════════════════════════════════════════════════════
