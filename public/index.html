@@ -2200,7 +2200,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 298;
+var APP_BUILD = 299;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12019,6 +12019,22 @@ window._toggleOpenChannel = async function () {
   try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
   _updateChannelBtn();
   _closePeopleDrawer();
+  // Opening the channel used to only ever reach OTHER members who'd separately opened theirs
+  // too, ahead of time — nothing told them a channel was open, so unless everyone happened to
+  // pre-opt-in, this silently reached nobody (the room's own voiceAll auto-join is gated on the
+  // RECEIVING device already having its channel open — see _openChannelOn() above). Ping every
+  // current room member the same way a direct/multi-select call already does
+  // (gl/<group>/voice/<uid>, which auto-joins or shows the tap-to-join prompt regardless of
+  // THEIR channel state), so opening the channel actually functions as "start group voice now"
+  // instead of "wait for everyone to have already turned this on themselves."
+  try {
+    var _chRoomId = _channelRoomId();
+    var _chLiveUsers = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+    Object.keys(_chLiveUsers).forEach(function (uid) {
+      if (uid === userId) return;
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/voice/' + uid), { from: userId, fromName: userName || 'Member', room: _chRoomId, ts: Date.now() }); } catch (e) {}
+    });
+  } catch (e) {}
   toast('Channel open — anyone who opens it hears your Talk button live');
   await _joinOpenChannel();
 };
