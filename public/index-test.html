@@ -1475,15 +1475,19 @@
 <!-- ══ INVITE PICKER — share link or invite a favorite directly ════════ -->
 <div id="invite-picker-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:340px;max-height:84vh;overflow-y:auto">
-    <div id="invite-picker-title" style="font-size:16px;font-weight:800;margin-bottom:3px">Invite to this room</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+      <!-- Only shown when opened from Room Info — returns there instead of dropping to a bare Close. -->
+      <button id="invite-picker-back" onclick="window._closeInvitePicker(true)" style="display:none;background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 4px 2px 0;line-height:1;flex-shrink:0;font-size:20px">&#8249;</button>
+      <div id="invite-picker-title" style="font-size:16px;font-weight:800">Invite to this room</div>
+    </div>
     <div id="invite-picker-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or find a person and invite them straight into the room.</div>
     <div id="invite-picker-share-row">
-      <button onclick="document.getElementById('invite-picker-modal').style.display='none';shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
+      <button onclick="window._closeInvitePicker(false);shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
     </div>
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Find people</div>
     <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
     <div id="invite-pick-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
-    <button onclick="document.getElementById('invite-picker-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Close</button>
+    <button onclick="window._closeInvitePicker(false)" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Close</button>
   </div>
 </div>
 
@@ -2163,7 +2167,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 297;
+var APP_BUILD = 298;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8277,12 +8281,24 @@ function _escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, fun
 window._openInvitePicker = function() {
   window._invitePickerMode = 'room';
   window._circleInviteTarget = null;
+  window._invitePickerBackTo = 'roomInfo';   // this is only ever opened FROM Room Info (closeRoomInfo() runs right before it)
+  var back = document.getElementById('invite-picker-back'); if (back) back.style.display = '';
   var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to this room';
   var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'Send a link, or find a person and invite them straight into the room.';
   var sr = document.getElementById('invite-picker-share-row'); if (sr) sr.style.display = '';
   var si = document.getElementById('invite-search'); if (si) si.value = '';
   _renderInvitePeople('');
   document.getElementById('invite-picker-modal').style.display = 'flex';
+};
+// Close the invite picker. goBack=true (the back-arrow) reopens Room Info when that's where this
+// was opened from; goBack=false (Close, or Share-then-close) always just closes to wherever was
+// already showing underneath — never reopens Room Info even if that's where we came from, since
+// Close is a deliberate "I'm done" action, not "take me back".
+window._closeInvitePicker = function (goBack) {
+  document.getElementById('invite-picker-modal').style.display = 'none';
+  if (goBack && window._invitePickerBackTo === 'roomInfo') {
+    try { openRoomInfo(); } catch (e) {}
+  }
 };
 // Circles are a permanent roster, not a one-off room join, so there's no "share a link" option
 // here — someone has to actually accept to become a member. Any current circle member can send
@@ -8291,6 +8307,8 @@ window._openCircleInvitePicker = function(circleKey, circleName) {
   window._invitePickerMode = 'circle';
   window._circleInviteTarget = { key: circleKey, name: circleName || circleKey };
   window._circleInviteMembers = {};
+  window._invitePickerBackTo = null;   // opened from the home screen / Account page, not Room Info — nothing to go "back" to
+  var back = document.getElementById('invite-picker-back'); if (back) back.style.display = 'none';
   var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to ' + (circleName || circleKey);
   var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'They’ll always show up in this Circle, in any room, once they accept — no need to join anything.';
   var sr = document.getElementById('invite-picker-share-row'); if (sr) sr.style.display = 'none';
@@ -8339,15 +8357,23 @@ function _renderInvitePeople(q) {
     if (!p.name) return;
     people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
   });
-  // Global directory: every signed-in account, so you can invite someone even if they're offline.
-  var _dir = window._dirAll || {};
-  Object.keys(_dir).forEach(function(acct) {
-    var d = _dir[acct] || {}; var dev = d.dev;
-    if (!dev || dev === me || seen[dev] || !d.name) return;
-    seen[dev] = 1;
-    var p = pres[dev];
-    people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
-  });
+  // Global directory: every account that's EVER signed in, not just people relevant to you —
+  // fine for deliberately searching for someone specific by name, but showing it by default
+  // turns this into "a bunch of random people" the moment more than a couple of families use
+  // the app. Only merge it in once there's an actual search query; friends + currently-online
+  // is the whole default list otherwise. (The fetch above is already gated the same way — this
+  // just makes sure a directory cached from an EARLIER search this session doesn't leak into
+  // every later empty-query open too.)
+  if (q) {
+    var _dir = window._dirAll || {};
+    Object.keys(_dir).forEach(function(acct) {
+      var d = _dir[acct] || {}; var dev = d.dev;
+      if (!dev || dev === me || seen[dev] || !d.name) return;
+      seen[dev] = 1;
+      var p = pres[dev];
+      people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
+    });
+  }
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
   var circleMode = window._invitePickerMode === 'circle';
   var circleMembers = window._circleInviteMembers || {};
@@ -8391,7 +8417,11 @@ function _renderInvitePeople(q) {
 }
 
 window._sendRoomInvite = function(uid) {
-  if (!uid || !db || !groupName) return;
+  // These early-outs used to be silent no-ops — the button would visibly do nothing with zero
+  // explanation, which is exactly what "the invite button doesn't work sometimes" looks like
+  // from the outside. Now every failure path actually says so.
+  if (!uid) return;
+  if (!db || !groupName) { toast('Couldn’t send the invite — try again in a moment', 2800); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
   var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
@@ -8399,8 +8429,15 @@ window._sendRoomInvite = function(uid) {
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
   var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
   if (pin) rec.pin = pin;
-  try { var r = fbPush(fbRef(db, 'gltest/_invites/' + uid)); fbSet(r, rec); } catch (e) {}
-  toast('Invited ' + nm + (pin ? '' : '') , 2200);
+  // The toast used to fire unconditionally AFTER this try/catch — meaning a swallowed exception
+  // (network blip, permission hiccup) still showed "Invited ___" even though nothing was ever
+  // written, so a real failure looked identical to success. Toast only follows an actual write now.
+  try {
+    var r = fbPush(fbRef(db, 'gltest/_invites/' + uid)); fbSet(r, rec);
+    toast('Invited ' + nm, 2200);
+  } catch (e) {
+    toast('Couldn’t send the invite — check your connection and try again', 3000);
+  }
 };
 
 // Circle invites use window._fb directly (not the bare db/fbRef/fbSet globals, which only get
@@ -8408,15 +8445,20 @@ window._sendRoomInvite = function(uid) {
 // section too, before the user has entered any room or map this session.
 window._sendCircleInvite = function(uid) {
   var t = window._circleInviteTarget; var fb = window._fb;
-  if (!uid || !fb || !fb.db || !t || !t.key) return;
+  if (!uid) return;
+  if (!fb || !fb.db || !t || !t.key) { toast('Couldn’t send the invite — try again in a moment', 2800); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
   var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
-  try { var r = fb.push(fb.ref(fb.db, 'gltest/_invites/' + uid)); fb.set(r, rec); } catch (e) {}
-  try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
-  try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
-  toast('Invited ' + nm + ' to ' + t.name, 2200);
+  try {
+    var r = fb.push(fb.ref(fb.db, 'gltest/_invites/' + uid)); fb.set(r, rec);
+    try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
+    try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
+    toast('Invited ' + nm + ' to ' + t.name, 2200);
+  } catch (e) {
+    toast('Couldn’t send the invite — check your connection and try again', 3000);
+  }
 };
 
 // ── Receiving: watch my invite inbox and surface it on the home screen ──
