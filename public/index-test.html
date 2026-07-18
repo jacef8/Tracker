@@ -1035,6 +1035,13 @@
           <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
         </div>
 
+        <!-- Family Circles you belong to — always-on presence, independent of the room list below.
+             Hidden entirely (via JS) when you're not in any circle yet. -->
+        <div id="my-circles-section" class="join-section" style="display:none">
+          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-users"/></svg>My Circles</div>
+          <div id="my-circles-list" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
+
         <!-- Active rooms list -->
         <div id="room-list-section" class="join-section">
           <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-search"/></svg>Join a group</div>
@@ -1166,6 +1173,12 @@
           <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">★ Your people</div>
           <input id="acct-friend-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._acctPeopleSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:7px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
+        </div>
+
+        <!-- Family Circles — permanent groups, always-on location, no room needed. Hidden when empty. -->
+        <div id="account-circles-section" style="margin-top:14px;display:none">
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">👪 My Circles <span style="font-size:10px;color:var(--muted);font-weight:400">· always show up for each other, in any room</span></div>
+          <div id="account-circles" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
         <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you -->
@@ -1458,9 +1471,11 @@
 <!-- ══ INVITE PICKER — share link or invite a favorite directly ════════ -->
 <div id="invite-picker-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:340px;max-height:84vh;overflow-y:auto">
-    <div style="font-size:16px;font-weight:800;margin-bottom:3px">Invite to this room</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or find a person and invite them straight into the room.</div>
-    <button onclick="document.getElementById('invite-picker-modal').style.display='none';shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
+    <div id="invite-picker-title" style="font-size:16px;font-weight:800;margin-bottom:3px">Invite to this room</div>
+    <div id="invite-picker-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px">Send a link, or find a person and invite them straight into the room.</div>
+    <div id="invite-picker-share-row">
+      <button onclick="document.getElementById('invite-picker-modal').style.display='none';shareRoomInvite();" style="width:100%;padding:12px;margin-bottom:14px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-share"/></svg>Share link / text</button>
+    </div>
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Find people</div>
     <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
     <div id="invite-pick-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
@@ -2136,7 +2151,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 290;
+var APP_BUILD = 291;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3265,7 +3280,7 @@ window._ensurePresenceSub = function (fb) {
     fb.onValue(fb.ref(fb.db, 'gltest/_devOwner'), function (ds) { window._devOwnerAll = ds.val() || {}; try { window._reconcileFriends(); } catch (e) {} });
   } catch (e) {}
 };
-try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} }); } catch (e) {}
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
 function _checkPresenceAlerts(newPres) {
   var friends = _getFriends(), prev = window._prevPresence || {};
   if (!window._presenceInit) { window._presenceInit = true; window._prevPresence = newPres; return; }
@@ -4116,8 +4131,173 @@ function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 // _setCircles also pushes into the signed-in profile sync (window._glSync), same as
 // friends/favorites, so circle membership follows the account across devices.
 function _getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
-function _setCircles(m) { try { localStorage.setItem('gl_circles', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
+function _setCircles(m) { try { localStorage.setItem('gl_circles', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }
 function _isCircleMember(key) { return !!_getCircles()[key]; }
+// Home-screen "My Circles" section: each circle you belong to, with a live-count peek, a way to
+// jump straight into its room (full chat/pins/voice — a circle IS a room), and a way to invite
+// someone — none of which require actually "joining" first, since that's the whole point.
+window._renderMyCirclesHome = function () {
+  var wrap = document.getElementById('my-circles-section');
+  var listEl = document.getElementById('my-circles-list');
+  if (!wrap || !listEl) return;
+  var circles = _getCircles();
+  var keys = Object.keys(circles);
+  if (!keys.length) { wrap.style.display = 'none'; listEl.innerHTML = ''; return; }
+  wrap.style.display = '';
+  var now = Date.now();
+  listEl.innerHTML = keys.sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
+    var name = circles[key] || key;
+    var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
+    var liveCount = Object.keys(users).filter(function (uid) {
+      var d = users[uid] || {}; return uid !== userId && d.ts && (now - d.ts) < 90000;
+    }).length;
+    var sub = liveCount ? (liveCount + ' live now') : 'Tap to open';
+    var safeKey = String(key).replace(/'/g, ''), safeName = String(name).replace(/'/g, '');
+    return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<div style="flex:1;min-width:0;cursor:pointer" onclick="window._joinFriendRoom(\'' + safeKey + '\',\'' + safeName + '\')">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
+        '<div style="font-size:11px;color:' + (liveCount ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
+      '</div>' +
+      '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:6px 11px;cursor:pointer">+ Invite</button>' +
+    '</div>';
+  }).join('');
+};
+
+// Account-page circle management: view the permanent member roster, invite, or leave. Fetches
+// gltest/<key>/members via a one-time get() rather than a live subscription — this section is only
+// visible while the Account panel itself is open, so a standing listener would be wasted upkeep.
+window._circleMembersCache = {};
+window._renderAccountCircles = function () {
+  var wrap = document.getElementById('account-circles-section');
+  var el = document.getElementById('account-circles');
+  if (!wrap || !el) return;
+  var circles = _getCircles();
+  var keys = Object.keys(circles);
+  if (!keys.length) { wrap.style.display = 'none'; el.innerHTML = ''; return; }
+  wrap.style.display = '';
+  var fb = window._fb;
+  keys.forEach(function (key) {
+    if (window._circleMembersCache[key] || !fb || !fb.get) return;
+    fb.get(fb.ref(fb.db, 'gltest/' + key + '/members')).then(function (snap) {
+      window._circleMembersCache[key] = (snap && snap.val && snap.val()) || {};
+      try { window._renderAccountCircles(); } catch (e) {}
+    }).catch(function () {});
+  });
+  el.innerHTML = keys.sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
+    var name = circles[key] || key;
+    var members = window._circleMembersCache[key] || null;
+    var memberNames = members ? Object.keys(members).map(function (uid) { return (members[uid] || {}).name || 'Member'; }) : null;
+    var sub = memberNames
+      ? (memberNames.length + ' member' + (memberNames.length !== 1 ? 's' : '') + ': ' + memberNames.slice(0, 4).join(', ') + (memberNames.length > 4 ? '…' : ''))
+      : 'Loading…';
+    var safeKey = String(key).replace(/'/g, ''), safeName = String(name).replace(/'/g, '');
+    return '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
+        '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(sub) + '</div>' +
+      '</div>' +
+      '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer">Invite</button>' +
+      '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:8px;color:#f85149;font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer">Leave</button>' +
+    '</div>';
+  }).join('');
+};
+window._leaveCircle = function (key, name) {
+  _confirm('Leave "' + name + '"? You\'ll stop showing up for each other until someone invites you back.', function () {
+    var fb = window._fb;
+    try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gltest/' + key + '/members/' + userId)); } catch (e) {}
+    var circles = _getCircles(); delete circles[key]; _setCircles(circles);
+    delete window._circleMembersCache[key];
+    try { delete window._circleUsersAll[key]; } catch (e) {}
+    try { window._renderAccountCircles(); window._renderMyCirclesHome(); _renderCircles(); } catch (e) {}
+    toast('Left "' + name + '"', 2400);
+  }, { yes: 'Leave', danger: true });
+};
+
+// ── Family Circles: always-on map presence, independent of whatever room (if any) is open ──
+// Mirrors _listenDevices/_renderDevices (own subscription + own marker store) rather than
+// folding into the room's userMarkers/onValue pipeline — a circle-mate has to show up on My Map
+// (no room open at all) and on any OTHER room's map too, so this can't depend on the per-room
+// subscription that only exists while that one specific room happens to be open.
+window._circleUsersAll = {};   // circleKey -> { uid: userData }, latest snapshot per circle
+window._circleMarkers = {};    // uid -> mapboxgl.Marker, kept separate from the room's userMarkers
+window._circleSubbed = {};     // circleKey -> true once its onValue listener is attached
+window._listenCircles = function () {
+  var fb = window._fb; if (!fb || !fb.db || !fb.onValue) return;
+  Object.keys(_getCircles()).forEach(function (key) {
+    if (window._circleSubbed[key]) return;
+    window._circleSubbed[key] = true;
+    try {
+      fb.onValue(fb.ref(fb.db, 'gltest/' + key + '/users'), function (snap) {
+        window._circleUsersAll[key] = (snap && snap.val && snap.val()) || {};
+        try { _renderCircles(); } catch (e) {}
+        try { window._renderMyCirclesHome(); } catch (e) {}   // live-count peek on the home screen — independent of whether a map is up yet
+      });
+    } catch (e) {}
+  });
+};
+function _renderCircles() {
+  if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
+  var now = Date.now(), seen = {};
+  Object.keys(_getCircles()).forEach(function (key) {
+    // The circle whose room you're CURRENTLY in already renders its members via the normal
+    // room-member code (userMarkers) — drawing them again here would double them up.
+    if (typeof groupName !== 'undefined' && groupName === key) return;
+    var users = window._circleUsersAll[key] || {};
+    Object.keys(users).forEach(function (uid) {
+      // Never draw yourself, the same person twice across circles, or someone the normal
+      // room-member code already drew (a circle-mate who also happens to be in whatever
+      // ad-hoc room you're currently standing in, separate from their own circle's room).
+      if (uid === userId || seen[uid] || (typeof userMarkers !== 'undefined' && userMarkers[uid])) return;
+      var data = users[uid] || {};
+      if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
+      seen[uid] = 1;
+      var isLive = (now - (data.ts || 0)) < LIVE_MS;
+      var isResting = !isLive && !!data.rest && (now - (data.ts || 0)) < BS_REST_MAX_MS;
+      var fillColor = data.color || userColor(uid);
+      var borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
+      var opacity = isLive ? '1' : isResting ? '0.9' : '0.65';
+      var mk = window._circleMarkers[uid];
+      if (!mk) {
+        var el = document.createElement('div');
+        Object.assign(el.style, {
+          width: '40px', height: '40px', borderRadius: '50%', background: fillColor,
+          border: '3px solid ' + borderColor, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '13px', fontWeight: '800', color: '#000', boxShadow: '0 2px 10px rgba(0,0,0,.6)',
+          cursor: 'pointer', opacity: opacity, fontFamily: 'system-ui, sans-serif', userSelect: 'none',
+        });
+        el.textContent = initials(data.name);
+        mk = new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([data.lng, data.lat]).addTo(map);
+        mk._el = el;
+        window._circleMarkers[uid] = mk;
+        el.addEventListener('click', function () { window._showCircleMemberPopup(uid); });
+      } else {
+        try { mk.setLngLat([data.lng, data.lat]); } catch (e) {}
+        var el2 = mk._el || mk.getElement();
+        if (el2) { el2.style.background = fillColor; el2.style.borderColor = borderColor; el2.style.opacity = opacity; }
+      }
+      mk._data = data;
+    });
+  });
+  // Drop markers for anyone no longer present in ANY visible circle this pass (left the circle,
+  // or you're now standing inside that circle's own room so the normal room code has them).
+  Object.keys(window._circleMarkers).forEach(function (uid) {
+    if (!seen[uid]) { try { window._circleMarkers[uid].remove(); } catch (e) {} delete window._circleMarkers[uid]; }
+  });
+}
+window._showCircleMemberPopup = function (uid) {
+  var mk = window._circleMarkers[uid]; if (!mk || !mk._data) return;
+  var data = mk._data, now = Date.now();
+  var isLive = (now - (data.ts || 0)) < LIVE_MS;
+  var safeName = (data.name || 'Member').replace(/'/g, '');
+  var gps = window._lastGPS;
+  var distLine = gps ? (distanceMiles(gps.lat, gps.lng, data.lat, data.lng) + ' ' + getBearing(gps.lat, gps.lng, data.lat, data.lng) + ' from you · ') : '';
+  var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:170px">' +
+    '<div style="font-weight:800;font-size:14px;color:#0d1117">' + escapeHtmlJs(_withDev(data)) + '</div>' +
+    '<div style="font-size:11px;color:#6e7681;margin:2px 0 9px">' + distLine + (isLive ? 'live now' : 'last seen ' + _devAgo(data.ts)) + '</div>' +
+    '<button onclick="window._followUser(\'' + uid + '\',\'' + safeName + '\')" style="width:100%;background:' + (isLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;padding:9px">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>' +
+  '</div>';
+  try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px' }).setLngLat([data.lng, data.lat]).setHTML(h).addTo(map); } catch (e) {}
+};
 
 // ── Account page: stats · map color · your groups · quick settings ──────────
 window._myColor = (function(){ try { return localStorage.getItem('gl_mycolor') || ''; } catch (e) { return ''; } })();
@@ -4192,6 +4372,7 @@ function _renderAccountPage() {
   try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
   try { _renderFriends(); } catch (e) {}
   try { if (window._listenDevices) _listenDevices(); window._renderMyDevices && _renderMyDevices(); } catch (e) {}
+  try { window._renderAccountCircles && window._renderAccountCircles(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -4930,7 +5111,8 @@ function enterMap(name, group, uid) {
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
-    try { setTimeout(function () { try { _renderDevices(); if (window._locatePending) { window._locatePending = false; _flyToDevice(); } } catch (e) {} }, 1400); } catch (e) {}
+    try { if (window._listenCircles) _listenCircles(); } catch (e) {}   // Family Circles — show regardless of which room this is
+    try { setTimeout(function () { try { _renderDevices(); _renderCircles(); if (window._locatePending) { window._locatePending = false; _flyToDevice(); } } catch (e) {} }, 1400); } catch (e) {}
     try { listenVoiceLog(); } catch (e) {}
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
@@ -5102,6 +5284,7 @@ function showJoinScreen() {
       beginLocation();
     }
   } catch (e) {}
+  try { window._renderMyCirclesHome(); } catch (e) {}
   // Pre-fill the name from the last session so returning users can join a room in one
   // tap without re-typing their name (and so an empty name doesn't silently block join).
   try {
@@ -8066,9 +8249,34 @@ window._confirmDeleteRoom = function() {
 function _escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); }
 
 window._openInvitePicker = function() {
+  window._invitePickerMode = 'room';
+  window._circleInviteTarget = null;
+  var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to this room';
+  var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'Send a link, or find a person and invite them straight into the room.';
+  var sr = document.getElementById('invite-picker-share-row'); if (sr) sr.style.display = '';
   var si = document.getElementById('invite-search'); if (si) si.value = '';
   _renderInvitePeople('');
   document.getElementById('invite-picker-modal').style.display = 'flex';
+};
+// Circles are a permanent roster, not a one-off room join, so there's no "share a link" option
+// here — someone has to actually accept to become a member. Any current circle member can send
+// this (no owner gate, same as adding a favorite has none).
+window._openCircleInvitePicker = function(circleKey, circleName) {
+  window._invitePickerMode = 'circle';
+  window._circleInviteTarget = { key: circleKey, name: circleName || circleKey };
+  window._circleInviteMembers = {};
+  var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to ' + (circleName || circleKey);
+  var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'They’ll always show up in this Circle, in any room, once they accept — no need to join anything.';
+  var sr = document.getElementById('invite-picker-share-row'); if (sr) sr.style.display = 'none';
+  var si = document.getElementById('invite-search'); if (si) si.value = '';
+  document.getElementById('invite-picker-modal').style.display = 'flex';
+  var fb = window._fb;
+  if (fb && fb.get) {
+    fb.get(fb.ref(fb.db, 'gltest/' + circleKey + '/members')).then(function (snap) {
+      window._circleInviteMembers = (snap && snap.val && snap.val()) || {};
+      _renderInvitePeople('');
+    }).catch(function () { _renderInvitePeople(''); });
+  } else { _renderInvitePeople(''); }
 };
 window._inviteSearch = function(q) { _renderInvitePeople(q || ''); };
 
@@ -8115,7 +8323,12 @@ function _renderInvitePeople(q) {
     people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
   });
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
-  function rank(pp) { return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3; }
+  var circleMode = window._invitePickerMode === 'circle';
+  var circleMembers = window._circleInviteMembers || {};
+  function rank(pp) {
+    if (circleMode) return circleMembers[pp.uid] ? 0 : pp.online ? 1 : pp.friend ? 2 : 3;
+    return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3;
+  }
   people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
   if (!people.length) {
     listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">' +
@@ -8124,19 +8337,22 @@ function _renderInvitePeople(q) {
     return;
   }
   listEl.innerHTML = people.slice(0, 40).map(function(pp) {
-    var inMyRoom = pp.room && groupName && pp.room === groupName;
-    var status = inMyRoom ? '<span style="color:#3fb950;font-weight:700">in this room</span>'
+    var alreadyMember = circleMode && !!circleMembers[pp.uid];
+    var inMyRoom = !circleMode && pp.room && groupName && pp.room === groupName;
+    var already = circleMode ? alreadyMember : inMyRoom;
+    var status = already ? (circleMode ? '<span style="color:#3fb950;font-weight:700">already in this Circle</span>' : '<span style="color:#3fb950;font-weight:700">in this room</span>')
       : pp.online ? '<span style="color:#3fb950;font-weight:700">online</span>'
       : pp.friend ? '<span style="color:var(--muted)">friend · offline</span>'
       : '<span style="color:var(--muted)">offline</span>';
+    var inviteFn = circleMode ? 'window._sendCircleInvite' : 'window._sendRoomInvite';
     return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px">' +
              '<div style="flex:1;min-width:0">' +
                '<div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
                '<div style="font-size:11px;margin-top:1px">' + status + '</div>' +
              '</div>' +
-             (inMyRoom
+             (already
                ? '<span style="flex-shrink:0;font-size:11px;color:var(--muted);font-weight:700;padding:7px 8px">here &#10003;</span>'
-               : '<button onclick="window._sendRoomInvite(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>') +
+               : '<button onclick="' + inviteFn + '(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>') +
            '</div>';
   }).join('');
 }
@@ -8152,6 +8368,22 @@ window._sendRoomInvite = function(uid) {
   if (pin) rec.pin = pin;
   try { var r = fbPush(fbRef(db, 'gltest/_invites/' + uid)); fbSet(r, rec); } catch (e) {}
   toast('Invited ' + nm + (pin ? '' : '') , 2200);
+};
+
+// Circle invites use window._fb directly (not the bare db/fbRef/fbSet globals, which only get
+// assigned once enterMap() runs) — this needs to work from the home screen's "My Circles"
+// section too, before the user has entered any room or map this session.
+window._sendCircleInvite = function(uid) {
+  var t = window._circleInviteTarget; var fb = window._fb;
+  if (!uid || !fb || !fb.db || !t || !t.key) return;
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var pres = window._presenceAll || {};
+  var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
+  var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
+  try { var r = fb.push(fb.ref(fb.db, 'gltest/_invites/' + uid)); fb.set(r, rec); } catch (e) {}
+  try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
+  try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
+  toast('Invited ' + nm + ' to ' + t.name, 2200);
 };
 
 // ── Receiving: watch my invite inbox and surface it on the home screen ──
@@ -8198,6 +8430,19 @@ function _renderInviteInbox() {
       '</div>';
     return;
   }
+  if (inv.circle) {
+    // Accepting doesn't navigate anywhere — the whole point of a Circle is you don't have to
+    // "join" it for location to flow both ways. See window._acceptCircleInvite.
+    box.innerHTML =
+      '<div style="background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
+        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#a78bfa;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to their <strong style="color:#a78bfa">' + _escHtml(inv.room || 'Family Circle') + '</strong> — you\'ll always show up for each other, no need to join anything</div>' +
+        '<div style="display:flex;gap:8px;margin-top:9px">' +
+          '<button onclick="window._acceptCircleInvite(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:#a78bfa;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Accept</button>' +
+          '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
+        '</div>' + more +
+      '</div>';
+    return;
+  }
   box.innerHTML =
     '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
       '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#00e676;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to <strong style="color:#00e676">' + _escHtml(inv.room || 'a room') + '</strong>' + (inv.pin ? ' · one-tap join' : '') + '</div>' +
@@ -8218,6 +8463,23 @@ window._acceptInvite = function(key) {
   window._inviteRoom = inv.room;
   window._invitePin = inv.pin || null;
   showInviteJoin(inv.room, inv.pin || null);
+};
+window._acceptCircleInvite = function(key) {
+  var inv = (window._pendingInvites || []).filter(function(i) { return i._key === key; })[0];
+  if (!inv || !inv.key) return;
+  var f = window._fb; if (!f || !f.db) return;
+  var s = {}; try { s = getSavedSession() || {}; } catch (e) {}
+  var uid = s.uid || (function () { try { return localStorage.getItem('gltest_uid'); } catch (e) { return null; } })();
+  var nm = s.name || userName || 'Me';
+  if (!uid) return;
+  try { f.remove(f.ref(f.db, 'gltest/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { f.set(f.ref(f.db, 'gltest/' + inv.key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: inv.from || null }); } catch (e) {}
+  var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
+  // Circles work with no GPS watch running yet if this is accepted from a cold home screen —
+  // the same proactive start showJoinScreen() already does for an existing circle member.
+  try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
+  try { window._renderMyCirclesHome(); } catch (e) {}
+  toast('You’re in ' + (inv.room || 'the Circle') + ' — you’ll always show up for each other now', 3200);
 };
 window._dismissInvite = function(key) {
   var uid = null; try { uid = localStorage.getItem('gltest_uid'); } catch (e) {}
@@ -9739,6 +10001,8 @@ window._enterSoloMap = function() {
     updatePinSource(lastPins);
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}
     try { _renderDevices(); } catch (e) {}   // your private devices (kid's watch ⌚) on My Map
+    try { if (window._listenCircles) _listenCircles(); } catch (e) {}
+    try { _renderCircles(); } catch (e) {}   // Family Circles members — always shown here, no room needed
     var pts = [];
     Object.keys(lastPins).forEach(function(k) { pts.push([lastPins[k].lng, lastPins[k].lat]); });
     try {
@@ -10230,7 +10494,9 @@ window._followUser = function(uid, name) {
       if (m) { var ol = m.getLngLat(); target = [ol.lng, ol.lat]; }
       // Devices (the watch) render on a separate marker dictionary from room members — fall
       // back to it so a device can be followed the exact same way as a person.
-      else { var dm = window._deviceMarkers && window._deviceMarkers[uid]; if (dm) { var dl = dm.getLngLat(); target = [dl.lng, dl.lat]; } }
+      else if (window._deviceMarkers && window._deviceMarkers[uid]) { var dl = window._deviceMarkers[uid].getLngLat(); target = [dl.lng, dl.lat]; }
+      // Same for a Family Circle member seen outside their circle's own room (_circleMarkers).
+      else { var cm = window._circleMarkers && window._circleMarkers[uid]; if (cm) { var cl = cm.getLngLat(); target = [cl.lng, cl.lat]; } }
     }
     // Set zoom only on the first centering; after that keep the user's chosen zoom so
     // they can zoom out (or in) freely while still being followed. On the periodic tick,
