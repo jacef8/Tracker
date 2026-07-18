@@ -1985,7 +1985,7 @@
     </button>
     <div id="ri-fav-row" onclick="window._riToggleFav()" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
       <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
-      <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen for quick rejoin</div></div>
+      <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen, and your location will keep flowing here even from other rooms</div></div>
     </div>
     <!-- Turn an already-existing room into a Circle (a Circle is otherwise only offered as a
          checkbox when creating a BRAND-NEW group). One-way: once a room is a Circle, other people
@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 321;
+var APP_BUILD = 322;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3995,7 +3995,7 @@ function _renderRiFav() {
   var star = document.getElementById('ri-fav-star');
   var sub = document.getElementById('ri-fav-sub');
   if (star) { star.innerHTML = on ? '&#9733;' : '&#9734;'; star.style.color = on ? 'var(--accent)' : 'var(--muted)'; }
-  if (sub) sub.textContent = on ? 'Saved — shows on your home screen for quick rejoin' : 'Pin it to your home screen for quick rejoin';
+  if (sub) sub.textContent = on ? 'Saved — shows on your home screen, and your location keeps flowing here no matter what room you\'re in' : 'Pin it to your home screen, and your location will keep flowing here even from other rooms';
 }
 window._riToggleFav = function() {
   if (!groupName) return;
@@ -4765,13 +4765,13 @@ window._toggleFav = function(key, name, ev) {
     f.push(key); _setFavs(f);
     // Favoriting keeps the room alive server-side, so a starred room never auto-deletes.
     try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gl/' + key + '/config/persistent'), true); } catch (e) {}
-    toast('★ ' + (name || 'Group') + ' favorited');
+    toast('★ ' + (name || 'Group') + ' favorited — your location will keep flowing here from other rooms too', 3600);
     _registerFavSub(key, name, false).then(function(ok) {
       toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
                : 'Favorited. Turn on notifications (in Settings) to get background alerts when it’s active.', 5500);
     });
   } else {
-    f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites');
+    f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites — your location will stop flowing there');
   }
   if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
 };
@@ -6967,7 +6967,10 @@ function startLocationSharing() {
     try { if (window._trackRec) window._trackRecOnFix(pos, now); } catch (e) {}
 
     // My Map (personal, no room): render YOUR dot with the SAME smooth marker + glide as the
-    // room maps (was Mapbox's raw geolocate dot, which jumps). No room to write to, so stop here.
+    // room maps (was Mapbox's raw geolocate dot, which jumps). Falls through below (no `return`
+    // anymore) so Circles/favorited rooms still get this fix even with no room open — that gap
+    // used to silently break the "always on regardless of room, or no room at all" promise both
+    // features make: your location never fanned out anywhere while sitting on My Map.
     if (window._soloMode || !groupName) {
       try {
         if (typeof map !== 'undefined' && map) {
@@ -6987,14 +6990,17 @@ function startLocationSharing() {
           }
         }
       } catch (e) {}
-      return;
     }
 
-    // Location hidden: stay in the room as a no-GPS member, broadcast no real position
+    // Location hidden: while in a room, stay as a no-GPS member broadcasting no real position.
+    // Circles/favorited rooms also get nothing below while hidden — hidden means hidden
+    // everywhere, not just in whatever room happens to be open.
     if (locationHidden) {
-      fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
-        lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true
-      });
+      if (groupName) {
+        fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
+          lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true
+        });
+      }
       return;
     }
 
@@ -7029,24 +7035,39 @@ function startLocationSharing() {
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
     };
-    fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
-    // Family Circles: a circle is a permanent membership, independent of whatever room
-    // (if any) is currently open — fan this same fix out to every circle so background
-    // location keeps updating there too, whether you're in a different room or no room
-    // at all. This one function is the single place both foreground watchPosition and the
-    // native background-geolocation plugin funnel fixes through, so no separate background
-    // wiring is needed for circles to get the same "always on" behavior rooms don't have.
+    if (groupName) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
+    // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
+    // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
+    // so background location keeps updating there too. This one function is the single place
+    // both foreground watchPosition and the native background-geolocation plugin funnel fixes
+    // through, so no separate background wiring is needed for circles to get this "always on"
+    // behavior rooms don't have.
+    var _circleKeys = [];
     try {
-      var _circleKeys = Object.keys(_getCircles());
+      _circleKeys = Object.keys(_getCircles());
       for (var _ci = 0; _ci < _circleKeys.length; _ci++) {
         var _ck = _circleKeys[_ci];
         if (_ck === groupName) continue; // already written above, skip the duplicate
         fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
       }
     } catch (e) {}
+    // Favorited rooms: the same "always show up here" fan-out as a Circle, but unilateral — no
+    // shared config flag, no permanent members roster, no invite/accept flow. Favoriting a room
+    // already meant "I'll come back to this one" (recurring group, quick rejoin); this makes
+    // your location actually follow that intent instead of only flowing while it happens to be
+    // the one currently-open room — which is exactly what left people missing from rooms they
+    // were expected to still be part of.
+    try {
+      var _favKeys = (typeof _getFavs === 'function') ? _getFavs() : [];
+      for (var _fi = 0; _fi < _favKeys.length; _fi++) {
+        var _fk = _favKeys[_fi];
+        if (_fk === groupName || _circleKeys.indexOf(_fk) !== -1) continue; // already written above
+        fbSet(fbRef(db, `gl/${_fk}/users/${userId}`), _fixPayload);
+      }
+    } catch (e) {}
     // Touch the session log (throttled to 60s) so the admin Users tab tracks movement + duration.
     try {
-      if (window._sessionId && (now - (window._sessionTouch || 0) > 60000)) {
+      if (groupName && window._sessionId && (now - (window._sessionTouch || 0) > 60000)) {
         window._sessionTouch = now;
         fbSet(fbRef(db, 'gl/_sessions/' + window._sessionId), {
           g: groupName, u: userId, n: userName, dev: _deviceLabel(), j: window._sessionJoinTs, l: now, lat: lat, lng: lng
@@ -7057,8 +7078,9 @@ function startLocationSharing() {
 
     // Write breadcrumb if enabled, moved enough, AND the fix is trustworthy. Low-accuracy
     // fixes (common when the screen is off and the OS falls back to cell/wifi location) and
-    // impossible teleports are what scatter the trail — so we drop them here.
-    if (breadcrumbsOn) {
+    // impossible teleports are what scatter the trail — so we drop them here. Breadcrumbs are
+    // per-room, so this only applies with a room actually open.
+    if (breadcrumbsOn && groupName) {
       const accM = accuracy || 0; // meters, from GPS or the native background fix
       const goodAccuracy = accM > 0 && accM <= TRAIL_MAX_ACC_M;
       const distM = lastBreadcrumbPos
