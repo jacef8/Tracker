@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 324;
+var APP_BUILD = 325;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5037,6 +5037,13 @@ function saveSession(name, group, uid) {
 }
 
 function enterMap(name, group, uid) {
+  // Capture whatever room (if any) we were just in, so it can be cleaned up below. Every
+  // caller is SUPPOSED to have already removed its own presence from the old room first
+  // (EXIT, _joinFriendRoom, showJoinScreen all do) — but that's a convention, not something
+  // this function enforced, so any path that reaches enterMap directly without going through
+  // one of those would permanently orphan a "still here" ghost in the room just left.
+  var _prevGroup = (typeof groupName !== 'undefined' && groupName) ? groupName : null;
+  var _prevUserId = (typeof userId !== 'undefined' && userId) ? userId : null;
   userName  = name;
   groupName = group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
   userId    = uid;
@@ -5062,6 +5069,13 @@ function enterMap(name, group, uid) {
   waitForFirebase(fb => {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
     fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
+
+    // Belt-and-suspenders on top of EXIT/showJoinScreen's own cleanup: whatever room we were
+    // just in gets its presence removed here too, so switching rooms can never leave a ghost
+    // "still here" entry behind no matter which path got us into this new one.
+    if (_prevGroup && _prevUserId && _prevGroup !== groupName) {
+      try { fbRemove(fbRef(db, 'gltest/' + _prevGroup + '/users/' + _prevUserId)); } catch (_) {}
+    }
 
     // Remove our own entry first (handles reload/rejoin cleanly)
     try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch(_) {}
