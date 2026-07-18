@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 312;
+var APP_BUILD = 313;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2825,6 +2825,9 @@ window._claimDevice = function (id) {
     fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/owner'), me);
     fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/ownerName'), ((typeof userName !== 'undefined' && userName) || (function(){ try { return localStorage.getItem('gl_name') || localStorage.getItem('gl_email') || 'Owner'; } catch(e){ return 'Owner'; } })()));
     fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/claimedAt'), Date.now());
+    // Per-owner index — lets a client look up just its own devices instead of scanning every
+    // device ever registered (gl/_devices has no other way to find "mine" without this).
+    fb.set(fb.ref(fb.db, 'gl/_deviceOwners/' + me + '/' + id), true);
   } catch (e) {}
   try { toast('Claimed ' + nm + ' — now private to you'); } catch (e) {}
   try { window._renderMyDevices(); } catch (e) {}
@@ -2833,6 +2836,7 @@ window._claimDevice = function (id) {
 window._removeDevice = function (id) {
   var fb = window._fb; if (!fb || !fb.db) return;
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'this device';
+  var owner = (window._devicesAll[id] || {}).owner;
   var now = Date.now();
   if (window._rmDevArmed !== id || now - (window._rmDevArmedAt || 0) > 4000) {
     window._rmDevArmed = id; window._rmDevArmedAt = now;
@@ -2841,6 +2845,7 @@ window._removeDevice = function (id) {
   }
   window._rmDevArmed = null;
   try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id)); } catch (e) {}
+  try { if (owner) fb.remove(fb.ref(fb.db, 'gl/_deviceOwners/' + owner + '/' + id)); } catch (e) {}
   try { if (window._deviceMarkers[id]) { window._deviceMarkers[id].remove(); delete window._deviceMarkers[id]; } } catch (e) {}
   try { toast('Device removed'); } catch (e) {}
   try { window._renderMyDevices(); } catch (e) {}
@@ -3189,6 +3194,7 @@ window._shareDeviceLink = function (id) {
 window._revokeDeviceShare = function (id, acct) {
   var fb = window._fb; if (!fb) return;
   try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + acct)); } catch (e) {}
+  try { fb.remove(fb.ref(fb.db, 'gl/_deviceSharedWithMe/' + acct + '/' + id)); } catch (e) {}
   if (window._devicesAll[id] && window._devicesAll[id].sharedWith) delete window._devicesAll[id].sharedWith[acct];
   try { _openShareModal(id, (window._devicesAll[id] || {}).shareCode); } catch (e) {}
   try { _renderMyDevices(); } catch (e) {}
@@ -3197,6 +3203,7 @@ window._revokeDeviceShare = function (id, acct) {
 window._leaveSharedDevice = function (id) {
   var me = _myAcct(), fb = window._fb; if (!me || !fb) return;
   try { fb.remove(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me)); } catch (e) {}
+  try { fb.remove(fb.ref(fb.db, 'gl/_deviceSharedWithMe/' + me + '/' + id)); } catch (e) {}
   if (window._devicesAll[id] && window._devicesAll[id].sharedWith) delete window._devicesAll[id].sharedWith[me];
   try { _renderMyDevices(); } catch (e) {}
   try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
@@ -3220,6 +3227,7 @@ window._acceptDeviceShare = function (code) {
       if (owner === me) { try { toast('This device is already yours'); } catch (e) {} return; }
       var myNm = (function () { try { return localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })() || (typeof userName !== 'undefined' && userName) || 'Family';
       try { fb.set(fb.ref(fb.db, 'gl/_devices/' + id + '/sharedWith/' + me), { name: myNm, ts: Date.now() }); } catch (e) {}
+      try { fb.set(fb.ref(fb.db, 'gl/_deviceSharedWithMe/' + me + '/' + id), true); } catch (e) {}
       try { toast('✓ Device shared with you — it’s on your map now'); } catch (e) {}
       try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
     }).catch(function () { try { toast('Could not add device'); } catch (e) {} });
