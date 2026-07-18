@@ -1093,7 +1093,7 @@
                changeable from here. -->
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent">
             <input type="checkbox" id="inp-make-circle" style="width:16px;height:16px;flex-shrink:0;accent-color:var(--accent)" />
-            Make this a Family Circle — a permanent group where everyone's location always shows, in any room
+            <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Family Circle — always-on location, any room</span>
           </label>
           <button class="btn-primary" id="join-btn" style="margin-top:2px">Open Map →</button>
         </div>
@@ -2190,7 +2190,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 292;
+var APP_BUILD = 293;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3459,15 +3459,26 @@ window._renderMySessions = function () {
     // the device label almost always (every session has a name, so d.name || d.dev never fell
     // through), making every one of a person's devices look like an identical duplicate row.
     var label = _withDev(d) || d.name || d.dev || 'Device';
+    var rmBtn = (!isThis && !online) ? '<button onclick="window._removeSession(\'' + _escHtml(id) + '\')" title="Remove" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">✕</button>' : '';
     rows += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)">' +
       '<span style="width:32px;height:32px;border-radius:8px;background:var(--bg2,#0d1117);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">' + icon + '</span>' +
       '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) + (isThis ? ' <span style="font-size:10px;color:var(--muted);font-weight:400">· this device</span>' : '') + '</div>' +
         '<div style="font-size:11px;color:' + col + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(status) + '</div></div>' +
       (online && !isThis && d.room ? '<button onclick="window._joinDeviceRoom(\'' + _escHtml(d.room) + '\')" style="background:' + (d.talking ? '#2ea043' : 'var(--bg)') + ';border:1px solid ' + (d.talking ? '#2ea043' : 'var(--border)') + ';border-radius:8px;color:' + (d.talking ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">' + (d.talking ? 'Listen' : 'Join') + '</button>' : '') +
+      rmBtn +
     '</div>';
   });
   if (!rows) rows = '<div style="font-size:12px;color:var(--muted);padding:11px;text-align:center">Only this device so far. Sign into GroundLink on your tablet/PC/watch with the same Google account and they’ll appear here — live.</div>';
   el.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">' + rows + '</div>';
+};
+// Manually clear a stale/duplicate "signed in on" entry (offline sessions only — an online one
+// would just get re-written by its own device's next heartbeat 22s later anyway).
+window._removeSession = function (id) {
+  var fb = window._fb, acct = (typeof _myAcct === 'function') ? _myAcct() : '';
+  if (!fb || !acct || !id) return;
+  try { fb.remove(fb.ref(fb.db, 'gl/_users/' + acct + '/sessions/' + id)); } catch (e) {}
+  try { if (window._mySessions) delete window._mySessions[id]; } catch (e) {}
+  try { window._renderMySessions(); } catch (e) {}
 };
 // Tapping a device's room jumps this phone into that same room (to see/hear what it's doing).
 window._joinDeviceRoom = function (room) {
