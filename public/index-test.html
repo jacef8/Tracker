@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 322;
+var APP_BUILD = 323;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11199,20 +11199,25 @@ window._nativeShare = async function(data, copyMsg) {
   } catch (e) { /* user cancelled the share — that's fine */ }
 };
 
-function _shareInvite(url, withPin) {
+function _shareInvite(url) {
+  // Every call site only ever shares a link that's already one-tap-ready — either the room has
+  // no passcode at all, or the passcode is embedded in the URL's ?k= — so the recipient never
+  // needs to be separately told a passcode. This used to be conditional on a `withPin` flag,
+  // but the flag was wired backwards: it fired the "you'll need the room passcode I'll send
+  // you" text specifically for the genuinely open, no-passcode case.
   var label = (typeof groupName === 'string' && groupName) ? groupName : 'our group';
   var text = 'Join me on GroundLink — live map for "' + label + '". ' +
-             (withPin ? 'Tap the link and you\u2019re in.' : 'You\u2019ll need the room passcode I\u2019ll send you.');
+             'Tap the link and you\u2019re in.';
   window._nativeShare({ title: 'GroundLink invite', text: text, url: url }, 'Invite link copied');
 }
 
 function shareRoomInvite() {
   if (!groupName) { toast('Join a room first'); return; }
   // Open room — plain one-tap link
-  if (!window._roomHasPin) { _shareInvite(_inviteUrl(false), false); return; }
+  if (!window._roomHasPin) { _shareInvite(_inviteUrl(false)); return; }
   // Passcode room — include the passcode automatically so it's truly one-tap
   var pin = window._roomPlainPin || _loadRoomPin(groupName);
-  if (pin) { window._roomPlainPin = pin; _shareInvite(_inviteUrl(true, pin), true); return; }
+  if (pin) { window._roomPlainPin = pin; _shareInvite(_inviteUrl(true, pin)); return; }
   // We don't know the passcode on this device yet — ask once, remember it, then share
   var modal    = document.getElementById('invite-modal');
   var err      = document.getElementById('invite-pin-error');
@@ -11228,7 +11233,7 @@ function shareRoomInvite() {
     var done = function() {
       window._roomPlainPin = p; _saveRoomPin(groupName, p);
       modal.style.display = 'none';
-      _shareInvite(_inviteUrl(true, p), true);
+      _shareInvite(_inviteUrl(true, p));
     };
     if (!window._fb) { done(); return; }
     var fb = window._fb;
