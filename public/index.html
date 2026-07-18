@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 320;
+var APP_BUILD = 321;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5703,6 +5703,23 @@ function showJoinScreen() {
   document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('inp-group').focus(); });
 }
 
+// ── Native app version (for diagnostics) ────────────────────────────────────
+// The web content (this file) auto-updates on every deploy, but the native Android shell —
+// permissions, the background-geolocation plugin, Kotlin/Java code — is baked into whatever
+// APK someone installed and does NOT auto-update. That gap is a common cause of "background
+// location stopped working" for people who installed a while ago: fixes shipped since then
+// never reach their phone until they install a newer APK. Report the installed native
+// version/build so the admin Debug tab can spot this remotely instead of guessing. No-op on
+// the web (the App plugin is native-only).
+window._nativeAppInfo = null;
+(function fetchNativeAppInfo() {
+  try {
+    var cap = window.Capacitor;
+    if (!cap || !cap.Plugins || !cap.Plugins.App || typeof cap.Plugins.App.getInfo !== 'function') return;
+    cap.Plugins.App.getInfo().then(function (info) { window._nativeAppInfo = info || null; }).catch(function () {});
+  } catch (e) {}
+})();
+
 // ── Native deep links (Android App Links) ──────────────────────────────────
 // When the app is opened by tapping a shared GroundLink https link, Android hands
 // the URL to Capacitor — but the WebView still loads the server ROOT, not the
@@ -7181,6 +7198,8 @@ function startLocationSharing() {
         bgErr: window._bgGeoError || '',
         fixSrc: window._lastFixSrc || 'none',
         gotNative: !!window._gotNativeFix,
+        nativeVer: (window._nativeAppInfo && window._nativeAppInfo.version) || '',
+        nativeBuild: (window._nativeAppInfo && window._nativeAppInfo.build) || '',
         acc: (window._lastAccM != null ? Math.round(window._lastAccM) : -1),
         lastFixAgo: window._lastFixTs ? Math.round((now - window._lastFixTs) / 1000) : -1,
         lastWriteAgo: window._lastWriteTs ? Math.round((now - window._lastWriteTs) / 1000) : -1,
