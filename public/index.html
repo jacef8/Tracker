@@ -2200,7 +2200,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 302;
+var APP_BUILD = 303;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4335,9 +4335,15 @@ window._closeVoiceLog = function () {
 };
 window._playVlogClip = function (key) {
   var c = null; for (var i = 0; i < window._voiceClips.length; i++) { if (window._voiceClips[i].key === key) { c = window._voiceClips[i]; break; } }
-  if (!c || !c.audio) return;
+  // Both failure paths here used to be silent — a missing clip or a playback rejection (codec
+  // mismatch, autoplay policy, whatever) just did nothing with zero indication why, which is
+  // exactly what "the replay button doesn't work" looks like from the outside.
+  if (!c || !c.audio) { try { toast('That clip isn’t available to play', 2600); } catch (e) {} return; }
   var a = _vlogAudioEl();
-  try { a.onended = null; a.src = c.audio; a.play().catch(function () {}); } catch (e) {}
+  try {
+    a.onended = null; a.src = c.audio;
+    a.play().catch(function (e) { console.error('[vlog] play failed', e); try { toast('Couldn’t play that clip', 2600); } catch (e2) {} });
+  } catch (e) { try { toast('Couldn’t play that clip', 2600); } catch (e2) {} }
   _setVlogSeen(c.ts); _updateVlogBadge(); _renderVoiceLog();
 };
 // Delete one transmission (removes it for EVERYONE in the group — voicelog is shared).
