@@ -1158,12 +1158,6 @@
             <div id="acct-color-swatches" style="display:none;gap:7px;flex-wrap:wrap;margin-top:10px"></div>
           </div>
 
-          <!-- Your rooms -->
-          <div>
-            <div style="font-size:12px;font-weight:700;color:var(--muted);margin:0 2px 5px">Your rooms</div>
-            <div id="acct-groups-list"></div>
-          </div>
-
           <!-- Battery saver / Alerts / Share my speed used to be duplicated here AND in the
                Settings sheet. Now that Settings has its own entry point on Home (the gear icon
                next to these tabs), there's no reason for two copies of the same three toggles —
@@ -2169,7 +2163,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 296;
+var APP_BUILD = 297;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4410,53 +4404,6 @@ window._toggleColorSwatches = function () {
   var s = document.getElementById('acct-color-swatches'); if (!s) return;
   s.style.display = (s.style.display === 'none' || !s.style.display) ? 'flex' : 'none';
 };
-function _rejoinSavedGroup(key, disp) {
-  var gi = document.getElementById('inp-group'); if (gi) gi.value = disp;
-  var name = ((document.getElementById('inp-name') || {}).value || '').trim();
-  if (!name) {
-    if (window._goPanel) window._goPanel(0);
-    var ni = document.getElementById('inp-name'); if (ni) { ni.style.borderColor = 'var(--danger)'; ni.focus(); }
-    try { toast('Enter your name first, then tap Rejoin', 2800); } catch (e) {}
-    return;
-  }
-  var existing = getSavedSession();
-  var uid = existing.uid || genUid();
-  checkGroupPasscode(name, key, uid);
-}
-// Delete / remove a saved group from the account "Your groups" list.
-// If you OWN the room you can delete it for everyone; otherwise it just leaves your list.
-window._acctDeleteGroup = function(key, disp) {
-  var fb = window._fb;
-  var removeFromList = function() {
-    var favs = _getFavs().filter(function(k) { return k !== key; });
-    _setFavs(favs);
-    try { if (window._unregisterFavSub) window._unregisterFavSub(key); } catch (e) {}
-    _renderAccountPage();
-  };
-  var justRemove = function() { removeFromList(); try { toast('Removed from your groups'); } catch (e) {} };
-  var myUid = '';
-  try { myUid = (getSavedSession() || {}).uid || ''; } catch (e) {}
-  if (!fb || !fb.get || !myUid) {
-    _confirm('Remove "' + disp + '" from your groups?', justRemove, { yes: 'Remove' });
-    return;
-  }
-  fb.get(fb.ref(fb.db, 'gltest/' + key + '/config/owner')).then(function(snap) {
-    var owner = (snap && snap.exists && snap.exists()) ? snap.val() : null;
-    if (owner && owner === myUid) {
-      // Owner gets a clean 3-way choice instead of stacked confirms.
-      _confirm('You own "' + disp + '". Deleting it erases its pins, chat and trails for everyone.', function() {
-        try { fb.set(fb.ref(fb.db, 'gltest/' + key + '/closed'), { ts: Date.now(), by: myUid, byOwner: true }); } catch (e) {}
-        setTimeout(function() { try { fb.remove(fb.ref(fb.db, 'gltest/' + key)); } catch (e) {} }, 3000);
-        removeFromList();
-        try { toast('Room deleted for everyone'); } catch (e) {}
-      }, { title: 'Remove "' + disp + '"?', danger: true, yes: 'Delete for everyone', mid: 'Just remove from my list', onMid: justRemove, no: 'Cancel' });
-    } else {
-      _confirm('Remove "' + disp + '" from your groups? The room itself stays — others can still use it.', justRemove, { yes: 'Remove' });
-    }
-  }).catch(function() {
-    _confirm('Remove "' + disp + '" from your groups?', justRemove, { yes: 'Remove' });
-  });
-};
 function _renderAccountPage() {
   try { if (window._ensurePresenceSub) window._ensurePresenceSub(); } catch (e) {}  // so friends show before joining
   try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
@@ -4482,26 +4429,6 @@ function _renderAccountPage() {
       b.onclick = function() { _setMyColor(c); };
       sw.appendChild(b);
     });
-  }
-
-  var gl = document.getElementById('acct-groups-list');
-  if (gl) {
-    if (!favs.length) {
-      gl.innerHTML = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No saved groups yet — tap the &#9734; on a group to keep it here.</div>';
-    } else {
-      gl.innerHTML = '';
-      favs.forEach(function(key) {
-        var disp = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-bottom:6px';
-        row.innerHTML = '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(disp) + '</div></div>' +
-          '<button type="button" class="acct-rejoin" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:700;padding:6px 13px;cursor:pointer">Rejoin</button>' +
-          '<button type="button" class="acct-del" title="Remove or delete this group" style="background:none;border:1px solid var(--border);border-radius:8px;color:#e74c3c;font-size:13px;padding:5px 9px;cursor:pointer;display:flex;align-items:center"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>';
-        row.querySelector('.acct-rejoin').onclick = function() { _rejoinSavedGroup(key, disp); };
-        row.querySelector('.acct-del').onclick = function() { window._acctDeleteGroup(key, disp); };
-        gl.appendChild(row);
-      });
-    }
   }
 
   _acctPill('acct-pill-battsaver', window._batterySaver !== false);
