@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 319;
+var APP_BUILD = 320;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6543,6 +6543,11 @@ const TRAIL_MAX_MS = 2 * 60 * 60 * 1000; // 2 hours of breadcrumb history
 const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
 const TRAIL_MAX_ACC_M = 50;          // skip breadcrumbs from fixes worse than 50 m accuracy
 const TRAIL_MAX_MPH = 150;           // skip breadcrumbs implying an impossible teleport (bad fix)
+const LIVE_MAX_ACC_M = 1000;         // a fix this bad is almost certainly cell-tower/Wi-Fi-only,
+                                      // not real GPS — never let it relocate the live marker
+const LIVE_HOLD_MAX_MS = 3 * 60 * 1000; // never hold longer than this — a chronically bad-GPS
+                                         // device should still drift toward reality eventually,
+                                         // not freeze forever at its very first fix
 let lastBreadcrumbPos = null;
 let lastBreadcrumbTs = 0;
 
@@ -6877,8 +6882,31 @@ function startLocationSharing() {
 
   const onGpsFix = (pos) => {
     if (window._roomClosed) return; // room was closed by an admin — stop writing
-    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    const { latitude: rawLat, longitude: rawLng, accuracy } = pos.coords;
     const now = Date.now();
+    // ── Live-position sanity filter ──────────────────────────────────────
+    // A fix can come back wildly degraded (cell-tower/Wi-Fi fallback instead of real GPS —
+    // common with the screen off, indoors, or a slow first fix), off by hundreds of meters to
+    // a few kilometers. Nothing filtered that for the live marker before — only the breadcrumb
+    // trail had an accuracy gate — so one bad fix could instantly relocate someone's icon for
+    // everyone viewing the room. Accept the very first fix ever no matter what (something beats
+    // nothing); after that, hold the last trustworthy position instead of jumping to an
+    // implausible one. accuracy/speed/ts below still reflect this fix, so the person doesn't
+    // look stale — only the broadcast coordinates hold at the last good spot.
+    let lat = rawLat, lng = rawLng;
+    const _accNow = accuracy || 0;
+    if (window._lastGoodFix) {
+      const _distM = metersApart(window._lastGoodFix.lat, window._lastGoodFix.lng, rawLat, rawLng);
+      const _dtSec = Math.max(1, (now - window._lastGoodFix.ts) / 1000);
+      const _impliedMph = (_distM / _dtSec) * 2.23694;
+      const _wildlyBad = _accNow > LIVE_MAX_ACC_M;
+      const _teleport = _impliedMph > TRAIL_MAX_MPH && _accNow > window._lastGoodFix.acc;
+      const _heldTooLong = (now - window._lastGoodFix.ts) > LIVE_HOLD_MAX_MS;
+      if ((_wildlyBad || _teleport) && !_heldTooLong) { lat = window._lastGoodFix.lat; lng = window._lastGoodFix.lng; }
+      else window._lastGoodFix = { lat: rawLat, lng: rawLng, acc: _accNow, ts: now };
+    } else {
+      window._lastGoodFix = { lat: rawLat, lng: rawLng, acc: _accNow, ts: now };
+    }
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
@@ -6975,8 +7003,12 @@ function startLocationSharing() {
 
     // Write real GPS position — clears the claiming placeholder. Speed is always written
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
+    // Report the accuracy of whatever position is actually being broadcast (lat/lng), not the
+    // raw reading — when a bad fix was held back above, showing its degraded accuracy next to
+    // the still-good held coordinates would be misleading.
+    var _effAccM = (lat === rawLat && lng === rawLng) ? _accNow : window._lastGoodFix.acc;
     var _fixPayload = {
-      lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(accuracy * 3.28084), ts: now,
+      lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
     };
