@@ -543,6 +543,7 @@ function renderDeviceDebug() {
         row('Screen state', d.vis || '?') +
         row('Location hidden', d.hidden ? 'yes' : 'no') +
         row('App build', d.build || '?') +
+        (d.native ? row('Native app version', (d.nativeVer || '?') + ' (build ' + (d.nativeBuild || '?') + ')') : '') +
       '</div></div>';
   }).join('');
   // Each card is one DEVICE (keyed by its unique id), not one person — so the same person on
@@ -617,6 +618,7 @@ function buildDeviceDebugText() {
       lines.push('Screen: ' + (d.vis || '?'));
       lines.push('Location hidden: ' + (d.hidden ? 'yes' : 'no'));
       lines.push('App build: ' + (d.build || '?'));
+      if (d.native) lines.push('Native app version: ' + (d.nativeVer || '?') + ' (build ' + (d.nativeBuild || '?') + ')');
     });
   });
   if (!any) lines.push('', '(no device reports yet)');
@@ -678,6 +680,7 @@ function copyAllDiagnostics(btn) {
       if (g.diag) Object.keys(g.diag).forEach(function (uid) {
         var d = g.diag[uid] || {};
         L.push('  [diag] ' + (d.name || uid.slice(0, 8)) + ': ' + (d.native ? 'NATIVE' : 'web') + ' build=' + (d.build || '?') +
+          (d.native ? ' nativeVer=' + (d.nativeVer || '?') + '(' + (d.nativeBuild || '?') + ')' : '') +
           ' bgGPS=' + (d.bgStarted ? (d.gotNative ? 'on' : 'starting') : 'off') +
           ' lastFix=' + (d.lastFixAgo >= 0 ? d.lastFixAgo + 's' : 'never') + ' lastWrite=' + (d.lastWriteAgo >= 0 ? d.lastWriteAgo + 's' : 'never') +
           ' acc=' + (d.acc != null ? d.acc + 'm' : '?') + ' screen=' + (d.vis || '?') + ' report=' + ago(d.ts) + ' ago' + (d.bgErr ? ' ERR:' + d.bgErr : ''));
