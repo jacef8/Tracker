@@ -1959,7 +1959,7 @@
          may already hold a permanent membership in it, so there's no clean "undo" exposed here —
          see window._riToggleCircle. -->
     <div id="ri-circle-row" onclick="window._riToggleCircle && window._riToggleCircle()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
-      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Make this a Crew</div><div id="ri-circle-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Everyone here always shows up for each other, in any room</div></div></div>
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Make this a Crew</div><div id="ri-circle-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Everyone here always shows up in this room, no matter where else they are</div></div></div>
       <span id="ri-circle-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
     <div id="ri-secdev-row" onclick="window._toggleSecureDevices && window._toggleSecureDevices()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
@@ -2170,7 +2170,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 315;
+var APP_BUILD = 316;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3815,7 +3815,7 @@ function _renderRiCircle() {
   var pill = document.getElementById('ri-circle-pill');
   var sub = document.getElementById('ri-circle-sub');
   if (pill) { pill.textContent = on ? 'ON' : 'OFF'; pill.style.background = on ? 'rgba(167,139,250,.18)' : 'var(--border)'; pill.style.color = on ? '#a78bfa' : 'var(--muted)'; }
-  if (sub) sub.textContent = on ? 'This room is a Crew — you always show up for each other, in any room' : 'Everyone here always shows up for each other, in any room';
+  if (sub) sub.textContent = on ? 'This room is a Crew — everyone always shows up here, no matter what room they\'re in or if they\'re in the background' : 'Everyone here always shows up in this room, no matter where else they are';
 }
 // One-way: turning this on for an EXISTING room is the same conversion a brand-new group's
 // "Make this a Circle" checkbox does at creation, just applied after the fact. No "undo" here —
@@ -3827,7 +3827,7 @@ window._riToggleCircle = function () {
   if (!groupName || !db) return;
   if (_riIsCircle()) return;
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
-  _confirm('Make "' + label + '" a Crew? Everyone in it will always show up for each other, in any room, from now on — this also makes the room private, so only people you invite can find it. This can\'t be undone.', function () {
+  _confirm('Make "' + label + '" a Crew? Everyone in it will always show up here for each other from now on, no matter what other room they\'re in or if the app\'s in the background — this also makes the room private, so only people you invite can find it. This can\'t be undone.', function () {
     // Suppresses the passive "this room just became a Crew" toast for the person doing the
     // converting — they already get their own dedicated confirmation + invite-prompt below,
     // so the generic listener firing for their own write would just be a redundant duplicate.
@@ -4380,11 +4380,16 @@ window._leaveCircle = function (key, name) {
   }, { yes: 'Leave', danger: true });
 };
 
-// ── Family Circles: always-on map presence, independent of whatever room (if any) is open ──
-// Mirrors _listenDevices/_renderDevices (own subscription + own marker store) rather than
-// folding into the room's userMarkers/onValue pipeline — a circle-mate has to show up on My Map
-// (no room open at all) and on any OTHER room's map too, so this can't depend on the per-room
-// subscription that only exists while that one specific room happens to be open.
+// ── Family Circles: always-on LOCATION WRITES, independent of whatever room (if any) is open;
+// but the always-visible MAP VIEW is My Map only ──
+// Your GPS fix keeps flowing into every circle's own room (gltest/<circleKey>/users) no matter what
+// room you're currently in or whether the app is backgrounded (see onGpsFix) — that's what lets
+// anyone who opens the circle's room later always find you there. It does NOT mean circle-mates'
+// markers should appear inside some OTHER, unrelated room you happen to have open — that would mix
+// two different groups of people on one map. So _renderCircles only draws when no room is open
+// (My Map). Mirrors _listenDevices/_renderDevices (own subscription + own marker store) rather
+// than folding into the room's userMarkers/onValue pipeline, since the subscription has to stay
+// alive on My Map where there's no per-room listener to piggyback on.
 window._circleUsersAll = {};   // circleKey -> { uid: userData }, latest snapshot per circle
 window._circleMarkers = {};    // uid -> mapboxgl.Marker, kept separate from the room's userMarkers
 window._circleSubbed = {};     // circleKey -> true once its onValue listener is attached
@@ -4405,15 +4410,19 @@ window._listenCircles = function () {
 function _renderCircles() {
   if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
   var now = Date.now(), seen = {};
+  // Circle markers only belong on My Map. Being inside ANY other room — your circle's own or a
+  // totally unrelated one — must never show circle-mates layered on top of that room's own people;
+  // clear anything left over from My Map and bail.
+  if (typeof groupName !== 'undefined' && groupName) {
+    Object.keys(window._circleMarkers).forEach(function (uid) { try { window._circleMarkers[uid].remove(); } catch (e) {} delete window._circleMarkers[uid]; });
+    return;
+  }
   Object.keys(_getCircles()).forEach(function (key) {
-    // The circle whose room you're CURRENTLY in already renders its members via the normal
-    // room-member code (userMarkers) — drawing them again here would double them up.
-    if (typeof groupName !== 'undefined' && groupName === key) return;
     var users = window._circleUsersAll[key] || {};
     Object.keys(users).forEach(function (uid) {
-      // Never draw yourself, the same person twice across circles, or someone the normal
-      // room-member code already drew (a circle-mate who also happens to be in whatever
-      // ad-hoc room you're currently standing in, separate from their own circle's room).
+      // Never draw yourself or the same person twice across circles. (userMarkers is always
+      // empty here since we already bailed above whenever a room is open — kept as a guard
+      // in case that changes.)
       if (uid === userId || seen[uid] || (typeof userMarkers !== 'undefined' && userMarkers[uid])) return;
       var data = users[uid] || {};
       if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
@@ -8417,7 +8426,7 @@ window._openCircleInvitePicker = function(circleKey, circleName) {
   window._invitePickerBackTo = null;   // opened from the home screen / Account page, not Room Info — nothing to go "back" to
   var back = document.getElementById('invite-picker-back'); if (back) back.style.display = 'none';
   var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to ' + (circleName || circleKey);
-  var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'They’ll always show up in this Crew, in any room, once they accept — no need to join anything.';
+  var s = document.getElementById('invite-picker-sub'); if (s) s.textContent = 'Once they accept, they\'ll always show up here in this Crew, no matter what other room they\'re in — no need to join anything.';
   var sr = document.getElementById('invite-picker-share-row'); if (sr) sr.style.display = 'none';
   var si = document.getElementById('invite-search'); if (si) si.value = '';
   document.getElementById('invite-picker-modal').style.display = 'flex';
@@ -8624,7 +8633,7 @@ function _renderInviteInbox() {
     // "join" it for location to flow both ways. See window._acceptCircleInvite.
     box.innerHTML =
       '<div style="background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
-        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#a78bfa;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to their <strong style="color:#a78bfa">' + _escHtml(inv.room || 'Crew') + '</strong> — you\'ll always show up for each other, no need to join anything</div>' +
+        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#a78bfa;margin-right:4px;vertical-align:middle"><use href="#ic-users"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to their <strong style="color:#a78bfa">' + _escHtml(inv.room || 'Crew') + '</strong> — you\'ll always show up here for each other, no matter what other room you\'re in, no need to join anything</div>' +
         '<div style="display:flex;gap:8px;margin-top:9px">' +
           '<button onclick="window._acceptCircleInvite(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:#a78bfa;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Accept</button>' +
           '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
@@ -8668,7 +8677,7 @@ window._acceptCircleInvite = function(key) {
   // the same proactive start showJoinScreen() already does for an existing circle member.
   try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
   try { window._renderCircleSwitcher(); } catch (e) {}
-  toast('You’re in ' + (inv.room || 'the Crew') + ' — you’ll always show up for each other now', 3200);
+  toast('You’re in ' + (inv.room || 'the Crew') + ' — you’ll always show up here now, no matter what other room you\'re in', 3200);
 };
 window._dismissInvite = function(key) {
   var uid = null; try { uid = localStorage.getItem('gltest_uid'); } catch (e) {}
@@ -11313,6 +11322,7 @@ try {
       nameCustom: LS.get('gltest_name_custom') === '1',
       friends:    LS.get('gl_friends') || '{}',
       favs:       LS.get('gl_favs') || '[]',
+      circles:    LS.get('gl_circles') || '{}',
       colors:     LS.get('gl_user_colors') || '{}',
       pins:       LS.get('gl_saved_pins') || '[]',
       tracks:     LS.get('gl_saved_tracks') || '[]',
@@ -11366,6 +11376,11 @@ try {
       if (p.nameCustom != null) LS.set('gltest_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
+      // Circle membership has to round-trip through the account profile just like friends/favs —
+      // otherwise a circle joined on one device (or before a reinstall) never reaches this device's
+      // local gl_circles cache, and this device silently never fans out GPS to it or subscribes to
+      // see it live, even though the permanent gltest/<key>/members roster correctly shows them "joined".
+      if (p.circles) { LS.set('gl_circles', typeof p.circles === 'string' ? p.circles : JSON.stringify(p.circles)); try { window._listenCircles && window._listenCircles(); } catch (e) {} }
       if (p.colors)  LS.set('gl_user_colors', typeof p.colors === 'string' ? p.colors : JSON.stringify(p.colors));
       if (p.mycolor) LS.set('gl_mycolor', p.mycolor);
       // MERGE the cloud pin library into local (union) — never wipe, so an extensive library survives.
