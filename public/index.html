@@ -2200,7 +2200,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 301;
+var APP_BUILD = 302;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8576,12 +8576,19 @@ function _renderInvitePeople(q) {
     var p = pres[uid];
     people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), room: p && p.room });
   });
-  Object.keys(pres).forEach(function(uid) {
-    if (seen[uid] || uid === me) return;
-    var p = pres[uid] || {};
-    if (!p.name) return;
-    people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
-  });
+  // Anyone currently online (not a friend) used to show here by default too — narrowed further
+  // than the directory fix below: the default list is now ONLY your actual friends (online or
+  // offline), full stop. A stranger who merely happens to be using the app at the same moment
+  // isn't someone you'd normally want surfaced as an invite candidate; search still finds them
+  // by name on purpose, same as the directory.
+  if (q) {
+    Object.keys(pres).forEach(function(uid) {
+      if (seen[uid] || uid === me) return;
+      var p = pres[uid] || {};
+      if (!p.name) return;
+      people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+    });
+  }
   // Global directory: every account that's EVER signed in, not just people relevant to you —
   // fine for deliberately searching for someone specific by name, but showing it by default
   // turns this into "a bunch of random people" the moment more than a couple of families use
@@ -8615,7 +8622,7 @@ function _renderInvitePeople(q) {
   if (!people.length) {
     listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">' +
       (q ? 'No one matching “' + _escHtml(q) + '”.'
-         : 'No friends yet and no one else is online right now. Type a name above to find anyone who\'s ever signed in — even offline — or tap the &#9734; next to a person in the member list to save them, or share the link above.') + '</div>';
+         : 'No friends yet. Type a name above to find anyone who\'s ever signed in — even offline — or tap the &#9734; next to a person in the member list to save them, or share the link above.') + '</div>';
     return;
   }
   listEl.innerHTML = people.slice(0, 40).map(function(pp) {
