@@ -175,12 +175,10 @@
      stack. (Not to be confused with .join-card, which is the single outer floating panel.) */
   .join-section { border: 1px solid rgba(240,165,0,0.3); border-radius: 12px; padding: 11px 12px 12px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; gap: 8px; }
   .join-section-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; letter-spacing: .01em; color: #d4dbe4; }
-  /* My Circles is a supplementary section ABOVE the two the front page always had — it must
-     stay compact so adding it doesn't push Quick-join past the viewport (see the #join-screen
-     "must never scroll" comment above). Tighter padding/gap than a normal .join-section, and the
-     list itself scrolls internally past 2 rows instead of growing the card without bound. */
-  #my-circles-section { padding: 8px 10px 9px; gap: 5px; }
-  #my-circles-list { max-height: 116px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  /* Circle switcher: a single collapsed pill by default (near-zero height cost on Quick Join —
+     see the #join-screen "must never scroll" comment above), its dropdown only taking space
+     once actually opened, and even then capped + internally scrolling past a few rows. */
+  #circle-switcher-list { max-height: 220px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
   .input-icon-wrap { position: relative; display: flex; align-items: center; }
   .input-icon-wrap > .input-icon { position: absolute; left: 13px; color: var(--muted); pointer-events: none; }
   .input-icon-wrap > input { padding-left: 40px !important; }
@@ -868,7 +866,7 @@
     #front-extra-actions, #install-banner { display: none !important; }
     .join-sub { display: none; }
     #room-list { max-height: clamp(124px, 20vh, 150px); }
-    #my-circles-list { max-height: 80px; }
+    #circle-switcher-list { max-height: 160px; }
   }
   .room-item {
     display: flex; align-items: center; justify-content: space-between;
@@ -1042,11 +1040,17 @@
           <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
         </div>
 
-        <!-- Family Circles you belong to — always-on presence, independent of the room list below.
-             Hidden entirely (via JS) when you're not in any circle yet. -->
-        <div id="my-circles-section" class="join-section" style="display:none">
-          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-users"/></svg>My Circles</div>
-          <div id="my-circles-list" style="display:flex;flex-direction:column;gap:8px"></div>
+        <!-- Circle switcher — a single compact pill (Life360-style), not a whole box in the
+             list: tap to drop down your circles and jump straight into one, invite, or leave.
+             Replaces the old full "My Circles" section AND the separate Account-page Circles
+             management block — this is now the one place both live. Hidden with zero circles. -->
+        <div id="circle-switcher" style="display:none;margin-bottom:2px">
+          <button id="circle-switcher-btn" type="button" onclick="window._toggleCircleSwitcher()" style="width:100%;display:flex;align-items:center;gap:8px;background:rgba(167,139,250,.10);border:1px solid rgba(167,139,250,.35);border-radius:12px;padding:10px 12px;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:left">
+            <svg class="licon licon-sm" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg>
+            <span id="circle-switcher-label" style="flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">My Circles</span>
+            <svg class="licon licon-sm" id="circle-switcher-chevron" style="color:var(--muted);flex-shrink:0;transition:transform .15s"><use href="#ic-chevron-down"/></svg>
+          </button>
+          <div id="circle-switcher-list" style="display:none;margin-top:6px;background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
         <!-- Active rooms list -->
@@ -1174,13 +1178,6 @@
           <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">★ Your people</div>
           <input id="acct-friend-search" type="search" inputmode="search" autocomplete="off" placeholder="Search friends &amp; people online…" oninput="window._acctPeopleSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:7px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
           <div id="account-friends" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
-        </div>
-
-        <!-- Family Circles — permanent groups, always-on location, no room needed. Hidden when empty. -->
-        <div id="account-circles-section" style="margin-top:14px;display:none">
-          <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">👪 My Circles</div>
-          <div style="font-size:10px;color:var(--muted);margin:1px 0 4px">Always show up for each other, in any room</div>
-          <div id="account-circles" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden"></div>
         </div>
 
         <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you -->
@@ -2167,7 +2164,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 303;
+var APP_BUILD = 304;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3789,7 +3786,7 @@ window._riToggleCircle = function () {
         }
       } catch (e) {}
     } catch (e) {}
-    try { window._renderMyCirclesHome(); _renderCircles(); } catch (e) {}
+    try { window._renderCircleSwitcher(); _renderCircles(); } catch (e) {}
     _renderRiCircle();
     try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}   // refresh the visibility row too
     toast('“' + label + '” is now a Circle (and now private)', 3200);
@@ -4230,16 +4227,23 @@ function _isCircleMember(key) { return !!_getCircles()[key]; }
 // Home-screen "My Circles" section: each circle you belong to, with a live-count peek, a way to
 // jump straight into its room (full chat/pins/voice — a circle IS a room), and a way to invite
 // someone — none of which require actually "joining" first, since that's the whole point.
-window._renderMyCirclesHome = function () {
-  var wrap = document.getElementById('my-circles-section');
-  var listEl = document.getElementById('my-circles-list');
-  if (!wrap || !listEl) return;
+// Circle switcher (Life360-style): one collapsed pill by default, its dropdown listing every
+// circle you belong to with a live-count, tap-to-enter, and inline Invite/Leave — this is now
+// the ONE place circle navigation AND management live (previously split across a Quick Join
+// list box and a separate Account-page section).
+window._toggleCircleSwitcher = function () {
+  var list = document.getElementById('circle-switcher-list');
+  var chev = document.getElementById('circle-switcher-chevron');
+  if (!list) return;
+  var open = list.style.display !== 'none';
+  if (open) { list.style.display = 'none'; if (chev) chev.style.transform = ''; }
+  else { list.style.display = 'block'; if (chev) chev.style.transform = 'rotate(180deg)'; _renderCircleSwitcherList(); }
+};
+function _renderCircleSwitcherList() {
+  var el = document.getElementById('circle-switcher-list'); if (!el) return;
   var circles = _getCircles();
-  var keys = Object.keys(circles);
-  if (!keys.length) { wrap.style.display = 'none'; listEl.innerHTML = ''; return; }
-  wrap.style.display = '';
   var now = Date.now();
-  listEl.innerHTML = keys.sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
+  el.innerHTML = Object.keys(circles).sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
     var name = circles[key] || key;
     var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
     var liveCount = Object.keys(users).filter(function (uid) {
@@ -4247,62 +4251,36 @@ window._renderMyCirclesHome = function () {
     }).length;
     var sub = liveCount ? (liveCount + ' live now') : 'Tap to open';
     var safeKey = String(key).replace(/'/g, ''), safeName = String(name).replace(/'/g, '');
-    return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:7px 10px">' +
+    return '<div style="display:flex;align-items:center;gap:4px;padding:9px 10px;border-bottom:1px solid var(--border)">' +
       '<div style="flex:1;min-width:0;cursor:pointer" onclick="window._joinFriendRoom(\'' + safeKey + '\',\'' + safeName + '\')">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
+        '<div style="font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
         '<div style="font-size:11px;color:' + (liveCount ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
       '</div>' +
-      '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:6px 11px;cursor:pointer">+ Invite</button>' +
+      '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" title="Invite" style="flex-shrink:0;background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;padding:6px;line-height:1">&#9993;</button>' +
+      '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" title="Leave" style="flex-shrink:0;background:none;border:none;color:#f85149;font-size:15px;cursor:pointer;padding:6px;line-height:1">&#10005;</button>' +
     '</div>';
   }).join('');
-};
-
-// Account-page circle management: view the permanent member roster, invite, or leave. Fetches
-// gltest/<key>/members via a one-time get() rather than a live subscription — this section is only
-// visible while the Account panel itself is open, so a standing listener would be wasted upkeep.
-window._circleMembersCache = {};
-window._renderAccountCircles = function () {
-  var wrap = document.getElementById('account-circles-section');
-  var el = document.getElementById('account-circles');
-  if (!wrap || !el) return;
+}
+window._renderCircleSwitcher = function () {
+  var wrap = document.getElementById('circle-switcher');
+  var label = document.getElementById('circle-switcher-label');
+  if (!wrap || !label) return;
   var circles = _getCircles();
   var keys = Object.keys(circles);
-  if (!keys.length) { wrap.style.display = 'none'; el.innerHTML = ''; return; }
+  if (!keys.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
-  var fb = window._fb;
-  keys.forEach(function (key) {
-    if (window._circleMembersCache[key] || !fb || !fb.get) return;
-    fb.get(fb.ref(fb.db, 'gltest/' + key + '/members')).then(function (snap) {
-      window._circleMembersCache[key] = (snap && snap.val && snap.val()) || {};
-      try { window._renderAccountCircles(); } catch (e) {}
-    }).catch(function () {});
-  });
-  el.innerHTML = keys.sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
-    var name = circles[key] || key;
-    var members = window._circleMembersCache[key] || null;
-    var memberNames = members ? Object.keys(members).map(function (uid) { return (members[uid] || {}).name || 'Member'; }) : null;
-    var sub = memberNames
-      ? (memberNames.length + ' member' + (memberNames.length !== 1 ? 's' : '') + ': ' + memberNames.slice(0, 4).join(', ') + (memberNames.length > 4 ? '…' : ''))
-      : 'Loading…';
-    var safeKey = String(key).replace(/'/g, ''), safeName = String(name).replace(/'/g, '');
-    return '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)">' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
-        '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(sub) + '</div>' +
-      '</div>' +
-      '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer">Invite</button>' +
-      '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:8px;color:#f85149;font-size:11px;font-weight:700;padding:6px 9px;cursor:pointer">Leave</button>' +
-    '</div>';
-  }).join('');
+  label.textContent = keys.length === 1 ? (circles[keys[0]] || keys[0]) : ('My Circles (' + keys.length + ')');
+  // Keep an already-open dropdown's contents live (e.g. a live-count changing) without forcing it shut.
+  var list = document.getElementById('circle-switcher-list');
+  if (list && list.style.display !== 'none') _renderCircleSwitcherList();
 };
 window._leaveCircle = function (key, name) {
   _confirm('Leave "' + name + '"? You\'ll stop showing up for each other until someone invites you back.', function () {
     var fb = window._fb;
     try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gltest/' + key + '/members/' + userId)); } catch (e) {}
     var circles = _getCircles(); delete circles[key]; _setCircles(circles);
-    delete window._circleMembersCache[key];
     try { delete window._circleUsersAll[key]; } catch (e) {}
-    try { window._renderAccountCircles(); window._renderMyCirclesHome(); _renderCircles(); } catch (e) {}
+    try { window._renderCircleSwitcher(); _renderCircles(); } catch (e) {}
     toast('Left "' + name + '"', 2400);
   }, { yes: 'Leave', danger: true });
 };
@@ -4324,7 +4302,7 @@ window._listenCircles = function () {
       fb.onValue(fb.ref(fb.db, 'gltest/' + key + '/users'), function (snap) {
         window._circleUsersAll[key] = (snap && snap.val && snap.val()) || {};
         try { _renderCircles(); } catch (e) {}
-        try { window._renderMyCirclesHome(); } catch (e) {}   // live-count peek on the home screen — independent of whether a map is up yet
+        try { window._renderCircleSwitcher(); } catch (e) {}   // live-count peek on the home screen — independent of whether a map is up yet
       });
     } catch (e) {}
   });
@@ -4419,7 +4397,6 @@ function _renderAccountPage() {
   try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
   try { _renderFriends(); } catch (e) {}
   try { if (window._listenDevices) _listenDevices(); window._renderMyDevices && _renderMyDevices(); } catch (e) {}
-  try { window._renderAccountCircles && window._renderAccountCircles(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -5311,7 +5288,7 @@ function showJoinScreen() {
       beginLocation();
     }
   } catch (e) {}
-  try { window._renderMyCirclesHome(); } catch (e) {}
+  try { window._renderCircleSwitcher(); } catch (e) {}
   // Pre-fill the name from the last session so returning users can join a room in one
   // tap without re-typing their name (and so an empty name doesn't silently block join).
   try {
@@ -8566,7 +8543,7 @@ window._acceptCircleInvite = function(key) {
   // Circles work with no GPS watch running yet if this is accepted from a cold home screen —
   // the same proactive start showJoinScreen() already does for an existing circle member.
   try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
-  try { window._renderMyCirclesHome(); } catch (e) {}
+  try { window._renderCircleSwitcher(); } catch (e) {}
   toast('You’re in ' + (inv.room || 'the Circle') + ' — you’ll always show up for each other now', 3200);
 };
 window._dismissInvite = function(key) {
