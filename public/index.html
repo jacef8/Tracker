@@ -1479,7 +1479,7 @@
     </button>
     <button onclick="window._pickVisibility('private')" style="width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:6px;cursor:pointer;color:var(--text)">
       <div style="font-size:14px;font-weight:700">&#128274; Private</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link.</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link — for real protection against someone who's guessed or been told the name, add a passcode once you're in (Room Info).</div>
     </button>
   </div>
 </div>
@@ -2218,7 +2218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 330;
+var APP_BUILD = 331;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4106,6 +4106,16 @@ window._setRoomVisibility = function(v) {
   try { window._evt('set room visibility to ' + v); } catch (e) {}
   toast(v === 'private' ? 'Room set to private' : 'Room set to public', 2200);
   renderRoomInfoOwner();
+  // Private only hides the room from the directory — anyone who's told (or guesses) the exact
+  // name can still join. Nudge toward a passcode for real protection, but only once, and only
+  // if they haven't already set one.
+  if (v === 'private' && !window._roomHasPin) {
+    setTimeout(function () {
+      _confirm('This room is now private — people can still join if they know its exact name. Add a passcode too for real protection?', function () {
+        _editPasscode();
+      }, { yes: 'Add passcode' });
+    }, 400);
+  }
 };
 function closeRoomInfo() { document.getElementById('room-info-sheet').style.display = 'none'; }
 function _editPasscode() { closeRoomInfo(); if (window._openSetPasscode) window._openSetPasscode(); }
@@ -4255,9 +4265,13 @@ async function _ensurePushIdentity() {
   } catch (e) {}
 }
 // Fire-and-forget: ask the server to push everyone else in the group
-function pushNotify(type, title, body, opts) {
+// roomKey: which room's favSubs/pushSubs to notify. Defaults to the CURRENT room (groupName) —
+// pass it explicitly for actions that target some OTHER room than the one you're standing in
+// (e.g. leaving a Crew from the Home-screen switcher, where groupName is empty).
+function pushNotify(type, title, body, opts, roomKey) {
   try {
-    if (!groupName || !userId) return;
+    var grp = roomKey || groupName;
+    if (!grp || !userId) return;
     opts = opts || {};
     try { if (!window._pushEndpoint) window._pushEndpoint = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
     try { if (!window._fcmToken) window._fcmToken = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
@@ -4266,7 +4280,7 @@ function pushNotify(type, title, body, opts) {
       headers: { 'Content-Type': 'application/json' },
       // senderFcm/senderEndpoint identify THIS physical device so the server can skip it even
       // if a stale subscription for this device lingers under an old uid (avoids self-notify).
-      body: JSON.stringify({ ns: 'gl', group: groupName, senderId: userId, senderFcm: window._fcmToken || '', senderEndpoint: window._pushEndpoint || '', type, title, body, url: '/', toFavs: !!opts.toFavs })
+      body: JSON.stringify({ ns: 'gl', group: grp, senderId: userId, senderFcm: window._fcmToken || '', senderEndpoint: window._pushEndpoint || '', type, title, body, url: '/', toFavs: !!opts.toFavs })
     }).catch(function(){});
   } catch (e) {}
 }
@@ -4677,6 +4691,11 @@ window._leaveCircle = function (key, name) {
     try { if (typeof _isFav !== 'function' || !_isFav(key)) _unregisterFavSub(key); } catch (e) {}
     try { delete window._circleUsersAll[key]; } catch (e) {}
     try { window._renderCircleSwitcher(); _renderCircles(); } catch (e) {}
+    // Tell the rest of the Crew — this used to be completely silent, so someone leaving just
+    // quietly stopped showing up with nothing telling anyone else why. Explicit roomKey since
+    // this is usually tapped from the Home-screen switcher, where groupName (current room) is
+    // empty and would otherwise make pushNotify silently no-op.
+    try { pushNotify('leave', name, (userName || 'Someone') + ' left ' + name, { toFavs: true }, key); } catch (e) {}
     toast('Left "' + name + '"', 2400);
   }, { yes: 'Leave', danger: true });
 };
@@ -4796,7 +4815,18 @@ window._toggleFav = function(key, name, ev) {
                : 'Favorited. Turn on notifications (in Settings) to get background alerts when it’s active.', 5500);
     });
   } else {
-    f.splice(i, 1); _setFavs(f); _unregisterFavSub(key); toast('Removed from favorites — your location will stop flowing there');
+    f.splice(i, 1); _setFavs(f);
+    // If this room is ALSO a Crew you belong to, unfavoriting doesn't actually stop your
+    // location flowing there — Crew membership (_getCircles) is a separate fan-out, untouched
+    // by favorite status — and favSubs is a single shared notification entry per room, not
+    // tracked by which feature asked for it, so unregistering it here would wrongly silence
+    // your Crew alerts too. Leaving the Crew itself is the "Leave" action in the Crew switcher.
+    var isCrewToo = false;
+    try { var _c = _getCircles(); isCrewToo = !!(_c && _c[key]); } catch (e) {}
+    if (!isCrewToo) _unregisterFavSub(key);
+    toast(isCrewToo
+      ? 'Removed from favorites — you\'re still in this Crew, so your location keeps flowing there'
+      : 'Removed from favorites — your location will stop flowing there');
   }
   if (window._lastGlSnap) renderRoomList(window._lastGlSnap);
 };
