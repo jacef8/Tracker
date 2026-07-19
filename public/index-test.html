@@ -2185,7 +2185,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 333;
+var APP_BUILD = 334;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5481,6 +5481,20 @@ window._finishOnboard = function () {
   var o = document.getElementById('gl-onboard');
   if (o) { o.style.transition = 'opacity .25s'; o.style.opacity = '0'; setTimeout(function () { try { o.remove(); } catch (e) {} }, 260); }
 };
+// "777" admin shortcut, typed into the room-name field. Bare "777" alone still just goes to
+// /777 and hits the auth wall (HTTP Basic Auth doesn't work in the native WebView — see
+// requireAdminAuth's comment in server.js — so there's no username/password dialog to fill in).
+// Typing "777" followed by a space or colon and the admin password goes straight to
+// /777?key=<password>, which logs in immediately and sets a long-lived cookie — no separate
+// browser address bar needed, works the same from the native app or a mobile browser tab.
+function _maybeAdminShortcut(raw) {
+  var val = String(raw || '').trim();
+  var m = /^777[\s:]*(.*)$/i.exec(val);
+  if (!m) return false;
+  var pw = (m[1] || '').trim();
+  window.location.replace(pw ? ('/777?key=' + encodeURIComponent(pw)) : '/777');
+  return true;
+}
 function showJoinScreen() {
   // Only remove presence if we're currently IN the map (topbar visible)
   // Don't fire on initial page load before enterMap is called
@@ -5541,7 +5555,7 @@ function showJoinScreen() {
     var grpErr = document.getElementById('group-required-msg');
     if (grpErr) grpErr.style.display = 'none';
     var val = this.value.trim();
-    if (val.toLowerCase() === '777')     { window.location.replace('/777'); return; }
+    if (_maybeAdminShortcut(val)) return;
     if (val.toLowerCase() === 'test888') { window.location.replace('/test888'); return; }
   });
   document.getElementById('inp-name').addEventListener('input', function() {
@@ -5650,7 +5664,7 @@ window._nativeAppInfo = null;
   }
 
   // Keyword shortcuts
-  if (s.group === '777') { window.location.replace('/777'); return; }
+  if (_maybeAdminShortcut(s.group)) return;
 
   // No saved session — just show join screen
   if (!s.uid || !s.name || !s.group) {
@@ -5708,7 +5722,7 @@ function handleJoin() {
     return;
   }
   // Admin shortcut
-  if (group === '777') { window.location.href = '/777'; return; }
+  if (_maybeAdminShortcut(group)) return;
   if (!name) {
     document.getElementById('inp-name').style.borderColor = 'var(--danger)';
     document.getElementById('inp-name').focus();
