@@ -1974,7 +1974,7 @@
          may already hold a permanent membership in it, so there's no clean "undo" exposed here —
          see window._riToggleCircle. -->
     <div id="ri-circle-row" onclick="window._riToggleCircle && window._riToggleCircle()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
-      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Make this a Crew</div><div id="ri-circle-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Everyone here always shows up in this room, no matter where else they are</div></div></div>
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg><div><div id="ri-circle-title" style="font-size:14px;font-weight:600;color:var(--text)">Make this a Crew</div><div id="ri-circle-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Everyone here always shows up in this room, no matter where else they are</div></div></div>
       <span id="ri-circle-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
     <div id="ri-secdev-row" onclick="window._toggleSecureDevices && window._toggleSecureDevices()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
@@ -2185,7 +2185,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 332;
+var APP_BUILD = 333;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3827,10 +3827,12 @@ function _riIsCircle() {
 }
 function _renderRiCircle() {
   var on = _riIsCircle();
+  var title = document.getElementById('ri-circle-title');
   var pill = document.getElementById('ri-circle-pill');
   var sub = document.getElementById('ri-circle-sub');
+  if (title) title.textContent = on ? 'Invite to this Crew' : 'Make this a Crew';
   if (pill) { pill.textContent = on ? 'ON' : 'OFF'; pill.style.background = on ? 'rgba(167,139,250,.18)' : 'var(--border)'; pill.style.color = on ? '#a78bfa' : 'var(--muted)'; }
-  if (sub) sub.textContent = on ? 'This room is a Crew — everyone always shows up here, no matter what room they\'re in or if they\'re in the background' : 'Everyone here always shows up in this room, no matter where else they are';
+  if (sub) sub.textContent = on ? 'This room is a Crew — everyone always shows up here, no matter what room they\'re in or if they\'re in the background. Tap to invite more people.' : 'Everyone here always shows up in this room, no matter where else they are';
 }
 // One-way: turning this on for an EXISTING room is the same conversion a brand-new group's
 // "Make this a Circle" checkbox does at creation, just applied after the fact. No "undo" here —
@@ -3840,12 +3842,15 @@ function _renderRiCircle() {
 // (Account page's "Leave" button).
 window._riToggleCircle = function () {
   if (!groupName || !db) return;
-  if (_riIsCircle()) return;
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  // Already a Crew — this row's job now is just to invite more people, same as the per-Crew
+  // invite icon in the My Crews switcher list. No separate "convert" step to repeat.
+  if (_riIsCircle()) { window._openCircleInvitePicker(groupName, label); return; }
   _confirm('Make "' + label + '" a Crew? Everyone in it will always show up here for each other from now on, no matter what other room they\'re in or if the app\'s in the background — this also makes the room private, so only people you invite can find it. This can\'t be undone.', function () {
     // Suppresses the passive "this room just became a Crew" toast for the person doing the
-    // converting — they already get their own dedicated confirmation + invite-prompt below,
-    // so the generic listener firing for their own write would just be a redundant duplicate.
+    // converting — they already get their own dedicated confirmation below (and immediately
+    // land in the invite picker), so the generic listener firing for their own write would
+    // just be a redundant duplicate.
     window._justMadeThisACircle = true;
     setTimeout(function () { window._justMadeThisACircle = false; }, 4000);
     try {
@@ -3875,21 +3880,12 @@ window._riToggleCircle = function () {
     _renderRiCircle();
     try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}   // refresh the visibility row too
     toast('“' + label + '” is now a Crew (and now private)', 3200);
-    // Anyone ELSE currently live in the room got no automatic membership or notification —
-    // that's deliberate (nobody should be silently opted into permanent tracking just for
-    // having been in the room at the wrong moment). But re-finding them in the invite picker
-    // is friction the converter shouldn't have to repeat, so offer it right away instead.
-    try {
-      var liveUsers = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
-      var hereCount = Object.keys(liveUsers).filter(function (uid) { return uid !== userId; }).length;
-      if (hereCount > 0) {
-        setTimeout(function () {
-          _confirm(hereCount + (hereCount === 1 ? ' person is' : ' people are') + ' here right now — invite ' + (hereCount === 1 ? 'them' : 'them all') + ' to the Crew too?', function () {
-            window._openCircleInvitePicker(groupName, label);
-          }, { yes: 'Invite them', no: 'Not now' });
-        }, 700);
-      }
-    } catch (e) {}
+    // Converting alone adds nobody else — that's deliberate (nobody should be silently opted
+    // into permanent tracking just for being in the room at the wrong moment). Go straight to
+    // the invite picker instead of a separate "invite them?" prompt first: it already ranks
+    // whoever's live in the room right now at the top, so this one step covers both "just
+    // convert it" (close the picker) and "convert AND invite" without an extra dialog.
+    setTimeout(function () { window._openCircleInvitePicker(groupName, label); }, 500);
   }, { yes: 'Make it a Crew' });
 };
 function renderRoomInfoOwner() {
