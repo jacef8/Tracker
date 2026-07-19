@@ -2218,7 +2218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 331;
+var APP_BUILD = 332;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7029,6 +7029,19 @@ function startLocationSharing() {
 
   const onGpsFix = (pos) => {
     if (window._roomClosed) return; // room was closed by an admin — stop writing
+    // db/fbRef/fbSet/fbPush/fbOnValue/fbRemove are ONLY ever assigned inside enterMap()'s
+    // waitForFirebase callback. If this session never actually called enterMap() this load —
+    // e.g. EXIT does a full page reload and clears the saved room first, so landing back on a
+    // bare Home screen never runs enterMap() again — they stay undefined forever. That silently
+    // broke the "circle/favorite fan-out keeps working from the Home screen" promise: every
+    // fbSet(fbRef(db, ...)) call below threw immediately, was swallowed by its own try/catch,
+    // and nothing ever got written — so a Crew member's presence, once removed by EXIT, could
+    // never be restored by the fan-out that's supposed to recreate it on the very next fix.
+    // window._fb is bootstrapped independently of ever entering a room, so fall back to it.
+    if (!db && window._fb && window._fb.db) {
+      db = window._fb.db; fbRef = window._fb.ref; fbSet = window._fb.set;
+      fbPush = window._fb.push; fbOnValue = window._fb.onValue; fbRemove = window._fb.remove;
+    }
     const { latitude: rawLat, longitude: rawLng, accuracy } = pos.coords;
     const now = Date.now();
     // ── Live-position sanity filter ──────────────────────────────────────
