@@ -1283,6 +1283,10 @@
       <span style="display:flex;color:var(--muted);margin-left:2px"><svg class="licon" style="width:12px;height:12px"><use href="#ic-chevron-down"/></svg></span>
     </div>
     <span id="group-lock-icon" style="display:none"></span>
+    <div id="room-switch-btn" title="Switch room" onclick="window._openRoomSwitcher()" style="
+      background:none;border:1px solid var(--border);border-radius:8px;padding:5px 9px;
+      color:var(--muted);cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;
+      -webkit-tap-highlight-color:transparent;"><svg class="licon licon-sm"><use href="#ic-map"/></svg></div>
     <div id="switch-group-btn" title="Leave group" style="
       background:rgba(248,81,73,0.15);border:1px solid rgba(248,81,73,0.5);
       border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;
@@ -1593,6 +1597,17 @@
       <button onclick="document.getElementById('invite-modal').style.display='none'" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px">Cancel</button>
       <button id="invite-pin-go" style="flex:1;padding:11px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-size:13px">Create invite</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ ROOM SWITCHER (jump to a favorite or Crew without Exit → Home) ══ -->
+<div id="room-switcher-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);align-items:flex-end;justify-content:center;padding:0">
+  <div style="width:100%;max-width:480px;background:#0d1117;border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:78vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 8px">
+      <div style="font-size:16px;font-weight:800">Switch room</div>
+      <button onclick="window._closeRoomSwitcher()" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:6px"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+    </div>
+    <div id="room-switcher-list" style="overflow-y:auto;padding:6px 14px 14px;flex:1"></div>
   </div>
 </div>
 
@@ -2203,7 +2218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 328;
+var APP_BUILD = 329;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4597,6 +4612,60 @@ window._renderCircleSwitcher = function () {
   var list = document.getElementById('circle-switcher-list');
   if (list && list.style.display !== 'none') _renderCircleSwitcherList();
 };
+
+// ── Room switcher: jump to a favorite or Crew from inside an active room, without having to
+// Exit back to Home first. Reuses _joinFriendRoom (same cleanup + reload path the Home-screen
+// circle switcher already uses) so it inherits the same presence-cleanup guarantees.
+window._openRoomSwitcher = function () {
+  var m = document.getElementById('room-switcher-modal');
+  if (m) m.style.display = 'flex';
+  try { _renderRoomSwitcherList(); } catch (e) {}
+};
+window._closeRoomSwitcher = function () {
+  var m = document.getElementById('room-switcher-modal');
+  if (m) m.style.display = 'none';
+};
+function _renderRoomSwitcherList() {
+  var el = document.getElementById('room-switcher-list'); if (!el) return;
+  var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
+  var circles = (typeof _getCircles === 'function') ? _getCircles() : {};
+  var now = Date.now(), seen = {}, rows = [];
+  Object.keys(circles).forEach(function (key) {
+    if (key === groupName || seen[key]) return; seen[key] = 1;
+    var name = circles[key] || key;
+    var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
+    var liveCount = Object.keys(users).filter(function (uid) {
+      var d = users[uid] || {}; return uid !== userId && d.ts && (now - d.ts) < 90000;
+    }).length;
+    rows.push({ key: key, name: name, sub: liveCount ? (liveCount + ' live now') : 'Crew · tap to open', badge: 'CREW' });
+  });
+  favs.forEach(function (key) {
+    if (key === groupName || seen[key]) return; seen[key] = 1;
+    var name = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    rows.push({ key: key, name: name, sub: 'Favorite · tap to open', badge: '★' });
+  });
+  if (!rows.length) {
+    el.innerHTML = '<div style="padding:24px 8px;text-align:center;color:var(--muted);font-size:13px">No other favorites or Crews yet. Favorite a room or make one a Crew to switch to it quickly from here.</div>';
+    return;
+  }
+  rows.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  el.innerHTML = rows.map(function (r) {
+    var safeKey = String(r.key).replace(/'/g, ''), safeName = String(r.name).replace(/'/g, '');
+    return '<div onclick="window._switchToRoom(\'' + safeKey + '\',\'' + safeName + '\')" style="display:flex;align-items:center;gap:10px;padding:11px 10px;border-bottom:1px solid var(--border);cursor:pointer">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(r.name) + '</div>' +
+        '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">' + _escHtml(r.sub) + '</div>' +
+      '</div>' +
+      '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:rgba(240,165,0,0.12);color:var(--accent);flex-shrink:0">' + r.badge + '</span>' +
+      '<span style="color:var(--muted);font-size:20px;flex-shrink:0">&#8250;</span>' +
+    '</div>';
+  }).join('');
+}
+window._switchToRoom = function (key, name) {
+  window._closeRoomSwitcher();
+  if (typeof window._joinFriendRoom === 'function') window._joinFriendRoom(key, name);
+};
+
 window._leaveCircle = function (key, name) {
   _confirm('Leave "' + name + '"? You\'ll stop showing up for each other until someone invites you back.', function () {
     var fb = window._fb;
@@ -8955,6 +9024,15 @@ window._sendRoomInvite = function(uid) {
   // written, so a real failure looked identical to success. Toast only follows an actual write now.
   try {
     var r = fbPush(fbRef(db, 'gl/_invites/' + uid)); fbSet(r, rec);
+    // Also deliver to every device signed into the same Google account as the target, not just
+    // the one specific device uid picked from the friends/presence list — otherwise inviting
+    // "Dad" only ever reaches whichever one of his devices happened to populate that list, and
+    // his other devices (tablet, PC) never see it at all. gl/_devOwner is the existing device→
+    // account reverse index (written by pushProfile), already cached client-side.
+    try {
+      var _acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+      if (_acct && _acct !== uid) { var r2 = fbPush(fbRef(db, 'gl/_invites/' + _acct)); fbSet(r2, rec); }
+    } catch (e) {}
     toast('Invited ' + nm, 2200);
   } catch (e) {
     toast('Couldn’t send the invite — check your connection and try again', 3000);
@@ -8974,6 +9052,11 @@ window._sendCircleInvite = function(uid) {
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
   try {
     var r = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(r, rec);
+    // Same account-wide fan-out as _sendRoomInvite — see its comment.
+    try {
+      var _acct2 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+      if (_acct2 && _acct2 !== uid) { var r3 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct2)); fb.set(r3, rec); }
+    } catch (e) {}
     try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
     try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
     toast('Invited ' + nm + ' to ' + t.name, 2200);
@@ -8983,22 +9066,45 @@ window._sendCircleInvite = function(uid) {
 };
 
 // ── Receiving: watch my invite inbox and surface it on the home screen ──
+// Two independent sources feed the same inbox: this device's own uid (gl/_invites/<gl_uid>) and,
+// once signed in, the shared account inbox (gl/_invites/<gl_account_uid>) — the fan-out
+// _sendRoomInvite/_sendCircleInvite write to so an invite reaches ANY of your signed-in devices,
+// not just whichever one the sender happened to pick. Each pending invite remembers which root
+// key (_src) it actually came from, since accept/dismiss have to remove it from that same node.
 window._pendingInvites = [];
+window._deviceInvitesRaw = {};
+window._acctInvitesRaw = {};
+function _mergeInvites() {
+  var merged = {};
+  Object.keys(window._deviceInvitesRaw || {}).forEach(function (k) { merged[k] = { v: window._deviceInvitesRaw[k], src: window._inviteWatchUid }; });
+  Object.keys(window._acctInvitesRaw || {}).forEach(function (k) { merged[k] = { v: window._acctInvitesRaw[k], src: window._inviteWatchAcct }; });
+  window._pendingInvites = Object.keys(merged)
+    .map(function (k) { var v = merged[k].v || {}; v._key = k; v._src = merged[k].src; return v; })
+    .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+  _renderInviteInbox();
+}
 function _watchInvites() {
   var f = window._fb; if (!f || !f.db) return;
   var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
-  if (!uid) return;
-  if (window._inviteWatchUid === uid) return; // already watching this id
-  window._inviteWatchUid = uid;
-  try {
-    f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
-      var data = snap.val() || {};
-      window._pendingInvites = Object.keys(data)
-        .map(function(k) { var v = data[k] || {}; v._key = k; return v; })
-        .sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
-      _renderInviteInbox();
-    });
-  } catch (e) {}
+  if (uid && window._inviteWatchUid !== uid) {
+    window._inviteWatchUid = uid;
+    try {
+      f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
+        window._deviceInvitesRaw = snap.val() || {};
+        _mergeInvites();
+      });
+    } catch (e) {}
+  }
+  var acct = null; try { acct = localStorage.getItem('gl_account_uid') || null; } catch (e) {}
+  if (acct && window._inviteWatchAcct !== acct) {
+    window._inviteWatchAcct = acct;
+    try {
+      f.onValue(f.ref(f.db, 'gl/_invites/' + acct), function(snap) {
+        window._acctInvitesRaw = snap.val() || {};
+        _mergeInvites();
+      });
+    } catch (e) {}
+  }
 }
 window._watchInvites = _watchInvites;
 
@@ -9053,9 +9159,11 @@ window._renderInviteInbox = _renderInviteInbox;
 window._acceptInvite = function(key) {
   var inv = (window._pendingInvites || []).filter(function(i) { return i._key === key; })[0];
   if (!inv) return;
-  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  // Remove from wherever this invite actually came from — the device inbox or the shared
+  // account inbox — not just the device uid, since it may have arrived via either one.
+  var src = inv._src || (function () { try { return localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
   var f = window._fb;
-  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { if (f && src) f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
   window._inviteRoom = inv.room;
   window._invitePin = inv.pin || null;
   showInviteJoin(inv.room, inv.pin || null);
@@ -9068,7 +9176,8 @@ window._acceptCircleInvite = function(key) {
   var uid = s.uid || (function () { try { return localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
   var nm = s.name || userName || 'Me';
   if (!uid) return;
-  try { f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  var src = inv._src || uid;
+  try { f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
   try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: inv.from || null }); } catch (e) {}
   var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
   try { _registerFavSub(inv.key, inv.room || inv.key, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
@@ -9079,9 +9188,10 @@ window._acceptCircleInvite = function(key) {
   toast('You’re in ' + (inv.room || 'the Crew') + ' — you’ll always show up here now, no matter what other room you\'re in', 3200);
 };
 window._dismissInvite = function(key) {
-  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+  var inv = (window._pendingInvites || []).filter(function(i) { return i._key === key; })[0];
+  var src = (inv && inv._src) || (function () { try { return localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
   var f = window._fb;
-  try { if (f && uid) f.remove(f.ref(f.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  try { if (f && src) f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
 };
 
 // Start watching once Firebase is ready (and again if identity changes after sign-in).
@@ -10553,6 +10663,11 @@ window._svSendPins = function() {
         var rec = { type: 'pins', fromName: userName || 'A friend', ts: Date.now(),
           pins: pins.map(function(p) { return { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', coll: p.coll || '' }; }) };
         var ir = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(ir, rec);
+        // Same account-wide fan-out as _sendRoomInvite/_sendCircleInvite.
+        try {
+          var _acct3 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+          if (_acct3 && _acct3 !== uid) { var ir2 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct3)); fb.set(ir2, rec); }
+        } catch (e) {}
       } catch (e) {}
       dest++;
     }
@@ -10570,8 +10685,8 @@ window._acceptPinShare = function(key) {
     arr.push({ pid: 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 10000), lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || '', coll: p.coll || '', savedAt: Date.now() });
   });
   setSavedPins(arr);
-  var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
-  try { if (window._fb && uid) window._fb.remove(window._fb.ref(window._fb.db, 'gl/_invites/' + uid + '/' + key)); } catch (e) {}
+  var src = inv._src || (function () { try { return localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
+  try { if (window._fb && src) window._fb.remove(window._fb.ref(window._fb.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
   try { renderSavedPins(); } catch (e) {}
   toast('Saved ' + inv.pins.length + ' pin' + (inv.pins.length > 1 ? 's' : '') + ' to your library', 3000);
 };
