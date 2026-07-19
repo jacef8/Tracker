@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 327;
+var APP_BUILD = 328;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6946,6 +6946,19 @@ window._dismissBgSetup = function(done) {
 // since had a background-permission problem. Snoozes for 12h if dismissed with "Not now".
 window._maybeShowBgSetup = function() {
   if (!_isNativeApp()) return;
+  // One-time forced recheck for iOS: this card used to show Android-only instructions to
+  // iPhone users too, so anyone on iOS who already tapped "Done" did so following steps that
+  // didn't match anything on their screen — that "done" flag can't be trusted as proof they
+  // actually granted Always/Background App Refresh. Ignore their prior done/snooze state
+  // exactly once to force the corrected card in front of them, then fall back to the normal
+  // logic below for every launch after that.
+  try {
+    if (_isIOS() && localStorage.getItem('gl_bg_ios_recheck1') !== '1') {
+      localStorage.setItem('gl_bg_ios_recheck1', '1');
+      window._openBgSetup();
+      return;
+    }
+  } catch (e) {}
   var state = '', ts = 0;
   try { state = localStorage.getItem('gl_bg_setup') || ''; ts = parseInt(localStorage.getItem('gl_bg_setup_ts') || '0'); } catch (e) {}
   var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
