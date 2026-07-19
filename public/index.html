@@ -1537,9 +1537,9 @@
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span id="bg-step1-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">1</span>
-        <div style="font-size:14px;font-weight:700">Location → Allow all the time</div>
+        <div id="bg-step1-title" style="font-size:14px;font-weight:700">Location → Allow all the time</div>
       </div>
-      <div style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
+      <div id="bg-step1-instructions" style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
         On the settings page that opens:<br>
         &#8201;1.&nbsp; Tap <b style="color:var(--accent)">Permissions</b><br>
         &#8201;2.&nbsp; Tap <b style="color:var(--accent)">Location</b><br>
@@ -1548,12 +1548,12 @@
       <button id="bg-step1-btn" onclick="window._bgOpenLocationSettings()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#000;font-weight:800;font-size:13px;cursor:pointer">Open Settings for Location</button>
     </div>
 
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:16px">
+    <div id="bg-step2-card" style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span id="bg-step2-check" style="width:20px;height:20px;border-radius:50%;background:var(--border);color:#0d1117;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">2</span>
-        <div style="font-size:14px;font-weight:700">Battery → Unrestricted</div>
+        <div id="bg-step2-title" style="font-size:14px;font-weight:700">Battery → Unrestricted</div>
       </div>
-      <div style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
+      <div id="bg-step2-instructions" style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px">
         On the settings page that opens:<br>
         &#8201;1.&nbsp; Tap <b style="color:var(--accent)">Battery</b><br>
         &#8201;2.&nbsp; Choose <b style="color:var(--accent)">Unrestricted</b> <span style="color:var(--muted)">(or "Don't optimize")</span><br>
@@ -2203,7 +2203,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 326;
+var APP_BUILD = 327;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6878,9 +6878,47 @@ function _bgOpenAppSettings(n) {
 }
 window._bgOpenLocationSettings = function() { _bgOpenAppSettings(1); };
 window._bgOpenBatterySettings  = function() { _bgOpenAppSettings(2); };
+// This card used to show the SAME Android-only copy ("Tap Permissions → Location",
+// "Battery → Unrestricted", "Samsung phones...") to every native user regardless of platform —
+// none of those menus exist on iOS, so an iPhone user following it would land on Settings →
+// GroundLink and find nothing matching the instructions, almost certainly never actually
+// granting "Always" location. That silently breaks background tracking on iOS specifically —
+// swap in the real iOS navigation instead.
+function _bgSetupCopyForPlatform() {
+  var ios = (typeof _isIOS === 'function') && _isIOS();
+  var t1 = document.getElementById('bg-step1-title'), i1 = document.getElementById('bg-step1-instructions');
+  var t2 = document.getElementById('bg-step2-title'), i2 = document.getElementById('bg-step2-instructions');
+  var card2 = document.getElementById('bg-step2-card'), b1 = document.getElementById('bg-step1-btn');
+  if (ios) {
+    if (t1) t1.textContent = 'Location → Always';
+    if (i1) i1.innerHTML = 'On the settings page that opens:<br>' +
+      '&#8201;1.&nbsp; Tap <b style="color:var(--accent)">Location</b><br>' +
+      '&#8201;2.&nbsp; Choose <b style="color:var(--accent)">Always</b> <span style="color:var(--muted)">— not "While Using the App"</span>';
+    if (b1) b1.textContent = 'Open Settings for GroundLink';
+    if (t2) t2.textContent = 'Background App Refresh → On';
+    if (i2) i2.innerHTML = 'On the same settings page:<br>' +
+      '&#8201;1.&nbsp; Turn on <b style="color:var(--accent)">Background App Refresh</b><br>' +
+      '&#8201;2.&nbsp; Also check Settings → General → Background App Refresh is on for GroundLink, and Low Power Mode is off';
+    if (card2) card2.style.display = '';
+  } else {
+    if (t1) t1.textContent = 'Location → Allow all the time';
+    if (i1) i1.innerHTML = 'On the settings page that opens:<br>' +
+      '&#8201;1.&nbsp; Tap <b style="color:var(--accent)">Permissions</b><br>' +
+      '&#8201;2.&nbsp; Tap <b style="color:var(--accent)">Location</b><br>' +
+      '&#8201;3.&nbsp; Choose <b style="color:var(--accent)">Allow all the time</b> <span style="color:var(--muted)">— not "While using the app"</span>';
+    if (b1) b1.textContent = 'Open Settings for Location';
+    if (t2) t2.textContent = 'Battery → Unrestricted';
+    if (i2) i2.innerHTML = 'On the settings page that opens:<br>' +
+      '&#8201;1.&nbsp; Tap <b style="color:var(--accent)">Battery</b><br>' +
+      '&#8201;2.&nbsp; Choose <b style="color:var(--accent)">Unrestricted</b> <span style="color:var(--muted)">(or "Don\'t optimize")</span><br>' +
+      '&#8201;3.&nbsp; <b>Samsung phones:</b> also turn off <b style="color:var(--accent)">Pause app activity if unused</b>';
+    if (card2) card2.style.display = '';
+  }
+}
 window._openBgSetup = function() {
   var m = document.getElementById('bg-setup-modal');
   if (m) m.style.display = 'flex';
+  try { _bgSetupCopyForPlatform(); } catch (e) {}
   try { _bgRefreshSteps(); } catch (e) {}
 };
 window._dismissBgSetup = function(done) {
