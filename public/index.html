@@ -2218,7 +2218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 335;
+var APP_BUILD = 336;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4883,7 +4883,49 @@ async function _registerFavSub(key, name, silent) {
 // self-heals existing Crew members who joined before this was wired up: the next time they
 // open the Account page (or relaunch), they get backfilled here same as anyone else. Silent:
 // never prompts.
+// A deleted room (e.g. an admin nuking stale rooms from the panel) can't reach into anyone
+// else's device — if a room was favorited or someone was a Crew member there, their phone still
+// has it in local storage, and the very next background GPS fix blindly recreates it via the
+// fan-out in onGpsFix (Firebase doesn't distinguish "never existed" from "existed, got deleted").
+// Run this once per session (not per fix — a get() per saved room, cheap at this cadence) so a
+// nuke actually sticks instead of rooms silently reappearing as devices phone home in the
+// background. Self-heals: drops anything confirmed gone from the local favorite/Crew list.
+async function _pruneDeadFavsAndCircles() {
+  try {
+    var fb = window._fb; if (!fb || !fb.db || !fb.get) return;
+    var favs = _getFavs();
+    var circles = _getCircles();
+    var checked = {};
+    var stillExists = async function (key) {
+      if (Object.prototype.hasOwnProperty.call(checked, key)) return checked[key];
+      try {
+        var snap = await fb.get(fb.ref(fb.db, 'gl/' + key));
+        checked[key] = !!(snap && snap.exists && snap.exists());
+      } catch (e) { checked[key] = true; } // network hiccup — don't punish for a failed check
+      return checked[key];
+    };
+    var deadFavs = [];
+    for (var i = 0; i < favs.length; i++) { if (!(await stillExists(favs[i]))) deadFavs.push(favs[i]); }
+    if (deadFavs.length) {
+      var favsNow = _getFavs();
+      deadFavs.forEach(function (k) { var idx = favsNow.indexOf(k); if (idx !== -1) favsNow.splice(idx, 1); try { _unregisterFavSub(k); } catch (e) {} });
+      _setFavs(favsNow);
+    }
+    var circleKeys = Object.keys(circles);
+    var deadCircles = [];
+    for (var j = 0; j < circleKeys.length; j++) { if (!(await stillExists(circleKeys[j]))) deadCircles.push(circleKeys[j]); }
+    if (deadCircles.length) {
+      var circlesNow = _getCircles();
+      deadCircles.forEach(function (k) { delete circlesNow[k]; try { _unregisterFavSub(k); } catch (e) {} try { delete window._circleUsersAll[k]; } catch (e) {} });
+      _setCircles(circlesNow);
+      try { window._renderCircleSwitcher(); } catch (e) {}
+    }
+    var goneCount = deadFavs.length + deadCircles.length;
+    if (goneCount) toast((goneCount === 1 ? 'A saved room' : goneCount + ' saved rooms') + ' no longer exist' + (goneCount === 1 ? 's' : '') + ' — removed from your list.', 4000);
+  } catch (e) {}
+}
 async function _registerAllFavSubs() {
+  try { await _pruneDeadFavsAndCircles(); } catch (e) {}
   try {
     var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
     for (var i = 0; i < favs.length; i++) { try { await _registerFavSub(favs[i], null, true); } catch (e) {} }
