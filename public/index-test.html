@@ -2185,7 +2185,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 329;
+var APP_BUILD = 330;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4477,18 +4477,19 @@ window._leaveCircle = function (key, name) {
   }, { yes: 'Leave', danger: true });
 };
 
-// ── Family Circles: always-on LOCATION WRITES, independent of whatever room (if any) is open;
-// but the always-visible MAP VIEW is My Map only ──
-// Your GPS fix keeps flowing into every circle's own room (gltest/<circleKey>/users) no matter what
-// room you're currently in or whether the app is backgrounded (see onGpsFix) — that's what lets
-// anyone who opens the circle's room later always find you there. It does NOT mean circle-mates'
-// markers should appear inside some OTHER, unrelated room you happen to have open — that would mix
-// two different groups of people on one map. So _renderCircles only draws when no room is open
-// (My Map). Mirrors _listenDevices/_renderDevices (own subscription + own marker store) rather
-// than folding into the room's userMarkers/onValue pipeline, since the subscription has to stay
-// alive on My Map where there's no per-room listener to piggyback on.
+// ── Family Circles: always-on LOCATION WRITES, independent of whatever room (if any) is open ──
+// Your GPS fix keeps flowing into every circle's own room (gltest/<circleKey>/users) no matter
+// what room you're currently in or whether the app is backgrounded (see onGpsFix) — that's what
+// lets anyone who opens the circle's room later always find you there. Circle-mates are NOT
+// rendered anywhere else, including My Map — seeing them only ever happens by actually opening
+// that circle's own room (the normal room-member code), matching the original intent exactly:
+// "if I go to that crew page, I can see all members at all times." A passive My-Map view was
+// built and shipped in an earlier session but was scope beyond what was ever actually asked for,
+// so it's been removed. The subscription below stays alive regardless — window._circleUsersAll
+// still feeds the live-count shown in the Home/room-switcher Crew lists, it just no longer
+// drives a map.
 window._circleUsersAll = {};   // circleKey -> { uid: userData }, latest snapshot per circle
-window._circleMarkers = {};    // uid -> mapboxgl.Marker, kept separate from the room's userMarkers
+window._circleMarkers = {};    // uid -> mapboxgl.Marker; always kept empty now, see _renderCircles
 window._circleSubbed = {};     // circleKey -> true once its onValue listener is attached
 window._listenCircles = function () {
   var fb = window._fb; if (!fb || !fb.db || !fb.onValue) return;
@@ -4498,64 +4499,15 @@ window._listenCircles = function () {
     try {
       fb.onValue(fb.ref(fb.db, 'gltest/' + key + '/users'), function (snap) {
         window._circleUsersAll[key] = (snap && snap.val && snap.val()) || {};
-        try { _renderCircles(); } catch (e) {}
-        try { window._renderCircleSwitcher(); } catch (e) {}   // live-count peek on the home screen — independent of whether a map is up yet
+        try { window._renderCircleSwitcher(); } catch (e) {}   // live-count peek on the home/switcher lists
       });
     } catch (e) {}
   });
 };
+// No-op kept (rather than deleted) so its several existing call sites stay harmless — just
+// clears any markers a stale/previous session may have left drawn before this change shipped.
 function _renderCircles() {
-  if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
-  var now = Date.now(), seen = {};
-  // Circle markers only belong on My Map. Being inside ANY other room — your circle's own or a
-  // totally unrelated one — must never show circle-mates layered on top of that room's own people;
-  // clear anything left over from My Map and bail.
-  if (typeof groupName !== 'undefined' && groupName) {
-    Object.keys(window._circleMarkers).forEach(function (uid) { try { window._circleMarkers[uid].remove(); } catch (e) {} delete window._circleMarkers[uid]; });
-    return;
-  }
-  Object.keys(_getCircles()).forEach(function (key) {
-    var users = window._circleUsersAll[key] || {};
-    Object.keys(users).forEach(function (uid) {
-      // Never draw yourself or the same person twice across circles. (userMarkers is always
-      // empty here since we already bailed above whenever a room is open — kept as a guard
-      // in case that changes.)
-      if (uid === userId || seen[uid] || (typeof userMarkers !== 'undefined' && userMarkers[uid])) return;
-      var data = users[uid] || {};
-      if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
-      seen[uid] = 1;
-      var isLive = (now - (data.ts || 0)) < LIVE_MS;
-      var isResting = !isLive && !!data.rest && (now - (data.ts || 0)) < BS_REST_MAX_MS;
-      var fillColor = data.color || userColor(uid);
-      var borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
-      var opacity = isLive ? '1' : isResting ? '0.9' : '0.65';
-      var mk = window._circleMarkers[uid];
-      if (!mk) {
-        var el = document.createElement('div');
-        Object.assign(el.style, {
-          width: '40px', height: '40px', borderRadius: '50%', background: fillColor,
-          border: '3px solid ' + borderColor, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '13px', fontWeight: '800', color: '#000', boxShadow: '0 2px 10px rgba(0,0,0,.6)',
-          cursor: 'pointer', opacity: opacity, fontFamily: 'system-ui, sans-serif', userSelect: 'none',
-        });
-        el.textContent = initials(data.name);
-        mk = new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([data.lng, data.lat]).addTo(map);
-        mk._el = el;
-        window._circleMarkers[uid] = mk;
-        el.addEventListener('click', function () { window._showCircleMemberPopup(uid); });
-      } else {
-        try { mk.setLngLat([data.lng, data.lat]); } catch (e) {}
-        var el2 = mk._el || mk.getElement();
-        if (el2) { el2.style.background = fillColor; el2.style.borderColor = borderColor; el2.style.opacity = opacity; }
-      }
-      mk._data = data;
-    });
-  });
-  // Drop markers for anyone no longer present in ANY visible circle this pass (left the circle,
-  // or you're now standing inside that circle's own room so the normal room code has them).
-  Object.keys(window._circleMarkers).forEach(function (uid) {
-    if (!seen[uid]) { try { window._circleMarkers[uid].remove(); } catch (e) {} delete window._circleMarkers[uid]; }
-  });
+  Object.keys(window._circleMarkers).forEach(function (uid) { try { window._circleMarkers[uid].remove(); } catch (e) {} delete window._circleMarkers[uid]; });
 }
 window._showCircleMemberPopup = function (uid) {
   var mk = window._circleMarkers[uid]; if (!mk || !mk._data) return;
