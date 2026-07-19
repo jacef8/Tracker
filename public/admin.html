@@ -10,8 +10,10 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, onValue, remove, push, set }
+  import { getDatabase, ref, onValue, remove, push, set, get }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getAuth, signInAnonymously }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
@@ -24,7 +26,19 @@
     measurementId:     "G-EH3FZ2CZWJ"
   };
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, onValue, remove, push, set };
+  window._fb = { db: getDatabase(app), ref, onValue, remove, push, set, get };
+  // gl/ reads require auth != null (see database.rules.json) — this page never signed in at
+  // all, so every onValue below was registering, getting permission-denied, and (per RTDB's
+  // "listeners don't auto-retry on a later auth change" behavior) staying denied forever. That's
+  // exactly what "stuck on Connecting to Firebase" was: the listener fired once, failed
+  // silently, and nothing ever called back. Anonymous auth is enough for read access; the
+  // waitForFirebase()/canary-read gating below (same pattern index.html already uses) makes
+  // sure nothing tries to read before that's actually resolved.
+  try {
+    const auth = getAuth(app);
+    window._fb.auth = auth;
+    if (!auth.currentUser) signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
+  } catch (e) { console.warn('auth init', e); }
 </script>
 
 <style>
@@ -1713,14 +1727,17 @@ var _userWindowMs = 86400000;                         // default 24h
 var _SESSION_KEEP_MS = 60 * 24 * 60 * 60 * 1000;      // purge sessions older than 60 days
 function _ensureSessionsSub() {
   if (_sessionsSub) return;
-  var fb = window._fb; if (!fb) return;
-  _sessionsSub = fb.onValue(fb.ref(fb.db, 'gl/_sessions'), function(snap) {
-    _sessionsData = snap.val() || {};
-    var cutoff = Date.now() - _SESSION_KEEP_MS;
-    Object.entries(_sessionsData).forEach(function(kv) {
-      if (((kv[1] && kv[1].l) || 0) < cutoff) { try { fb.remove(fb.ref(fb.db, 'gl/_sessions/' + kv[0])); } catch (e) {} }
+  if (!window._fb) return;
+  _sessionsSub = true; // claim immediately so a second quick tab-switch doesn't double-subscribe while waitForFirebase is still pending
+  waitForFirebase(function(fb) {
+    _sessionsSub = fb.onValue(fb.ref(fb.db, 'gl/_sessions'), function(snap) {
+      _sessionsData = snap.val() || {};
+      var cutoff = Date.now() - _SESSION_KEEP_MS;
+      Object.entries(_sessionsData).forEach(function(kv) {
+        if (((kv[1] && kv[1].l) || 0) < cutoff) { try { fb.remove(fb.ref(fb.db, 'gl/_sessions/' + kv[0])); } catch (e) {} }
+      });
+      var p = document.getElementById('tab-users'); if (p && p.classList.contains('active')) renderUsers();
     });
-    var p = document.getElementById('tab-users'); if (p && p.classList.contains('active')) renderUsers();
   });
 }
 function setUserWindow(btn) {
@@ -1842,12 +1859,27 @@ function copyFirebaseLog() {
   });
 }
 
-function loadAdmin() {
-  var t = setInterval(function() {
-    if (!window._fb) return;
-    clearInterval(t);
+// Also waits for anonymous sign-in to resolve (not just window._fb existing) — see the note by
+// the auth setup above. Same pattern as index.html's waitForFirebase().
+function _fbAuthReady() { return !window._fb || !window._fb.auth || !!window._fb.auth.currentUser; }
+var _fbReadReady = false, _fbReadPromise = null;
+function _verifyFbRead() {
+  if (_fbReadReady) return Promise.resolve();
+  if (_fbReadPromise) return _fbReadPromise;
+  _fbReadPromise = window._fb.get(window._fb.ref(window._fb.db, 'gl/_debug'))
+    .then(function () { _fbReadReady = true; })
+    .catch(function () { return new Promise(function (res) { setTimeout(res, 400); }).then(function () { _fbReadReady = true; }); });
+  return _fbReadPromise;
+}
+function waitForFirebase(cb) {
+  if (window._fb && _fbAuthReady()) { _verifyFbRead().then(function () { cb(window._fb); }); return; }
+  var t = setInterval(function () {
+    if (window._fb && _fbAuthReady()) { clearInterval(t); _verifyFbRead().then(function () { cb(window._fb); }); }
+  }, 80);
+}
 
-    var fb = window._fb;
+function loadAdmin() {
+  waitForFirebase(function(fb) {
     addLog('Connected to Firebase', 'ok');
     initActivityFeed();
 
@@ -2153,7 +2185,7 @@ function loadAdmin() {
       renderOverview();
     }, 5000);
 
-  }, 50);
+  });
 }
 
 loadAdmin();
