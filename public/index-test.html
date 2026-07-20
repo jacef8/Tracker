@@ -1502,7 +1502,7 @@
       <div style="font-size:17px;font-weight:800">Keep tracking with the screen off</div>
     </div>
     <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px">
-      So your group keeps seeing you when GroundLink is in your pocket, set these two things. Tap a button to jump to GroundLink's settings, then follow the steps.
+      So your group keeps seeing you — screen off, app closed, even after your phone restarts — set these two things. Tap a button to jump to GroundLink's settings, then follow the steps.
     </div>
 
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:10px">
@@ -2195,7 +2195,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 341;
+var APP_BUILD = 342;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6764,6 +6764,18 @@ function _isIOS() {
     return !!(c && typeof c.getPlatform === 'function' && c.getPlatform() === 'ios');
   } catch (e) { return false; }
 }
+// Direct, authoritative check via a native JS bridge (MainActivity's GLPermissions interface,
+// Android only) for whether ACCESS_BACKGROUND_LOCATION is actually granted — not just declared
+// in the manifest. Returns true (don't nag) when the bridge doesn't exist (web, iOS, or an
+// older installed APK that predates this) so nothing here can regress a platform it can't check.
+function _hasBackgroundLocation() {
+  try {
+    if (window.GLPermissions && typeof window.GLPermissions.hasBackgroundLocation === 'function') {
+      return window.GLPermissions.hasBackgroundLocation();
+    }
+  } catch (e) {}
+  return true;
+}
 function _bgLocationOn() { try { return localStorage.getItem('gl_bg_location') !== '0'; } catch (e) { return true; } }
 async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
@@ -6993,7 +7005,13 @@ window._maybeShowBgSetup = function() {
   } catch (e) {}
   var state = '', ts = 0;
   try { state = localStorage.getItem('gl_bg_setup') || ''; ts = parseInt(localStorage.getItem('gl_bg_setup_ts') || '0'); } catch (e) {}
-  var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '');
+  // NOT_AUTHORIZED only ever fires on a FULL permission denial — "While using the app"
+  // (foreground-only) still lets addWatcher() succeed the whole time the app is open (the
+  // Activity being alive is enough for the OS), so this reactive check never catches the
+  // foreground-only case at all. That silently broke reboot/swipe-away tracking while looking
+  // completely fine during normal use — confirmed on-device 2026-07-20. _hasBackgroundLocation()
+  // asks the OS directly instead of inferring from a plugin error that may never occur.
+  var permProblem = /NOT_AUTHORIZED/i.test(window._bgGeoError || '') || !_hasBackgroundLocation();
   if (state === 'done' && !permProblem) return;
   // Re-prompt once a day (was 12h) until background location is actually granted.
   if (state === 'snooze' && (Date.now() - ts) < 24 * 60 * 60 * 1000 && !permProblem) return;
