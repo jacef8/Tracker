@@ -2,6 +2,7 @@ package com.groundlink.app;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.AudioDeviceInfo;
@@ -296,6 +297,35 @@ public class MainActivity extends BridgeActivity {
                 public boolean hasBackgroundLocation() {
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true; // no separate background permission before Android 10
                     return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                }
+
+                // Jumps straight to the Location permission's own picker (the 3-choice "Allow
+                // all the time / only while using / deny" screen) — skipping App Info →
+                // Permissions → Location entirely. Requires API 30+ and all three extras
+                // (EXTRA_USER in particular can't be constructed from a raw adb shell command,
+                // which is why an initial adb-only test of this intent silently failed — it's
+                // only buildable from real Java code). Returns false if unavailable so the JS
+                // side can fall back to the existing generic App Info flow with its own
+                // step-by-step instructions.
+                @JavascriptInterface
+                public boolean openLocationPermissionSettings() {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false;
+                    try {
+                        Intent intent = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
+                        // EXTRA_PERMISSION_NAME exists in the platform but isn't part of the
+                        // public SDK stub (unlike EXTRA_PACKAGE_NAME/EXTRA_USER below, which
+                        // compile fine as real Intent constants) — the literal key string still
+                        // works, since the receiving Settings component just reads whatever
+                        // string key is actually present, regardless of which constant supplied it.
+                        intent.putExtra("android.intent.extra.PERMISSION_NAME", Manifest.permission.ACCESS_FINE_LOCATION);
+                        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, getPackageName());
+                        intent.putExtra(Intent.EXTRA_USER, android.os.Process.myUserHandle());
+                        if (intent.resolveActivity(getPackageManager()) == null) return false;
+                        startActivity(intent);
+                        return true;
+                    } catch (Exception e) {
+                        return false;
+                    }
                 }
             }, "GLPermissions");
         } catch (Exception e) {
