@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
@@ -54,8 +55,16 @@ import androidx.core.app.NotificationCompat;
  */
 public class HeadlessTrackerService extends Service {
     private static final String TAG = "GLHeadlessSvc";
-    private static final String CHAN_ID = "groundlink_headless";
+    // Two FIXED channel IDs instead of one channel whose importance we'd try to change in
+    // place — channel importance is locked once created, and deleting+recreating the SAME
+    // channel ID races the OS's handling of an already-posted notification (this exact crash
+    // was already hit and fixed for VoiceForegroundService; mirrored here). Toggling just
+    // switches which channel ID the notification is posted under.
+    private static final String CHAN_VISIBLE = "groundlink_headless_visible";
+    private static final String CHAN_HIDDEN = "groundlink_headless_quiet";
     private static final int NOTIF_ID = 44;
+    private static final String PREFS = "groundlink_headless_svc";
+    private static final String PREF_ICON_VISIBLE = "icon_visible";
     private static final String HEADLESS_URL = "https://tracker-production-3b03.up.railway.app/headless.html";
 
     private WebView webView;
@@ -90,6 +99,29 @@ public class HeadlessTrackerService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "startActive failed", e);
         }
+    }
+
+    // The foreground service itself can't be hidden entirely (that notification is the whole
+    // OS-level trade-off for staying alive unthrottled), but its status-bar ICON specifically
+    // can be removed by lowering the channel's importance to MIN — same mechanism as the voice
+    // notification icon toggle. Default HIDDEN (unlike voice's default-visible): background
+    // location runs essentially all the time, so a persistent status-bar icon for it is exactly
+    // the always-on clutter Life360-style apps avoid.
+    //
+    // Deliberately does NOT nudge the service the way VoiceForegroundService.setIconVisible()
+    // does — this setting can only be toggled from the open app's Settings page, which means
+    // MainActivity is alive and this service is necessarily in STANDBY (no notification posted
+    // at all right now — see the class doc). Calling startActive() here would wrongly force a
+    // full promotion out of standby (duplicate tracking) just to change a preference. The new
+    // value is simply picked up the next time the service actually promotes to active (reboot,
+    // or the app getting swiped from Recents).
+    public static void setIconVisible(Context ctx, boolean visible) {
+        try { prefs(ctx).edit().putBoolean(PREF_ICON_VISIBLE, visible).apply(); }
+        catch (Exception e) { Log.e(TAG, "setIconVisible() failed", e); }
+    }
+
+    private static SharedPreferences prefs(Context ctx) {
+        return ctx.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     @Override
@@ -282,10 +314,13 @@ public class HeadlessTrackerService extends Service {
     }
 
     private Notification buildNotification() {
+        boolean iconVisible = prefs(this).getBoolean(PREF_ICON_VISIBLE, false);
+        String chanId = iconVisible ? CHAN_VISIBLE : CHAN_HIDDEN;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(CHAN_ID) == null) {
-                NotificationChannel ch = new NotificationChannel(CHAN_ID, "Background location", NotificationManager.IMPORTANCE_LOW);
+            if (nm != null && nm.getNotificationChannel(chanId) == null) {
+                int importance = iconVisible ? NotificationManager.IMPORTANCE_LOW : NotificationManager.IMPORTANCE_MIN;
+                NotificationChannel ch = new NotificationChannel(chanId, "Background location", importance);
                 ch.setShowBadge(false);
                 nm.createNotificationChannel(ch);
             }
@@ -296,12 +331,12 @@ public class HeadlessTrackerService extends Service {
             int piFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
             pi = PendingIntent.getActivity(this, 0, launch, piFlags);
         } catch (Exception e) { /* notification still works without a tap target */ }
-        NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHAN_ID)
+        NotificationCompat.Builder b = new NotificationCompat.Builder(this, chanId)
             .setContentTitle("GroundLink")
             .setContentText("Sharing your location in the background")
             .setSmallIcon(R.drawable.ic_stat_groundlink)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW);
+            .setPriority(iconVisible ? NotificationCompat.PRIORITY_LOW : NotificationCompat.PRIORITY_MIN);
         if (pi != null) b.setContentIntent(pi);
         return b.build();
     }
