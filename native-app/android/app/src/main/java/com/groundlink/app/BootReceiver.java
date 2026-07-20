@@ -20,10 +20,12 @@ public class BootReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        Log.i(TAG, "onReceive: action=" + (intent != null ? intent.getAction() : "null intent"));
         if (intent == null) return;
         String action = intent.getAction();
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action) && !"android.intent.action.QUICKBOOT_POWERON".equals(action)) return;
         try {
+            Log.i(TAG, "onReceive: calling HeadlessTrackerService.startActive");
             HeadlessTrackerService.startActive(context);
         } catch (Exception e) {
             // Best-effort — a boot receiver crashing would be far worse than tracking simply not
