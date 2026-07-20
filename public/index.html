@@ -2228,7 +2228,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 337;
+var APP_BUILD = 338;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3476,7 +3476,12 @@ window._ensurePresenceSub = function (fb) {
     fb.onValue(fb.ref(fb.db, 'gl/_devOwner'), function (ds) { window._devOwnerAll = ds.val() || {}; try { window._reconcileFriends(); } catch (e) {} });
   } catch (e) {}
 };
-try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
+// Cold-launch self-heal: previously the ONLY reliable trigger for _pruneDeadFavsAndCircles was
+// opening the Account page (plus a native-only path via enableAlerts), so a device that never
+// opened Account could sit showing a nuked Crew/Favorite on its Home screen indefinitely. Firing
+// it here too — right after Firebase auth actually resolves, once per launch — means a nuke
+// self-heals on the very next cold start with no extra tap required.
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { _registerAllFavSubs(); } catch (e) {} try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
 
 // ── ACCOUNT DEVICE SESSIONS ────────────────────────────────────────────────────────────────
 // Every device signed into YOUR account reports what it's doing to gl/_users/<acct>/sessions/<id>
