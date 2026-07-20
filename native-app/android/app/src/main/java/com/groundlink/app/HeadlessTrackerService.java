@@ -140,6 +140,28 @@ public class HeadlessTrackerService extends Service {
         active = false;
         try { stopForeground(true); } catch (Exception e) {}
         destroyWebView();
+        // Closes a narrow race: swipe-away schedules a ~1s-delayed restart (see onTaskRemoved);
+        // if the app is reopened (re-asserting standby) inside that window, cancel the pending
+        // alarm too, or it would still fire afterward and wrongly promote back to active while
+        // the app is open (duplicate tracking, a surprise notification the user didn't expect).
+        try {
+            PendingIntent pi = restartPendingIntent(PendingIntent.FLAG_NO_CREATE);
+            if (pi != null) {
+                AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                if (am != null) am.cancel(pi);
+                pi.cancel();
+            }
+        } catch (Exception e) {}
+    }
+
+    // FLAG_NO_CREATE returns null instead of creating a new PendingIntent if a matching one
+    // isn't already pending — used to look up (for cancellation) vs. create (in onTaskRemoved)
+    // the exact same PendingIntent, matched by request code + explicit component.
+    private PendingIntent restartPendingIntent(int extraFlags) {
+        Intent restart = new Intent(getApplicationContext(), HeadlessTrackerService.class);
+        restart.setPackage(getPackageName());
+        int flags = extraFlags | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
+        return PendingIntent.getService(getApplicationContext(), 91, restart, flags);
     }
 
     private void ensureWebView() {
@@ -216,10 +238,7 @@ public class HeadlessTrackerService extends Service {
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
         try {
-            Intent restart = new Intent(getApplicationContext(), HeadlessTrackerService.class);
-            restart.setPackage(getPackageName());
-            int piFlags = PendingIntent.FLAG_ONE_SHOT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
-            PendingIntent pi = PendingIntent.getService(getApplicationContext(), 91, restart, piFlags);
+            PendingIntent pi = restartPendingIntent(PendingIntent.FLAG_ONE_SHOT);
             AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
             if (am != null) am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1000, pi);
         } catch (Exception e) {
