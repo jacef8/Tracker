@@ -2127,8 +2127,8 @@
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
     <div id="set-voicenotif-row" onclick="window._setToggleVoiceNotifIcon()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
-      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice notification icon</div><div style="font-size:11px;color:var(--muted);margin-top:2px">A status-bar icon shows while voice is connected so audio keeps working in the background. Turn off to hide the icon — background voice still runs.</div></div></div>
-      <span id="set-voicenotif-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice notification icon</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Background voice keeps working either way — this only controls whether it shows a status-bar icon while doing it. Off by default.</div></div></div>
+      <span id="set-voicenotif-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
     <div id="set-bglocation-row" onclick="window._setToggleBgLocation && window._setToggleBgLocation()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep updating your dot when the app is closed. Turning this off removes the status-bar icon — you'll only update while the app is open.</div></div></div>
@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 351;
+var APP_BUILD = 352;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3914,10 +3914,12 @@ window._setToggleCarAudio = function () {
 // Voice notification icon: the foreground service that keeps background voice reception
 // working REQUIRES a notification to exist (that's the OS-level trade-off for staying alive
 // unthrottled) — but its status-bar ICON specifically can be hidden by lowering the
-// notification's importance, same idea as the existing background-location status-bar icon.
-// Default ON (icon shown). Native side rebuilds the notification channel on change since
-// Android channel importance can't be changed in place once created.
-function _voiceNotifIconOn() { try { return localStorage.getItem('gl_voice_notif_icon') !== '0'; } catch (e) { return true; } }
+// notification's importance, same mechanism as the background-location icon below. Default
+// OFF (hidden) — flipped from ON 2026-07-20 since almost no one wants to see it while talking.
+// NOTE: Android floors any foreground-service notification's importance at LOW regardless of
+// what's requested (confirmed on-device — even Life360's own tracking notification sits at
+// LOW), so "hidden" here means "as low as Android allows," not truly invisible in all cases.
+function _voiceNotifIconOn() { try { return localStorage.getItem('gl_voice_notif_icon') === '1'; } catch (e) { return false; } }
 window._setToggleVoiceNotifIcon = function () {
   var on = !_voiceNotifIconOn();
   try { localStorage.setItem('gl_voice_notif_icon', on ? '1' : '0'); } catch (e) {}
