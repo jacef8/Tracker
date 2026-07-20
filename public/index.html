@@ -1204,6 +1204,12 @@
           <div id="account-muted"></div>
         </div>
 
+        <!-- People whose pins you've hidden from your map — hidden entirely when empty -->
+        <div id="account-pin-muted-section" style="margin-top:14px;display:none">
+          <div class="field-label" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">🚫📍 Hidden pins</div>
+          <div id="account-pin-muted"></div>
+        </div>
+
         <!-- Your signed-in devices (this account) — live: online / which room / talking -->
         <div style="margin-top:14px">
           <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">📲 Signed in on</div>
@@ -2231,7 +2237,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 347;
+var APP_BUILD = 348;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2582,6 +2588,37 @@ window._renderMutedList = function () {
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
       '<span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔇 ' + _escHtml(m[uid].name || 'Muted') + '</span>' +
       '<button onclick="window._toggleMute(\'' + uid + '\',' + JSON.stringify(m[uid].name || '') + ')" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer">Unmute</button>' +
+    '</div>';
+  }).join('');
+  el.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">' + rows + '</div>';
+};
+
+// Pin-mute: hide a specific person's dropped pins from YOUR map, so they can't clutter it.
+// Voice/alerts/location still work normally — this only affects pin visibility. They are NOT
+// told; nothing changes on their side. Syncs across your devices (same account) via the
+// profile, like the voice mute above. Keyed by uid.
+function _getPinMuted() { try { return JSON.parse(localStorage.getItem('gl_pin_muted') || '{}'); } catch (e) { return {}; } }
+function _setPinMuted(m) { try { localStorage.setItem('gl_pin_muted', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
+window._isPinMuted = function (uid) { return !!_getPinMuted()[uid]; };
+window._togglePinMute = function (uid, name) {
+  var m = _getPinMuted(), was = !!m[uid];
+  if (was) delete m[uid]; else m[uid] = { name: name || '', ts: Date.now() };
+  _setPinMuted(m);
+  try { toast(was ? '📍 Showing ' + (name || 'their') + ' pins again' : '🚫 Hiding ' + (name || 'their') + ' pins on your map'); } catch (e) {}
+  try { updatePinSource(lastPins); } catch (e) {}
+  try { if (pinFeedOpen) renderPinFeed(lastPins); } catch (e) {}
+  try { window._renderPinMutedList && window._renderPinMutedList(); } catch (e) {}
+  return !was;
+};
+window._renderPinMutedList = function () {
+  var el = document.getElementById('account-pin-muted'); if (!el) return;
+  var m = _getPinMuted(), ids = Object.keys(m);
+  if (!ids.length) { el.innerHTML = ''; var sec = document.getElementById('account-pin-muted-section'); if (sec) sec.style.display = 'none'; return; }
+  var sec2 = document.getElementById('account-pin-muted-section'); if (sec2) sec2.style.display = '';
+  var rows = ids.sort(function (a, b) { return (m[b].ts || 0) - (m[a].ts || 0); }).map(function (uid) {
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+      '<span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🚫 ' + _escHtml(m[uid].name || 'Hidden') + '</span>' +
+      '<button onclick="window._togglePinMute(\'' + uid + '\',' + JSON.stringify(m[uid].name || '') + ')" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer">Show pins</button>' +
     '</div>';
   }).join('');
   el.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">' + rows + '</div>';
@@ -4881,6 +4918,7 @@ function _renderAccountPage() {
   try { if (window._listenDevices) _listenDevices(); window._renderMyDevices && _renderMyDevices(); } catch (e) {}
   try { window._subMySessions && window._subMySessions(); window._renderMySessions && window._renderMySessions(); } catch (e) {}
   try { window._renderMutedList && window._renderMutedList(); } catch (e) {}
+  try { window._renderPinMutedList && window._renderPinMutedList(); } catch (e) {}
   var favs = _getFavs();
   var saved = []; try { saved = JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch (e) {}
   var pinsDropped = 0; try { pinsDropped = parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0; } catch (e) {}
@@ -6612,7 +6650,9 @@ function updatePinSource(pins) {
     window._queuedPins = pins; // will be applied once map is ready
     return;
   }
-  const features = Object.entries(pins).map(([pid, pin]) => {
+  const features = Object.entries(pins).filter(([pid, pin]) => {
+    return pin.droppedBy === userId || !window._isPinMuted(pin.droppedBy);
+  }).map(([pid, pin]) => {
     const isMine   = pin.droppedBy === userId;
     const cat      = pin.cat || 'Waypoint';
     // Use known category image or fall back to Custom
@@ -8003,6 +8043,7 @@ function listenUsers() {
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
           (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:0;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '">' + (window._isMuted(uid) ? '🔇' : '🔊') + '</button>' : '') +
+          (!isMine ? '<button class="upinmute-btn" title="' + (window._isPinMuted(uid) ? 'Show their pins on your map again' : 'Hide their pins from your map') + '" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:0;color:' + (window._isPinMuted(uid) ? '#f85149' : 'var(--muted)') + '">📍' + (window._isPinMuted(uid) ? '🚫' : '') + '</button>' : '') +
           ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
@@ -8019,6 +8060,14 @@ function listenUsers() {
         e.currentTarget.textContent = nowMuted ? '🔇' : '🔊';
         e.currentTarget.style.color = nowMuted ? '#f85149' : 'var(--muted)';
         e.currentTarget.title = nowMuted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
+      });
+      var _pmb = row.querySelector('.upinmute-btn');
+      if (_pmb) _pmb.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var nowPinMuted = window._togglePinMute(uid, data.name);
+        e.currentTarget.innerHTML = nowPinMuted ? '📍🚫' : '📍';
+        e.currentTarget.style.color = nowPinMuted ? '#f85149' : 'var(--muted)';
+        e.currentTarget.title = nowPinMuted ? 'Show their pins on your map again' : 'Hide their pins from your map';
       });
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
@@ -8462,6 +8511,7 @@ window._showPinPopup = function(pid, lngLat) {
       '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
       (isMine ? '<button class="pop-btn" onclick="window._movePin(\'' + pid + '\')">Move</button>' : '') +
       (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
+      (!isMine ? '<button class="pop-btn" onclick="window._togglePinMute(\'' + pin.droppedBy + '\',' + JSON.stringify(pin.name || '') + ');window._closePinPopup()">' + (window._isPinMuted(pin.droppedBy) ? 'Show ' + escapeHtmlJs(pin.name || 'their') + ' pins' : 'Hide ' + escapeHtmlJs(pin.name || 'their') + ' pins') + '</button>' : '') +
     '</div>';
   window._closePinPopup();
   window._pinInfoPopup = new mapboxgl.Popup({ offset: 18, closeButton: true, maxWidth: '250px' })
@@ -12141,6 +12191,7 @@ try {
       nameCustom: LS.get('gl_name_custom') === '1',
       friends:    LS.get('gl_friends') || '{}',
       muted:      LS.get('gl_muted') || '{}',
+      pinMuted:   LS.get('gl_pin_muted') || '{}',
       favs:       LS.get('gl_favs') || '[]',
       circles:    LS.get('gl_circles') || '{}',
       colors:     LS.get('gl_user_colors') || '{}',
@@ -12196,6 +12247,7 @@ try {
       if (p.nameCustom != null) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
+      if (p.pinMuted) LS.set('gl_pin_muted', typeof p.pinMuted === 'string' ? p.pinMuted : JSON.stringify(p.pinMuted));
       if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
       // Circle membership has to round-trip through the account profile just like friends/favs —
       // otherwise a circle joined on one device (or before a reinstall) never reaches this device's
