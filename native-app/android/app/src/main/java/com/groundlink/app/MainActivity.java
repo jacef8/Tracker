@@ -282,6 +282,12 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // If the bridge/WebView isn't ready, voice still works — it just won't keep the radio on.
         }
+        // Re-assert standby every time the visible app starts (fresh launch, or reopened after
+        // having been swiped away) — demotes HeadlessTrackerService back down (tears down its
+        // WebView/tracking, drops its notification) if a prior task removal had promoted it to
+        // active, since the normal in-app path covers location again from here. Also associates
+        // the service with THIS task so a future swipe-away reliably triggers onTaskRemoved().
+        try { HeadlessTrackerService.startStandby(this); } catch (Exception e) {}
         hideNavBar();
     }
 
