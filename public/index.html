@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 352;
+var APP_BUILD = 353;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6161,16 +6161,13 @@ window._nativeAppInfo = null;
     var groupKey = s.group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
     fb.onValue(fb.ref(fb.db, 'gl/' + groupKey), function(snap) {
       var groupExists = snap.exists();
-      // A favorited/Crew room (config.persistent) is "long-term" — the 2-hour session window
-      // only exists to stop a one-off quick-join room from silently pulling you back in forever.
-      // Private/passcode status has no bearing on this anymore (a private quick-join room lives
-      // on the exact same lifecycle as a public one) — only actual permanence does.
-      var groupData = (snap.exists && snap.exists()) ? snap.val() : null;
-      var config = (groupData && groupData.config) || {};
-      var isLongTerm = _isFav(groupKey) || !!config.persistent;
-
-      if ((sessionFresh || isLongTerm) && groupExists) {
-        // Session is fresh (or this is a long-term group) and it still exists — auto-rejoin
+      // Reverted 2026-07-20: favorited/Crew rooms used to bypass the 2-hour window entirely
+      // (auto-rejoin forever), which meant the app opened straight into that room's map on
+      // EVERY launch instead of Home — reported repeatedly as unwanted. A Crew's location
+      // fan-out and Home-screen reachability (Favorites/My Circles) don't depend on this;
+      // only the freshness window decides whether a cold launch skips straight past Home.
+      if (sessionFresh && groupExists) {
+        // Session is fresh and the group still exists — auto-rejoin
         enterMap(s.name, s.group, s.uid);
       } else {
         // Show join screen — name pre-filled, group NOT pre-filled
