@@ -2001,6 +2001,16 @@
     </div>
     <div id="ri-pin-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px"></div>
     <div id="ri-vis-row" style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:none"></div>
+    <!-- Only shown for a plain quick-join room (not a Favorite/Crew — those use unfavorite / the
+         Crew switcher's own Leave instead). EXIT no longer stops you from showing up here; this
+         is the one explicit action that does, personally, without affecting anyone else or the
+         room itself. -->
+    <div id="ri-leave-row" style="display:none;background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.35);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <button onclick="window._leaveThisRoom && window._leaveThisRoom()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:none;border:none;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer">
+        <svg class="licon licon-sm"><use href="#ic-exit"/></svg>Leave this room
+      </button>
+      <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;line-height:1.5">Stops your location from reaching this room. Everyone else is unaffected, and the room stays until its own expiration.</div>
+    </div>
     <div id="ri-owner-actions" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Owner</div>
       <button onclick="window._ownerDeleteRoom()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.45);border-radius:10px;padding:12px 14px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer">
@@ -2185,7 +2195,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 336;
+var APP_BUILD = 337;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3741,6 +3751,15 @@ function openRoomInfo() {
   }
   var ownerActions = document.getElementById('ri-owner-actions');
   if (ownerActions) ownerActions.style.display = window._isRoomOwner ? 'block' : 'none';
+  // "Leave this room" — only meaningful for a plain quick-join room. A Favorite uses unfavorite
+  // instead (stops the fan-out the same way), and a Crew uses its own Leave in the switcher
+  // (also removes the permanent roster entry, which this can't do).
+  var leaveRow = document.getElementById('ri-leave-row');
+  if (leaveRow) {
+    var _isPersistentRoom = false;
+    try { _isPersistentRoom = _isFav(groupName) || _riIsCircle(); } catch (e) {}
+    leaveRow.style.display = _isPersistentRoom ? 'none' : 'block';
+  }
   try { _renderRiFav(); } catch (e) {}
   try { _renderRiCircle(); } catch (e) {}
   try { _renderRoomExpire(); } catch (e) {}
@@ -3770,11 +3789,21 @@ function _renderRoomExpire() {
     if (clearBtn) clearBtn.style.display = 'none';
   }
 }
+// A quick-join room can only ever be extended up to 7 days past its OWN creation, never
+// further — someone who wants a room to genuinely persist longer than that is exactly the
+// "should be a Favorite/Crew instead" case, not a reason to keep pushing this deadline out.
+var QUICK_JOIN_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 function _applyRoomExpire(ts) {
   if (isNaN(ts) || ts <= Date.now()) { toast('Pick a time in the future'); return; }
+  var createdAt = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.createdAt) || Date.now();
+  var maxTs = createdAt + QUICK_JOIN_MAX_MS;
+  var clamped = false;
+  if (ts > maxTs) { ts = maxTs; clamped = true; }
   try { if (db && groupName) fbSet(fbRef(db, 'gltest/' + groupName + '/config/expires'), ts); } catch (e) {}
   if (window._evt) window._evt('room kept active until ' + new Date(ts).toLocaleString());
-  toast('Room stays active until ' + new Date(ts).toLocaleString(), 3500);
+  toast(clamped
+    ? 'Quick-join rooms max out at 7 days old — set to ' + new Date(ts).toLocaleString() + '. For longer, make it a Favorite or Crew instead.'
+    : 'Room stays active until ' + new Date(ts).toLocaleString(), clamped ? 5000 : 3500);
   try { if (window._lastGlSnap && window._lastGlSnap[groupName]) { window._lastGlSnap[groupName].config = window._lastGlSnap[groupName].config || {}; window._lastGlSnap[groupName].config.expires = ts; } } catch (e) {}
   var inp = document.getElementById('ri-expire-input'); if (inp) { try { inp.value = _toLocalDatetime(ts); } catch (e) {} }
   _renderRoomExpire();
@@ -3911,6 +3940,33 @@ window._setRoomVisibility = function(v) {
   }
 };
 function closeRoomInfo() { document.getElementById('room-info-sheet').style.display = 'none'; }
+// The one explicit action that actually stops your location from reaching a plain quick-join
+// room — EXIT no longer does this (see the switch-group-btn handler). Removes this room from
+// _getJoinedRooms (stops future fan-out from any screen, including Home), clears your current
+// presence entry, tells the room someone left (same notification EXIT used to send), and takes
+// you back to Home since there's nothing left here for you to view.
+window._leaveThisRoom = function () {
+  if (!groupName) return;
+  var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
+  _confirm('Leave "' + label + '"? Your location will stop reaching this room. Everyone else is unaffected, and the room itself stays until its own expiration.', function () {
+    var _key = groupName;
+    try { _untrackJoinedRoom(_key); } catch (e) {}
+    try { pushNotify('leave', label, userName + ' left ' + label, { toFavs: true }, _key); } catch (e) {}
+    try {
+      if (db && userId) {
+        window._fb.onDisconnect(fbRef(db, `gltest/${_key}/users/${userId}`)).cancel();
+        fbRemove(fbRef(db, `gltest/${_key}/users/${userId}`));
+      }
+    } catch (e) {}
+    try {
+      localStorage.removeItem('gltest_group');
+      sessionStorage.removeItem('gltest_group');
+      _cookieSet('gltest_group', '');
+    } catch (e) {}
+    toast('Left "' + label + '"', 2200);
+    setTimeout(function () { location.reload(); }, 300);
+  }, { yes: 'Leave', danger: true });
+};
 function _editPasscode() { closeRoomInfo(); if (window._openSetPasscode) window._openSetPasscode(); }
 function _copyRoomPin(pin) {
   if (navigator.clipboard) { navigator.clipboard.writeText(pin).then(function(){ toast('Passcode copied'); }).catch(function(){ toast('Passcode: ' + pin, 4000); }); }
@@ -4335,6 +4391,34 @@ function _getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') ||
 function _setFavs(arr) { try { localStorage.setItem('gl_favs', JSON.stringify(arr)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 
+// Quick-join rooms this device has entered keep getting fanned your location out to, on the
+// SAME "always on regardless of current room" basis as Circles/Favorites — just bounded by the
+// room's own short lifecycle (24h, extendable up to 7 days) instead of being permanent. This is
+// what makes "someone can check my location even if I don't have the app open" true for a
+// quick-join room, not just Favorites/Crews. Device-local only (unlike favorites, not synced
+// across your other devices — it's tied to which device actually joined the room).
+// { [roomKey]: { name, expires } }
+function _getJoinedRooms() { try { return JSON.parse(localStorage.getItem('gltest_joined') || '{}'); } catch (e) { return {}; } }
+function _setJoinedRooms(m) { try { localStorage.setItem('gltest_joined', JSON.stringify(m)); } catch (e) {} }
+// Add/refresh a room's fan-out entry — called on entering any room (see enterMap). Skipped for
+// rooms already tracked as a Favorite/Circle, since those already fan out permanently and don't
+// need a second, redundant, shorter-lived entry layered on top.
+function _trackJoinedRoom(key, name, expiresTs) {
+  try {
+    if (_isFav(key)) return;
+    var circles = _getCircles(); if (circles && circles[key]) return;
+    var m = _getJoinedRooms();
+    m[key] = { name: name || key, expires: expiresTs || (Date.now() + 24 * 60 * 60 * 1000) };
+    _setJoinedRooms(m);
+  } catch (e) {}
+}
+// Explicit personal opt-out — stop THIS device's location from continuing to reach a room,
+// without affecting the room itself (which stays alive for everyone else until its own
+// deadline). This is what the "Leave this room" action calls; EXIT no longer does this.
+function _untrackJoinedRoom(key) {
+  try { var m = _getJoinedRooms(); if (m[key]) { delete m[key]; _setJoinedRooms(m); } } catch (e) {}
+}
+
 // ── Family Circles (device-local membership cache) ──────────────────────────
 // A Circle is an ordinary room (config.circle + config.persistent) with an added
 // PERMANENT roster (gltest/<key>/members/<uid>, separate from the live/connection-based
@@ -4708,7 +4792,20 @@ async function _pruneDeadFavsAndCircles() {
       _setCircles(circlesNow);
       try { window._renderCircleSwitcher(); } catch (e) {}
     }
-    var goneCount = deadFavs.length + deadCircles.length;
+    // Quick-join rooms this device is still tracking get the same treatment — a nuked room
+    // shouldn't keep getting silently recreated just because it hasn't hit its own natural
+    // expiration yet (the onGpsFix fan-out already self-prunes on expiration; this catches
+    // early deletion too).
+    var joined = _getJoinedRooms();
+    var joinedKeys = Object.keys(joined);
+    var deadJoined = [];
+    for (var k = 0; k < joinedKeys.length; k++) { if (!(await stillExists(joinedKeys[k]))) deadJoined.push(joinedKeys[k]); }
+    if (deadJoined.length) {
+      var joinedNow = _getJoinedRooms();
+      deadJoined.forEach(function (rk) { delete joinedNow[rk]; });
+      _setJoinedRooms(joinedNow);
+    }
+    var goneCount = deadFavs.length + deadCircles.length + deadJoined.length;
     if (goneCount) toast((goneCount === 1 ? 'A saved room' : goneCount + ' saved rooms') + ' no longer exist' + (goneCount === 1 ? 's' : '') + ' — removed from your list.', 4000);
   } catch (e) {}
 }
@@ -4824,17 +4921,27 @@ function renderRoomList(all) {
     var hasChat = group.chat && Object.keys(group.chat).length;
     var hasTrails = group.trails && Object.keys(group.trails).length;
     var config = group.config || {};
-    // Kept alive indefinitely if: owned by a signed-in user, OR private (recurring
-    // groups), OR favorited by anyone (favoriting writes config.persistent). Public,
-    // never-favorited rooms keep the casual lifecycle below.
-    var keptUntil = (config.expires && config.expires > now);   // explicit "keep active until" time
-    var persistent = !!config.persistent || config.visibility === 'private' || keptUntil;
+    // Kept alive PERMANENTLY only if favorited or a Crew (both set config.persistent) —
+    // private/passcode status has no bearing on lifespan at all anymore. Everything else is a
+    // quick-join room living on its own hard wall-clock deadline below, regardless of activity.
+    var keptUntil = (config.expires && config.expires > now);   // still within its lifecycle, or an explicit future date
+    var persistent = !!config.persistent;
     var isFav = favs.indexOf(key) !== -1;
     // Empty husk with no data at all — safe to remove (unless it's a kept-alive room).
     if (fb && !persistent && !hasUsers && !hasPins && !hasChat && !hasTrails && !lastSeen) { fb.remove(fb.ref(fb.db, 'gltest/' + key)); return; }
-    // Nobody in it for 24h — auto-retire, EXCEPT kept-alive rooms (persistent/private/favorited live forever).
-    if (fb && !hasUsers && lastSeen && (now - lastSeen) > STALE_MS) {
-      if (!persistent) { fb.remove(fb.ref(fb.db, 'gltest/' + key)); return; }
+    // Quick-join rooms expire on a hard wall-clock deadline (24h by default at creation,
+    // extendable via Room Info up to 7 days from creation — see _applyRoomExpire) that does NOT
+    // reset on activity — deleted at that point regardless of who's still present. Favorited/
+    // Crew rooms (persistent) never hit this.
+    if (fb && !persistent) {
+      if (config.expires) {
+        if (now > config.expires) { fb.remove(fb.ref(fb.db, 'gltest/' + key)); return; }
+      } else if (lastSeen || hasUsers) {
+        // Self-heal: a room that somehow never got a lifecycle stamp (e.g. the visibility
+        // picker's snapshot hadn't loaded yet at creation) shouldn't end up accidentally
+        // immortal — give it the same default 24h deadline the first time anyone observes it.
+        try { fb.set(fb.ref(fb.db, 'gltest/' + key + '/config/expires'), now + 24 * 60 * 60 * 1000); } catch (e) {}
+      }
     }
 
     var liveUsers = realUsers.filter(function(u) { return (now - (u.ts || 0)) < LIVE_MS; });
@@ -5216,6 +5323,18 @@ function enterMap(name, group, uid) {
       try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
       // The creator of a brand-new group is its owner.
       try { fbSet(fbRef(db, 'gltest/' + groupName + '/config/owner'), userId); } catch (_) {}
+      // Every brand-new quick-join room gets a hard lifecycle stamp: expires 24h from now by
+      // default (extendable later via Room Info's "Keep active until…", capped at 7 days from
+      // createdAt — see _applyRoomExpire) — a fixed wall-clock deadline that does NOT reset on
+      // activity, and deletes the room at that point regardless of who's still in it. Skipped
+      // when this creation is ALSO becoming a Circle below, since that sets config.persistent
+      // (never expires) instead — private/passcode status has no bearing on this at all.
+      if (!window._pendingCircle) {
+        try {
+          fbSet(fbRef(db, 'gltest/' + groupName + '/config/createdAt'), Date.now());
+          fbSet(fbRef(db, 'gltest/' + groupName + '/config/expires'), Date.now() + 24 * 60 * 60 * 1000);
+        } catch (_) {}
+      }
       window._pendingVisibility = null;
     }
     // Creator asked for this brand-new group to be a Family Circle — mark it persistent
@@ -5232,6 +5351,14 @@ function enterMap(name, group, uid) {
       } catch (_) {}
       window._pendingCircle = null;
     }
+    // Track this room so onGpsFix's fan-out keeps feeding it regardless of what room (if any)
+    // becomes current later — same "always show up" guarantee Circles/Favorites already have,
+    // just bounded by the room's own lifecycle instead of being permanent. Skipped entirely if
+    // it's already a Favorite/Circle (those fan out permanently already, see _trackJoinedRoom).
+    try {
+      var _knownExpires = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.expires) || (Date.now() + 24 * 60 * 60 * 1000);
+      _trackJoinedRoom(groupName, group, _knownExpires);
+    } catch (e) {}
     // ── Room ownership ────────────────────────────────────────────────
     // Track who owns this room. If no owner has ever been recorded (older
     // rooms created before this feature), the first person to open it claims it.
@@ -5538,25 +5665,24 @@ function _maybeAdminShortcut(raw) {
   return true;
 }
 function showJoinScreen() {
-  // Only remove presence if we're currently IN the map (topbar visible)
-  // Don't fire on initial page load before enterMap is called
-  try {
-    var topbar = document.getElementById('topbar');
-    var inMap = topbar && topbar.style.display === 'flex';
-    if (inMap && typeof db !== 'undefined' && db && typeof groupName !== 'undefined' && groupName && typeof userId !== 'undefined' && userId) {
-      fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId));
-    }
-  } catch(_) {}
+  // Going to Home is purely navigational now — it does NOT remove presence from whatever room
+  // you were just in. That room keeps getting fed by the fan-out below (same mechanism that
+  // already kept Circles/Favorites alive from the Home screen), exactly like every other room
+  // switch. Actually stopping your location from reaching a room is now the separate, explicit
+  // "Leave this room" action in Room Info (window._leaveThisRoom) — nothing here does that.
   document.getElementById('join-screen').style.display = 'flex';
   try { window._maybeOnboard && window._maybeOnboard(); } catch (e) {}
   try { if (window._sizePagerSoon) window._sizePagerSoon(); } catch (e) {}
+  // "Active" presence — app open, not "in" any one room's UI right now. Force null explicitly
+  // since groupName may still hold the room just left at this exact point.
   try { window._assertPresence(null); } catch (e) {}
-  // Family Circles: if you belong to one, your location should keep flowing to it even
-  // sitting on the home screen with no room open — same pipeline My Map already starts
-  // on its own (beginLocation → onGpsFix's fan-out), just triggered here too so a circle
-  // member doesn't have to specifically open My Map for it to kick in.
+  // If you belong to any Circle/Favorite/still-tracked quick-join room, your location should
+  // keep flowing to all of them even sitting on the Home screen with no room's UI open — same
+  // pipeline My Map already starts on its own (beginLocation → onGpsFix's fan-out), just
+  // triggered here too so nobody has to specifically open My Map for it to kick in.
   try {
-    if (window._gpsWatchId == null && Object.keys(_getCircles()).length) {
+    var _hasFanoutTargets = Object.keys(_getCircles()).length || _getFavs().length || Object.keys(_getJoinedRooms()).length;
+    if (window._gpsWatchId == null && _hasFanoutTargets) {
       if (!userId) { var _cs = getSavedSession(); userId = _cs.uid || genUid(); userName = userName || _cs.name || 'Me'; }
       beginLocation();
     }
@@ -5731,7 +5857,7 @@ window._nativeAppInfo = null;
       // straight onto the map instead of bouncing back to the join screen after a couple hours.
       var groupData = (snap.exists && snap.exists()) ? snap.val() : null;
       var config = (groupData && groupData.config) || {};
-      var isLongTerm = _isFav(groupKey) || !!config.persistent || config.visibility === 'private';
+      var isLongTerm = _isFav(groupKey) || !!config.persistent;
 
       if ((sessionFresh || isLongTerm) && groupExists) {
         // Session is fresh (or this is a long-term group) and it still exists — auto-rejoin
@@ -7036,13 +7162,32 @@ function startLocationSharing() {
     // your location actually follow that intent instead of only flowing while it happens to be
     // the one currently-open room — which is exactly what left people missing from rooms they
     // were expected to still be part of.
+    var _favKeys = [];
     try {
-      var _favKeys = (typeof _getFavs === 'function') ? _getFavs() : [];
+      _favKeys = (typeof _getFavs === 'function') ? _getFavs() : [];
       for (var _fi = 0; _fi < _favKeys.length; _fi++) {
         var _fk = _favKeys[_fi];
         if (_fk === groupName || _circleKeys.indexOf(_fk) !== -1) continue; // already written above
         fbSet(fbRef(db, `gltest/${_fk}/users/${userId}`), _fixPayload);
       }
+    } catch (e) {}
+    // Quick-join rooms this device has entered: same always-on fan-out, but each entry carries
+    // its own short expiration (24h, extendable up to 7 days — see _applyRoomExpire) instead of
+    // being permanent. Prune (and skip writing to) anything past its deadline right here, so a
+    // room that's aged out stops getting fed the moment this device notices, rather than only
+    // when some other cleanup pass happens to run.
+    try {
+      var _joined = _getJoinedRooms();
+      var _joinedKeys = Object.keys(_joined);
+      var _joinedChanged = false;
+      for (var _ji = 0; _ji < _joinedKeys.length; _ji++) {
+        var _jk = _joinedKeys[_ji];
+        if (_jk === groupName || _circleKeys.indexOf(_jk) !== -1 || _favKeys.indexOf(_jk) !== -1) continue; // already written above
+        var _jEntry = _joined[_jk];
+        if (_jEntry && _jEntry.expires && now > _jEntry.expires) { delete _joined[_jk]; _joinedChanged = true; continue; }
+        fbSet(fbRef(db, `gltest/${_jk}/users/${userId}`), _fixPayload);
+      }
+      if (_joinedChanged) _setJoinedRooms(_joined);
     } catch (e) {}
     // Touch the session log (throttled to 60s) so the admin Users tab tracks movement + duration.
     try {
@@ -8537,36 +8682,29 @@ document.getElementById('map').addEventListener('click', () => {
 document.getElementById('switch-group-btn').addEventListener('click', () => {
   if (window._soloMode) { window._exitSoloMap(); return; } // personal map: just close it, no room teardown
   // Immediate exit — no confirm dialog needed
+  // EXIT is purely navigational now — it takes you back to Home so you can reach other rooms
+  // and Settings, but does NOT stop you from showing up here. Your location keeps flowing to
+  // this room via the exact same fan-out that already keeps Circles/Favorites alive from the
+  // Home screen (see showJoinScreen + _getJoinedRooms). Actually stopping is the separate,
+  // explicit "Leave this room" action in Room Info (window._leaveThisRoom).
   if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
-  try { clearInterval(window._diagTimer); } catch(_) {} // stop diagnostics reporting
+  try { clearInterval(window._diagTimer); } catch(_) {} // stop this screen's diagnostics reporting
   try { fbRemove(fbRef(db, 'gltest/' + groupName + '/diag/' + userId)); } catch(_) {} // clear our debug entry
-  // Stop GPS updates so a late position write can't re-add us after we leave
-  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch(_) {}
-  try { stopNativeBackgroundTracking(); } catch(_) {} // stop native foreground service if running
-  try { writeDebugLog(groupName, userName + ' exited'); } catch(_) {}
-  // Tell favoriters who aren't in the room that someone left.
-  try { pushNotify('leave', groupName, userName + ' left the group', { toFavs: true }); } catch(_) {}
-  // Clear saved group first — keep uid and name so rejoin is easy
+  try { writeDebugLog(groupName, userName + ' went to Home (still showing up here)'); } catch(_) {}
+  // Clear saved group so the NEXT cold launch shows Home instead of resuming straight into this
+  // room's full UI — this only affects what screen you land on, not the fan-out above.
   try {
     localStorage.removeItem('gltest_group');
     sessionStorage.removeItem('gltest_group');
     _cookieSet('gltest_group', '');
   } catch(_) {}
-  // Remove our presence, and only reload once Firebase confirms the delete — a bare
-  // remove() followed by an immediate reload was getting cut off mid-flight, which
-  // left us showing as "online" in the room. onDisconnect is the backstop.
-  var _exited = false;
-  var _go = function() { if (!_exited) { _exited = true; location.reload(); } };
-  try {
-    if (db && groupName && userId) {
-      // Cancel the queued conn:false disconnect write so the reload below doesn't resurrect a husk.
-      try { window._fb.onDisconnect(fbRef(db, `gltest/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
-      try { fbRemove(fbRef(db, 'gltest/_presence/' + userId)); } catch (_) {}   // drop global presence on exit
-      var p = fbRemove(fbRef(db, `gltest/${groupName}/users/${userId}`)); // trails persist 2h
-      if (p && typeof p.then === 'function') { p.then(_go).catch(_go); } else { _go(); }
-    } else { _go(); }
-  } catch(_) { _go(); }
-  setTimeout(_go, 1500); // fallback so exit always completes even if offline
+  // A reload tears down this page's WebSocket connection, which would otherwise trigger the
+  // QUEUED onDisconnect action (remove, or conn:false on native) — cancel that specifically so
+  // the reload itself doesn't undo "still showing up here." Presence is left exactly as-is;
+  // the next fix (native background service survives the reload; the fan-out restarts within
+  // seconds once the Home screen loads) refreshes it again.
+  try { if (db && groupName && userId) window._fb.onDisconnect(fbRef(db, `gltest/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
+  location.reload();
 });
 
 
