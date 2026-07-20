@@ -857,8 +857,8 @@
   .pop-dist { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
   .pop-coords { font-size: 11px; color: #c2ccd6; font-family: monospace; margin-bottom: 4px; }
   .pop-meta { font-size: 12px; color: #c2ccd6; }
-  .pop-actions { display: flex; gap: 6px; margin-top: 10px; }
-  .pop-btn { flex: 1; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; padding: 7px 6px; border: 1px solid var(--border); }
+  .pop-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .pop-btn { flex: 1 1 calc(50% - 3px); min-width: 0; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; padding: 7px 4px; border: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pop-edit { background: var(--accent); border-color: var(--accent); color: #000; }
   .pop-save { background: none; color: var(--accent); border-color: var(--accent); }
   .pop-save.is-saved { color: var(--muted); border-color: var(--border); }
@@ -2231,7 +2231,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 346;
+var APP_BUILD = 347;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7538,8 +7538,13 @@ function startLocationSharing() {
       }
     }
 
-    if (!window._firstFix) {
-      window._firstFix = true;
+    // Keyed by room (not a page-lifetime-once flag) and guarded on `map`/`groupName` actually
+    // existing — a GPS fix can now legitimately arrive before any room is entered at all (the
+    // Home-screen fan-out arm for Favorites/Circles/joined-rooms), and a once-ever flag got
+    // silently wasted on that no-map context, never firing again once a room was actually
+    // opened — confirmed as the reason "default to Follow Group" wasn't taking effect.
+    if (map && groupName && window._firstFixRoom !== groupName) {
+      window._firstFixRoom = groupName;
       writeDebugLog(groupName, userName + ' GPS active');
       // Default to Follow Group on first entering the map — frame everyone in view (gracefully
       // degrades to just centering on you if you're alone, same as tapping the button manually
