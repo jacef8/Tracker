@@ -2228,7 +2228,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 343;
+var APP_BUILD = 344;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7530,9 +7530,12 @@ function startLocationSharing() {
     if (!window._firstFix) {
       window._firstFix = true;
       writeDebugLog(groupName, userName + ' GPS active');
-      // Default to Follow Me on first entering the map — center on you and track your position.
+      // Default to Follow Group on first entering the map — frame everyone in view (gracefully
+      // degrades to just centering on you if you're alone, same as tapping the button manually
+      // would). Respects an already-active follow-me/follow-group state in the rare case the
+      // user tapped one manually before this first fix arrived.
       try {
-        if (!followUid && typeof window._locateMeTapped === 'function') window._locateMeTapped();
+        if (!followUid && !fitAllInterval && typeof window._fitAllTapped === 'function') window._fitAllTapped();
         else map.flyTo({ center: [lng, lat], zoom: 15 });
       } catch (e) { try { map.flyTo({ center: [lng, lat], zoom: 15 }); } catch (e2) {} }
     }
