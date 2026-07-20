@@ -300,6 +300,13 @@ public class MainActivity extends BridgeActivity {
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true; // no separate background permission before Android 10
                     return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
                 }
+                // User setting (Settings → "Location notification icon"). Same mechanism as
+                // GLAudioRouter.setVoiceNotificationVisible — see HeadlessTrackerService.setIconVisible
+                // for why this only persists a preference rather than nudging the live service.
+                @JavascriptInterface
+                public void setLocationNotificationVisible(boolean visible) {
+                    try { HeadlessTrackerService.setIconVisible(MainActivity.this, visible); } catch (Exception e) {}
+                }
                 // NOTE: a direct deep-link straight to the Location permission's own picker
                 // (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed — confirmed
                 // on-device 2026-07-20 that launching it throws SecurityException requiring

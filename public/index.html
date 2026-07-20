@@ -2134,6 +2134,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep updating your dot when the app is closed. Turning this off removes the status-bar icon — you'll only update while the app is open.</div></div></div>
       <span id="set-bglocation-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-locnotif-row" onclick="window._setToggleLocationNotifIcon()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Location notification icon</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Background location keeps running either way — this only controls whether it shows a status-bar icon while doing it. Off by default, like Life360.</div></div></div>
+      <span id="set-locnotif-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
       <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
@@ -2237,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 349;
+var APP_BUILD = 350;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3921,6 +3925,17 @@ window._setToggleVoiceNotifIcon = function () {
   try { var a = window.GLAudioRouter; if (a && a.setVoiceNotificationVisible) a.setVoiceNotificationVisible(on); } catch (e) {}
   toast(on ? 'Voice notification icon on' : 'Voice notification icon hidden — background voice still runs');
 };
+// Location notification icon: same mechanism as the voice one above, but default OFF (hidden)
+// instead of default ON — background location runs essentially all the time, so a persistent
+// status-bar icon for it is exactly the always-on clutter Life360-style apps avoid.
+function _locNotifIconOn() { try { return localStorage.getItem('gl_loc_notif_icon') === '1'; } catch (e) { return false; } }
+window._setToggleLocationNotifIcon = function () {
+  var on = !_locNotifIconOn();
+  try { localStorage.setItem('gl_loc_notif_icon', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-locnotif-pill', on); } catch (e) {}
+  try { var p = window.GLPermissions; if (p && p.setLocationNotificationVisible) p.setLocationNotificationVisible(on); } catch (e) {}
+  toast(on ? 'Location notification icon on' : 'Location notification icon hidden — background tracking still runs');
+};
 function _voiceEnabled() { try { return localStorage.getItem('gl_voice_off') !== '1'; } catch (e) { return true; } }
 function _applyVoicePref() {
   var on = _voiceEnabled();
@@ -4282,6 +4297,9 @@ function _syncSettings() {
   // Voice notification icon toggle — native app only.
   var vnRow = document.getElementById('set-voicenotif-row');
   if (vnRow) { vnRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-voicenotif-pill', _voiceNotifIconOn()); } catch (e) {} }
+  // Location notification icon toggle — native app only.
+  var lnRow = document.getElementById('set-locnotif-row');
+  if (lnRow) { lnRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-locnotif-pill', _locNotifIconOn()); } catch (e) {} }
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
   var bgRow = document.getElementById('set-bgtrack-row');
