@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8" /><title>GroundLink Background</title></head>
+<body>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+  // Minimal, UI-less location reporter — hosted inside HeadlessTrackerService (native Android)
+  // in its own bare WebView, independent of MainActivity/the Capacitor bridge. Exists because
+  // the main app's location fan-out (onGpsFix in index.html) only ever runs while a Capacitor
+  // Activity is alive — swiping the app from Recents (or a device reboot before the app is ever
+  // reopened) tears that down entirely, and the vendored background-geolocation plugin
+  // deliberately stops itself the moment that Activity/bridge is destroyed (see
+  // BackgroundGeolocationService.onUnbind / BackgroundGeolocation.handleOnDestroy). This page
+  // re-implements just the one piece that has to survive without any of that: reading the
+  // fan-out target list (Favorites/Crews/tracked quick-join rooms) from the SAME shared
+  // localStorage the real app already writes to, and writing GPS fixes to Firebase for each.
+  // It does not replace the main app, has no map/chat/voice/UI, and is never opened by a human.
+  const firebaseConfig = {
+    apiKey:            "AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk",
+    authDomain:        "tracker-58b87.firebaseapp.com",
+    databaseURL:       "https://tracker-58b87-default-rtdb.firebaseio.com",
+    projectId:         "tracker-58b87",
+    storageBucket:     "tracker-58b87.firebasestorage.app",
+    messagingSenderId: "371034128407",
+    appId:             "1:371034128407:web:31259f67dc2d36d91cdc52",
+    measurementId:     "G-EH3FZ2CZWJ"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const auth = getAuth(app);
+
+  function log(msg) { try { console.log('[GL-headless] ' + msg); } catch (e) {} }
+
+  function getUid() { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } }
+  function getName() { try { return localStorage.getItem('gl_name') || 'Someone'; } catch (e) { return 'Someone'; } }
+  function getDev() { try { return localStorage.getItem('gl_devlabel') || ''; } catch (e) { return ''; } }
+  function getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) { return []; } }
+  function getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
+  function getJoined() { try { return JSON.parse(localStorage.getItem('gl_joined') || '{}'); } catch (e) { return {}; } }
+  function setJoined(m) { try { localStorage.setItem('gl_joined', JSON.stringify(m)); } catch (e) {} }
+
+  // Recomputed fresh on every single fix (not cached at startup) — favoriting a room or
+  // accepting a Crew invite in the VISIBLE app while this headless instance also happens to be
+  // running takes effect on the very next fix, no restart needed, since both share localStorage.
+  // Self-prunes expired quick-join entries the same way onGpsFix's fan-out loop already does.
+  function fanOutKeys() {
+    var keys = {};
+    getFavs().forEach(function (k) { keys[k] = 1; });
+    Object.keys(getCircles()).forEach(function (k) { keys[k] = 1; });
+    var joined = getJoined(), now = Date.now(), changed = false;
+    Object.keys(joined).forEach(function (k) {
+      var entry = joined[k];
+      if (entry && entry.expires && now > entry.expires) { delete joined[k]; changed = true; return; }
+      keys[k] = 1;
+    });
+    if (changed) setJoined(joined);
+    return Object.keys(keys);
+  }
+
+  function onFix(pos) {
+    var uid = getUid();
+    if (!uid) return; // never used the real app on this device — nothing to report or fan out to
+    var keys = fanOutKeys();
+    if (!keys.length) return;
+    var c = pos.coords;
+    var payload = {
+      lat: c.latitude, lng: c.longitude, name: getName(), dev: getDev(),
+      accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
+      spd: c.speed != null ? Math.round(c.speed * 2.23694) : 0, spdH: 1, rest: 0
+    };
+    keys.forEach(function (k) {
+      try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
+    });
+  }
+
+  // Tells HeadlessTrackerService there's genuinely nothing to do, so its notification doesn't
+  // linger forever for a device that was never really using this feature (a fresh install that
+  // reboots before ever being opened once) or has since unfavorited/left everything it was
+  // tracking. Safe to call repeatedly — the native side just stops the whole service.
+  function stopIfNothingToDo() {
+    if (!getUid() || !fanOutKeys().length) {
+      try { if (window.AndroidHeadless) window.AndroidHeadless.stopSelf(); } catch (e) {}
+      return true;
+    }
+    return false;
+  }
+
+  var started = false;
+  function start() {
+    if (started) return;
+    if (stopIfNothingToDo()) { log('nothing to track — stopping'); return; }
+    if (!navigator.geolocation) { log('no geolocation API'); return; }
+    started = true;
+    navigator.geolocation.watchPosition(onFix, function (err) { log('geo error ' + err.code); },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    log('watch started for uid ' + getUid());
+    // Re-check periodically in case everything gets unfavorited/expires while this instance is
+    // running long-term — the initial check above only covers the moment it started.
+    setInterval(stopIfNothingToDo, 5 * 60 * 1000);
+  }
+
+  // Anonymous auth isn't strictly required for gl/ writes today (production rules currently
+  // allow open writes there — only gltest/ enforces auth.uid match), but staying consistent with
+  // the rest of the app future-proofs against the same tightening eventually reaching gl/ too,
+  // and costs nothing to wait briefly for. Don't let a slow/broken auth path block tracking
+  // forever, though — start anyway after a short grace period either way.
+  try {
+    onAuthStateChanged(auth, function (u) { if (u) start(); });
+    if (!auth.currentUser) signInAnonymously(auth).catch(function (e) { log('anon auth failed: ' + e); });
+  } catch (e) { log('auth init failed: ' + e); }
+  setTimeout(start, 5000);
+</script>
+</body>
+</html>
