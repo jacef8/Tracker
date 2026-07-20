@@ -2195,7 +2195,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 339;
+var APP_BUILD = 340;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7009,7 +7009,11 @@ function startLocationSharing() {
   var _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
   const onGpsFix = (pos) => {
-    if (window._roomClosed) return; // room was closed by an admin — stop writing
+    // window._roomClosed used to gate this ENTIRE function, which silenced the fan-out to every
+    // Circle/Favorite/joined-room too, not just the room that actually closed/removed/deleted us
+    // — for however long until the reload that follows landed. Now it only suppresses the write
+    // to the CURRENT room specifically (see the `!window._roomClosed` check below); every other
+    // fan-out destination keeps getting fed right up to the reload, exactly like EXIT already does.
     // db/fbRef/fbSet/fbPush/fbOnValue/fbRemove are ONLY ever assigned inside enterMap()'s
     // waitForFirebase callback. If this session never actually called enterMap() this load —
     // e.g. EXIT does a full page reload and clears the saved room first, so landing back on a
@@ -7159,7 +7163,7 @@ function startLocationSharing() {
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       color: window._myColor || ''
     };
-    if (groupName) fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), _fixPayload);
+    if (groupName && !window._roomClosed) fbSet(fbRef(db, `gltest/${groupName}/users/${userId}`), _fixPayload);
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
     // so background location keeps updating there too. This one function is the single place
@@ -8735,8 +8739,10 @@ function _roomClosedByAdmin() {
   window._roomClosed = true;
   try { clearInterval(window._noGpsHeartbeat); } catch (_) {}
   try { clearInterval(window._diagTimer); } catch (_) {}
-  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
-  try { stopNativeBackgroundTracking(); } catch (_) {}
+  // Deliberately NOT clearing the GPS watch or stopping native background tracking here —
+  // this room closing shouldn't interrupt location still flowing to any Circle/Favorite/
+  // joined-room the fan-out is feeding (see onGpsFix's `!window._roomClosed` guard, which now
+  // only suppresses the write to THIS specific room). Same pattern EXIT already uses.
   try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
   try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
   try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch (_) {}
@@ -8757,8 +8763,10 @@ function _removedByOwner() {
   window._roomClosed = true;
   try { clearInterval(window._noGpsHeartbeat); } catch (_) {}
   try { clearInterval(window._diagTimer); } catch (_) {}
-  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
-  try { stopNativeBackgroundTracking(); } catch (_) {}
+  // Deliberately NOT clearing the GPS watch or stopping native background tracking here —
+  // this room closing shouldn't interrupt location still flowing to any Circle/Favorite/
+  // joined-room the fan-out is feeding (see onGpsFix's `!window._roomClosed` guard, which now
+  // only suppresses the write to THIS specific room). Same pattern EXIT already uses.
   try { if (typeof followInterval !== 'undefined') clearInterval(followInterval); } catch (_) {}
   try { if (typeof fitAllInterval !== 'undefined') clearInterval(fitAllInterval); } catch (_) {}
   try { fbRemove(fbRef(db, 'gltest/' + groupName + '/users/' + userId)); } catch (_) {}
@@ -8820,11 +8828,13 @@ window._confirmDeleteRoom = function() {
   if (!window._isRoomOwner || !db || !groupName) return;
   var gk = groupName;
   window._ownerDeleting = true; // keep our own app alive through the close → delete sequence
+  window._roomClosed = true; // suppress onGpsFix's write to THIS room only — other fan-out targets keep flowing
   // 1) Flag the room closed so every member is ejected and stops writing presence.
   try { fbSet(fbRef(db, 'gltest/' + gk + '/closed'), { ts: Date.now(), by: userId, byOwner: true }); } catch (e) {}
-  // Stop our own location writes so we don't recreate presence during the delete.
-  try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
-  try { stopNativeBackgroundTracking(); } catch (e) {}
+  // Deliberately NOT clearing the GPS watch or stopping native background tracking here —
+  // deleting this room shouldn't interrupt location still flowing to any Circle/Favorite/
+  // joined-room the fan-out is feeding. window._roomClosed above already stops onGpsFix from
+  // re-writing presence into this specific room while the delete is in flight.
   try { fbRemove(fbRef(db, 'gltest/' + gk + '/users/' + userId)); } catch (e) {}
   toast('Deleting group…', 4500);
   // 2) After members have had a few seconds to receive the close, remove everything.
