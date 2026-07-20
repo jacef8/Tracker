@@ -116,7 +116,7 @@ public class VoiceForegroundService extends Service {
     }
 
     private Notification buildNotification() {
-        boolean iconVisible = prefs(this).getBoolean(PREF_ICON_VISIBLE, true);
+        boolean iconVisible = prefs(this).getBoolean(PREF_ICON_VISIBLE, false);
         String chanId = iconVisible ? CHAN_VISIBLE : CHAN_HIDDEN;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
