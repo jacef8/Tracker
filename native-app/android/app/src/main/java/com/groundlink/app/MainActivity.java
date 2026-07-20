@@ -300,42 +300,15 @@ public class MainActivity extends BridgeActivity {
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true; // no separate background permission before Android 10
                     return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
                 }
-
-                // Jumps straight to the Location permission's own picker (the 3-choice "Allow
-                // all the time / only while using / deny" screen) — skipping App Info →
-                // Permissions → Location entirely. Requires API 30+ and all three extras
-                // (EXTRA_USER in particular can't be constructed from a raw adb shell command,
-                // which is why an initial adb-only test of this intent silently failed — it's
-                // only buildable from real Java code). Returns false if unavailable so the JS
-                // side can fall back to the existing generic App Info flow with its own
-                // step-by-step instructions.
-                @JavascriptInterface
-                public boolean openLocationPermissionSettings() {
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                        Log.i(TAG, "openLocationPermissionSettings: SDK " + Build.VERSION.SDK_INT + " < R, skipping");
-                        return false;
-                    }
-                    try {
-                        Intent intent = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
-                        // EXTRA_PERMISSION_NAME exists in the platform but isn't part of the
-                        // public SDK stub (unlike EXTRA_PACKAGE_NAME/EXTRA_USER below, which
-                        // compile fine as real Intent constants) — the literal key string still
-                        // works, since the receiving Settings component just reads whatever
-                        // string key is actually present, regardless of which constant supplied it.
-                        intent.putExtra("android.intent.extra.PERMISSION_NAME", Manifest.permission.ACCESS_FINE_LOCATION);
-                        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, getPackageName());
-                        intent.putExtra(Intent.EXTRA_USER, android.os.Process.myUserHandle());
-                        android.content.ComponentName resolved = intent.resolveActivity(getPackageManager());
-                        Log.i(TAG, "openLocationPermissionSettings: resolveActivity=" + resolved);
-                        if (resolved == null) return false;
-                        startActivity(intent);
-                        Log.i(TAG, "openLocationPermissionSettings: startActivity called successfully");
-                        return true;
-                    } catch (Exception e) {
-                        Log.e(TAG, "openLocationPermissionSettings failed", e);
-                        return false;
-                    }
-                }
+                // NOTE: a direct deep-link straight to the Location permission's own picker
+                // (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed — confirmed
+                // on-device 2026-07-20 that launching it throws SecurityException requiring
+                // android.permission.GRANT_RUNTIME_PERMISSIONS, a signature|privileged permission
+                // no third-party app can ever hold. resolveActivity() succeeds (the real system
+                // screen does exist), but startActivity() is unconditionally blocked. Not
+                // fixable from here — the generic App Info flow (_bgOpenAppSettings) is the only
+                // way in for a regular app. Don't re-attempt this without a materially different
+                // approach (e.g. actual confirmation from Android source, not just a doc search).
             }, "GLPermissions");
         } catch (Exception e) {
             // If unavailable, the JS side treats "can't check" as "don't nag" — no regression.

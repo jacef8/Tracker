@@ -2231,7 +2231,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 345;
+var APP_BUILD = 346;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7156,20 +7156,12 @@ function _bgOpenAppSettings(n) {
   try { if (BG && BG.openSettings) BG.openSettings(); else toast('Open Settings → Apps → GroundLink'); } catch (e) { toast('Open Settings → Apps → GroundLink'); }
   _bgMarkStep(n, true);
 }
-window._bgOpenLocationSettings = function() {
-  // Jump straight to Location's own picker (Android 11+) instead of the generic App Info page —
-  // skips "tap Permissions, then tap Location" entirely, landing right on the 3-choice screen.
-  // Falls back to the existing generic flow if the bridge is missing (older APK/web/iOS) or the
-  // OS doesn't support it — resolveActivity() on the native side already guards against a crash.
-  try {
-    if (window.GLPermissions && typeof window.GLPermissions.openLocationPermissionSettings === 'function'
-        && window.GLPermissions.openLocationPermissionSettings()) {
-      _bgMarkStep(1, true);
-      return;
-    }
-  } catch (e) {}
-  _bgOpenAppSettings(1);
-};
+// NOTE: a direct deep-link straight to Location's own permission picker
+// (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed on the native side — confirmed
+// on-device 2026-07-20 that it requires GRANT_RUNTIME_PERMISSIONS, a signature|privileged
+// permission no third-party app can ever hold. The generic App Info flow below (with its own
+// numbered on-screen steps) is the only way in for a regular app.
+window._bgOpenLocationSettings = function() { _bgOpenAppSettings(1); };
 window._bgOpenBatterySettings  = function() { _bgOpenAppSettings(2); };
 // This card used to show the SAME Android-only copy ("Tap Permissions → Location",
 // "Battery → Unrestricted", "Samsung phones...") to every native user regardless of platform —
