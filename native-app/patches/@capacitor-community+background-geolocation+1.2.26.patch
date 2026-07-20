@@ -1,0 +1,52 @@
+diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
+index a92fcf9..a3134d4 100644
+--- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
++++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
+@@ -49,6 +49,14 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+         }
+ )
+ public class BackgroundGeolocation extends Plugin {
++    // GroundLink patch (see native-app/patches/): a fresh channel ID instead of the package
++    // name, at MIN importance instead of the upstream default's DEFAULT/HIGH. Channel importance
++    // is locked once created, so any device that already has the old
++    // "com.equimaps.capacitor_background_geolocation" channel (created at IMPORTANCE_DEFAULT)
++    // would keep showing a status-bar icon forever even after this patch, unless the notification
++    // moves to a brand-new channel ID. This removes the icon (matches Life360-style background
++    // tracking); the foreground service itself is unaffected and keeps running.
++    private static final String NOTIFICATION_CHANNEL_ID = "com.equimaps.capacitor_background_geolocation_quiet";
+     private BackgroundGeolocationService.LocalBinder service = null;
+     private Boolean stoppedWithoutPermissions = false;
+ 
+@@ -103,7 +111,7 @@ public class BackgroundGeolocation extends Plugin {
+                     )
+                     .setContentText(backgroundMessage)
+                     .setOngoing(true)
+-                    .setPriority(Notification.PRIORITY_HIGH)
++                    .setPriority(Notification.PRIORITY_MIN)
+                     .setWhen(System.currentTimeMillis());
+ 
+             try {
+@@ -151,7 +159,7 @@ public class BackgroundGeolocation extends Plugin {
+ 
+             // Set the Channel ID for Android O.
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+-                builder.setChannelId(BackgroundGeolocationService.class.getPackage().getName());
++                builder.setChannelId(NOTIFICATION_CHANNEL_ID);
+             }
+ 
+             backgroundNotification = builder.build();
+@@ -287,12 +295,12 @@ public class BackgroundGeolocation extends Plugin {
+                     Context.NOTIFICATION_SERVICE
+             );
+             NotificationChannel channel = new NotificationChannel(
+-                    BackgroundGeolocationService.class.getPackage().getName(),
++                    NOTIFICATION_CHANNEL_ID,
+                     getAppString(
+                             "capacitor_background_geolocation_notification_channel_name",
+                             "Background Tracking"
+                     ),
+-                    NotificationManager.IMPORTANCE_DEFAULT
++                    NotificationManager.IMPORTANCE_MIN
+             );
+             channel.enableLights(false);
+             channel.enableVibration(false);
