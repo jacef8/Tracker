@@ -2228,7 +2228,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 338;
+var APP_BUILD = 339;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4008,6 +4008,16 @@ function _applyRoomExpire(ts) {
   var clamped = false;
   if (ts > maxTs) { ts = maxTs; clamped = true; }
   try { if (db && groupName) fbSet(fbRef(db, 'gl/' + groupName + '/config/expires'), ts); } catch (e) {}
+  // Keep this device's own joined-room fan-out cache in sync with the new deadline — otherwise
+  // shortening it here left this device's onGpsFix loop feeding the room past its new (earlier)
+  // deadline (resurrecting it via the self-heal in renderRoomList), and extending it left
+  // onGpsFix stopping at the OLD deadline even though the room is still alive server-side. Only
+  // updates an existing entry — a Favorite/Crew is never tracked here (see _trackJoinedRoom) and
+  // shouldn't become one just because its expiration was touched.
+  try {
+    var _jr = _getJoinedRooms();
+    if (_jr[groupName]) { _jr[groupName].expires = ts; _setJoinedRooms(_jr); }
+  } catch (e) {}
   if (window._evt) window._evt('room kept active until ' + new Date(ts).toLocaleString());
   toast(clamped
     ? 'Quick-join rooms max out at 7 days old — set to ' + new Date(ts).toLocaleString() + '. For longer, make it a Favorite or Crew instead.'
@@ -4559,7 +4569,7 @@ function sendSOS() {
     if (loc) { msg.lat = loc.lat; msg.lng = loc.lng; }
     fbSet(c, msg);
   }
-  pushNotify('sos', 'SOS', userName + ' needs help');
+  pushNotify('sos', 'SOS', userName + ' needs help', { toFavs: true });
   try { window._evt('sent an SOS'); } catch (e) {}
   toast('SOS sent to group');
 }
@@ -5594,12 +5604,10 @@ function enterMap(name, group, uid) {
         } else {
           window._isRoomOwner = (owner === userId);
         }
-        // A room owned by a signed-in (Google) user becomes permanent — it won't auto-expire.
-        try {
-          if (window._isRoomOwner && localStorage.getItem('gl_account') === 'google') {
-            fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
-          }
-        } catch (e) {}
+        // NOTE: being a signed-in owner no longer auto-sets config.persistent — that used to
+        // make every quick-join room created by a signed-in user permanent within seconds of
+        // creation, silently defeating the 24h/7-day auto-expire lifecycle for that entire user
+        // class. Favorite/Crew are now the only deliberate ways to make a room permanent.
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
@@ -7205,6 +7213,12 @@ window._maybeShowBgSetup = function() {
 function startLocationSharing() {
   if (!navigator.geolocation) { toast('Geolocation not supported'); return; }
 
+  // This function can now legitimately re-enter more than once per page life without a reload
+  // in between (e.g. Home's fan-out arms it, then accepting a Crew invite or opening My Map
+  // calls it again) — clear any previous heartbeat first so re-entry doesn't leak a duplicate
+  // interval that nothing would otherwise ever stop.
+  try { if (window._noGpsHeartbeat) clearInterval(window._noGpsHeartbeat); } catch (e) {}
+
   // Restore the user's hide-location choice from a previous session
   try { locationHidden = localStorage.getItem('gl_loc_hidden') === '1'; } catch (e) {}
   _syncSettings();
@@ -7586,7 +7600,7 @@ function startLocationSharing() {
   // Do NOT remove on close — user may just be pocketing their phone.
   // Single always-on heartbeat: keeps hidden + no-GPS members alive in the list.
   // (Live-GPS members are kept fresh by onGpsFix, so we don't write over them here.)
-  var _noGpsHeartbeat = setInterval(function() {
+  window._noGpsHeartbeat = setInterval(function() {
     if (window._roomClosed) return; // room closed by an admin — stop the heartbeat
     if (!(db && groupName && userId && userName)) return;
     if (locationHidden) {
@@ -8919,7 +8933,7 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   // this room via the exact same fan-out that already keeps Circles/Favorites alive from the
   // Home screen (see showJoinScreen + _getJoinedRooms). Actually stopping is the separate,
   // explicit "Leave this room" action in Room Info (window._leaveThisRoom).
-  if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat);
+  try { clearInterval(window._noGpsHeartbeat); } catch (_) {}
   try { clearInterval(window._diagTimer); } catch(_) {} // stop this screen's diagnostics reporting
   try { fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + userId)); } catch(_) {} // clear our debug entry
   try { writeDebugLog(groupName, userName + ' went to Home (still showing up here)'); } catch(_) {}
@@ -8946,7 +8960,7 @@ function _roomClosedByAdmin() {
   if (window._ownerDeleting) return; // the owner is deleting this room themselves — don't double-eject
   if (window._roomClosed) return;
   window._roomClosed = true;
-  try { if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat); } catch (_) {}
+  try { clearInterval(window._noGpsHeartbeat); } catch (_) {}
   try { clearInterval(window._diagTimer); } catch (_) {}
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
   try { stopNativeBackgroundTracking(); } catch (_) {}
@@ -8968,7 +8982,7 @@ function _roomClosedByAdmin() {
 function _removedByOwner() {
   if (window._roomClosed) return;
   window._roomClosed = true;
-  try { if (typeof _noGpsHeartbeat !== 'undefined') clearInterval(_noGpsHeartbeat); } catch (_) {}
+  try { clearInterval(window._noGpsHeartbeat); } catch (_) {}
   try { clearInterval(window._diagTimer); } catch (_) {}
   try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (_) {}
   try { stopNativeBackgroundTracking(); } catch (_) {}
