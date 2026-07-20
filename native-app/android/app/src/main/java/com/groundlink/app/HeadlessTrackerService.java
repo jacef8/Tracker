@@ -103,6 +103,7 @@ public class HeadlessTrackerService extends Service {
         // (e.g. low memory) — resume whatever mode it was last in rather than defaulting away
         // from active tracking. Only an explicit standby request should ever demote it.
         boolean standby = intent != null && intent.getBooleanExtra("standby", false);
+        Log.i(TAG, "onStartCommand: intent=" + (intent == null ? "null" : "present") + " standby=" + standby + " currentActive=" + active);
         try {
             if (standby) {
                 demoteToStandby();
@@ -116,27 +117,33 @@ public class HeadlessTrackerService extends Service {
     }
 
     private void promoteToActive() {
-        if (active) return;
+        if (active) { Log.i(TAG, "promoteToActive: already active, no-op"); return; }
         active = true;
+        Log.i(TAG, "promoteToActive: starting foreground + webview");
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else {
                 startForeground(NOTIF_ID, buildNotification());
             }
+            Log.i(TAG, "promoteToActive: startForeground succeeded");
         } catch (Exception e) {
             // Location foreground-service type can be refused in some background-start edge
             // cases — fall back to an untyped notification rather than crash. Worse case here is
             // a less-precise OS classification, not a failure to track.
             Log.w(TAG, "typed startForeground failed, falling back", e);
-            try { startForeground(NOTIF_ID, buildNotification()); } catch (Exception e2) {
-                Log.e(TAG, "startForeground failed entirely", e2);
+            try {
+                startForeground(NOTIF_ID, buildNotification());
+                Log.i(TAG, "promoteToActive: fallback startForeground succeeded");
+            } catch (Exception e2) {
+                Log.e(TAG, "startForeground failed entirely — service will likely be killed by the OS", e2);
             }
         }
         try { ensureWebView(); } catch (Exception e) { Log.e(TAG, "ensureWebView failed", e); }
     }
 
     private void demoteToStandby() {
+        Log.i(TAG, "demoteToStandby: was active=" + active);
         active = false;
         try { stopForeground(true); } catch (Exception e) {}
         destroyWebView();
@@ -184,6 +191,15 @@ public class HeadlessTrackerService extends Service {
                 // through anyway, so just grant WebView's own internal per-origin check.
                 callback.invoke(origin, true, false);
             }
+
+            // Surfaces headless.html's own console.log/[GL-headless] lines into logcat under this
+            // service's tag — otherwise they're silently swallowed since nobody's ever looking at
+            // devtools for a WebView nobody can see.
+            @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
+                Log.i(TAG, "JS console: " + cm.message() + " (" + cm.sourceId() + ":" + cm.lineNumber() + ")");
+                return true;
+            }
         });
         // A boot-triggered load can easily race ahead of the network actually being up yet, and
         // there's no human here to notice a blank/error page and manually retry. Detect a failed
@@ -194,8 +210,17 @@ public class HeadlessTrackerService extends Service {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 super.onReceivedError(view, request, error);
-                if (request != null && !request.isForMainFrame()) return;
+                boolean mainFrame = request == null || request.isForMainFrame();
+                Log.w(TAG, "onReceivedError: mainFrame=" + mainFrame + " url=" + (request != null ? request.getUrl() : "?")
+                    + " code=" + (error != null ? error.getErrorCode() : "?") + " desc=" + (error != null ? error.getDescription() : "?"));
+                if (!mainFrame) return;
                 scheduleRetry();
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                Log.i(TAG, "onPageFinished: " + url);
             }
         });
         // Lets headless.html tell us there's genuinely nothing to do (no saved session at all —
@@ -205,9 +230,11 @@ public class HeadlessTrackerService extends Service {
         wv.addJavascriptInterface(new Object() {
             @android.webkit.JavascriptInterface
             public void stopSelf() {
+                Log.i(TAG, "AndroidHeadless.stopSelf() called from headless.html — nothing to track");
                 try { HeadlessTrackerService.this.stopSelf(); } catch (Exception e) {}
             }
         }, "AndroidHeadless");
+        Log.i(TAG, "ensureWebView: loading " + HEADLESS_URL);
         wv.loadUrl(HEADLESS_URL);
         webView = wv;
     }
@@ -215,9 +242,10 @@ public class HeadlessTrackerService extends Service {
     private void scheduleRetry() {
         if (retryScheduled || !active) return;
         retryScheduled = true;
+        Log.i(TAG, "scheduleRetry: will reload headless.html in 10s");
         mainHandler.postDelayed(() -> {
             retryScheduled = false;
-            try { if (active && webView != null) webView.loadUrl(HEADLESS_URL); } catch (Exception e) {}
+            try { if (active && webView != null) { Log.i(TAG, "scheduleRetry: reloading now"); webView.loadUrl(HEADLESS_URL); } } catch (Exception e) {}
         }, 10000);
     }
 
@@ -237,6 +265,7 @@ public class HeadlessTrackerService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
+        Log.i(TAG, "onTaskRemoved fired — scheduling restart in 1s");
         try {
             PendingIntent pi = restartPendingIntent(PendingIntent.FLAG_ONE_SHOT);
             AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
