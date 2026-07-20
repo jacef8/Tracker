@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 350;
+var APP_BUILD = 351;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8106,6 +8106,25 @@ function listenUsers() {
       });
       if (!isMine) listEl.appendChild(row);   // you're already on the map — don't list yourself
     });
+
+    // A PC/desktop viewer typically has no local GPS, so onGpsFix's own "default to Follow
+    // Group on first entering the map" (above) never fires for them at all — that logic is
+    // gated entirely on THIS device's own position callback. This listener runs for everyone
+    // regardless of local GPS, so it's the only reliable place to apply the same default for a
+    // no-GPS viewer: once real position data shows up for anyone in the room. Shares the SAME
+    // per-room latch as onGpsFix (not a separate one) so whichever fires first claims it —
+    // otherwise a device that gets both a self-fix AND this snapshot could call _fitAllTapped
+    // twice, and since that function TOGGLES group-follow, the second call would immediately
+    // cancel what the first one just started.
+    if (map && groupName && window._firstFixRoom !== groupName) {
+      var _anyGps = Object.values(users).some(function (u) { return !u.noGps && (u.lat !== 0 || u.lng !== 0); });
+      if (_anyGps) {
+        window._firstFixRoom = groupName;
+        try {
+          if (!followUid && !fitAllInterval && typeof window._fitAllTapped === 'function') window._fitAllTapped();
+        } catch (e) {}
+      }
+    }
   });
 }
 
