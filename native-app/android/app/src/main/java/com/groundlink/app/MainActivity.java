@@ -282,6 +282,25 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // If the bridge/WebView isn't ready, voice still works — it just won't keep the radio on.
         }
+        // Lets the web app ask a direct, authoritative question the vendored background-
+        // geolocation plugin's own error reporting can't answer: is ACCESS_BACKGROUND_LOCATION
+        // actually granted? The plugin only reports NOT_AUTHORIZED on a full permission denial —
+        // "While using the app" (foreground-only) still lets addWatcher() succeed as long as the
+        // Activity is open, so the reactive error path never catches the foreground-only case at
+        // all. That silently broke reboot/swipe-away tracking (HeadlessTrackerService, the
+        // background-geolocation plugin's own service) while looking completely fine during
+        // normal foreground use — confirmed on-device 2026-07-20.
+        try {
+            this.getBridge().getWebView().addJavascriptInterface(new Object() {
+                @JavascriptInterface
+                public boolean hasBackgroundLocation() {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true; // no separate background permission before Android 10
+                    return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                }
+            }, "GLPermissions");
+        } catch (Exception e) {
+            // If unavailable, the JS side treats "can't check" as "don't nag" — no regression.
+        }
         // Re-assert standby every time the visible app starts (fresh launch, or reopened after
         // having been swiped away) — demotes HeadlessTrackerService back down (tears down its
         // WebView/tracking, drops its notification) if a prior task removal had promoted it to
