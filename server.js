@@ -126,8 +126,7 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
   const group = b.group, senderId = b.senderId;
   const senderFcm = b.senderFcm || '', senderEndpoint = b.senderEndpoint || '';
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
-  // DB root namespace — the test page sends ns:'gltest' to isolate its data from
-  // production ('gl'). Sanitized + defaulted so existing prod callers are unchanged.
+  // DB root namespace — sanitized + defaulted to production ('gl').
   const ns = (typeof b.ns === 'string' && /^[a-z0-9_]{1,20}$/i.test(b.ns)) ? b.ns : 'gl';
   const payload = JSON.stringify({
     title: b.title || 'GroundLink',
@@ -228,13 +227,12 @@ app.get('/join', function(req, res) {
   res.redirect('/?fresh=1');
 });
 
-// ─── Admin/test gate ─────────────────────────────────────────────────
-// These used to be "secret URL" only — no real check, and express.static below
-// serves every file in public/ by its literal name, so /admin.html and
-// /index-test.html were ALSO directly reachable, completely bypassing the
-// /777 and /test888 aliases even if those had a check. Both the aliases AND
-// the raw filenames now go through the same auth gate, registered before
-// express.static so these explicit routes win.
+// ─── Admin gate ─────────────────────────────────────────────────
+// This used to be "secret URL" only — no real check, and express.static below
+// serves every file in public/ by its literal name, so /admin.html was ALSO
+// directly reachable, completely bypassing the /777 alias even if that had a
+// check. Both the alias AND the raw filename now go through the same auth
+// gate, registered before express.static so this explicit route wins.
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || '';
 const ADMIN_COOKIE = 'gl_admin_session';
@@ -304,12 +302,6 @@ app.get(['/777', '/admin.html'], requireAdminAuth, function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
-// Test environment — secret path (same style as the /777 admin route)
-// Access: /test888
-app.get(['/test888', '/index-test.html'], requireAdminAuth, function(req, res) {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.sendFile(path.join(__dirname, 'public', 'index-test.html'));
-});
 // Public APK install page — share this link with friends: /download
 app.get('/download', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -350,7 +342,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('manifest.json')) {
       res.setHeader('Content-Type', 'application/manifest+json');
     }
-    if (filePath.endsWith('index.html') || filePath.endsWith('index-test.html')) {
+    if (filePath.endsWith('index.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
     if (filePath.endsWith('version.json')) {
