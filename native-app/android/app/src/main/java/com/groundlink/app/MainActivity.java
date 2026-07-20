@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import androidx.core.app.ActivityCompat;
@@ -24,6 +25,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BridgeActivity {
+    private static final String TAG = "GLMainActivity";
 
     private AudioRouter audioRouter;
 
@@ -309,7 +311,10 @@ public class MainActivity extends BridgeActivity {
                 // step-by-step instructions.
                 @JavascriptInterface
                 public boolean openLocationPermissionSettings() {
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false;
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                        Log.i(TAG, "openLocationPermissionSettings: SDK " + Build.VERSION.SDK_INT + " < R, skipping");
+                        return false;
+                    }
                     try {
                         Intent intent = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
                         // EXTRA_PERMISSION_NAME exists in the platform but isn't part of the
@@ -320,10 +325,14 @@ public class MainActivity extends BridgeActivity {
                         intent.putExtra("android.intent.extra.PERMISSION_NAME", Manifest.permission.ACCESS_FINE_LOCATION);
                         intent.putExtra(Intent.EXTRA_PACKAGE_NAME, getPackageName());
                         intent.putExtra(Intent.EXTRA_USER, android.os.Process.myUserHandle());
-                        if (intent.resolveActivity(getPackageManager()) == null) return false;
+                        android.content.ComponentName resolved = intent.resolveActivity(getPackageManager());
+                        Log.i(TAG, "openLocationPermissionSettings: resolveActivity=" + resolved);
+                        if (resolved == null) return false;
                         startActivity(intent);
+                        Log.i(TAG, "openLocationPermissionSettings: startActivity called successfully");
                         return true;
                     } catch (Exception e) {
+                        Log.e(TAG, "openLocationPermissionSettings failed", e);
                         return false;
                     }
                 }

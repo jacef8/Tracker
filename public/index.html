@@ -2130,7 +2130,10 @@
     </div>
     <div id="set-bgtrack-row" onclick="window._openBgSetup()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Background tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Keep sharing when your screen is off — tap to set up</div></div></div>
-      <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
+      <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
+        <span id="set-bgtrack-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">CHECK</span>
+        <span style="color:var(--muted);font-size:18px;padding:0 1px">›</span>
+      </div>
     </div>
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.7">
       <div>Screen stays awake automatically while tracking.</div>
@@ -2228,7 +2231,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 344;
+var APP_BUILD = 345;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5026,6 +5029,19 @@ async function _pruneDeadFavsAndCircles() {
       _setCircles(circlesNow);
       try { window._renderCircleSwitcher(); } catch (e) {}
     }
+    // One-time (and self-healing) cleanup: a Crew's room is always private, and joining a
+    // private room used to auto-favorite it too — before enterMap's config/visibility listener
+    // was guarded against this — so existing installs can have a Crew's room sitting in
+    // Favorites redundantly, on top of the circle-switcher already covering it. Strip it from
+    // Favorites only; leave any favSub subscription alone since Crew membership already
+    // registers it independently (see _leaveCircle's identical reasoning in reverse).
+    var favsForOverlap = _getFavs();
+    var favCrewOverlap = favsForOverlap.filter(function (k) { return !!circles[k]; });
+    if (favCrewOverlap.length) {
+      _setFavs(favsForOverlap.filter(function (k) { return !circles[k]; }));
+      toast((favCrewOverlap.length === 1 ? 'A room' : favCrewOverlap.length + ' rooms') + ' you\'re in a Crew with '
+        + (favCrewOverlap.length === 1 ? 'was' : 'were') + ' also showing up in Favorites — cleaned that up.', 4000);
+    }
     // Quick-join rooms this device is still tracking get the same treatment — a nuked room
     // shouldn't keep getting silently recreated just because it hasn't hit its own natural
     // expiration yet (the onGpsFix fan-out already self-prunes on expiration; this catches
@@ -5637,9 +5653,12 @@ function enterMap(name, group, uid) {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/visibility'), function(snap) {
         window._roomVisibility = snap.val() || 'public';
         // Joining a PRIVATE room auto-favorites it (silently) so a recurring group always
-        // keeps it in their list to rejoin — and that also keeps it alive server-side.
+        // keeps it in their list to rejoin — and that also keeps it alive server-side. Skipped
+        // for a Crew's own room (always private) — Crew membership already covers "keep this
+        // alive and easy to get back to" via the dedicated circle-switcher, so auto-favoriting
+        // it too just clutters the Favorites tab with a redundant second entry for the same room.
         try {
-          if (window._roomVisibility === 'private' && typeof _getFavs === 'function' && _getFavs().indexOf(groupName) === -1) {
+          if (window._roomVisibility === 'private' && !_isCircleMember(groupName) && typeof _getFavs === 'function' && _getFavs().indexOf(groupName) === -1) {
             var ff = _getFavs(); ff.push(groupName); _setFavs(ff);
             try { var fbV = window._fb; if (fbV && fbV.set) fbV.set(fbV.ref(fbV.db, 'gl/' + groupName + '/config/persistent'), true); } catch (e) {}
             try { _registerFavSub(groupName, userName); } catch (e) {}
