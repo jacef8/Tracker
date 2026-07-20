@@ -2228,7 +2228,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 340;
+var APP_BUILD = 341;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4654,11 +4654,18 @@ function _isCircleMember(key) { return !!_getCircles()[key]; }
 // visitor: their location shows here only while they happen to be in this room, and never
 // again once they leave. Asked at most once per room per device — a "Not now" is respected,
 // not re-nagged every time they come back.
+// Re-asks once every 24h rather than only once ever — a "Not now" is a stall, not a permanent
+// decline, and the owner would rather a regular visitor eventually join than get silently
+// funneled toward Favorite-and-never-asked-again on the very first visit.
+var CREW_REASK_MS = 24 * 60 * 60 * 1000;
 window._promptJoinCrew = function (key, label) {
   if (!key || _isCircleMember(key)) return;
   var askedKey = 'gl_crew_asked_' + key;
-  try { if (localStorage.getItem(askedKey) === '1') return; } catch (e) {}
-  try { localStorage.setItem(askedKey, '1'); } catch (e) {}
+  try {
+    var _lastAsked = parseInt(localStorage.getItem(askedKey), 10) || 0;
+    if (Date.now() - _lastAsked < CREW_REASK_MS) return;
+  } catch (e) {}
+  try { localStorage.setItem(askedKey, String(Date.now())); } catch (e) {}
   _confirm(
     'This is a Crew — accept to always show up here for each other, no matter what other room you\'re in or if the app\'s in the background, even after you leave this room.',
     function () {
