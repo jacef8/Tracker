@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 365;
+var APP_BUILD = 366;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2699,6 +2699,11 @@ function _friendsRowsHTML() {
   return ids.map(function (fid) {
     var s = _friendStatus(fid);
     var nm = s.name || friends[fid] || 'Friend';
+    // _friendStatus's _mySessions fallback returns a bare name with no device suffix (audited
+    // 2026-07-20) — without this, favoriting two of your own devices that report the same
+    // account name (e.g. phone + tablet both "Jace") renders two identical, indistinguishable rows.
+    var _fsDev = (window._mySessions || {})[fid]; _fsDev = _fsDev && _fsDev.dev;
+    if (_fsDev && nm.toLowerCase().indexOf(_fsDev.toLowerCase()) === -1) nm += ' · ' + _fsDev;
     var roomDisp = s.online ? _prettyGroup(s.roomKey) : '';
     var statusTxt = s.inMyRoom ? 'In your room' : s.online ? 'In “' + escapeHtmlJs(roomDisp) + '”' : s.active ? 'Active' : 'Offline';
     var statusCol = s.inMyRoom ? '#f0a500' : s.online ? '#3fb950' : s.active ? '#58a6ff' : 'var(--muted)';
@@ -2750,7 +2755,12 @@ window._acctPeopleSearch = function (q) {
   Object.keys(friends).forEach(function (uid) {
     if (uid === me) return; seen[uid] = 1;
     var p = pres[uid];
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), active: !!(p && !p.room), room: p && p.room });
+    // Same _mySessions fallback as the mySessions loop further down (audited 2026-07-20) —
+    // without it, a favorited OWN device with stale/missing presence renders wrong here AND
+    // never reaches the mySessions loop at all, since `seen[uid]` is already set above.
+    var ms = (window._mySessions || {})[uid];
+    var msOnline = !!(ms && ms.ts && (Date.now() - ms.ts) < 70000);
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend', friend: true, online: !!(p && p.room) || (msOnline && !!ms.room), active: !!(p && !p.room) || (msOnline && !ms.room), room: (p && p.room) || (ms && ms.room) });
   });
   Object.keys(pres).forEach(function (uid) {
     if (seen[uid] || uid === me) return;
@@ -2818,6 +2828,11 @@ window._acctAddFriend = function (uid) {
   // Offline people aren't in presence — pull their name from the directory so the favorite
   // shows their real name (e.g. "Laura Ford") instead of the generic "Friend".
   if (!nm) { var dir = window._dirAll || {}; Object.keys(dir).forEach(function (acct) { var d = dir[acct] || {}; if (d.dev === uid && d.name) nm = d.name; }); }
+  // Your OWN other devices might not be in presence OR the (single-slot-per-account) directory
+  // at all — _mySessions is the only complete source for those (audited 2026-07-20). Without
+  // this, adding one of your own devices as a favorite while its presence/directory data was
+  // stale/missing would permanently save it under the generic name "Friend".
+  if (!nm) { var ms = (window._mySessions || {})[uid]; if (ms && ms.name) nm = (typeof _withDev === 'function' ? _withDev(ms) : ms.name) || ms.name; }
   if (!nm) nm = 'Friend';
   try { _toggleFriend(uid, nm); } catch (e) {}
   try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; window._acctPeopleSearch(q); } catch (e) {}
@@ -9501,7 +9516,8 @@ window._sendRoomInvite = function(uid) {
   if (!db || !groupName) { toast('Couldn’t send the invite — try again in a moment', 2800); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
-  var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
+  var ms = (window._mySessions || {})[uid];
+  var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
   var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
@@ -9535,7 +9551,8 @@ window._sendCircleInvite = function(uid) {
   if (!fb || !fb.db || !t || !t.key) { toast('Couldn’t send the invite — try again in a moment', 2800); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
-  var nm = friends[uid] || (pres[uid] && pres[uid].name) || 'them';
+  var ms = (window._mySessions || {})[uid];
+  var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
   try {
     var r = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(r, rec);
