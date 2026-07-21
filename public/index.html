@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 361;
+var APP_BUILD = 362;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3539,6 +3539,8 @@ window._ensurePresenceSub = function (fb) {
       window._presenceAll = ps.val() || {};
       try { _checkPresenceAlerts(window._presenceAll); } catch (e) {}
       try { _renderFriends(); } catch (e) {}
+      // Keep People search live too — see the matching comment in _subMySessions's listener.
+      try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; if (q) window._acctPeopleSearch(q); } catch (e) {}
     });
   } catch (e) {}
   // Global account directory (name-only) → lets the people search find anyone who's ever
@@ -3610,6 +3612,11 @@ window._subMySessions = function () {
     fb.onValue(fb.ref(fb.db, 'gl/_users/' + acct + '/sessions'), function (snap) {
       window._mySessions = snap.val() || {};
       try { window._renderMySessions(); } catch (e) {}
+      // People search is a one-shot render per keystroke, not a live subscription — without
+      // this it goes stale the instant you stop typing, while "Signed in on" (this same
+      // listener) keeps updating live, so the two can show contradicting status for the exact
+      // same device at the exact same moment (confirmed on-device 2026-07-20).
+      try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; if (q) window._acctPeopleSearch(q); } catch (e) {}
     });
     window._writeSession();   // announce this device right away
   } catch (e) {}
