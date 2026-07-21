@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 360;
+var APP_BUILD = 361;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2666,6 +2666,15 @@ function _friendStatus(fid) {
       var u = snap[g] && snap[g].users && snap[g].users[fid];
       if (u && u.conn !== false) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
     }
+  }
+  // Last resort, specifically for favoriting one of YOUR OWN other devices: gl/_presence is a
+  // separate subscription from gl/_users/<acct>/sessions (the "Signed in on" / People-search
+  // data), and can lag or miss a device even when the session heartbeat is fine — only ever
+  // contains entries for your own account's devices, so this can't mistakenly mark someone
+  // ELSE's favorite as active.
+  var ms = (window._mySessions || {})[fid];
+  if (ms && ms.ts && (Date.now() - ms.ts) < 70000) {
+    return { online: !!ms.room, active: !ms.room, inMyRoom: (typeof groupName !== 'undefined') && ms.room === groupName, roomKey: ms.room || '', name: ms.name };
   }
   return { online: false, active: false, inMyRoom: false, roomKey: '', name: null };
 }
