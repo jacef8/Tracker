@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 363;
+var APP_BUILD = 364;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3541,6 +3541,7 @@ window._ensurePresenceSub = function (fb) {
       try { _renderFriends(); } catch (e) {}
       // Keep People search live too — see the matching comment in _subMySessions's listener.
       try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; if (q) window._acctPeopleSearch(q); } catch (e) {}
+      try { var iq = document.getElementById('invite-search'); if (iq) window._inviteSearch(iq.value); } catch (e) {}
     });
   } catch (e) {}
   // Global account directory (name-only) → lets the people search find anyone who's ever
@@ -3617,6 +3618,7 @@ window._subMySessions = function () {
       // listener) keeps updating live, so the two can show contradicting status for the exact
       // same device at the exact same moment (confirmed on-device 2026-07-20).
       try { var q = (document.getElementById('acct-friend-search') || {}).value || ''; if (q) window._acctPeopleSearch(q); } catch (e) {}
+      try { var iq2 = document.getElementById('invite-search'); if (iq2) window._inviteSearch(iq2.value); } catch (e) {}
     });
     window._writeSession();   // announce this device right away
   } catch (e) {}
@@ -9394,7 +9396,12 @@ function _renderInvitePeople(q) {
     if (uid === me) return;
     seen[uid] = 1;
     var p = pres[uid];
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || 'Friend', friend: true, online: !!(p && p.room), room: p && p.room });
+    // gl/_presence can lag or miss a device even when it's genuinely active (confirmed
+    // on-device 2026-07-20 — same gap fixed for _friendStatus/favorites in build 361) — fall
+    // back to the account-session heartbeat, which doesn't depend on being in any room.
+    var ms = (window._mySessions || {})[uid];
+    var msOnline = !!(ms && ms.ts && (Date.now() - ms.ts) < 70000);
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend', friend: true, online: !!(p && p.room) || msOnline, room: (p && p.room) || (ms && ms.room) });
   });
   // Anyone currently online (not a friend) used to show here by default too — narrowed further
   // than the directory fix below: the default list is now ONLY your actual friends (online or
