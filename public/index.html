@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 353;
+var APP_BUILD = 354;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6007,12 +6007,7 @@ function showJoinScreen() {
     if (_ni && !_ni.value && _ss && _ss.name) _ni.value = _ss.name;
   } catch (e) {}
   // Live diagnostic on the build stamp: are we detected as the native app?
-  try {
-    var _bs = document.getElementById('build-stamp');
-    if (_bs) _bs.textContent = 'build ' + APP_BUILD + ' · ' + (_isNativeApp() ? 'NATIVE' : 'web')
-      + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
-      + (window.Capacitor ? ' · cap' : '');
-  } catch (e) {}
+  try { window._refreshBuildStamp(); } catch (e) {}
   setTimeout(initInstallTip, 50);
   // Always open on the Quick-join panel.
   try { if (window._joinPagerReset) window._joinPagerReset(); } catch (e) {}
@@ -6066,11 +6061,29 @@ function showJoinScreen() {
 // version/build so the admin Debug tab can spot this remotely instead of guessing. No-op on
 // the web (the App plugin is native-only).
 window._nativeAppInfo = null;
+// Rebuilds the small build-stamp footer on the Home screen. Called once immediately (before
+// native info has necessarily resolved) and again once fetchNativeAppInfo's promise settles,
+// so the native version/build appear as soon as they're known without blocking the initial
+// web-build display.
+window._refreshBuildStamp = function () {
+  try {
+    var _bs = document.getElementById('build-stamp');
+    if (!_bs) return;
+    var _ni = window._nativeAppInfo;
+    _bs.textContent = 'build ' + APP_BUILD + ' · ' + (_isNativeApp() ? 'NATIVE' : 'web')
+      + (/GroundLinkNative/i.test(navigator.userAgent || '') ? ' · UA✓' : '')
+      + (window.Capacitor ? ' · cap' : '')
+      + (_ni ? ' · app ' + (_ni.version || '?') + ' (' + (_ni.build || '?') + ')' : '');
+  } catch (e) {}
+};
 (function fetchNativeAppInfo() {
   try {
     var cap = window.Capacitor;
     if (!cap || !cap.Plugins || !cap.Plugins.App || typeof cap.Plugins.App.getInfo !== 'function') return;
-    cap.Plugins.App.getInfo().then(function (info) { window._nativeAppInfo = info || null; }).catch(function () {});
+    cap.Plugins.App.getInfo().then(function (info) {
+      window._nativeAppInfo = info || null;
+      try { window._refreshBuildStamp(); } catch (e) {}
+    }).catch(function () {});
   } catch (e) {}
 })();
 
