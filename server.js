@@ -342,7 +342,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('manifest.json')) {
       res.setHeader('Content-Type', 'application/manifest+json');
     }
-    if (filePath.endsWith('index.html')) {
+    if (filePath.endsWith('index.html') || filePath.endsWith('headless.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
     if (filePath.endsWith('version.json')) {

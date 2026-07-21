@@ -76,6 +76,17 @@
     });
   }
 
+  // iOS entry point: AppDelegate's CLLocationManager — unlike this page's own
+  // navigator.geolocation.watchPosition below, which runs inside a WKWebView with no guaranteed
+  // background execution — reliably keeps delivering fixes in the background via
+  // significant-location-change monitoring (see AppDelegate.swift). It hands each fix to this
+  // page via evaluateJavaScript instead of asking the WebView to acquire its own. Reuses onFix's
+  // existing identity/fan-out/write logic completely unchanged; only the coordinate SOURCE
+  // differs. Purely additive — does not touch the existing Android/watchPosition path at all.
+  window._writeIOSFix = function (lat, lng, accuracy, speed) {
+    onFix({ coords: { latitude: lat, longitude: lng, accuracy: accuracy || 0, speed: (speed != null && speed >= 0) ? speed : null } });
+  };
+
   // Tells HeadlessTrackerService there's genuinely nothing to do, so its notification doesn't
   // linger forever for a device that was never really using this feature (a fresh install that
   // reboots before ever being opened once) or has since unfavorited/left everything it was
