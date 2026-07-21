@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 364;
+var APP_BUILD = 365;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9401,7 +9401,14 @@ function _renderInvitePeople(q) {
     // back to the account-session heartbeat, which doesn't depend on being in any room.
     var ms = (window._mySessions || {})[uid];
     var msOnline = !!(ms && ms.ts && (Date.now() - ms.ts) < 70000);
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend', friend: true, online: !!(p && p.room) || msOnline, room: (p && p.room) || (ms && ms.room) });
+    // Append the device type (phone/tablet/PC) when we know it and the favorite's own name
+    // doesn't already say so — a custom favorite name like "Jace-PC" already identifies itself,
+    // but a plain "Jace" gives no way to tell which of several same-named devices this row is
+    // (confirmed confusing on-device 2026-07-20 — the invite list had "Jace-PC", "Jace", "PC"
+    // side by side with no way to tell the last two apart).
+    var dispName = friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend';
+    if (ms && ms.dev && dispName.toLowerCase().indexOf(ms.dev.toLowerCase()) === -1) dispName += ' · ' + ms.dev;
+    people.push({ uid: uid, name: dispName, friend: true, online: !!(p && p.room) || msOnline, room: (p && p.room) || (ms && ms.room) });
   });
   // Anyone currently online (not a friend) used to show here by default too — narrowed further
   // than the directory fix below: the default list is now ONLY your actual friends (online or
