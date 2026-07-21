@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 355;
+var APP_BUILD = 356;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2743,6 +2743,19 @@ window._acctPeopleSearch = function (q) {
     var p = pres[uid] || {}; if (!p.name) return;
     seen[uid] = 1;   // otherwise the directory loop below re-adds this same device a second time
     people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, active: !p.room, room: p.room });
+  });
+  // Your OWN other devices — the same list that drives "Signed in on" in Account settings
+  // (gl/_users/<acct>/sessions, one entry per device that's ever signed into this account).
+  // The global directory below only ever tracks a SINGLE most-recently-active device per
+  // account, so it can surface at most one of your devices — never all of them at once. This
+  // is the only complete source for "find my phone from my tablet" once the phone's gone idle.
+  var mySessions = window._mySessions || {};
+  Object.keys(mySessions).forEach(function (id) {
+    if (seen[id] || id === me) return;
+    var d = mySessions[id] || {}; if (!d.name) return;
+    seen[id] = 1;
+    var online = d.ts && (Date.now() - d.ts) < 70000;
+    people.push({ uid: id, name: _withDev(d) || d.name, friend: false, online: online && !!d.room, active: online && !d.room, room: d.room });
   });
   // Global directory: every signed-in account, found even when offline (targets their last device).
   var dir = window._dirAll || {};
