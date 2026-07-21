@@ -1002,6 +1002,10 @@
   <symbol id="ic-pause" viewBox="0 0 24 24"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></symbol>
   <symbol id="ic-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polygon points="16 8 10.5 10.5 8 16 13.5 13.5 16 8"/></symbol>
   <symbol id="ic-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></symbol>
+  <!-- Muted/hidden variants: the exact ic-mic/ic-pin shapes plus one diagonal slash, so the
+       "off" state reads as unmistakably the same icon rather than an unrelated glyph. -->
+  <symbol id="ic-mic-off" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/><line x1="3" y1="3" x2="21" y2="21"/></symbol>
+  <symbol id="ic-pin-off" viewBox="0 0 24 24"><path d="M12 21s-6-5.686-6-10a6 6 0 0 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2.5"/><line x1="3" y1="3" x2="21" y2="21"/></symbol>
   <symbol id="ic-history" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></symbol>
   <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></symbol>
   <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
@@ -2241,7 +2245,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 367;
+var APP_BUILD = 368;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8192,8 +8196,8 @@ function listenUsers() {
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
-          (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:0;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '">' + (window._isMuted(uid) ? '🔇' : '🔊') + '</button>' : '') +
-          (!isMine ? '<button class="upinmute-btn" title="' + (window._isPinMuted(uid) ? 'Show their pins on your map again' : 'Hide their pins from your map') + '" style="background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:0;color:' + (window._isPinMuted(uid) ? '#f85149' : 'var(--muted)') + '">📍' + (window._isPinMuted(uid) ? '🚫' : '') + '</button>' : '') +
+          (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isMuted(uid) ? 'ic-mic-off' : 'ic-mic') + '"/></svg></button>' : '') +
+          (!isMine ? '<button class="upinmute-btn" title="' + (window._isPinMuted(uid) ? 'Show their pins on your map again' : 'Hide their pins from your map') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isPinMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isPinMuted(uid) ? 'ic-pin-off' : 'ic-pin') + '"/></svg></button>' : '') +
           ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
@@ -8207,7 +8211,7 @@ function listenUsers() {
       if (_mub) _mub.addEventListener('click', function(e) {
         e.stopPropagation();
         var nowMuted = window._toggleMute(uid, data.name);
-        e.currentTarget.textContent = nowMuted ? '🔇' : '🔊';
+        var _use = e.currentTarget.querySelector('use'); if (_use) _use.setAttribute('href', nowMuted ? '#ic-mic-off' : '#ic-mic');
         e.currentTarget.style.color = nowMuted ? '#f85149' : 'var(--muted)';
         e.currentTarget.title = nowMuted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
       });
@@ -8215,7 +8219,7 @@ function listenUsers() {
       if (_pmb) _pmb.addEventListener('click', function(e) {
         e.stopPropagation();
         var nowPinMuted = window._togglePinMute(uid, data.name);
-        e.currentTarget.innerHTML = nowPinMuted ? '📍🚫' : '📍';
+        var _use2 = e.currentTarget.querySelector('use'); if (_use2) _use2.setAttribute('href', nowPinMuted ? '#ic-pin-off' : '#ic-pin');
         e.currentTarget.style.color = nowPinMuted ? '#f85149' : 'var(--muted)';
         e.currentTarget.title = nowPinMuted ? 'Show their pins on your map again' : 'Hide their pins from your map';
       });
