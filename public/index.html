@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 356;
+var APP_BUILD = 357;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3554,10 +3554,18 @@ window._writeSession = function () {
   try {
     var fb = window._fb; if (!fb || !fb.db) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : ''; if (!acct) return;   // signed-in only
-    // userId isn't assigned until enterMap() runs (join a room/My Map); before that it's ''.
-    // A blank id here would collapse the ref path to the PARENT node and overwrite the whole
-    // sessions map with one flat record — the exact bug that showed 6 nameless "Device" rows.
-    if (!userId) return;
+    // userId isn't assigned until enterMap() runs (join a room/My Map) — before that it's ''.
+    // Previously this just gave up on a blank userId, so a device sitting on the Home screen
+    // (signed in, app genuinely open, but never having joined a room this launch) never wrote
+    // a heartbeat at all — its status elsewhere just showed whatever ts was left over from its
+    // last actual room visit, however stale, which looked exactly like "offline" even with the
+    // app open in front of you. Falls back to the persistent per-device id (set at sign-in,
+    // well before any room is ever entered) so a real heartbeat still gets written. A blank id
+    // here would collapse the ref path to the PARENT node and overwrite the whole sessions map
+    // with one flat record — the exact bug that showed 6 nameless "Device" rows — so the
+    // fallback must never itself be blank either.
+    var sessId = userId || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
+    if (!sessId) return;
     var rec = {
       name: (typeof userName !== 'undefined' && userName) || 'Me',
       dev:  (typeof _deviceLabel === 'function' ? _deviceLabel() : ''),
@@ -3566,7 +3574,7 @@ window._writeSession = function () {
       voice: window._imVoiceRoom || '',
       ts: Date.now()
     };
-    fb.set(fb.ref(fb.db, 'gl/_users/' + acct + '/sessions/' + userId), rec);
+    fb.set(fb.ref(fb.db, 'gl/_users/' + acct + '/sessions/' + sessId), rec);
   } catch (e) {}
 };
 try { setInterval(function () { try { window._writeSession(); } catch (e) {} }, 22000); } catch (e) {}
