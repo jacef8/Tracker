@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 366;
+var APP_BUILD = 367;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2650,6 +2650,24 @@ function _presenceOnline(p) { return !!(p && p.room); }
 // A favorite's status, robust to a missing presence entry: prefer the global presence
 // index; if it's absent, fall back to "in YOUR room" when they have a live marker on your
 // map — so an in-room favorite never shows offline (even if their app is on an older build).
+// True if `uid` has reported a real location fix recently in any Crew/circle YOU belong to
+// (window._circleUsersAll, live-subscribed per circle — see _listenCircles). Covers a device
+// that's actively background-tracking (screen off, main app not "open") but still genuinely
+// sharing location — the session heartbeat above can never see this, because the native
+// background-tracking page (headless.html) has no heartbeat code in it at all (confirmed
+// 2026-07-20): "online" was only ever measuring "is the app UI open," not "is this device
+// actively sharing location to a Crew," which is a real, separate thing a user cares about.
+// A more generous freshness window than the app-open heartbeat (5 min vs 70s) since background
+// fixes can be throttled by the OS/battery saver and don't arrive as regularly.
+function _isRecentlyActiveInAnyCircle(uid) {
+  var all = window._circleUsersAll || {};
+  var now = Date.now();
+  for (var key in all) {
+    var u = all[key] && all[key][uid];
+    if (u && u.ts && (now - u.ts) < 5 * 60 * 1000) return { room: key, ts: u.ts, name: u.name || null };
+  }
+  return null;
+}
 function _friendStatus(fid) {
   var p = (window._presenceAll || {})[fid];
   // "active" = app open at all (a presence entry exists, room or not) — "online" stays
@@ -2676,6 +2694,9 @@ function _friendStatus(fid) {
   if (ms && ms.ts && (Date.now() - ms.ts) < 70000) {
     return { online: !!ms.room, active: !ms.room, inMyRoom: (typeof groupName !== 'undefined') && ms.room === groupName, roomKey: ms.room || '', name: ms.name };
   }
+  // Last resort: an actual recent GPS fix in a shared Crew — see _isRecentlyActiveInAnyCircle.
+  var circ = _isRecentlyActiveInAnyCircle(fid);
+  if (circ) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && circ.room === groupName, roomKey: circ.room, name: circ.name };
   return { online: false, active: false, inMyRoom: false, roomKey: '', name: null };
 }
 function _friendsRowsHTML() {
@@ -2760,7 +2781,10 @@ window._acctPeopleSearch = function (q) {
     // never reaches the mySessions loop at all, since `seen[uid]` is already set above.
     var ms = (window._mySessions || {})[uid];
     var msOnline = !!(ms && ms.ts && (Date.now() - ms.ts) < 70000);
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend', friend: true, online: !!(p && p.room) || (msOnline && !!ms.room), active: !!(p && !p.room) || (msOnline && !ms.room), room: (p && p.room) || (ms && ms.room) });
+    // Last resort: an actual recent GPS fix in a shared Crew — covers background-only tracking
+    // (screen off, app not "open"), which neither presence nor the session heartbeat can see.
+    var circ = !(p && p.room) && !(msOnline && ms.room) ? _isRecentlyActiveInAnyCircle(uid) : null;
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || (circ && circ.name) || 'Friend', friend: true, online: !!(p && p.room) || (msOnline && !!ms.room) || !!circ, active: !!(p && !p.room) || (msOnline && !ms.room), room: (p && p.room) || (ms && ms.room) || (circ && circ.room) });
   });
   Object.keys(pres).forEach(function (uid) {
     if (seen[uid] || uid === me) return;
@@ -2779,7 +2803,8 @@ window._acctPeopleSearch = function (q) {
     var d = mySessions[id] || {}; if (!d.name) return;
     seen[id] = 1;
     var online = d.ts && (Date.now() - d.ts) < 70000;
-    people.push({ uid: id, name: _withDev(d) || d.name, friend: false, online: online && !!d.room, active: online && !d.room, room: d.room });
+    var circ2 = !(online && d.room) ? _isRecentlyActiveInAnyCircle(id) : null;
+    people.push({ uid: id, name: _withDev(d) || d.name, friend: false, online: (online && !!d.room) || !!circ2, active: online && !d.room, room: d.room || (circ2 && circ2.room) });
   });
   // Global directory: every signed-in account, found even when offline (targets their last device).
   var dir = window._dirAll || {};
@@ -9421,9 +9446,12 @@ function _renderInvitePeople(q) {
     // but a plain "Jace" gives no way to tell which of several same-named devices this row is
     // (confirmed confusing on-device 2026-07-20 — the invite list had "Jace-PC", "Jace", "PC"
     // side by side with no way to tell the last two apart).
-    var dispName = friends[uid] || (p && p.name) || (ms && ms.name) || 'Friend';
+    // Last resort: an actual recent GPS fix in a shared Crew — covers background-only tracking
+    // (screen off, app not "open"), which neither presence nor the session heartbeat can see.
+    var circ = !(p && p.room) && !msOnline ? _isRecentlyActiveInAnyCircle(uid) : null;
+    var dispName = friends[uid] || (p && p.name) || (ms && ms.name) || (circ && circ.name) || 'Friend';
     if (ms && ms.dev && dispName.toLowerCase().indexOf(ms.dev.toLowerCase()) === -1) dispName += ' · ' + ms.dev;
-    people.push({ uid: uid, name: dispName, friend: true, online: !!(p && p.room) || msOnline, room: (p && p.room) || (ms && ms.room) });
+    people.push({ uid: uid, name: dispName, friend: true, online: !!(p && p.room) || msOnline || !!circ, room: (p && p.room) || (ms && ms.room) || (circ && circ.room) });
   });
   // Anyone currently online (not a friend) used to show here by default too — narrowed further
   // than the directory fix below: the default list is now ONLY your actual friends (online or
@@ -9446,7 +9474,9 @@ function _renderInvitePeople(q) {
       if (seen[id] || id === me) return;
       var d = mySess[id] || {}; if (!d.name) return;
       seen[id] = 1;
-      people.push({ uid: id, name: (typeof _withDev === 'function' ? _withDev(d) : d.name) || d.name, friend: false, online: !!(d.ts && (Date.now() - d.ts) < 70000 && d.room), room: d.room });
+      var msOn = !!(d.ts && (Date.now() - d.ts) < 70000 && d.room);
+      var circ2 = !msOn ? _isRecentlyActiveInAnyCircle(id) : null;
+      people.push({ uid: id, name: (typeof _withDev === 'function' ? _withDev(d) : d.name) || d.name, friend: false, online: msOn || !!circ2, room: d.room || (circ2 && circ2.room) });
     });
   }
   // Global directory: every account that's EVER signed in, not just people relevant to you —
