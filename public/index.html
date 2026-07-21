@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 358;
+var APP_BUILD = 359;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2673,12 +2673,17 @@ function _friendsRowsHTML() {
   var friends = _getFriends();
   // Never list YOURSELF (your own device id OR your account uid) — that showed your PC as an
   // "offline favorite". Exclude both.
+  //
+  // Deliberately does NOT also exclude "the device your account is recorded under in the
+  // directory" anymore (removed 2026-07-20). That existed to catch a leftover self-favorite
+  // when signed in on a different device than the directory's current entry — but the
+  // directory only ever tracks ONE device per account, and someone with a phone/tablet/PC all
+  // on the same account legitimately wants to favorite their OTHER devices from any of them.
+  // That broader exclusion silently hid a just-added device the moment the directory's single
+  // slot happened to point at it, which looked identical to "adding a favorite silently failed."
   var _meAcct = (typeof _myAcct === 'function') ? _myAcct() : '';
   var _meDev = ''; try { _meDev = localStorage.getItem('gl_uid') || ''; } catch (e) {}
-  // Also exclude the device your OWN account is recorded under in the directory — signing in on
-  // a different device than the one in the directory was leaking "yourself" into favorites.
-  var _meDirDev = ''; try { var _dd = (window._dirAll || {})[_meAcct]; if (_dd && _dd.dev) _meDirDev = _dd.dev; } catch (e) {}
-  var ids = Object.keys(friends).filter(function (f) { return f && f !== userId && f !== _meAcct && f !== _meDev && f !== _meDirDev; });
+  var ids = Object.keys(friends).filter(function (f) { return f && f !== userId && f !== _meAcct && f !== _meDev; });
   if (!ids.length) return '<div style="padding:18px 14px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7">No favorites yet.<br>Tap the ☆ star next to someone in a room to add them.</div>';
   function rank(fid) { var s = _friendStatus(fid); return s.online ? (s.inMyRoom ? 1 : 0) : s.active ? 2 : 3; }
   ids.sort(function (a, b) { return rank(a) - rank(b); });   // online-elsewhere, then in-room, then active, then offline
