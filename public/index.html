@@ -2241,7 +2241,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 362;
+var APP_BUILD = 363;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9407,6 +9407,17 @@ function _renderInvitePeople(q) {
       var p = pres[uid] || {};
       if (!p.name) return;
       people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+    });
+    // Your OWN other devices, not yet favorited — same gap as People search had (build 356):
+    // the global directory below tracks only ONE device per account (whichever was most
+    // recently active), so it can never find a DIFFERENT device on your own account by name,
+    // like inviting your tablet to a Crew while the directory's slot points at your phone.
+    var mySess = window._mySessions || {};
+    Object.keys(mySess).forEach(function (id) {
+      if (seen[id] || id === me) return;
+      var d = mySess[id] || {}; if (!d.name) return;
+      seen[id] = 1;
+      people.push({ uid: id, name: (typeof _withDev === 'function' ? _withDev(d) : d.name) || d.name, friend: false, online: !!(d.ts && (Date.now() - d.ts) < 70000 && d.room), room: d.room });
     });
   }
   // Global directory: every account that's EVER signed in, not just people relevant to you —
