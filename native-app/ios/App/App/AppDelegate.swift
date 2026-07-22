@@ -30,16 +30,46 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var headlessWebView: WKWebView?
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
     private var pendingFix: CLLocation?
+    private var lastReportedAt: Date?
+    private var staleFixTimer: Timer?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         let mgr = CLLocationManager()
         mgr.delegate = self
         mgr.allowsBackgroundLocationUpdates = true
         mgr.pausesLocationUpdatesAutomatically = false
+        // Confirmed on-device 2026-07-21: tracking stopped the instant the screen locked — well
+        // before any real app termination, so significant-location-change alone (rare, ~500m+
+        // jumps) can't be the whole story. The vendored plugin's OWN startUpdatingLocation() call
+        // presumably keeps CoreLocation itself receiving updates fine in that state, but relaying
+        // them from native code into the WebView's JS (Capacitor's plugin bridge) to actually
+        // write to Firebase apparently doesn't survive the screen turning off — WKWebView JS
+        // execution is known to get throttled once the app isn't foregrounded, independent of
+        // whether the process itself is still alive. Running a SECOND, parallel continuous
+        // location session here — reported via the same native → hidden-WKWebView →
+        // headless.html path already built for the relaunch-after-termination case — means every
+        // regular update also goes through a path that never depends on the main app's WebView/
+        // bridge being active at all, not just the rare significant-change event.
+        mgr.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        mgr.distanceFilter = 50 // meters — family-location-sharing granularity, not turn-by-turn
+        mgr.startUpdatingLocation()
         if CLLocationManager.significantLocationChangeMonitoringAvailable() {
             mgr.startMonitoringSignificantLocationChanges()
         }
         bgLocationManager = mgr
+        // A stationary device (moved less than distanceFilter) never gets another
+        // didUpdateLocations callback at all, so its last-known fix would otherwise go stale in
+        // Firebase after a few minutes and look exactly like tracking had silently stopped, even
+        // though it's working correctly — just nothing to report. Periodically re-report the last
+        // known location so "still here, unmoved" reads the same as "actively tracked" elsewhere
+        // in the app (see _isRecentlyActiveInAnyCircle's 5-minute freshness window).
+        staleFixTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let sinceLast = self.lastReportedAt.map { Date().timeIntervalSince($0) } ?? .infinity
+            if sinceLast > 170, let loc = self.bgLocationManager?.location {
+                self.reportFixInBackground(loc)
+            }
+        }
         // launchOptions[.location] != nil means iOS relaunched us purely for this — no UI will
         // ever be shown for this launch, and the Capacitor bridge/live web app won't load. That's
         // fine: the actual fix report happens from locationManager(_:didUpdateLocations:) below,
@@ -103,7 +133,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // guaranteed the same background execution reliability as a native CLLocationManager
     // delegate callback, which is the entire reason this exists.
     private func reportFixInBackground(_ loc: CLLocation) {
+        // Continuous updates (every distanceFilter meters) plus the periodic stale-fix timer
+        // could otherwise both fire close together and overlap two in-flight WKWebView reports,
+        // each silently overwriting the other's pendingFix/bgTask handle. Simplest safe guard:
+        // drop this update if one's already in flight rather than risk corrupted overlapping
+        // state — an occasional skipped fix is harmless; a leaked background task token isn't.
+        guard headlessWebView == nil else { return }
         pendingFix = loc
+        lastReportedAt = Date()
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
             self?.endBackgroundTaskIfNeeded()
         }
