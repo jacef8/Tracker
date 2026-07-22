@@ -103,6 +103,14 @@
   function start() {
     if (started) return;
     if (stopIfNothingToDo()) { log('nothing to track — stopping'); return; }
+    // iOS's AppDelegate keeps this exact page loaded for the app's entire process lifetime and
+    // injects each fix directly via window._writeIOSFix (its own CLLocationManager is the
+    // reliable background source there — a WKWebView's own internal geolocation bridge isn't
+    // guaranteed the same background execution reliability). Starting ALSO watchPosition here
+    // would just be a second, redundant, battery-costing GPS source competing with the native one
+    // for the same writes over the page's whole (now much longer) lifetime. window._nativeDriven
+    // is set via a WKUserScript before this script ever runs — see AppDelegate.swift.
+    if (window._nativeDriven) { log('native-driven (iOS) — skipping own watchPosition'); return; }
     if (!navigator.geolocation) { log('no geolocation API'); return; }
     started = true;
     navigator.geolocation.watchPosition(onFix, function (err) { log('geo error ' + err.code); },
