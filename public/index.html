@@ -2245,7 +2245,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 371;
+var APP_BUILD = 372;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7293,7 +7293,8 @@ async function startNativeBackgroundTracking() {
       backgroundMessage: 'Your group can see you on the map.',
       requestPermissions: true,
       stale: false,
-      distanceFilter: 8
+      distanceFilter: 8,
+      interval: BS_INTERVAL_ACTIVE
     }, window._bgWatcherCb);
     try { window._evt('background tracking service started'); } catch (e) {}
   } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); try { window._evt('background tracking failed to start — ' + String(e)); } catch (e2) {} }
@@ -7317,6 +7318,13 @@ var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
 var BS_MOVE_M        = 30;              // moved more than this → you're moving again
 var BS_DF_IDLE       = 75;              // native GPS distance filter while idle (m)
 var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
+// The vendored plugin used to hardcode its LocationRequest interval to 1000ms regardless of
+// distanceFilter — so idle mode's wider distanceFilter only reduced how many fixes got
+// DELIVERED, not how often the GPS radio actually woke up to check. Patched (2026-07-22) to
+// accept an interval so idle mode can genuinely let the radio sleep between polls instead of
+// polling every second and discarding most of the results.
+var BS_INTERVAL_ACTIVE = 1000;          // native GPS poll interval while active (ms) — unchanged
+var BS_INTERVAL_IDLE    = 30000;        // native GPS poll interval while idle (ms)
 window._batterySaver = (function(){ try { return localStorage.getItem('gl_battsaver') !== '0'; } catch(e){ return true; } })();
 
 // Re-arm the native watcher at a wider/narrower distance filter so the GPS radio
@@ -7330,7 +7338,8 @@ function _bsApplyPower(idle) {
       backgroundMessage: idle ? 'Battery saver on — updating when you move.' : 'Your group can see you on the map.',
       requestPermissions: false,
       stale: false,
-      distanceFilter: idle ? BS_DF_IDLE : BS_DF_ACTIVE
+      distanceFilter: idle ? BS_DF_IDLE : BS_DF_ACTIVE,
+      interval: idle ? BS_INTERVAL_IDLE : BS_INTERVAL_ACTIVE
     }, window._bgWatcherCb).then(function(id) {
       window._bgWatcherId = id;
       try { window._bgGeo.removeWatcher({ id: prev }); } catch (e) {}
@@ -7877,8 +7886,12 @@ function startLocationSharing() {
       });
     } catch (e) {}
   };
+  // This is diagnostics-only (admin Debug tab), read by nobody most of the time — 15s meant
+  // every device did a Firebase write, forever, purely so an admin COULD look. Widened to 60s;
+  // visibilitychange still fires an immediate write whenever the app comes to front, so the
+  // data is fresh exactly when someone's actually about to look at it.
   clearInterval(window._diagTimer);
-  window._diagTimer = setInterval(window._writeDiag, 15000);
+  window._diagTimer = setInterval(window._writeDiag, 60000);
   window._writeDiag();
   document.addEventListener('visibilitychange', window._writeDiag);
 
