@@ -2245,7 +2245,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 372;
+var APP_BUILD = 373;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12109,6 +12109,24 @@ window._toggleGroupFollowExcl = function (id, name) {
   } catch (e) {}
   toast(excluded ? (name || 'They') + ' excluded from Follow group' : (name || 'They') + ' included in Follow group', 2600);
 };
+// Measures the ACTUAL on-screen topbar/bottom-toolbar position each time, instead of a fixed
+// guess — a static number can't account for per-device safe-area insets (notch/gesture bar) or
+// whichever bottom bar happens to be active (voice bar up, member sheet open, etc. all move
+// #map-controls via CSS). Confirmed on-device 2026-07-22: edge members were getting clipped
+// under the toolbars because the old flat {top:100,bottom:130} undershot the real topbar height
+// (116px) before even adding the notch inset on top of it.
+function _followPadding() {
+  var top = 100, bottom = 130; // fallback if the elements are ever missing
+  try {
+    var r = document.getElementById('topbar').getBoundingClientRect();
+    if (r.height > 0) top = r.height + 12;
+  } catch (e) {}
+  try {
+    var r2 = document.getElementById('map-controls').getBoundingClientRect();
+    if (r2.height > 0) bottom = (window.innerHeight - r2.top) + 12;
+  } catch (e) {}
+  return { top: top, bottom: bottom, left: 72, right: 72 };
+}
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
@@ -12132,8 +12150,8 @@ function _groupFollowTick(force) {
   pts.forEach(function(p) { b.extend(p); });
   var cam;
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
-  // or the screen edge — extra at the bottom to clear the map controls, but not excessive.
-  try { cam = map.cameraForBounds(b, { padding: { top: 100, bottom: 130, left: 72, right: 72 }, maxZoom: 16 }); } catch (e) {}
+  // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
+  try { cam = map.cameraForBounds(b, { padding: _followPadding(), maxZoom: 16 }); } catch (e) {}
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
