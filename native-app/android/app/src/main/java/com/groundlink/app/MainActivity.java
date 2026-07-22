@@ -1,6 +1,7 @@
 package com.groundlink.app;
 
 import android.Manifest;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -326,6 +327,22 @@ public class MainActivity extends BridgeActivity {
         // active, since the normal in-app path covers location again from here. Also associates
         // the service with THIS task so a future swipe-away reliably triggers onTaskRemoved().
         try { HeadlessTrackerService.startStandby(this); } catch (Exception e) {}
+        // One-time cleanup: these two channel ids are 100% superseded (the visible/hidden-icon
+        // split replaced "groundlink_headless" with "groundlink_headless_visible"/"_quiet"; the
+        // vendored background-geolocation plugin's own patch replaced
+        // "com.equimaps.capacitor_background_geolocation" with "..._quiet") and nothing will ever
+        // post to them again — but Android never removes a channel on its own, so both lingered
+        // forever in Settings > Notifications > Categories, showing as confusing duplicates next
+        // to their still-used replacements (confirmed on-device 2026-07-21, "why are there
+        // duplicate notifications?"). Deleting an app's own unused channel is safe; if the same
+        // id were ever reintroduced later it would just come back as a fresh channel.
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                if (nm.getNotificationChannel("groundlink_headless") != null) nm.deleteNotificationChannel("groundlink_headless");
+                if (nm.getNotificationChannel("com.equimaps.capacitor_background_geolocation") != null) nm.deleteNotificationChannel("com.equimaps.capacitor_background_geolocation");
+            }
+        } catch (Exception e) {}
         hideNavBar();
     }
 
