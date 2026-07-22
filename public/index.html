@@ -2245,7 +2245,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 370;
+var APP_BUILD = 371;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3784,10 +3784,26 @@ window._joinFriendRoom = function(roomKey, roomName) {
 // their dot in place ("last known") but this kept showing their LAST recorded speed forever —
 // looking exactly like "the app says they're doing 51 but the dot isn't moving", since the two
 // were gated completely differently. Now both freeze together.
-function _updateMarkerSpeed(el, data, isLive) {
+// Shared show/hide decision for every "· NN mph" speed display in the app (map marker label,
+// member-list row, bottom info-card "driving" badge) — a single >25mph cutoff used for both
+// showing AND hiding made every one of these flash on/off constantly whenever real speed
+// hovered right around the line (accelerating through it, stop-and-go traffic), reported
+// on-device 2026-07-22. Hysteresis fixes it: show once above 25, but only hide again once it
+// drops below 18. State is kept per-uid (not per-DOM-element) so all three displays for the
+// same person agree with each other and stay in sync across re-renders.
+window._speedShownState = window._speedShownState || {};
+function _shouldShowSpeed(uid, data, eligibleOverride) {
+  var eligible = (eligibleOverride !== undefined ? eligibleOverride : true) && data && data.spd && !data.spdH && !data.hidden && !data.noGps;
+  if (!eligible) { window._speedShownState[uid] = false; return false; }
+  var was = !!window._speedShownState[uid];
+  var show = was ? data.spd > 18 : data.spd > 25;
+  window._speedShownState[uid] = show;
+  return show;
+}
+function _updateMarkerSpeed(el, data, isLive, uid) {
   var s = el && el.querySelector ? el.querySelector('.mk-speed') : null;
   if (!s) return;
-  if (isLive && data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) {
+  if (_shouldShowSpeed(uid, data, isLive)) {
     s.textContent = data.spd + ' mph';
     s.style.display = 'block';
   } else {
@@ -8091,7 +8107,7 @@ function listenUsers() {
         _spdEl.className = 'mk-speed';
         _spdEl.style.cssText = 'position:absolute;top:48px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:800;color:#fff;background:rgba(0,0,0,.62);padding:1px 6px;border-radius:7px;white-space:nowrap;display:none;pointer-events:none;letter-spacing:.02em';
         el.appendChild(_spdEl);
-        _updateMarkerSpeed(el, data, isLive || isMine);
+        _updateMarkerSpeed(el, data, isLive || isMine, uid);
 
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
@@ -8118,7 +8134,7 @@ function listenUsers() {
           el.style.borderColor  = borderColor;
           el.style.opacity      = opacity;
           el.style.color        = textColor;
-          _updateMarkerSpeed(el, data, isLive || isMine);
+          _updateMarkerSpeed(el, data, isLive || isMine, uid);
         }
       }
 
@@ -8135,7 +8151,7 @@ function listenUsers() {
         const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : isResting ? 'RESTING' : 'LAST KNOWN';
         const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#888ea0';
         var _safeName = data.name.replace(/'/g, '');
-        var _driving = (data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps);
+        var _driving = _shouldShowSpeed(uid, data);
         var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
         var _sub = (_distLine ? _distLine + ' · ' : '') + _meta;
         var _coordsStr = (typeof data.lat === 'number' && typeof data.lng === 'number') ? data.lat.toFixed(6) + ', ' + data.lng.toFixed(6) : '';
@@ -8190,7 +8206,7 @@ function listenUsers() {
           '<div class="uname">' + escapeHtmlJs(_withDev(data)) + (isMine ? ' (you)' : '') + '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Resting (battery saver) · ' + timeLabel : 'Last seen: ' + timeLabel) +
-            ((data.spd && data.spd > 25 && !data.spdH && !data.hidden && !data.noGps) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
+            (_shouldShowSpeed(uid, data) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
           '</div>' +
         '</div>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
