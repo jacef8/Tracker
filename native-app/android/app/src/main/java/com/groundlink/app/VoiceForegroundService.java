@@ -120,9 +120,15 @@ public class VoiceForegroundService extends Service {
         String chanId = iconVisible ? CHAN_VISIBLE : CHAN_HIDDEN;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(chanId) == null) {
+            if (nm != null) {
                 int importance = iconVisible ? NotificationManager.IMPORTANCE_LOW : NotificationManager.IMPORTANCE_MIN;
-                NotificationChannel ch = new NotificationChannel(chanId, "Voice", importance);
+                // Distinct names + called unconditionally (not just when missing) — same fix and
+                // same reasoning as HeadlessTrackerService.buildNotification(): both channels
+                // showed as identical "Voice" entries in Settings > Notifications > Categories
+                // with no way to tell them apart (confirmed confusing on-device 2026-07-21), and
+                // createNotificationChannel() is safe/idempotent to re-call on an existing
+                // channel — only importance is locked, name/description still update.
+                NotificationChannel ch = new NotificationChannel(chanId, iconVisible ? "Voice (status icon)" : "Voice (silent)", importance);
                 ch.setShowBadge(false);
                 nm.createNotificationChannel(ch);
             }

@@ -318,9 +318,21 @@ public class HeadlessTrackerService extends Service {
         String chanId = iconVisible ? CHAN_VISIBLE : CHAN_HIDDEN;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null && nm.getNotificationChannel(chanId) == null) {
+            if (nm != null) {
                 int importance = iconVisible ? NotificationManager.IMPORTANCE_LOW : NotificationManager.IMPORTANCE_MIN;
-                NotificationChannel ch = new NotificationChannel(chanId, "Background location", importance);
+                // Distinct names (not just "Background location" for both) so Android's own
+                // Settings > Notifications > Categories list doesn't show two identical-looking
+                // entries with no way to tell them apart — confirmed confusing on-device
+                // 2026-07-21 ("why are there duplicate notifications?"). Channel importance is
+                // locked once created, so toggling requires two separate channel IDs; only the
+                // NAME can still be told apart.
+                //
+                // Called unconditionally (not just when the channel doesn't exist yet) —
+                // createNotificationChannel() is safe and idempotent to call repeatedly on an
+                // EXISTING channel: importance is locked and won't change, but name/description
+                // do get updated. That's the only way this rename actually reaches a phone that
+                // already had the old channel created under the old name.
+                NotificationChannel ch = new NotificationChannel(chanId, iconVisible ? "Background location (status icon)" : "Background location (silent)", importance);
                 ch.setShowBadge(false);
                 nm.createNotificationChannel(ch);
             }
