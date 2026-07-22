@@ -1,0 +1,29 @@
+diff --git a/node_modules/@capacitor-firebase/authentication/ios/Plugin/Handlers/GoogleAuthProviderHandler.swift b/node_modules/@capacitor-firebase/authentication/ios/Plugin/Handlers/GoogleAuthProviderHandler.swift
+index 2cc2e26..0e63e8f 100644
+--- a/node_modules/@capacitor-firebase/authentication/ios/Plugin/Handlers/GoogleAuthProviderHandler.swift
++++ b/node_modules/@capacitor-firebase/authentication/ios/Plugin/Handlers/GoogleAuthProviderHandler.swift
+@@ -30,10 +30,22 @@ class GoogleAuthProviderHandler: NSObject {
+ 
+     private func startSignInWithGoogleFlow(_ call: CAPPluginCall, isLink: Bool) {
+         #if RGCFA_INCLUDE_GOOGLE
+-        guard let clientId = FirebaseApp.app()?.options.clientID else { return }
++        // Both guards below used to `return` silently on failure — the JS promise from
++        // signInWithGoogle() would then just hang forever with no resolve/reject, no error, no
++        // UI. That's indistinguishable from "the button did nothing" (confirmed on-device
++        // 2026-07-22: exactly what was reported), and left no way to tell which precondition
++        // actually failed. Rejecting makes a real failure visible and diagnosable instead of a
++        // silent hang.
++        guard let clientId = FirebaseApp.app()?.options.clientID else {
++            call.reject("Google sign-in unavailable: no Firebase clientID configured")
++            return
++        }
+         let config = GIDConfiguration(clientID: clientId, serverClientID: clientId)
+         GIDSignIn.sharedInstance.configuration = config
+-        guard let controller = self.pluginImplementation.getPlugin().bridge?.viewController else { return }
++        guard let controller = self.pluginImplementation.getPlugin().bridge?.viewController else {
++            call.reject("Google sign-in unavailable: no view controller to present from")
++            return
++        }
+         let scopes = call.getArray("scopes", String.self) ?? []
+ 
+         DispatchQueue.main.async {
