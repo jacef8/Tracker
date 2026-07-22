@@ -26,8 +26,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // (including that relaunch) for the delegate callback below to actually fire.
     private var bgLocationManager: CLLocationManager?
 
-    // Kept alive only for the duration of a single background fix report, then released.
+    // Kept alive for the ENTIRE process lifetime, not recreated per fix (see reportFixInBackground
+    // for why this changed 2026-07-22).
     private var headlessWebView: WKWebView?
+    private var headlessPageReady = false
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
     private var pendingFix: CLLocation?
     private var lastReportedAt: Date?
@@ -132,20 +134,43 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // WebView to acquire its own — a WKWebView's own internal geolocation bridge is not
     // guaranteed the same background execution reliability as a native CLLocationManager
     // delegate callback, which is the entire reason this exists.
+    //
+    // 2026-07-22: this used to create a BRAND NEW WKWebView for every single fix — a full page
+    // load, ES module import, and fresh Firebase SDK initialization, every ~50m of movement or
+    // every 3 minutes while stationary, for hours on end. That's real, compounding memory/CPU
+    // pressure with nothing ever torn down cleanly in between (a background-killed process can't
+    // run deinit logic), and is a very plausible reason tracking could work for a while and then
+    // go silently missing again — exactly what was reported on-device. Now the WebView is created
+    // ONCE and reused for the lifetime of the process; every fix after the first is just a
+    // evaluateJavaScript call against an already-warm page, no reload, no re-init.
     private func reportFixInBackground(_ loc: CLLocation) {
-        // Continuous updates (every distanceFilter meters) plus the periodic stale-fix timer
-        // could otherwise both fire close together and overlap two in-flight WKWebView reports,
-        // each silently overwriting the other's pendingFix/bgTask handle. Simplest safe guard:
-        // drop this update if one's already in flight rather than risk corrupted overlapping
-        // state — an occasional skipped fix is harmless; a leaked background task token isn't.
-        guard headlessWebView == nil else { return }
         pendingFix = loc
         lastReportedAt = Date()
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
             self?.endBackgroundTaskIfNeeded()
         }
+        if let wv = headlessWebView, headlessPageReady {
+            sendPendingFix(to: wv)
+            return
+        }
+        if headlessWebView != nil {
+            // Already loading from an earlier call — the fix just landed in pendingFix above,
+            // and didFinish will pick up whatever's newest once the page is ready. Nothing more
+            // to do; don't start a second load.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.endBackgroundTaskIfNeeded() }
+            return
+        }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore.default()
+        // Tells headless.html to skip its own navigator.geolocation.watchPosition auto-start
+        // (built for Android's HeadlessTrackerService) — this page now stays loaded for the
+        // whole process lifetime on iOS too, so that would otherwise run continuously alongside
+        // this native CLLocationManager as a redundant, competing GPS source. Injected at
+        // document start so it's set before headless.html's own module script ever runs.
+        let flagScript = WKUserScript(source: "window._nativeDriven = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        let controller = WKUserContentController()
+        controller.addUserScript(flagScript)
+        config.userContentController = controller
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
         headlessWebView = wv
@@ -160,36 +185,49 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.endBackgroundTaskIfNeeded() }
     }
 
-    // MARK: - WKNavigationDelegate
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // headless.html's Firebase SDK is loaded as an ES module (deferred, async) — the
-        // document's own load event (this callback) can fire before that module has actually
-        // finished executing and defined window._writeIOSFix. A short additional wait gives it
-        // room; the module itself does negligible work (no heavy imports beyond Firebase's own
-        // lazy-loaded pieces), so this margin is generous rather than tight.
+    private func sendPendingFix(to webView: WKWebView) {
         guard let loc = pendingFix else { endBackgroundTaskIfNeeded(); return }
+        pendingFix = nil
         let lat = loc.coordinate.latitude
         let lng = loc.coordinate.longitude
         let acc = loc.horizontalAccuracy
         let spd = loc.speed
+        let js = "window._writeIOSFix && window._writeIOSFix(\(lat), \(lng), \(acc), \(spd));"
+        webView.evaluateJavaScript(js) { [weak self] _, _ in
+            // Give the Firebase write itself a moment to actually reach the network before
+            // ending the background task — evaluateJavaScript's completion only means the
+            // synchronous call returned, not that the async `set()` write completed.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.endBackgroundTaskIfNeeded() }
+        }
+    }
+
+    // MARK: - WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Only fires once, the first time the persistent WebView loads. headless.html's Firebase
+        // SDK is loaded as an ES module (deferred, async) — the document's own load event (this
+        // callback) can fire before that module has actually finished executing and defined
+        // window._writeIOSFix. A short additional wait gives it room; the module itself does
+        // negligible work (no heavy imports beyond Firebase's own lazy-loaded pieces), so this
+        // margin is generous rather than tight.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            let js = "window._writeIOSFix && window._writeIOSFix(\(lat), \(lng), \(acc), \(spd));"
-            webView.evaluateJavaScript(js) { _, _ in
-                // Give the Firebase write itself a moment to actually reach the network before
-                // tearing the WebView down — evaluateJavaScript's completion only means the
-                // synchronous call returned, not that the async `set()` write completed.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.endBackgroundTaskIfNeeded() }
-            }
-            self?.pendingFix = nil
+            guard let self = self else { return }
+            self.headlessPageReady = true
+            self.sendPendingFix(to: webView)
         }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        // The page failed to load at all — drop it so the next fix tries a fresh load instead of
+        // being stuck waiting on a WebView that will never call didFinish.
+        headlessWebView = nil
+        headlessPageReady = false
         endBackgroundTaskIfNeeded()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        headlessWebView = nil
+        headlessPageReady = false
         endBackgroundTaskIfNeeded()
     }
 
@@ -198,8 +236,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             UIApplication.shared.endBackgroundTask(bgTask)
             bgTask = .invalid
         }
-        headlessWebView = nil
-        pendingFix = nil
     }
 
 }
