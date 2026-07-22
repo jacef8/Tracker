@@ -67,6 +67,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // in the app (see _isRecentlyActiveInAnyCircle's 5-minute freshness window).
         staleFixTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+            // Same foreground guard as locationManager(_:didUpdateLocations:) below — while
+            // active, the main WebView's own path is already keeping this fresh continuously.
+            if UIApplication.shared.applicationState == .active { return }
             let sinceLast = self.lastReportedAt.map { Date().timeIntervalSince($0) } ?? .infinity
             if sinceLast > 170, let loc = self.bgLocationManager?.location {
                 self.reportFixInBackground(loc)
@@ -118,6 +121,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
+        // This manager runs unconditionally for the whole process lifetime (it has to, to survive
+        // relaunch-after-termination) — but while the app is actually foregrounded, the main
+        // Capacitor WebView's own GPS path is already reporting fixes at a much tighter cadence
+        // for smooth marker movement (see _animateMarker in index.html, which glides over a fixed
+        // 1.4s and assumes fixes arrive that often). This manager's distanceFilter/accuracy are
+        // tuned coarse for battery, not smoothness. Reporting from both while foregrounded meant
+        // this coarser, sparser source was competing with the smooth one for the same Firebase
+        // write — confirmed 2026-07-22 as the cause of choppy/jumpy movement on iOS specifically
+        // (Android has no equivalent competing native path). Only report from here when actually
+        // backgrounded; the foreground path already has this covered.
+        if UIApplication.shared.applicationState == .active { return }
         reportFixInBackground(loc)
     }
 
