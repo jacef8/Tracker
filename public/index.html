@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 377;
+var APP_BUILD = 378;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11308,6 +11308,11 @@ window._viewHistory = function () {
 // (gl/<group>/pins, session-scoped) and My Saved Pins (personal, localStorage-only) — it needs
 // to be readable by every circle member's device, same tier as members/<uid>.
 window._openPlacesManager = function (circleKey, circleName) {
+  // Stop Follow-me/Follow-group as soon as the tool is opened, not only once "+ Add Place" is
+  // tapped — the map re-centering on your own live position fights you the moment you're even
+  // looking at this panel, not just while actively placing a pin.
+  try { if (typeof followUid !== 'undefined' && followUid) stopFollowing(); } catch (e) {}
+  try { if (typeof fitAllInterval !== 'undefined' && fitAllInterval) _stopFitAll(); } catch (e) {}
   _placesManagerCircleKey = circleKey;
   _placesManagerCircleName = circleName || circleKey;
   document.getElementById('places-drawer-title').textContent = 'Places — ' + _placesManagerCircleName;
@@ -11366,11 +11371,9 @@ function _renderPlacesList() {
   }, { onlyOnce: true });
 }
 window._startAddPlace = function () {
+  // Follow-me/Follow-group is already stopped by _openPlacesManager the moment this panel was
+  // opened — nothing more to stop here.
   document.getElementById('places-drawer').classList.remove('open');
-  // Stop Follow-me/Follow-group first — otherwise the map keeps re-centering on your own
-  // position every tick while you're trying to pan over to somewhere else to drop the pin.
-  try { if (typeof followUid !== 'undefined' && followUid) stopFollowing(); } catch (e) {}
-  try { if (typeof fitAllInterval !== 'undefined' && fitAllInterval) _stopFitAll(); } catch (e) {}
   window._enablePlaceMode();
   toast('Tap the map to set the Place’s center', 3000);
 };
