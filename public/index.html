@@ -1682,8 +1682,24 @@
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-compass"/></svg>My Tracks</span>
     <button class="panel-close" onclick="document.getElementById('tracks-drawer').classList.remove('open')"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
-  <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</div>
-  <div id="tracks-list" style="overflow-y:auto;flex:1"></div>
+  <div style="display:flex;gap:6px;padding:8px 12px 0">
+    <button id="trk-tab-tracks" onclick="window._showTracksTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:var(--bg);color:var(--accent);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid var(--accent)">Tracks</button>
+    <button id="trk-tab-history" onclick="window._showHistoryTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:transparent;color:var(--muted);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid transparent">History</button>
+  </div>
+  <div id="trk-tracks-pane">
+    <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</div>
+    <div id="tracks-list" style="overflow-y:auto;flex:1"></div>
+  </div>
+  <div id="trk-history-pane" style="display:none;overflow-y:auto;flex:1">
+    <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">See where a Circle member has been on a given day. Only shows up if <b>Location history</b> is on in Settings for that person.</div>
+    <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+      <select id="hist-circle-pick" onchange="window._historyCircleChanged()" style="width:100%;padding:10px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></select>
+      <select id="hist-member-pick" style="width:100%;padding:10px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></select>
+      <input id="hist-date-pick" type="date" style="width:100%;padding:10px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px" />
+      <button onclick="window._viewHistory()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">View</button>
+    </div>
+    <div id="hist-result"></div>
+  </div>
 </div>
 
 <!-- ══ TRACK DETAIL DRAWER ═══════════════════════════════════════════ -->
@@ -2109,6 +2125,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-rain"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Battery saver</div><div style="font-size:11px;color:var(--muted);margin-top:2px">When you sit still a while, ease off GPS &amp; send a slow heartbeat. Moving wakes it instantly.</div></div></div>
       <span id="set-battsaver-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div onclick="_setToggleHistory()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-history"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Location history</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Remember where you've been so your Circle can look back on any day (kept 30 days)</div></div></div>
+      <span id="set-history-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div class="section-title" style="margin:14px 0 7px">Voice &amp; devices</div>
     <div onclick="_setToggleVoice()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
@@ -2245,7 +2265,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 373;
+var APP_BUILD = 374;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4406,6 +4426,7 @@ function _syncSettings() {
     ['join', 'chat', 'pin', 'voice'].forEach(function (t) { _setPill('ntype-' + t + '-pill', _notifPref(t)); });
   } catch (e) {}
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
+  _setPill('set-history-pill', (typeof historyOn !== 'undefined') && !!historyOn);
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
@@ -4506,6 +4527,38 @@ function _setToggleBatterySaver() {
   _syncSettings();
   toast(window._batterySaver ? 'Battery saver on — eases off GPS during long sits' : 'Battery saver off — full GPS always', 2600);
   try { window._evt('battery saver ' + (window._batterySaver ? 'enabled' : 'disabled')); } catch (e) {}
+}
+function _setToggleHistory() {
+  historyOn = !historyOn;
+  // Same key headless.html reads directly (it has no access to this page's JS state) — keep
+  // this exact key name in sync with the read there.
+  try { localStorage.setItem('gl_history_on', historyOn ? '1' : '0'); } catch (e) {}
+  if (!historyOn) { lastHistoryPos = null; lastHistoryTs = 0; }
+  _syncSettings();
+  toast(historyOn ? 'Location history on — recording where you go' : 'Location history off', 2600);
+  try { window._evt('location history ' + (historyOn ? 'enabled' : 'disabled')); } catch (e) {}
+}
+// Best-effort retention: history has no server-side cleanup job (no Cloud Functions exist in
+// this project), so prune day-nodes older than HIST_MAX_AGE_DAYS on launch. Not a hard
+// guarantee — it only runs when someone's client actually launches and reaches this circle —
+// but bounds growth for the common case without adding new backend infrastructure.
+function _sweepOldHistory() {
+  try {
+    if (!db) return;
+    var circles = _getCircles(); // gl_circles in localStorage — same source headless.html reads
+    var cutoff = Date.now() - HIST_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+    Object.keys(circles).forEach(function (circleKey) {
+      fbOnValue(fbRef(db, 'gl/' + circleKey + '/history/' + userId), function (snap) {
+        var byDate = snap.val() || {};
+        Object.keys(byDate).forEach(function (dateStr) {
+          var dayMs = Date.parse(dateStr + 'T00:00:00');
+          if (!isNaN(dayMs) && dayMs < cutoff) {
+            fbRemove(fbRef(db, 'gl/' + circleKey + '/history/' + userId + '/' + dateStr));
+          }
+        });
+      }, { onlyOnce: true });
+    });
+  } catch (e) {}
 }
 function _setToggleAlerts() { toggleAlerts(!alertsOn); setTimeout(_syncSettings, 350); }
 function _setToggleCrumbs() { if (typeof toggleBreadcrumbs === 'function') toggleBreadcrumbs(); setTimeout(_syncSettings, 60); }
@@ -5937,6 +5990,11 @@ function enterMap(name, group, uid) {
         // Apply visual state after a short delay so DOM is ready
         setTimeout(applyBreadcrumbState, 200);
       }
+      // Restore location-history setting — gl_history_on is also read directly by
+      // headless.html (the separate background bridge), so keep this exact key in sync.
+      historyOn = localStorage.getItem('gl_history_on') === '1';
+      try { if (typeof _setPill === 'function') _setPill('set-history-pill', historyOn); } catch (e2) {}
+      try { if (typeof _sweepOldHistory === 'function') _sweepOldHistory(); } catch (e3) {}
     } catch(e) {}
     initMap();
     // iOS sometimes renders the GL canvas blank when the map is built while an
@@ -7042,6 +7100,16 @@ document.getElementById('measure-btn').addEventListener('click', function() {
 
 // ══ LOCATION ═════════════════════════════════════════════════════
 let breadcrumbsOn = false;
+// Persistent, day-bucketed location history — deliberately a SEPARATE opt-in from
+// breadcrumbsOn (see gl/<circleKey>/history/<uid>/<date> writes below), so a person can want
+// one without the other. Coarser distance filter than breadcrumbs (history is for "where was I
+// today", not a smooth live trail) to keep each day's point count small with no server-side
+// retention job (no Cloud Functions exist in this project) — see the launch-time sweep too.
+let historyOn = false;
+let lastHistoryPos = null;
+let lastHistoryTs = 0;
+const HIST_MIN_DIST_M = 50;
+const HIST_MAX_AGE_DAYS = 30;
 let unreadPinCount = 0;
 
 function updateUnreadBubble() {
@@ -7754,6 +7822,34 @@ function startLocationSharing() {
             }
           });
         }, { onlyOnce: true });
+      }
+    }
+
+    // Location history: independent of breadcrumbsOn/groupName — fans out to every circle the
+    // user belongs to (reusing _circleKeys, already computed above for the live-position
+    // fan-out), day-bucketed so the viewer never needs a range query, just one day node. Coarser
+    // distance filter than breadcrumbs (HIST_MIN_DIST_M) since this is "where was I today", not
+    // a smooth live trail — keeps each day's point count small with no server-side retention job.
+    if (historyOn && _circleKeys.length) {
+      const hAccM = accuracy || 0;
+      const hGoodAccuracy = hAccM > 0 && hAccM <= TRAIL_MAX_ACC_M;
+      const hDistM = lastHistoryPos
+        ? metersApart(lastHistoryPos.lat, lastHistoryPos.lng, lat, lng) : Infinity;
+      const hMoved = hDistM > HIST_MIN_DIST_M;
+      let hPlausible = true;
+      if (lastHistoryPos && lastHistoryTs) {
+        const hDtSec = Math.max(1, (now - lastHistoryTs) / 1000);
+        const hMph = (hDistM / hDtSec) * 2.23694;
+        if (hMph > TRAIL_MAX_MPH) hPlausible = false;
+      }
+      if (hMoved && hGoodAccuracy && hPlausible) {
+        lastHistoryPos = { lat, lng };
+        lastHistoryTs = now;
+        const dateStr = new Date(now).toLocaleDateString('en-CA'); // yyyy-mm-dd, local date
+        for (var _hi = 0; _hi < _circleKeys.length; _hi++) {
+          const histRef = fbPush(fbRef(db, `gl/${_circleKeys[_hi]}/history/${userId}/${dateStr}`));
+          fbSet(histRef, { lat, lng, ts: now, acc: Math.round(hAccM) });
+        }
       }
     }
 
@@ -10982,6 +11078,88 @@ function _clearSavedTrack(){ try { ['saved-track','saved-track-glow'].forEach(fu
 
 // — tracks library list —
 function openTracks(){ document.getElementById('tracks-drawer').classList.add('open'); try { setLocateMeVisible(false); } catch(e){} renderTracks(); }
+
+// ── History tab (view a Circle member's day, without touching the Tracks library) ──
+window._showTracksTab = function () {
+  document.getElementById('trk-tab-tracks').style.color = 'var(--accent)';
+  document.getElementById('trk-tab-tracks').style.borderBottomColor = 'var(--accent)';
+  document.getElementById('trk-tab-history').style.color = 'var(--muted)';
+  document.getElementById('trk-tab-history').style.borderBottomColor = 'transparent';
+  document.getElementById('trk-tracks-pane').style.display = '';
+  document.getElementById('trk-history-pane').style.display = 'none';
+};
+window._showHistoryTab = function () {
+  document.getElementById('trk-tab-history').style.color = 'var(--accent)';
+  document.getElementById('trk-tab-history').style.borderBottomColor = 'var(--accent)';
+  document.getElementById('trk-tab-tracks').style.color = 'var(--muted)';
+  document.getElementById('trk-tab-tracks').style.borderBottomColor = 'transparent';
+  document.getElementById('trk-tracks-pane').style.display = 'none';
+  document.getElementById('trk-history-pane').style.display = '';
+  _populateHistoryCirclePicker();
+  var dp = document.getElementById('hist-date-pick');
+  if (dp && !dp.value) {
+    var y = new Date(Date.now() - 86400000);
+    dp.value = y.toLocaleDateString('en-CA'); // default to yesterday
+  }
+};
+function _populateHistoryCirclePicker() {
+  var sel = document.getElementById('hist-circle-pick'); if (!sel) return;
+  var circles = _getCircles();
+  var keys = Object.keys(circles);
+  if (!keys.length) {
+    sel.innerHTML = '<option value="">No Circles yet</option>';
+    document.getElementById('hist-member-pick').innerHTML = '';
+    return;
+  }
+  sel.innerHTML = keys.map(function (k) { return '<option value="' + _escHtml(k) + '">' + _escHtml(circles[k] || k) + '</option>'; }).join('');
+  // Default to the currently-open room if it happens to be one of these circles.
+  if (groupName && keys.indexOf(groupName) !== -1) sel.value = groupName;
+  window._historyCircleChanged();
+}
+window._historyCircleChanged = function () {
+  var circleKey = document.getElementById('hist-circle-pick').value;
+  var memberSel = document.getElementById('hist-member-pick');
+  if (!circleKey) { memberSel.innerHTML = ''; return; }
+  memberSel.innerHTML = '<option value="">Loading members…</option>';
+  fbOnValue(fbRef(db, 'gl/' + circleKey + '/members'), function (snap) {
+    var members = snap.val() || {};
+    var uids = Object.keys(members);
+    if (!uids.length) { memberSel.innerHTML = '<option value="">No members</option>'; return; }
+    memberSel.innerHTML = uids.map(function (uid) {
+      return '<option value="' + _escHtml(uid) + '">' + _escHtml(members[uid].name || uid) + '</option>';
+    }).join('');
+    if (userId && uids.indexOf(userId) !== -1) memberSel.value = userId; // default to yourself
+  }, { onlyOnce: true });
+};
+window._viewHistory = function () {
+  var circleKey = document.getElementById('hist-circle-pick').value;
+  var uid = document.getElementById('hist-member-pick').value;
+  var dateStr = document.getElementById('hist-date-pick').value;
+  var resultEl = document.getElementById('hist-result');
+  if (!circleKey || !uid || !dateStr) { toast('Pick a Circle, member, and date first', 2400); return; }
+  resultEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
+  fbOnValue(fbRef(db, 'gl/' + circleKey + '/history/' + uid + '/' + dateStr), function (snap) {
+    var raw = snap.val() || {};
+    var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, ts: p.ts, alt: 0, sp: null, ac: p.acc }; })
+      .sort(function (a, b) { return a.ts - b.ts; });
+    if (!pts.length) {
+      resultEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No history for that day — either nothing was recorded, or Location history wasn\'t on yet.</div>';
+      return;
+    }
+    var st = _trackStats(pts);
+    var memberName = (document.getElementById('hist-member-pick').selectedOptions[0] || {}).textContent || 'Member';
+    var synthTrack = { id: 'hist_' + uid + '_' + dateStr, name: memberName + ' — ' + dateStr, ts: pts[0].ts, pts: pts, stats: st };
+    window._lastHistoryTrack = synthTrack;
+    function stat(v, l) { return '<div class="trk-stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
+    resultEl.innerHTML = '<div class="trk-stat-grid">' +
+      stat(_trkFmtDist(st.distM), 'Distance') +
+      stat(_trkFmtDur(st.durMs), 'Span') +
+      stat(st.avgMph.toFixed(1) + ' mph', 'Avg speed') +
+      stat(st.maxMph.toFixed(1) + ' mph', 'Max speed') +
+      '</div>' +
+      '<div style="padding:10px 12px 18px"><button onclick="window._drawSavedTrack(window._lastHistoryTrack, true); document.getElementById(\'tracks-drawer\').classList.remove(\'open\')" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button></div>';
+  }, { onlyOnce: true });
+};
 function renderTracks(){
   var list=document.getElementById('tracks-list'); if(!list) return;
   var arr=getSavedTracks();

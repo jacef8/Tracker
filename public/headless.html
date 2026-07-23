@@ -4,7 +4,7 @@
 <body>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getDatabase, ref, set, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // Minimal, UI-less location reporter — hosted inside HeadlessTrackerService (native Android)
@@ -41,6 +41,21 @@
   function getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
   function getJoined() { try { return JSON.parse(localStorage.getItem('gl_joined') || '{}'); } catch (e) { return {}; } }
   function setJoined(m) { try { localStorage.setItem('gl_joined', JSON.stringify(m)); } catch (e) {} }
+  // Same key index.html's _setToggleHistory() writes — this page has no access to that page's
+  // JS state, so it reads the flag straight from the SAME shared localStorage.
+  function getHistoryOn() { try { return localStorage.getItem('gl_history_on') === '1'; } catch (e) { return false; } }
+
+  function metersApart(lat1, lng1, lat2, lng2) {
+    var R = 6371000;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLng = (lng2 - lng1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  // Same filtering thresholds as index.html's history write (onGpsFix) — kept in sync manually
+  // since this page can't share code with the main app.
+  var HIST_MAX_ACC_M = 50, HIST_MAX_MPH = 150, HIST_MIN_DIST_M = 50;
+  var lastHistoryPos = null, lastHistoryTs = 0;
 
   // Recomputed fresh on every single fix (not cached at startup) — favoriting a room or
   // accepting a Crew invite in the VISIBLE app while this headless instance also happens to be
@@ -73,6 +88,36 @@
     };
     keys.forEach(function (k) {
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
+    });
+    writeHistoryIfOn(uid, c);
+  }
+
+  // Mirrors index.html's history-write block inside onGpsFix — kept as a near-duplicate rather
+  // than shared code since this page can't import from the main app. Circle-scoped only (not
+  // favorites/joined-rooms), same as the main app's write.
+  function writeHistoryIfOn(uid, c) {
+    if (!getHistoryOn()) return;
+    var circleKeys = Object.keys(getCircles());
+    if (!circleKeys.length) return;
+    var accM = c.accuracy || 0;
+    if (!(accM > 0 && accM <= HIST_MAX_ACC_M)) return; // bad fix — skip
+    var now = Date.now();
+    var distM = lastHistoryPos ? metersApart(lastHistoryPos.lat, lastHistoryPos.lng, c.latitude, c.longitude) : Infinity;
+    if (!(distM > HIST_MIN_DIST_M)) return; // hasn't moved enough yet
+    if (lastHistoryPos && lastHistoryTs) {
+      var dtSec = Math.max(1, (now - lastHistoryTs) / 1000);
+      var mph = (distM / dtSec) * 2.23694;
+      if (mph > HIST_MAX_MPH) return; // implausible jump — bad fix
+    }
+    lastHistoryPos = { lat: c.latitude, lng: c.longitude };
+    lastHistoryTs = now;
+    var dateStr = new Date(now).toLocaleDateString('en-CA'); // yyyy-mm-dd, local date
+    var point = { lat: c.latitude, lng: c.longitude, ts: now, acc: Math.round(accM) };
+    circleKeys.forEach(function (k) {
+      try {
+        var histRef = push(ref(db, 'gl/' + k + '/history/' + uid + '/' + dateStr));
+        set(histRef, point);
+      } catch (e) {}
     });
   }
 
