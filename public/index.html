@@ -2180,6 +2180,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-history"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Location history</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Remember where you've been so your Circle can look back on any day (kept 30 days)</div></div></div>
       <span id="set-history-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
+    <div id="set-places-row" onclick="closeSettings(); window._openPlacesManager && window._openPlacesManager(groupName, _prettyGroup(groupName))" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#00b0ff;flex-shrink:0"><use href="#ic-target"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Location alerts</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Get notified when a Circle member arrives at or leaves a place</div></div></div>
+      <svg class="licon" style="color:var(--muted);flex-shrink:0"><use href="#ic-arrow-right"/></svg>
+    </div>
     <div class="section-title" style="margin:14px 0 7px">Voice &amp; devices</div>
     <div onclick="_setToggleVoice()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
@@ -2318,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 375;
+var APP_BUILD = 376;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4480,6 +4484,13 @@ function _syncSettings() {
   } catch (e) {}
   _setPill('set-crumbs-pill', (typeof breadcrumbsOn !== 'undefined') && !!breadcrumbsOn);
   _setPill('set-history-pill', (typeof historyOn !== 'undefined') && !!historyOn);
+  // Location alerts (Places) only make sense for a Circle — persistent membership is what
+  // "who to notify" is built on (gl/<circleKey>/members). A plain temporary room has no such
+  // roster, so there's nowhere for an alert to fan out to.
+  try {
+    var placesRow = document.getElementById('set-places-row');
+    if (placesRow) placesRow.style.display = (typeof _isCircleMember === 'function' && groupName && _isCircleMember(groupName)) ? 'flex' : 'none';
+  } catch (e) {}
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
@@ -5070,7 +5081,6 @@ function _renderCircleSwitcherList() {
         '<div style="font-size:11px;color:' + (liveCount ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
       '</div>' +
       '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" title="Invite" style="flex-shrink:0;background:none;border:none;color:var(--accent);cursor:pointer;padding:6px;line-height:1;display:flex;align-items:center"><svg class="licon"><use href="#ic-users"/></svg></button>' +
-      '<button onclick="window._openPlacesManager(\'' + safeKey + '\',\'' + safeName + '\')" title="Places &amp; alerts" style="flex-shrink:0;background:none;border:none;color:#00b0ff;cursor:pointer;padding:6px;line-height:1;display:flex;align-items:center"><svg class="licon"><use href="#ic-target"/></svg></button>' +
       '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" title="Leave" style="flex-shrink:0;background:none;border:none;color:#f85149;font-size:15px;cursor:pointer;padding:6px;line-height:1">&#10005;</button>' +
     '</div>';
   }).join('');
@@ -11251,7 +11261,10 @@ window._historyCircleChanged = function () {
   var memberSel = document.getElementById('hist-member-pick');
   if (!circleKey) { memberSel.innerHTML = ''; return; }
   memberSel.innerHTML = '<option value="">Loading members…</option>';
-  fbOnValue(fbRef(db, 'gl/' + circleKey + '/members'), function (snap) {
+  // window._fb directly, not the bare fbRef/fbOnValue aliases — those are only assigned once a
+  // room has been entered (see the assignment inside startLocationSharing), but this picker is
+  // reachable from the Tracks drawer on the home screen too, before any room is joined.
+  window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + circleKey + '/members'), function (snap) {
     var members = snap.val() || {};
     var uids = Object.keys(members);
     if (!uids.length) { memberSel.innerHTML = '<option value="">No members</option>'; return; }
@@ -11268,7 +11281,7 @@ window._viewHistory = function () {
   var resultEl = document.getElementById('hist-result');
   if (!circleKey || !uid || !dateStr) { toast('Pick a Circle, member, and date first', 2400); return; }
   resultEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
-  fbOnValue(fbRef(db, 'gl/' + circleKey + '/history/' + uid + '/' + dateStr), function (snap) {
+  window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + circleKey + '/history/' + uid + '/' + dateStr), function (snap) {
     var raw = snap.val() || {};
     var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, ts: p.ts, alt: 0, sp: null, ac: p.acc }; })
       .sort(function (a, b) { return a.ts - b.ts; });
@@ -11312,7 +11325,7 @@ function _renderPlaceEventsFeed() {
   // switching circles) stacks a new live subscription on top every time, none ever released.
   try { if (typeof window._placeEventsUnsub === 'function') window._placeEventsUnsub(); } catch (e) {}
   list.innerHTML = '<div style="padding:12px 16px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
-  window._placeEventsUnsub = fbOnValue(fbRef(db, 'gl/' + _placesManagerCircleKey + '/placeEvents'), function (snap) {
+  window._placeEventsUnsub = window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/placeEvents'), function (snap) {
     if (_placesManagerCircleKey === null) return; // drawer closed since this fired
     var raw = snap.val() || {};
     var events = Object.keys(raw).map(function (k) { return raw[k]; }).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 20);
@@ -11332,7 +11345,7 @@ function _renderPlaceEventsFeed() {
 function _renderPlacesList() {
   var list = document.getElementById('places-list'); if (!list || !_placesManagerCircleKey) return;
   list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
-  fbOnValue(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places'), function (snap) {
+  window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'), function (snap) {
     var places = snap.val() || {};
     var ids = Object.keys(places);
     if (!ids.length) {
@@ -11382,11 +11395,11 @@ window._savePlace = function () {
       arrive: !!document.getElementById('place-alert-arrive').checked,
       leave: !!document.getElementById('place-alert-leave').checked
     },
-    createdBy: userId, createdAt: Date.now()
+    createdBy: userId || (typeof _myAcct === 'function' && _myAcct()) || '', createdAt: Date.now()
   };
   try {
-    var placeRef = fbPush(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places'));
-    fbSet(placeRef, payload);
+    var placeRef = window._fb.push(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'));
+    window._fb.set(placeRef, payload);
     try { window._evt('added Place "' + name + '"'); } catch (e) {}
   } catch (e) { toast('Failed to save — try again', 2400); return; }
   document.getElementById('place-modal').style.display = 'none';
@@ -11398,7 +11411,7 @@ window._savePlace = function () {
 window._deletePlace = function (placeId) {
   if (!_placesManagerCircleKey) return;
   _confirm('Delete this Place? Alerts for it will stop.', function () {
-    try { fbRemove(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places/' + placeId)); } catch (e) {}
+    try { window._fb.remove(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places/' + placeId)); } catch (e) {}
     _renderPlacesList();
   });
 };
