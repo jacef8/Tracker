@@ -353,14 +353,19 @@ public class MainActivity extends BridgeActivity {
         if (hasFocus) hideNavBar();
     }
 
-    // Immersive: hide the bottom Android navigation bar so the map uses the full screen.
-    // The status bar (clock/battery) stays. Swipe up from the bottom edge reveals the nav
-    // bar briefly, then it auto-hides again (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE).
+    // Immersive: hide BOTH the bottom Android navigation bar and the top status bar (clock/
+    // battery/signal) so the map uses the full screen and the app's own topbar isn't fighting
+    // for space with a second, redundant bar above it (confirmed on-device 2026-07-22 — the
+    // status bar was sitting directly above the app's topbar, eating into map height for no
+    // real benefit on a full-screen map app). #topbar's own CSS already reserves
+    // safe-area-inset-top via padding, so hiding the status bar just makes that inset collapse
+    // to ~0 automatically — no web-side change needed. Swipe from either edge reveals the bars
+    // briefly, then they auto-hide again (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE).
     private void hideNavBar() {
         try {
             WindowInsetsControllerCompat c = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
             if (c != null) {
-                c.hide(WindowInsetsCompat.Type.navigationBars());
+                c.hide(WindowInsetsCompat.Type.systemBars());
                 c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
         } catch (Exception e) {
