@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 379;
+var APP_BUILD = 380;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9897,6 +9897,34 @@ function _mergeInvites() {
     })
     .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
   _renderInviteInbox();
+  _selfHealCircleInvites();
+}
+// The synchronous _isCircleMember check above only catches the common case — it reads THIS
+// device's own gl_circles cache, which can be stale on a multi-device account (confirmed
+// on-device 2026-07-23: membership accepted on one device didn't update another signed-in
+// device's local cache, so the filter above missed it there). This is the authoritative
+// version: ask Firebase directly whether either this device's uid or the account's uid is
+// already in gl/<circleKey>/members, and remove the stale invite if so — real source of truth,
+// not a local cache that can fall behind. Runs after every render as a background cleanup;
+// removing it triggers the onValue listener to naturally re-render without it.
+function _selfHealCircleInvites() {
+  var f = window._fb; if (!f || !f.db) return;
+  var deviceUid = null; try { deviceUid = localStorage.getItem('gl_uid'); } catch (e) {}
+  var acctUid = null; try { acctUid = localStorage.getItem('gl_account_uid'); } catch (e) {}
+  var uids = [deviceUid, acctUid].filter(Boolean);
+  if (!uids.length) return;
+  (window._pendingInvites || []).forEach(function (inv) {
+    if (!inv.circle || !inv.key || !inv._src || !inv._key) return;
+    uids.forEach(function (uid) {
+      try {
+        f.get(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid)).then(function (snap) {
+          if (snap.exists()) {
+            try { f.remove(f.ref(f.db, 'gl/_invites/' + inv._src + '/' + inv._key)); } catch (e) {}
+          }
+        }).catch(function () {});
+      } catch (e) {}
+    });
+  });
 }
 function _watchInvites() {
   var f = window._fb; if (!f || !f.db) return;
