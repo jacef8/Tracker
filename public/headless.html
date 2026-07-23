@@ -4,7 +4,7 @@
 <body>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getDatabase, ref, set, push, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // Minimal, UI-less location reporter — hosted inside HeadlessTrackerService (native Android)
@@ -90,6 +90,70 @@
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
     });
     writeHistoryIfOn(uid, c);
+    checkPlaceGeofences(uid, c);
+  }
+
+  // Place Alerts — mirrors index.html's _checkPlaceGeofences (onGpsFix). Circle-scoped only.
+  // This file has no live onValue subscriptions (kept deliberately minimal), so places are
+  // cached with a short TTL and re-fetched with a one-shot get() rather than a standing
+  // subscription — acceptable since fixes reaching this page are already infrequent (every
+  // ~30s-3min in the background), so a few minutes of place-list staleness doesn't matter.
+  var PLACE_HYSTERESIS_M = 15;
+  var placesCache = {}, placesCacheTs = {};
+  var placeGeoState = {}; // 'uid_placeId' -> {inside: bool|null}
+  var PLACES_CACHE_TTL_MS = 5 * 60 * 1000;
+  function getPlacesForCircle(circleKey) {
+    var now = Date.now();
+    if (placesCache[circleKey] && (now - (placesCacheTs[circleKey] || 0)) < PLACES_CACHE_TTL_MS) {
+      return Promise.resolve(placesCache[circleKey]);
+    }
+    return get(ref(db, 'gl/' + circleKey + '/places')).then(function (snap) {
+      var val = snap.val() || {};
+      placesCache[circleKey] = val;
+      placesCacheTs[circleKey] = now;
+      return val;
+    }).catch(function () { return placesCache[circleKey] || {}; });
+  }
+  function sendPlacePush(circleKey, kind, placeName) {
+    try {
+      var name = getName() || 'Someone';
+      var body = name + (kind === 'arrive' ? ' arrived at ' : ' left ') + (placeName || 'a place');
+      // toFavs required — circle members' push subs live only in favSubs, not pushSubs (see
+      // _registerFavSub in index.html). Without this the server finds zero recipients.
+      fetch('/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ns: 'gl', group: circleKey, type: 'place_' + kind, title: placeName || 'Place alert', body: body, url: '/', toFavs: true })
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function checkPlaceGeofences(uid, c) {
+    var circleKeys = Object.keys(getCircles());
+    if (!circleKeys.length) return;
+    circleKeys.forEach(function (circleKey) {
+      getPlacesForCircle(circleKey).then(function (places) {
+        Object.keys(places).forEach(function (placeId) {
+          var p = places[placeId]; if (!p || typeof p.lat !== 'number') return;
+          var dist = metersApart(c.latitude, c.longitude, p.lat, p.lng);
+          var radius = p.radius || 200;
+          var stateKey = uid + '_' + placeId;
+          var state = placeGeoState[stateKey] || { inside: null };
+          var isInside;
+          if (state.inside === true) isInside = dist <= radius + PLACE_HYSTERESIS_M;
+          else if (state.inside === false) isInside = dist <= radius - PLACE_HYSTERESIS_M;
+          else isInside = dist <= radius;
+          var firstCheck = state.inside === null;
+          placeGeoState[stateKey] = { inside: isInside };
+          if (firstCheck || isInside === state.inside) return;
+          var kind = isInside ? 'arrive' : 'leave';
+          if (p.alertOn && p.alertOn[kind] === false) return;
+          try {
+            var evRef = push(ref(db, 'gl/' + circleKey + '/placeEvents'));
+            set(evRef, { uid: uid, name: getName() || 'Someone', placeId: placeId, placeName: p.name || 'a place', kind: kind, ts: Date.now() });
+          } catch (e) {}
+          sendPlacePush(circleKey, kind, p.name);
+        });
+      });
+    });
   }
 
   // Mirrors index.html's history-write block inside onGpsFix — kept as a near-duplicate rather

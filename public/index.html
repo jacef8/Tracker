@@ -388,6 +388,15 @@
     background: rgba(0,0,0,.2); border: none; border-radius: 12px;
     padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
   }
+  #place-mode-bar {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%; transform: translateX(-50%);
+    z-index: 400;
+    background: #00b0ff; border-radius: 20px;
+    padding: 8px 18px; font-size: 13px; font-weight: 700; color: #0d1117;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0,176,255,.45); white-space: nowrap;
+  }
+  #place-mode-bar.active { display: flex; }
   #measure-bar {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%; transform: translateX(-50%);
     z-index: 400;
@@ -505,22 +514,22 @@
   /* Slide-out panels become BOTTOM SHEETS (~half screen) so the map stays
      visible — much roomier than the old narrow side drawers, on phone & PC.
      Full width on phones; a centered wide sheet on big screens. */
-  #user-drawer, #saved-pins-drawer, #tracks-drawer, #track-detail-drawer {
+  #user-drawer, #saved-pins-drawer, #tracks-drawer, #track-detail-drawer, #places-drawer {
     top: auto !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
     width: auto !important; height: 56vh !important; max-height: 56vh !important;
     transform: translateY(110%) !important;   /* fully off-screen when closed — no faint edge line */
     border: none !important; border-top: 2px solid rgba(240,165,0,0.5) !important;
     border-radius: 18px 18px 0 0 !important; box-shadow: 0 -8px 30px rgba(0,0,0,0.55) !important;
   }
-  #user-drawer.open, #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open {
+  #user-drawer.open, #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open, #places-drawer.open {
     transform: translateY(0) !important;
   }
   @media (min-width: 769px) {
-    #user-drawer, #saved-pins-drawer, #tracks-drawer, #track-detail-drawer {
+    #user-drawer, #saved-pins-drawer, #tracks-drawer, #track-detail-drawer, #places-drawer {
       left: 50% !important; right: auto !important; width: min(640px, 94vw) !important;
       transform: translateX(-50%) translateY(110%) !important;
     }
-    #user-drawer.open, #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open {
+    #user-drawer.open, #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open, #places-drawer.open {
       transform: translateX(-50%) translateY(0) !important;
     }
   }
@@ -801,7 +810,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   #drawer-backdrop.show { display: block; }
-  #saved-pins-drawer, #tracks-drawer, #track-detail-drawer {
+  #saved-pins-drawer, #tracks-drawer, #track-detail-drawer, #places-drawer {
     position: fixed; top: calc(var(--topbar-h) + var(--safe-top)); right: 0; bottom: 0; z-index: 302;
     width: min(320px, 92vw);
     background: rgba(13,17,23,0.55);
@@ -811,7 +820,7 @@
     transform: translateX(100%); transition: transform .22s ease;
     display: flex; flex-direction: column;
   }
-  #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open { transform: translateX(0); }
+  #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open, #places-drawer.open { transform: translateX(0); }
   @keyframes recpulse { 0%,100%{opacity:1} 50%{opacity:.25} }
   .trk-row { display:flex; align-items:center; gap:10px; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin:6px 12px; cursor:pointer; }
   .trk-row:active { background:rgba(255,255,255,.05); }
@@ -1384,6 +1393,48 @@
 <div id="pin-mode-bar">
   <svg class="licon licon-sm"><use href="#ic-pin"/></svg>Tap the map to place a pin
   <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
+</div>
+
+<div id="place-mode-bar">
+  <svg class="licon licon-sm"><use href="#ic-target"/></svg>Tap the map for your Place's center
+  <button class="cancel-mode" onclick="window._disablePlaceMode()">Cancel</button>
+</div>
+
+<!-- ══ PLACE MODAL (name + radius + arrive/leave, after tapping the map) ══ -->
+<div id="place-modal" style="display:none;position:fixed;inset:0;z-index:410;background:rgba(0,0,0,.55);align-items:flex-end;justify-content:center">
+  <div style="width:100%;max-width:440px;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px) 16px 16px">
+    <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:12px">New Place</div>
+    <input id="place-name-input" type="text" placeholder="Name (e.g. Home, School)" maxlength="40" style="width:100%;padding:11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:10px" />
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Alert radius</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="place-radius-btn" data-radius="100" onclick="window._pickPlaceRadius(100)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Small (100m)</button>
+      <button class="place-radius-btn" data-radius="200" onclick="window._pickPlaceRadius(200)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--accent);background:var(--accent);color:#000;font-size:12px;font-weight:700;cursor:pointer">Medium (200m)</button>
+      <button class="place-radius-btn" data-radius="400" onclick="window._pickPlaceRadius(400)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Large (400m)</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input id="place-alert-arrive" type="checkbox" checked style="width:16px;height:16px" />Notify when someone arrives</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input id="place-alert-leave" type="checkbox" checked style="width:16px;height:16px" />Notify when someone leaves</label>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button onclick="window._cancelPlaceModal()" style="flex:1;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
+      <button onclick="window._savePlace()" style="flex:1;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Save Place</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PLACES DRAWER (manage a Circle's alert places) ══ -->
+<div id="places-drawer">
+  <div class="panel-header">
+    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-target"/></svg><span id="places-drawer-title">Places</span></span>
+    <button class="panel-close" onclick="document.getElementById('places-drawer').classList.remove('open'); if (typeof window._placeEventsUnsub === 'function') { window._placeEventsUnsub(); window._placeEventsUnsub = null; }"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+  </div>
+  <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Get notified when a Circle member arrives at or leaves a place.</div>
+  <div style="padding:10px 12px 0">
+    <button onclick="window._startAddPlace()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">+ Add Place</button>
+  </div>
+  <div id="places-list" style="padding:8px 0"></div>
+  <div style="padding:10px 12px 4px;font-size:12px;font-weight:700;color:var(--muted);border-top:1px solid var(--border);margin-top:4px">Recent activity</div>
+  <div id="place-events-list" style="overflow-y:auto;flex:1;padding:4px 0 12px"></div>
 </div>
 
 <!-- ══ OFFLINE DOWNLOAD MODE BAR (map stays visible; frame the area) ════ -->
@@ -2252,6 +2303,8 @@ function _prettyGroup(g) {
   return String(g == null ? '' : g).replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }
 let pinMode = false, pendingCoords = null;
+let placeMode = false, pendingPlaceCoords = null, placeRadiusPicked = 200;
+let _placesManagerCircleKey = null, _placesManagerCircleName = '';
 let _editingPid = null; // set when the pin sheet is editing an existing pin instead of dropping a new one
 let userMarkers = {}, pinMarkers = {};
 var locationHidden = false; // when true: stay in room, chat & view, but don't broadcast position
@@ -2265,7 +2318,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 374;
+var APP_BUILD = 375;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4560,6 +4613,58 @@ function _sweepOldHistory() {
     });
   } catch (e) {}
 }
+// ── Place Alerts: geofence detection ────────────────────────────────
+// Places are cached per-circle via one LIVE subscription (not re-queried per fix — that would
+// hammer Firebase on every single GPS fix). window._placesCache[circleKey] mirrors
+// window._circleUsersAll's existing pattern for the same reason.
+window._placesCache = window._placesCache || {};
+window._placesSubbed = window._placesSubbed || {};
+window._placeGeoState = window._placeGeoState || {}; // 'uid_placeId' -> {inside: bool}
+var PLACE_HYSTERESIS_M = 15; // avoids flapping arrive/leave right on the boundary line
+function _ensurePlacesSubscribed(circleKey) {
+  if (window._placesSubbed[circleKey]) return;
+  window._placesSubbed[circleKey] = true;
+  try {
+    fbOnValue(fbRef(db, 'gl/' + circleKey + '/places'), function (snap) {
+      window._placesCache[circleKey] = snap.val() || {};
+    });
+  } catch (e) {}
+}
+// Called once per fix (from onGpsFix) with the fix already fan-out to every circle. Checks the
+// CURRENT USER's own position against every place in every circle they belong to — an arrival/
+// departure is only meaningful for the person actually moving, not for someone else's fix.
+function _checkPlaceGeofences(lat, lng, circleKeys) {
+  circleKeys.forEach(function (circleKey) {
+    var places = window._placesCache[circleKey]; if (!places) return;
+    Object.keys(places).forEach(function (placeId) {
+      var p = places[placeId]; if (!p || typeof p.lat !== 'number') return;
+      var dist = metersApart(lat, lng, p.lat, p.lng);
+      var radius = p.radius || 200;
+      var stateKey = userId + '_' + placeId;
+      var state = window._placeGeoState[stateKey] || { inside: null }; // null = not yet known
+      var isInside;
+      if (state.inside === true) isInside = dist <= radius + PLACE_HYSTERESIS_M; // stay inside until well clear
+      else if (state.inside === false) isInside = dist <= radius - PLACE_HYSTERESIS_M; // stay outside until well within
+      else isInside = dist <= radius; // first-ever check for this place — no transition to fire, just establish state
+      var firstCheck = state.inside === null;
+      window._placeGeoState[stateKey] = { inside: isInside };
+      if (firstCheck || isInside === state.inside) return; // no transition
+      var kind = isInside ? 'arrive' : 'leave';
+      if (p.alertOn && p.alertOn[kind] === false) return; // this transition type isn't wanted
+      try {
+        var evRef = fbPush(fbRef(db, 'gl/' + circleKey + '/placeEvents'));
+        fbSet(evRef, { uid: userId, name: userName || 'Someone', placeId: placeId, placeName: p.name || 'a place', kind: kind, ts: Date.now() });
+      } catch (e) {}
+      try {
+        var body = (userName || 'Someone') + (kind === 'arrive' ? ' arrived at ' : ' left ') + (p.name || 'a place');
+        // toFavs is required here — circle members' push subscriptions live ONLY in favSubs
+        // (see _registerFavSub), never pushSubs (which is for people actively in the room right
+        // now). Without this, the /push endpoint would find zero recipients for a Circle.
+        if (typeof pushNotify === 'function') pushNotify('place_' + kind, p.name || 'Place alert', body, { toFavs: true }, circleKey);
+      } catch (e) {}
+    });
+  });
+}
 function _setToggleAlerts() { toggleAlerts(!alertsOn); setTimeout(_syncSettings, 350); }
 function _setToggleCrumbs() { if (typeof toggleBreadcrumbs === 'function') toggleBreadcrumbs(); setTimeout(_syncSettings, 60); }
 function _setToggleParcels() {
@@ -4965,6 +5070,7 @@ function _renderCircleSwitcherList() {
         '<div style="font-size:11px;color:' + (liveCount ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
       '</div>' +
       '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" title="Invite" style="flex-shrink:0;background:none;border:none;color:var(--accent);cursor:pointer;padding:6px;line-height:1;display:flex;align-items:center"><svg class="licon"><use href="#ic-users"/></svg></button>' +
+      '<button onclick="window._openPlacesManager(\'' + safeKey + '\',\'' + safeName + '\')" title="Places &amp; alerts" style="flex-shrink:0;background:none;border:none;color:#00b0ff;cursor:pointer;padding:6px;line-height:1;display:flex;align-items:center"><svg class="licon"><use href="#ic-target"/></svg></button>' +
       '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" title="Leave" style="flex-shrink:0;background:none;border:none;color:#f85149;font-size:15px;cursor:pointer;padding:6px;line-height:1">&#10005;</button>' +
     '</div>';
   }).join('');
@@ -6710,6 +6816,18 @@ function initMap() {
       handleMeasureClick(e.lngLat); return;
     }
 
+    // ── 1b. Place drop mode (geofence center) ──────────────────────
+    if (placeMode) {
+      pendingPlaceCoords = e.lngLat;
+      window._disablePlaceMode();
+      document.getElementById('place-name-input').value = '';
+      placeRadiusPicked = 200;
+      document.getElementById('place-alert-arrive').checked = true;
+      document.getElementById('place-alert-leave').checked = true;
+      document.getElementById('place-modal').style.display = 'flex';
+      return;
+    }
+
     // ── 2. Pin drop mode ──────────────────────────────────────────
     if (pinMode) {
       pendingCoords = e.lngLat;
@@ -7742,9 +7860,11 @@ function startLocationSharing() {
       _circleKeys = Object.keys(_getCircles());
       for (var _ci = 0; _ci < _circleKeys.length; _ci++) {
         var _ck = _circleKeys[_ci];
+        _ensurePlacesSubscribed(_ck); // no-op after the first call per circle — see the guard inside
         if (_ck === groupName) continue; // already written above, skip the duplicate
         fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
       }
+      if (_circleKeys.length) _checkPlaceGeofences(lat, lng, _circleKeys);
     } catch (e) {}
     // Favorited rooms: the same "always show up here" fan-out as a Circle, but unilateral — no
     // shared config flag, no permanent members roster, no invite/accept flow. Favoriting a room
@@ -9224,6 +9344,16 @@ function disablePinMode() {
   document.getElementById('pin-mode-bar').classList.remove('active');
   map.getCanvas().style.cursor = '';
 }
+window._enablePlaceMode = function () {
+  placeMode = true;
+  document.getElementById('place-mode-bar').classList.add('active');
+  map.getCanvas().style.cursor = 'crosshair';
+};
+window._disablePlaceMode = function () {
+  placeMode = false;
+  document.getElementById('place-mode-bar').classList.remove('active');
+  map.getCanvas().style.cursor = '';
+};
 
 // pin-hub-btn handled by openPinHub() wired below
 document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
@@ -11159,6 +11289,118 @@ window._viewHistory = function () {
       '</div>' +
       '<div style="padding:10px 12px 18px"><button onclick="window._drawSavedTrack(window._lastHistoryTrack, true); document.getElementById(\'tracks-drawer\').classList.remove(\'open\')" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button></div>';
   }, { onlyOnce: true });
+};
+
+// ── Places (geofence arrive/leave alerts) — management UI ──────────
+// A Place lives at gl/<circleKey>/places/<placeId>, distinct from room pins
+// (gl/<group>/pins, session-scoped) and My Saved Pins (personal, localStorage-only) — it needs
+// to be readable by every circle member's device, same tier as members/<uid>.
+window._openPlacesManager = function (circleKey, circleName) {
+  _placesManagerCircleKey = circleKey;
+  _placesManagerCircleName = circleName || circleKey;
+  document.getElementById('places-drawer-title').textContent = 'Places — ' + _placesManagerCircleName;
+  document.getElementById('places-drawer').classList.add('open');
+  _renderPlacesList();
+  _renderPlaceEventsFeed();
+};
+// Live (not one-shot) — this is the fallback source of truth if a push notification is ever
+// missed, so it should stay current for as long as the drawer is open, not just the moment it
+// was opened.
+function _renderPlaceEventsFeed() {
+  var list = document.getElementById('place-events-list'); if (!list || !_placesManagerCircleKey) return;
+  // Detach the previous circle's listener first — without this, reopening the drawer (or
+  // switching circles) stacks a new live subscription on top every time, none ever released.
+  try { if (typeof window._placeEventsUnsub === 'function') window._placeEventsUnsub(); } catch (e) {}
+  list.innerHTML = '<div style="padding:12px 16px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+  window._placeEventsUnsub = fbOnValue(fbRef(db, 'gl/' + _placesManagerCircleKey + '/placeEvents'), function (snap) {
+    if (_placesManagerCircleKey === null) return; // drawer closed since this fired
+    var raw = snap.val() || {};
+    var events = Object.keys(raw).map(function (k) { return raw[k]; }).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 20);
+    if (!events.length) {
+      list.innerHTML = '<div style="padding:12px 16px;text-align:center;color:var(--muted);font-size:12px">No activity yet.</div>';
+      return;
+    }
+    list.innerHTML = events.map(function (ev) {
+      var when = new Date(ev.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      var verb = ev.kind === 'arrive' ? 'arrived at' : 'left';
+      return '<div style="padding:8px 16px;font-size:13px;color:var(--text);border-bottom:1px solid var(--border)">' +
+        '<b>' + _escHtml(ev.name || 'Someone') + '</b> ' + verb + ' <b>' + _escHtml(ev.placeName || 'a place') + '</b>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + when + '</div></div>';
+    }).join('');
+  });
+}
+function _renderPlacesList() {
+  var list = document.getElementById('places-list'); if (!list || !_placesManagerCircleKey) return;
+  list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
+  fbOnValue(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places'), function (snap) {
+    var places = snap.val() || {};
+    var ids = Object.keys(places);
+    if (!ids.length) {
+      list.innerHTML = '<div style="padding:22px 16px;text-align:center;color:var(--muted);font-size:13px">No places yet.<br>Tap <b>+ Add Place</b> to set one up.</div>';
+      return;
+    }
+    list.innerHTML = ids.map(function (pid) {
+      var p = places[pid];
+      var alerts = [];
+      if (p.alertOn && p.alertOn.arrive) alerts.push('arrive');
+      if (p.alertOn && p.alertOn.leave) alerts.push('leave');
+      return '<div class="trk-row" style="cursor:default">' +
+        '<svg class="licon" style="color:#00b0ff;flex-shrink:0"><use href="#ic-target"/></svg>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(p.name || 'Place') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + (p.radius || 200) + 'm radius · alerts on ' + (alerts.length ? alerts.join(' &amp; ') : 'nothing') + '</div></div>' +
+        '<button onclick="window._deletePlace(\'' + _escHtml(pid) + '\')" title="Delete" style="flex-shrink:0;background:none;border:none;color:#f85149;cursor:pointer;padding:6px"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
+        '</div>';
+    }).join('');
+  }, { onlyOnce: true });
+}
+window._startAddPlace = function () {
+  document.getElementById('places-drawer').classList.remove('open');
+  window._enablePlaceMode();
+  toast('Tap the map to set the Place’s center', 3000);
+};
+window._pickPlaceRadius = function (r) {
+  placeRadiusPicked = r;
+  document.querySelectorAll('.place-radius-btn').forEach(function (btn) {
+    var active = Number(btn.getAttribute('data-radius')) === r;
+    btn.style.background = active ? 'var(--accent)' : 'var(--bg)';
+    btn.style.color = active ? '#000' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+  });
+};
+window._cancelPlaceModal = function () {
+  document.getElementById('place-modal').style.display = 'none';
+  pendingPlaceCoords = null;
+  if (_placesManagerCircleKey) document.getElementById('places-drawer').classList.add('open');
+};
+window._savePlace = function () {
+  if (!pendingPlaceCoords || !_placesManagerCircleKey) { toast('Something went wrong — try again', 2400); return; }
+  var name = (document.getElementById('place-name-input').value || '').trim();
+  if (!name) { toast('Give this Place a name', 2200); return; }
+  var payload = {
+    name: name, lat: pendingPlaceCoords.lat, lng: pendingPlaceCoords.lng, radius: placeRadiusPicked,
+    alertOn: {
+      arrive: !!document.getElementById('place-alert-arrive').checked,
+      leave: !!document.getElementById('place-alert-leave').checked
+    },
+    createdBy: userId, createdAt: Date.now()
+  };
+  try {
+    var placeRef = fbPush(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places'));
+    fbSet(placeRef, payload);
+    try { window._evt('added Place "' + name + '"'); } catch (e) {}
+  } catch (e) { toast('Failed to save — try again', 2400); return; }
+  document.getElementById('place-modal').style.display = 'none';
+  pendingPlaceCoords = null;
+  document.getElementById('places-drawer').classList.add('open');
+  toast('Place saved', 2200);
+  _renderPlacesList();
+};
+window._deletePlace = function (placeId) {
+  if (!_placesManagerCircleKey) return;
+  _confirm('Delete this Place? Alerts for it will stop.', function () {
+    try { fbRemove(fbRef(db, 'gl/' + _placesManagerCircleKey + '/places/' + placeId)); } catch (e) {}
+    _renderPlacesList();
+  });
 };
 function renderTracks(){
   var list=document.getElementById('tracks-list'); if(!list) return;
@@ -13436,10 +13678,10 @@ window._voiceMod().then(function (m) {
     }
   };
   // Least-modal first → most-modal last; on a z-index tie the later (more modal) wins.
-  var IDS = ['user-drawer','track-detail-drawer','tracks-drawer','saved-pins-drawer',
+  var IDS = ['user-drawer','track-detail-drawer','tracks-drawer','saved-pins-drawer','places-drawer',
     'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','voice-log-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
-    'pin-modal','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
+    'pin-modal','place-modal','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
     'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup'];
   function g(id) { return document.getElementById(id); }
   // On-screen ⟺ has real size AND overlaps the viewport. Handles BOTH display-toggled
