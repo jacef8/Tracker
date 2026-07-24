@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 383;
+var APP_BUILD = 384;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2537,6 +2537,46 @@ function _setGroupBadge(el, extraCount) {
     b.style.display = 'none';
   }
 }
+// Reset a marker to its normal solo look (plain circle, its own initials) — used both for
+// markers that were never grouped and ones that just split back apart.
+function _applyMarkerSolo(mk) {
+  var el = mk && mk._el; if (!el) return;
+  el.style.display = 'flex';
+  el.style.width = '44px';
+  el.style.borderRadius = '50%';
+  el.style.border = mk._borderShorthand || '3px solid #888ea0';
+  var initEl = el.querySelector('.mk-initials');
+  if (initEl) initEl.textContent = mk._initials || '';
+  _setGroupBadge(el, 0);
+}
+// Riding together / standing right next to each other: morph the primary marker into an
+// oval showing the FIRST TWO members' own initials in their own colors, side by side —
+// anyone past those two just adds to the "+N" badge (no badge at all for exactly 2 people).
+function _applyMarkerMerged(primary, members) {
+  var mk = userMarkers[primary], el = mk && mk._el; if (!el) return;
+  var ordered = members.slice();
+  if (ordered.indexOf(userId) !== -1) {
+    ordered = [userId].concat(ordered.filter(function (u) { return u !== userId; }).sort());
+  } else {
+    ordered = ordered.sort();
+  }
+  var shown = ordered.slice(0, 2);
+  el.style.display = 'flex';
+  el.style.width = '68px';
+  el.style.borderRadius = '22px';
+  el.style.border = '3px solid #ffffff';
+  el.style.background = 'transparent';
+  var initEl = el.querySelector('.mk-initials');
+  if (initEl) {
+    initEl.innerHTML = shown.map(function (u) {
+      var m = userMarkers[u];
+      var col = (m && m._fillColor) || '#888ea0';
+      var txt = (m && m._initials) || '';
+      return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + escapeHtmlJs(txt) + '</span>';
+    }).join('');
+  }
+  _setGroupBadge(el, ordered.length - shown.length);
+}
 function _updateMarkerGrouping() {
   var uids = Object.keys(userMarkers).filter(function (u) { return userMarkers[u] && userMarkers[u]._ll; });
   var parent = {};
@@ -2565,7 +2605,7 @@ function _updateMarkerGrouping() {
     var members = groups[r];
     if (members.length < 2) {
       var mk0 = userMarkers[members[0]];
-      if (mk0 && mk0._el) { mk0._el.style.display = 'flex'; _setGroupBadge(mk0._el, 0); }
+      if (mk0) _applyMarkerSolo(mk0);
       return;
     }
     // "You" wins as the visible primary if you're in the cluster; otherwise first by uid
@@ -2573,9 +2613,9 @@ function _updateMarkerGrouping() {
     var primary = members.indexOf(userId) !== -1 ? userId : members.slice().sort()[0];
     members.forEach(function (u) {
       var mk = userMarkers[u]; if (!mk || !mk._el) return;
-      if (u === primary) { mk._el.style.display = 'flex'; _setGroupBadge(mk._el, members.length - 1); }
-      else mk._el.style.display = 'none';
+      if (u !== primary) mk._el.style.display = 'none';
     });
+    _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
   });
 }
@@ -8470,7 +8510,13 @@ function listenUsers() {
           cursor: 'pointer', opacity: opacity,
           fontFamily: 'system-ui, sans-serif', userSelect: 'none',
         });
-        el.textContent = initials(data.name);
+        // Initials live in their own child (not raw el.textContent) so the merge-marker
+        // code below can rewrite just this piece without wiping the speed label / badge.
+        var _initEl = document.createElement('div');
+        _initEl.className = 'mk-initials';
+        _initEl.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit';
+        _initEl.textContent = initials(data.name);
+        el.appendChild(_initEl);
         el.style.position = 'relative';
         // Small speed label that sits just under the dot (shown only while driving).
         var _spdEl = document.createElement('div');
@@ -8483,6 +8529,9 @@ function listenUsers() {
           .setLngLat([data.lng, data.lat])
           .addTo(map);
         userMarkers[uid]._el = el;
+        userMarkers[uid]._fillColor = fillColor;
+        userMarkers[uid]._borderShorthand = isMine ? '4px solid #f0a500' : ('3px solid ' + borderColor);
+        userMarkers[uid]._initials = initials(data.name);
         // Tap marker → open the bottom info card (a full-width bar that never covers the
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
         el.addEventListener('click', function() {
@@ -8501,6 +8550,9 @@ function listenUsers() {
         }
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
+        userMarkers[uid]._fillColor = fillColor;
+        userMarkers[uid]._borderShorthand = isMine ? '4px solid #f0a500' : ('3px solid ' + borderColor);
+        userMarkers[uid]._initials = initials(data.name);
         if (el) {
           el.style.background   = fillColor;
           el.style.borderColor  = borderColor;
