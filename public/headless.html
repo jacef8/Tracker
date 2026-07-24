@@ -57,6 +57,11 @@
   var HIST_MAX_ACC_M = 50, HIST_MAX_MPH = 150, HIST_MIN_DIST_M = 50;
   var lastHistoryPos = null, lastHistoryTs = 0;
 
+  // "Here since" — mirrors index.html's onGpsFix anchor so the "Here for Xm"/"Moving" label
+  // stays correct across background fixes too (not just foreground ones).
+  var hereAnchor = null, hereSinceTs = 0;
+  var HERE_MOVE_M = 40;
+
   // Recomputed fresh on every single fix (not cached at startup) — favoriting a room or
   // accepting a Crew invite in the VISIBLE app while this headless instance also happens to be
   // running takes effect on the very next fix, no restart needed, since both share localStorage.
@@ -81,10 +86,15 @@
     var keys = fanOutKeys();
     if (!keys.length) return;
     var c = pos.coords;
+    var spdMph = c.speed != null ? Math.round(c.speed * 2.23694) : 0;
+    var hereMovedM = hereAnchor ? metersApart(hereAnchor.lat, hereAnchor.lng, c.latitude, c.longitude) : Infinity;
+    if (spdMph >= 3 || hereMovedM > HERE_MOVE_M || !hereSinceTs) {
+      hereAnchor = { lat: c.latitude, lng: c.longitude }; hereSinceTs = Date.now();
+    }
     var payload = {
       lat: c.latitude, lng: c.longitude, name: getName(), dev: getDev(),
       accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
-      spd: c.speed != null ? Math.round(c.speed * 2.23694) : 0, spdH: 1, rest: 0
+      spd: spdMph, spdH: 1, rest: 0, hereSince: hereSinceTs
     };
     keys.forEach(function (k) {
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
