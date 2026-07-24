@@ -1062,7 +1062,7 @@
         <!-- In-app invites from people inside a room -->
         <div id="invite-inbox" style="display:none"></div>
 
-        <div>
+        <div id="home-name-row">
           <div class="field-label">Your name</div>
           <div class="input-icon-wrap">
             <svg class="licon licon-sm input-icon"><use href="#ic-user"/></svg>
@@ -1177,6 +1177,18 @@
             <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
               <div id="acct-stat-saved" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
               <div style="font-size:10px;color:var(--muted);margin-top:2px">Saved spots</div>
+            </div>
+          </div>
+
+          <!-- Your name — moved here from the home screen (build 393+) to declutter it for
+               returning users; home still shows its own field for brand-new visitors with no
+               saved name yet (see home-name-row toggle in showJoinScreen). -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+            <div class="field-label" style="margin-bottom:6px">Your name</div>
+            <div class="input-icon-wrap">
+              <svg class="licon licon-sm input-icon"><use href="#ic-user"/></svg>
+              <input class="join-input" id="acct-name-input" placeholder="e.g. Jace" maxlength="24" autocomplete="off"
+                onchange="window._setMyName(this.value)" onblur="window._setMyName(this.value)" />
             </div>
           </div>
 
@@ -2322,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 393;
+var APP_BUILD = 394;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5433,7 +5445,21 @@ window._toggleColorSwatches = function () {
   var s = document.getElementById('acct-color-swatches'); if (!s) return;
   s.style.display = (s.style.display === 'none' || !s.style.display) ? 'flex' : 'none';
 };
+// Your display name, editable from the Account page (moved off the home screen to declutter
+// it for returning users — see home-name-row). Mirrors _setMyColor's shape: update local
+// state, persist, and push live if you're currently in a room.
+window._setMyName = function(v) {
+  v = (v || '').trim().slice(0, 24);
+  if (!v) return;
+  userName = v;
+  try { var ni = document.getElementById('inp-name'); if (ni) ni.value = v; } catch (e) {}
+  try { var s = getSavedSession(); saveSession(v, (groupName || s.group || ''), (userId || s.uid || '')); } catch (e) {}
+  try { window._writeSession && window._writeSession(); } catch (e) {}
+  try { if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/name'), v); } catch (e) {}
+  try { toast('Name updated', 1800); } catch (e) {}
+};
 function _renderAccountPage() {
+  try { var _ani = document.getElementById('acct-name-input'); if (_ani && document.activeElement !== _ani) _ani.value = (typeof userName !== 'undefined' && userName) || getSavedSession().name || ''; } catch (e) {}
   try { if (window._ensurePresenceSub) window._ensurePresenceSub(); } catch (e) {}  // so friends show before joining
   try { setTimeout(function () { _registerAllFavSubs(); }, 1500); } catch (e) {}    // keep favorite-group background alerts live (incl. native FCM)
   try { _renderFriends(); } catch (e) {}
@@ -6546,6 +6572,11 @@ function showJoinScreen() {
     var _ss = getSavedSession();
     var _ni = document.getElementById('inp-name');
     if (_ni && !_ni.value && _ss && _ss.name) _ni.value = _ss.name;
+    // Returning users already have a name — hide the field here and let them edit it from
+    // the Account page instead (decluttered home screen). Brand-new visitors with no saved
+    // name yet still see it, since they need somewhere to enter one before their first join.
+    var _hnr = document.getElementById('home-name-row');
+    if (_hnr) _hnr.style.display = (_ss && _ss.name) ? 'none' : '';
   } catch (e) {}
   // Live diagnostic on the build stamp: are we detected as the native app?
   try { window._refreshBuildStamp(); } catch (e) {}
@@ -8594,7 +8625,11 @@ function listenUsers() {
 
       // Color scheme: gold=me, green=live teammate, teal=resting (battery saver), gray=last known
       // Members can pick their own dot color (Account page); fall back to the auto color.
-      const fillColor   = isMine ? '#f0a500' : (data.color || userColor(uid));
+      // Priority: YOUR OWN override for this person (if you've picked one) beats their own
+      // chosen color, which beats the auto-assigned fallback. Was backwards before — data.color
+      // was checked first, so a viewer's own per-person override never even got consulted once
+      // the person had picked any color for themselves.
+      const fillColor   = isMine ? '#f0a500' : (_getUserColorOverride(uid) || data.color || userColor(uid));
       const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text

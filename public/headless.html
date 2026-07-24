@@ -37,6 +37,10 @@
   function getUid() { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } }
   function getName() { try { return localStorage.getItem('gl_name') || 'Someone'; } catch (e) { return 'Someone'; } }
   function getDev() { try { return localStorage.getItem('gl_devlabel') || ''; } catch (e) { return ''; } }
+  // Same key index.html's _setMyColor() writes. Without this, a background fix (fbSet fully
+  // replaces the node, no merge) silently erases whatever color the person picked on the
+  // Account page the moment the native service writes its next fix.
+  function getMyColor() { try { return localStorage.getItem('gl_mycolor') || ''; } catch (e) { return ''; } }
   function getFavs() { try { return JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) { return []; } }
   function getCircles() { try { return JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e) { return {}; } }
   function getJoined() { try { return JSON.parse(localStorage.getItem('gl_joined') || '{}'); } catch (e) { return {}; } }
@@ -94,7 +98,7 @@
     var payload = {
       lat: c.latitude, lng: c.longitude, name: getName(), dev: getDev(),
       accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
-      spd: spdMph, spdH: 1, rest: 0, hereSince: hereSinceTs
+      spd: spdMph, spdH: 1, rest: 0, hereSince: hereSinceTs, color: getMyColor()
     };
     keys.forEach(function (k) {
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
