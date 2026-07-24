@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 388;
+var APP_BUILD = 389;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6251,7 +6251,11 @@ function enterMap(name, group, uid) {
     //     absorbs screen-sleep blips, while a genuine close clears within a minute or two.
     try {
       var _meRef = fb.ref(fb.db, `gl/${groupName}/users/${userId}`);
-      fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
+      // Keep the unsubscribe so EXIT can actually STOP this watcher before reloading — it
+      // re-arms the onDisconnect removal on every reconnect, so a one-time cancel() right
+      // before reload (as EXIT used to rely on solely) can still lose the race if any
+      // reconnect blip fires in between and silently re-queues a fresh removal.
+      window._connWatchUnsub = fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
         if (s.val() !== true) return;
         try {
           if (_isNativeApp()) fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
@@ -9783,6 +9787,11 @@ document.getElementById('switch-group-btn').addEventListener('click', async () =
     sessionStorage.removeItem('gl_group');
     _cookieSet('gl_group', '');
   } catch(_) {}
+  // Stop the .info/connected watcher FIRST — it re-arms a fresh onDisconnect removal on every
+  // reconnect blip, so cancelling the current one below isn't enough by itself: any reconnect
+  // in the window between cancel() and the reload's actual WebSocket teardown would silently
+  // queue a brand new removal that this cancel() never touches.
+  try { if (window._connWatchUnsub) { window._connWatchUnsub(); window._connWatchUnsub = null; } } catch (_) {}
   // A reload tears down this page's WebSocket connection, which would otherwise trigger the
   // QUEUED onDisconnect action (remove, or conn:false on native) — cancel that specifically so
   // the reload itself doesn't undo "still showing up here." MUST wait for the server to ack
@@ -12921,8 +12930,14 @@ function _groupFollowTick(force) {
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
-  // Keep the current zoom unless the ideal has drifted ~0.6 levels (group spread/converge).
-  var zoom = (force || Math.abs(targetZoom - curZoom) > 0.6) ? targetZoom : curZoom;
+  // targetZoom is the TIGHTEST zoom that still fits everyone with padding — anything more
+  // zoomed in than that WILL clip someone. So a zoom-out is never optional/deferrable: if the
+  // ideal is looser than what we've got, apply it now regardless of the dead-band below, or
+  // the group re-centers on the midpoint between members while cropping them out of frame.
+  // Zooming IN tighter has no correctness cost (nobody gets clipped), so that direction still
+  // gets the small dead-band to avoid jittery re-zooming while the group drifts slowly.
+  var needsZoomOut = targetZoom < curZoom - 0.05;
+  var zoom = (force || needsZoomOut || Math.abs(targetZoom - curZoom) > 0.6) ? targetZoom : curZoom;
   // Skip when nothing meaningfully changed (stationary group) — avoids needless animation.
   var c = map.getCenter();
   var moved = Math.abs(cam.center.lng - c.lng) + Math.abs(cam.center.lat - c.lat);

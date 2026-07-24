@@ -1883,7 +1883,18 @@ function loadAdmin() {
     addLog('Connected to Firebase', 'ok');
     initActivityFeed();
 
+    // This fires on EVERY write anywhere under gl/ — every GPS fix, history point, and place
+    // event from every user in every room, all funneling into one listener that re-runs the
+    // WHOLE render pipeline (every tab's summary) synchronously. With several people active
+    // plus History/Place writes, that can fire many times a second and jam the main thread
+    // ("page isn't responding"). Debounce to at most once every 400ms; the last snapshot in
+    // a burst is always the one that actually renders.
+    var _adminRenderTimer = null;
     fb.onValue(fb.ref(fb.db, 'gl'), function(snap) {
+      clearTimeout(_adminRenderTimer);
+      _adminRenderTimer = setTimeout(function() { _adminRenderSnapshot(snap); }, 400);
+    });
+    function _adminRenderSnapshot(snap) {
       var all = snap.val() || {};
       var now = Date.now();
 
@@ -2176,7 +2187,7 @@ function loadAdmin() {
 
       // Keep the Debug tab live if it's the open tab.
       if (document.getElementById('tab-debug').classList.contains('active')) renderDeviceDebug();
-    });
+    }
 
     // Refresh the Overview list every 5 seconds (so "live/stale" ticks) — only when active
     setInterval(function() {
