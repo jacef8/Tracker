@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 389;
+var APP_BUILD = 390;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8525,7 +8525,10 @@ function listenUsers() {
 
     // Remove markers for users fully gone from Firebase
     Object.keys(userMarkers).forEach(uid => {
-      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid]; delete window._groupCandidate[uid]; delete window._lastStableGroupSig[uid]; }
+      if (!users[uid]) {
+        console.log('[GL-debug] removing marker (not in filtered users):', uid, 'raw allUsers entry:', allUsers[uid]);
+        userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid]; delete window._groupCandidate[uid]; delete window._lastStableGroupSig[uid];
+      }
     });
 
     var _frMap = _getFriends();
@@ -8544,6 +8547,7 @@ function listenUsers() {
       // sharing or the room roster, purely a local viewing preference (gl_member_hidden).
       const _hiddenFromMap = !isMine && window._isMemberHidden && window._isMemberHidden(uid);
       if (_hiddenFromMap && userMarkers[uid]) {
+        console.log('[GL-debug] removing marker (hide-from-map toggle is ON for this uid):', uid);
         userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid];
       }
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
@@ -8564,6 +8568,7 @@ function listenUsers() {
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
       if (hasGps && !_hiddenFromMap && !userMarkers[uid]) {
+        console.log('[GL-debug] creating fresh marker for:', uid, data.name);
         const el = document.createElement('div');
         Object.assign(el.style, {
           width: '44px', height: '44px', borderRadius: '50%',
