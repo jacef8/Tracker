@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 382;
+var APP_BUILD = 383;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2565,7 +2565,7 @@ function _updateMarkerGrouping() {
     var members = groups[r];
     if (members.length < 2) {
       var mk0 = userMarkers[members[0]];
-      if (mk0 && mk0._el) { mk0._el.style.display = ''; _setGroupBadge(mk0._el, 0); }
+      if (mk0 && mk0._el) { mk0._el.style.display = 'flex'; _setGroupBadge(mk0._el, 0); }
       return;
     }
     // "You" wins as the visible primary if you're in the cluster; otherwise first by uid
@@ -2573,7 +2573,7 @@ function _updateMarkerGrouping() {
     var primary = members.indexOf(userId) !== -1 ? userId : members.slice().sort()[0];
     members.forEach(function (u) {
       var mk = userMarkers[u]; if (!mk || !mk._el) return;
-      if (u === primary) { mk._el.style.display = ''; _setGroupBadge(mk._el, members.length - 1); }
+      if (u === primary) { mk._el.style.display = 'flex'; _setGroupBadge(mk._el, members.length - 1); }
       else mk._el.style.display = 'none';
     });
     window._markerGroupMembers[primary] = members;
@@ -2789,6 +2789,18 @@ window._togglePinMute = function (uid, name) {
   try { updatePinSource(lastPins); } catch (e) {}
   try { if (pinFeedOpen) renderPinFeed(lastPins); } catch (e) {}
   try { window._renderPinMutedList && window._renderPinMutedList(); } catch (e) {}
+  return !was;
+};
+// Hide a member's location dot from YOUR map only — doesn't touch their sharing, doesn't
+// remove them from the room. Same localStorage-map + profile-sync shape as pin-muting above.
+function _getMemberHidden() { try { return JSON.parse(localStorage.getItem('gl_member_hidden') || '{}'); } catch (e) { return {}; } }
+function _setMemberHidden(m) { try { localStorage.setItem('gl_member_hidden', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
+window._isMemberHidden = function (uid) { return !!_getMemberHidden()[uid]; };
+window._toggleMemberHidden = function (uid, name) {
+  var m = _getMemberHidden(), was = !!m[uid];
+  if (was) delete m[uid]; else m[uid] = { name: name || '', ts: Date.now() };
+  _setMemberHidden(m);
+  try { toast(was ? '📍 Showing ' + (name || 'them') + ' on your map again' : '🙈 Hiding ' + (name || 'them') + ' from your map'); } catch (e) {}
   return !was;
 };
 window._renderPinMutedList = function () {
@@ -8423,6 +8435,12 @@ function listenUsers() {
       return (b[1].ts || 0) - (a[1].ts || 0);        // then most recent
     }).forEach(([uid, data]) => {
       const isMine   = uid === userId;
+      // You've chosen to hide this person's dot from your own map — doesn't touch their
+      // sharing or the room roster, purely a local viewing preference (gl_member_hidden).
+      const _hiddenFromMap = !isMine && window._isMemberHidden && window._isMemberHidden(uid);
+      if (_hiddenFromMap && userMarkers[uid]) {
+        userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid];
+      }
       const isLive   = (now - (data.ts || 0)) < LIVE_MS;
       // Battery-saver "resting": not live, but intentionally low-power (last fix flagged rest:1).
       // Treat as a calm, still-present state — not the gray "last known / lost signal".
@@ -8440,7 +8458,7 @@ function listenUsers() {
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
-      if (hasGps && !userMarkers[uid]) {
+      if (hasGps && !_hiddenFromMap && !userMarkers[uid]) {
         const el = document.createElement('div');
         Object.assign(el.style, {
           width: '44px', height: '44px', borderRadius: '50%',
@@ -8545,6 +8563,7 @@ function listenUsers() {
       // OFF (location sharing turned off), NO GPS (desktop / no fix).
       var bd;
       if (isMine)            bd = { t: 'YOU',    bg: 'rgba(240,165,0,.15)', c: '#f0a500' };
+      else if (_hiddenFromMap) bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#888ea0' };
       else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#888ea0' };
       else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#888ea0' };
       else if (isLive)       bd = { t: 'LIVE',    bg: '#13361f',            c: '#3fb950' };
@@ -8568,6 +8587,7 @@ function listenUsers() {
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
           (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isMuted(uid) ? 'ic-mic-off' : 'ic-mic') + '"/></svg></button>' : '') +
           (!isMine ? '<button class="upinmute-btn" title="' + (window._isPinMuted(uid) ? 'Show their pins on your map again' : 'Hide their pins from your map') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isPinMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isPinMuted(uid) ? 'ic-pin-off' : 'ic-pin') + '"/></svg></button>' : '') +
+          (!isMine ? '<button class="uhidemap-btn" title="' + (_hiddenFromMap ? 'Show on your map again' : 'Hide their dot from your map') + '" style="background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:0;display:flex;align-items:center;color:' + (_hiddenFromMap ? '#f85149' : 'var(--muted)') + '">' + (_hiddenFromMap ? '🙈' : '👁') + '</button>' : '') +
           ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
@@ -8593,6 +8613,14 @@ function listenUsers() {
         e.currentTarget.style.color = nowPinMuted ? '#f85149' : 'var(--muted)';
         e.currentTarget.title = nowPinMuted ? 'Show their pins on your map again' : 'Hide their pins from your map';
       });
+      var _hmb = row.querySelector('.uhidemap-btn');
+      if (_hmb) _hmb.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var nowHidden = window._toggleMemberHidden(uid, data.name);
+        e.currentTarget.textContent = nowHidden ? '🙈' : '👁';
+        e.currentTarget.style.color = nowHidden ? '#f85149' : 'var(--muted)';
+        e.currentTarget.title = nowHidden ? 'Show on your map again' : 'Hide their dot from your map';
+      });
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
       var _ob = row.querySelector('.uowner-btn');
@@ -8600,6 +8628,10 @@ function listenUsers() {
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         setLocateMeVisible(true);
+        if (_hiddenFromMap) {
+          toast('Tap 👁 to show ' + data.name + ' on your map again');
+          return;
+        }
         if (!hasGps) {
           toast((isMine ? 'You have' : data.name + ' has') + ' no GPS location' + (isMine ? ' on this device' : ' (PC/desktop)'));
           return;
@@ -13042,6 +13074,7 @@ try {
       friends:    LS.get('gl_friends') || '{}',
       muted:      LS.get('gl_muted') || '{}',
       pinMuted:   LS.get('gl_pin_muted') || '{}',
+      memberHidden: LS.get('gl_member_hidden') || '{}',
       favs:       LS.get('gl_favs') || '[]',
       circles:    LS.get('gl_circles') || '{}',
       colors:     LS.get('gl_user_colors') || '{}',
@@ -13098,6 +13131,7 @@ try {
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
       if (p.pinMuted) LS.set('gl_pin_muted', typeof p.pinMuted === 'string' ? p.pinMuted : JSON.stringify(p.pinMuted));
+      if (p.memberHidden) LS.set('gl_member_hidden', typeof p.memberHidden === 'string' ? p.memberHidden : JSON.stringify(p.memberHidden));
       if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
       // Circle membership has to round-trip through the account profile just like friends/favs —
       // otherwise a circle joined on one device (or before a reinstall) never reaches this device's
