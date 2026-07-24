@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 392;
+var APP_BUILD = 393;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6264,6 +6264,12 @@ function enterMap(name, group, uid) {
     // mismatch — "X joined" showing up right as X actually left, or showing up again for a
     // device that never left — was confusing/wrong on its own, independent of the marker bug.
     if (!_skipClaimPlaceholder) writeDebugLog(groupName, userName + ' joined');
+    // Real push notification (not just the in-app toast/activity-log entry above) — same
+    // "genuine fresh join only" gate, and uses the pretty display name instead of the raw
+    // gl/ key (was showing literal slugs like "my_girls" in the notification title).
+    if (!_skipClaimPlaceholder && _announceJoinOn()) {
+      _ensurePushIdentity().then(function () { pushNotify('join', _prettyGroup(groupName), userName + ' joined the group', { toFavs: true }); });
+    }
     // Reliable presence cleanup: Firebase removes us server-side the instant this
     // client disconnects (reload, tab close, crash, network drop) so we don't
     // linger as "online" in the room or on the join-screen group list.
@@ -6357,7 +6363,6 @@ function enterMap(name, group, uid) {
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
     }); } catch (e) {}
-    if (_announceJoinOn()) _ensurePushIdentity().then(function () { pushNotify('join', groupName, userName + ' joined the group', { toFavs: true }); });
     // Notifications default ON — silently re-subscribe to this room if permission is already granted
     setTimeout(autoEnableAlerts, 800);
     // Load this room's cached passcode (so invites can build a direct-join link)
@@ -8535,8 +8540,10 @@ function listenUsers() {
       });
     }
 
-    // Update known users
-    knownUsers = {};
+    // Update known users — accumulate only, never wipe. A full reset every pass meant a uid
+    // dropping out of `users` for even one snapshot (e.g. the brief flash during a rejoin)
+    // got forgotten immediately, so the very next reappearance looked like a brand-new join
+    // and fired a spurious "X joined" alert — including for someone who'd just hit EXIT.
     Object.entries(users).forEach(([uid, data]) => { knownUsers[uid] = data.name; });
     usersInitialLoad = false;
 
