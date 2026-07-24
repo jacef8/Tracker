@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 386;
+var APP_BUILD = 387;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2915,7 +2915,12 @@ function _isRecentlyActiveInAnyCircle(uid) {
   var now = Date.now();
   for (var key in all) {
     var u = all[key] && all[key][uid];
-    if (u && u.ts && (now - u.ts) < 5 * 60 * 1000) return { room: key, ts: u.ts, name: u.name || null };
+    if (!u || !u.ts) continue;
+    var age = now - u.ts;
+    // A resting (battery-saver) member heartbeats every few minutes for up to 6h and is still
+    // legitimately present, not just "recently" active — same reasoning as the Crew switcher.
+    var freshMs = (u.rest && !u.noGps && !u.hidden) ? 6 * 60 * 60 * 1000 : 5 * 60 * 1000;
+    if (age < freshMs) return { room: key, ts: u.ts, name: u.name || null };
   }
   return null;
 }
@@ -5239,15 +5244,25 @@ function _renderCircleSwitcherList() {
   el.innerHTML = Object.keys(circles).sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
     var name = circles[key] || key;
     var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
-    var liveCount = Object.keys(users).filter(function (uid) {
-      var d = users[uid] || {}; return uid !== userId && d.ts && (now - d.ts) < 90000;
-    }).length;
-    var sub = liveCount ? (liveCount + ' live now') : 'Tap to open';
+    // A backgrounded/stationary Crew member on battery-saver "resting" (heartbeat every few
+    // minutes, still within its 6h grace) is legitimately present — just not "live" in the
+    // last 90s. Without this, an always-on Crew reads as empty the moment everyone's phone
+    // settles down, which defeats the point of it being always-on.
+    var liveCount = 0, restingCount = 0;
+    Object.keys(users).forEach(function (uid) {
+      if (uid === userId) return;
+      var d = users[uid] || {}, age = now - (d.ts || 0);
+      if (d.ts && age < 90000) liveCount++;
+      else if (d.rest && !d.noGps && !d.hidden && age < 6 * 60 * 60 * 1000) restingCount++;
+    });
+    var sub = liveCount > 0
+      ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
+      : restingCount > 0 ? (restingCount + ' resting') : 'Tap to open';
     var safeKey = String(key).replace(/'/g, ''), safeName = String(name).replace(/'/g, '');
     return '<div style="display:flex;align-items:center;gap:4px;padding:9px 10px;border-bottom:1px solid var(--border)">' +
       '<div style="flex:1;min-width:0;cursor:pointer" onclick="window._joinFriendRoom(\'' + safeKey + '\',\'' + safeName + '\')">' +
         '<div style="font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(name) + '</div>' +
-        '<div style="font-size:11px;color:' + (liveCount ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
+        '<div style="font-size:11px;color:' + ((liveCount || restingCount) ? '#3fb950' : 'var(--muted)') + '">' + sub + '</div>' +
       '</div>' +
       '<button onclick="window._openCircleInvitePicker(\'' + safeKey + '\',\'' + safeName + '\')" title="Invite" style="flex-shrink:0;background:none;border:none;color:var(--accent);cursor:pointer;padding:6px;line-height:1;display:flex;align-items:center"><svg class="licon"><use href="#ic-users"/></svg></button>' +
       '<button onclick="window._leaveCircle(\'' + safeKey + '\',\'' + safeName + '\')" title="Leave" style="flex-shrink:0;background:none;border:none;color:#f85149;font-size:15px;cursor:pointer;padding:6px;line-height:1">&#10005;</button>' +
@@ -5289,10 +5304,18 @@ function _renderRoomSwitcherList() {
     if (key === groupName || seen[key]) return; seen[key] = 1;
     var name = circles[key] || key;
     var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
-    var liveCount = Object.keys(users).filter(function (uid) {
-      var d = users[uid] || {}; return uid !== userId && d.ts && (now - d.ts) < 90000;
-    }).length;
-    rows.push({ key: key, name: name, sub: liveCount ? (liveCount + ' live now') : 'Crew · tap to open', badge: 'CREW' });
+    // Same resting-aware count as the Home-screen Crew switcher — see comment there.
+    var liveCount = 0, restingCount = 0;
+    Object.keys(users).forEach(function (uid) {
+      if (uid === userId) return;
+      var d = users[uid] || {}, age = now - (d.ts || 0);
+      if (d.ts && age < 90000) liveCount++;
+      else if (d.rest && !d.noGps && !d.hidden && age < 6 * 60 * 60 * 1000) restingCount++;
+    });
+    var sub2 = liveCount > 0
+      ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
+      : restingCount > 0 ? (restingCount + ' resting') : 'Crew · tap to open';
+    rows.push({ key: key, name: name, sub: sub2, badge: 'CREW' });
   });
   favs.forEach(function (key) {
     if (key === groupName || seen[key]) return; seen[key] = 1;
