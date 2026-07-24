@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 384;
+var APP_BUILD = 385;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2519,9 +2519,11 @@ function _applyCameraOnSelfFix(lng, lat) {
 // right next to each other) instead of two overlapping icons with no way to tell them apart.
 // Hysteresis (join <15m, split >30m) so walking near the boundary doesn't flicker — the
 // "wasTogether" check keys off the PREVIOUS pass's grouping, not just the raw distance.
-var MERGE_JOIN_M = 15, MERGE_SPLIT_M = 30;
+var MERGE_JOIN_M = 15, MERGE_SPLIT_M = 30, GROUP_DEBOUNCE_MS = 5000;
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
+window._groupCandidate = window._groupCandidate || {};        // uid -> {sig, since} — proposed grouping being timed
+window._lastStableGroupSig = window._lastStableGroupSig || {}; // uid -> last APPLIED grouping signature
 function _setGroupBadge(el, extraCount) {
   var b = el.querySelector('.mk-group-badge');
   if (extraCount > 0) {
@@ -2594,27 +2596,47 @@ function _updateMarkerGrouping() {
     }
   }
 
-  var groups = {};
-  uids.forEach(function (u) { var r = find(u); (groups[r] = groups[r] || []).push(u); });
+  var rawGroups = {};
+  uids.forEach(function (u) { var r = find(u); (rawGroups[r] = rawGroups[r] || []).push(u); });
   var newPrev = {};
-  Object.keys(groups).forEach(function (r) { groups[r].forEach(function (u) { newPrev[u] = r; }); });
+  Object.keys(rawGroups).forEach(function (r) { rawGroups[r].forEach(function (u) { newPrev[u] = r; }); });
   window._prevGroupOf = newPrev;
 
+  // Debounce: a raw grouping change must hold steady for GROUP_DEBOUNCE_MS before it's
+  // actually applied. Two phones riding together at highway speed report fixes a moment
+  // apart from each other — at 50-70mph that alone can look like 10s of meters of
+  // separation for a second or two, which flickers across the join/split thresholds far
+  // faster than a real reunion/split would. Until a new grouping proves itself, keep
+  // showing whatever was last stable for that member.
+  var now = Date.now();
+  var effectiveSig = {};
+  uids.forEach(function (u) {
+    var rawSig = rawGroups[find(u)].slice().sort().join(',');
+    var cand = window._groupCandidate[u];
+    if (!cand || cand.sig !== rawSig) { cand = { sig: rawSig, since: now }; window._groupCandidate[u] = cand; }
+    var lastStable = window._lastStableGroupSig[u];
+    if (rawSig === lastStable || (now - cand.since) >= GROUP_DEBOUNCE_MS) {
+      window._lastStableGroupSig[u] = rawSig;
+      effectiveSig[u] = rawSig;
+    } else {
+      effectiveSig[u] = lastStable || rawSig;
+    }
+  });
+
+  var finalGroups = {};
+  uids.forEach(function (u) { (finalGroups[effectiveSig[u]] = finalGroups[effectiveSig[u]] || []).push(u); });
+
   window._markerGroupMembers = {};
-  Object.keys(groups).forEach(function (r) {
-    var members = groups[r];
+  Object.keys(finalGroups).forEach(function (sig) {
+    var members = finalGroups[sig].filter(function (u) { return userMarkers[u] && userMarkers[u]._el; });
     if (members.length < 2) {
-      var mk0 = userMarkers[members[0]];
-      if (mk0) _applyMarkerSolo(mk0);
+      members.forEach(function (u) { _applyMarkerSolo(userMarkers[u]); });
       return;
     }
     // "You" wins as the visible primary if you're in the cluster; otherwise first by uid
     // (stable ordering — doesn't matter who, just needs to not swap arbitrarily each pass).
     var primary = members.indexOf(userId) !== -1 ? userId : members.slice().sort()[0];
-    members.forEach(function (u) {
-      var mk = userMarkers[u]; if (!mk || !mk._el) return;
-      if (u !== primary) mk._el.style.display = 'none';
-    });
+    members.forEach(function (u) { if (u !== primary) userMarkers[u]._el.style.display = 'none'; });
     _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
   });
@@ -8463,7 +8485,7 @@ function listenUsers() {
 
     // Remove markers for users fully gone from Firebase
     Object.keys(userMarkers).forEach(uid => {
-      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid]; }
+      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid]; delete window._groupCandidate[uid]; delete window._lastStableGroupSig[uid]; }
     });
 
     var _frMap = _getFriends();
@@ -8472,7 +8494,10 @@ function listenUsers() {
       if (fa !== fb2) return fa ? -1 : 1;            // friends pinned to the top
       var am = a[0] === userId, bm = b[0] === userId;
       if (am !== bm) return am ? -1 : 1;             // then you
-      return (b[1].ts || 0) - (a[1].ts || 0);        // then most recent
+      // Then alphabetical — NOT by fix recency. Two people both actively sending GPS
+      // fixes would otherwise swap top spot every time either one's ts ticked past the
+      // other's, making the whole list visibly shuffle several times a second.
+      return (a[1].name || '').localeCompare(b[1].name || '') || a[0].localeCompare(b[0]);
     }).forEach(([uid, data]) => {
       const isMine   = uid === userId;
       // You've chosen to hide this person's dot from your own map — doesn't touch their
