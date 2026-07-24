@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 394;
+var APP_BUILD = 395;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8561,6 +8561,19 @@ function listenUsers() {
       }
     });
 
+    // Forget someone only after they've been truly absent a while — not immediately (that was
+    // the bug: a uid dropping out for even one snapshot, e.g. the brief flash during a rejoin,
+    // got forgotten right away, so the very next reappearance looked like a brand-new join and
+    // fired a spurious alert), but also not NEVER (an earlier fix over-corrected to that, which
+    // meant a genuine "gone for a while, back now" never re-alerted for the rest of the session).
+    var JOIN_ALERT_FORGET_MS = 3 * 60 * 1000;
+    window._joinAlertLastSeen = window._joinAlertLastSeen || {};
+    Object.keys(knownUsers).forEach(function (uid) {
+      if (!users[uid] && (now - (window._joinAlertLastSeen[uid] || 0)) > JOIN_ALERT_FORGET_MS) {
+        delete knownUsers[uid];
+      }
+    });
+
     // Detect new joins (someone who wasn't here before and is LIVE)
     if (!usersInitialLoad) {
       Object.entries(users).forEach(([uid, data]) => {
@@ -8571,11 +8584,9 @@ function listenUsers() {
       });
     }
 
-    // Update known users — accumulate only, never wipe. A full reset every pass meant a uid
-    // dropping out of `users` for even one snapshot (e.g. the brief flash during a rejoin)
-    // got forgotten immediately, so the very next reappearance looked like a brand-new join
-    // and fired a spurious "X joined" alert — including for someone who'd just hit EXIT.
-    Object.entries(users).forEach(([uid, data]) => { knownUsers[uid] = data.name; });
+    // Update known users — accumulate/refresh only; actual forgetting (for a real "gone a
+    // while" scenario) happens in the forget-pass above, not here.
+    Object.entries(users).forEach(([uid, data]) => { knownUsers[uid] = data.name; window._joinAlertLastSeen[uid] = now; });
     usersInitialLoad = false;
 
     const listEl = document.getElementById('user-list');
