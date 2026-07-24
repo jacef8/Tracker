@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 385;
+var APP_BUILD = 386;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7699,6 +7699,7 @@ async function stopNativeBackgroundTracking() {
 var BS_IDLE_ENTER_MS = 15 * 60 * 1000;  // still this long → enter low-power
 var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
 var BS_MOVE_M        = 30;              // moved more than this → you're moving again
+var HERE_MOVE_M       = 40;             // "here since" anchor: moved more than this → new stop
 var BS_DF_IDLE       = 75;              // native GPS distance filter while idle (m)
 var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
 // The vendored plugin used to hardcode its LocationRequest interval to 1000ms regardless of
@@ -8034,6 +8035,17 @@ function startLocationSharing() {
       if (window._bsIdle && window._bsLastWrite && (now - window._bsLastWrite) < BS_HEARTBEAT_MS) return;
     }
 
+    // "Here since" — how long has this person been sitting at ~this spot, independent of
+    // Battery Saver (which may be off). Same anchor/threshold idea as the battery-saver idle
+    // detector above, just always on, so a member's info card can show "Here for 23m" or
+    // "Moving" regardless of whether they have low-power mode enabled.
+    var hereMovedM = window._hereAnchor ? metersApart(window._hereAnchor.lat, window._hereAnchor.lng, lat, lng) : Infinity;
+    var hereMoving = (window._lastSpeedMph >= 3) || (hereMovedM > HERE_MOVE_M);
+    if (hereMoving || !window._hereSinceTs) {
+      window._hereAnchor = { lat: lat, lng: lng };
+      window._hereSinceTs = now;
+    }
+
     // Write real GPS position — clears the claiming placeholder. Speed is always written
     // (so the admin panel can see it); spdH=1 marks "don't show my speed to other members".
     // Report the accuracy of whatever position is actually being broadcast (lat/lng), not the
@@ -8043,6 +8055,7 @@ function startLocationSharing() {
     var _fixPayload = {
       lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
       trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
+      hereSince: window._hereSinceTs,
       color: window._myColor || ''
     };
     if (groupName && !window._roomClosed) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
@@ -8602,7 +8615,18 @@ function listenUsers() {
         var _safeName = data.name.replace(/'/g, '');
         var _driving = _shouldShowSpeed(uid, data);
         var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
-        var _sub = (_distLine ? _distLine + ' · ' : '') + _meta;
+        // "Here for Xm" / "Moving" — how long they've been sitting at ~this spot (or that
+        // they're currently in motion), from the always-on hereSince anchor written in onGpsFix.
+        var _hereLine = '';
+        if (!data.noGps && !data.hidden && data.hereSince) {
+          if (isLive && (data.spd || 0) >= 3) {
+            _hereLine = 'Moving';
+          } else {
+            var _hereMin = Math.floor((now - data.hereSince) / 60000);
+            _hereLine = _hereMin < 1 ? 'Just arrived' : _hereMin < 60 ? ('Here ' + _hereMin + 'm') : ('Here ' + Math.floor(_hereMin / 60) + 'h ' + (_hereMin % 60) + 'm');
+          }
+        }
+        var _sub = (_hereLine ? _hereLine + ' · ' : '') + (_distLine ? _distLine + ' · ' : '') + _meta;
         var _coordsStr = (typeof data.lat === 'number' && typeof data.lng === 'number') ? data.lat.toFixed(6) + ', ' + data.lng.toFixed(6) : '';
         var _msFollow = !isMine
           ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>'
@@ -9716,7 +9740,7 @@ document.getElementById('map').addEventListener('click', () => {
 });
 
 // ══ SWITCH GROUP ═════════════════════════════════════════════════
-document.getElementById('switch-group-btn').addEventListener('click', () => {
+document.getElementById('switch-group-btn').addEventListener('click', async () => {
   if (window._soloMode) { window._exitSoloMap(); return; } // personal map: just close it, no room teardown
   // Immediate exit — no confirm dialog needed
   // EXIT is purely navigational now — it takes you back to Home so you can reach other rooms
@@ -9737,10 +9761,19 @@ document.getElementById('switch-group-btn').addEventListener('click', () => {
   } catch(_) {}
   // A reload tears down this page's WebSocket connection, which would otherwise trigger the
   // QUEUED onDisconnect action (remove, or conn:false on native) — cancel that specifically so
-  // the reload itself doesn't undo "still showing up here." Presence is left exactly as-is;
-  // the next fix (native background service survives the reload; the fan-out restarts within
-  // seconds once the Home screen loads) refreshes it again.
-  try { if (db && groupName && userId) window._fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).cancel(); } catch (_) {}
+  // the reload itself doesn't undo "still showing up here." MUST wait for the server to ack
+  // the cancellation before reloading — cancel() is async, and firing the reload right behind
+  // it (as before) raced the WebSocket teardown against the cancel request actually reaching
+  // the server, so the queued removal could still fire first and silently drop presence anyway.
+  // Bounded so a dead/slow network doesn't make EXIT feel stuck.
+  try {
+    if (db && groupName && userId) {
+      await Promise.race([
+        window._fb.onDisconnect(fbRef(db, `gl/${groupName}/users/${userId}`)).cancel(),
+        new Promise(function (r) { setTimeout(r, 800); })
+      ]);
+    }
+  } catch (_) {}
   location.reload();
 });
 
