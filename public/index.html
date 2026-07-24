@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 395;
+var APP_BUILD = 396;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8526,7 +8526,22 @@ const DISC_GRACE_MS  = 3 * 60 * 1000;      // once the live connection is truly 
 var knownUsers = {};
 var usersInitialLoad = true;
 
+// Crew members should show up in the People list all the time — not just while they happen
+// to have a live/recent GPS fix in `users`. Live-subscribe to the permanent roster for a
+// Crew room and cache it; the `users` listener below merges in anyone from here who isn't
+// currently present, as an "Offline" row (no map marker — there's no position to place one).
+window._roomMembersRoster = null;
+function _listenRoomMembersRoster() {
+  window._roomMembersRoster = null;
+  if (!groupName || typeof _isCircleMember !== 'function' || !_isCircleMember(groupName)) return;
+  try {
+    fbOnValue(fbRef(db, `gl/${groupName}/members`), function (snap) {
+      window._roomMembersRoster = snap.val() || {};
+    });
+  } catch (e) {}
+}
 function listenUsers() {
+  _listenRoomMembersRoster();
   fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
     const allUsers = snap.val() || {};
     const now = Date.now();
@@ -8593,8 +8608,13 @@ function listenUsers() {
     listEl.innerHTML = '';
 
     // Update member count badge on users button — counts people PLUS the private
-    // devices you can see (the watch is a member too). _refreshPeopleBadge pops on change.
-    window._roomUserCount = Object.keys(users).filter(function (u) { return u !== userId; }).length;   // count others, not yourself
+    // devices you can see (the watch is a member too), PLUS any Crew roster members without
+    // a live presence entry. _refreshPeopleBadge pops on change.
+    var _offlineRosterCount = 0;
+    if (window._roomMembersRoster) {
+      _offlineRosterCount = Object.keys(window._roomMembersRoster).filter(function (u) { return u !== userId && !users[u]; }).length;
+    }
+    window._roomUserCount = Object.keys(users).filter(function (u) { return u !== userId; }).length + _offlineRosterCount;   // count others, not yourself
     window._refreshPeopleBadge();
 
     // Remove markers for users fully gone from Firebase
@@ -8857,6 +8877,29 @@ function listenUsers() {
       });
       if (!isMine) listEl.appendChild(row);   // you're already on the map — don't list yourself
     });
+
+    // Crew members without a live/recent presence entry still belong in the list — otherwise
+    // a Crew just reads as "whoever happens to be actively sharing right now" instead of the
+    // actual permanent roster (no map marker for these — there's no position to place one).
+    if (window._roomMembersRoster) {
+      Object.keys(window._roomMembersRoster).forEach(function (uid) {
+        if (uid === userId || users[uid]) return;
+        var m = window._roomMembersRoster[uid] || {};
+        var orow = document.createElement('div');
+        orow.className = 'user-item';
+        orow.style.opacity = '0.55';
+        orow.innerHTML =
+          '<div class="user-avatar" style="background:var(--border);color:var(--muted);font-weight:800">' + escapeHtmlJs(initials(m.name || 'Member')) + '</div>' +
+          '<div style="min-width:0">' +
+            '<div class="uname">' + escapeHtmlJs(m.name || 'Member') + '</div>' +
+            '<div class="ustatus" style="color:var(--muted)">Offline — not sharing right now</div>' +
+          '</div>' +
+          '<div style="margin-left:auto;flex-shrink:0">' +
+            '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">OFFLINE</span>' +
+          '</div>';
+        listEl.appendChild(orow);
+      });
+    }
 
     // Riding together / standing right next to each other — merge into one dot + badge
     // now that every marker for this snapshot has an up-to-date _ll.
