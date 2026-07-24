@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 380;
+var APP_BUILD = 381;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7441,14 +7441,31 @@ async function startNativeBackgroundTracking() {
       if (error) {
         window._bgGeoError = (error.code || 'err') + (error.message ? ': ' + error.message : '');
         try { if (window._lastBgErr !== window._bgGeoError) { window._lastBgErr = window._bgGeoError; window._evt('background tracking error — ' + window._bgGeoError); } } catch (e) {}
-        // Background ("always") permission missing — open the guided setup card instead
-        // of a bare confirm dialog.
+        // Background ("always") permission missing — open the guided setup card instead of a
+        // bare confirm dialog. BUT: right after a cold launch, iOS's CLLocationManager can
+        // report a stale/not-yet-synced authorization status for the first few seconds — the
+        // plugin reads that as NOT_AUTHORIZED even though the real OS-level grant is already
+        // "Always" a moment later (confirmed as the likely cause of a real report: the nag card
+        // reappearing almost every launch on one specific iPhone, 2026-07-24). Give it a grace
+        // window instead of nagging on the very first error: only escalate immediately if the
+        // watcher's been running a while already, otherwise wait and recheck once — if the error
+        // is still there after CoreLocation's had time to settle, THEN it's a real problem.
         if (error.code === 'NOT_AUTHORIZED' && typeof window._openBgSetup === 'function') {
-          window._openBgSetup();
+          var _bgAuthGraceMs = 4000;
+          var _sinceStart = Date.now() - (window._bgTrackingStartedAt || 0);
+          if (_sinceStart > _bgAuthGraceMs) {
+            window._openBgSetup();
+          } else {
+            clearTimeout(window._bgAuthRetryTimer);
+            window._bgAuthRetryTimer = setTimeout(function () {
+              if (window._bgGeoError && /NOT_AUTHORIZED/i.test(window._bgGeoError)) window._openBgSetup();
+            }, _bgAuthGraceMs - _sinceStart + 250);
+          }
         }
         console.warn('bg-geo', error);
         return;
       }
+      clearTimeout(window._bgAuthRetryTimer); // a real fix arrived — any pending "still not authorized?" recheck is moot
       window._bgGeoError = '';
       if (!location || typeof window._onGpsFix !== 'function') return;
       window._lastFixSrc = 'native'; // diagnostics: this fix came from the background service
@@ -7483,6 +7500,7 @@ async function startNativeBackgroundTracking() {
       // background (the 15s interval gets throttled while the screen is off).
       if (typeof window._writeDiag === 'function') window._writeDiag();
     };
+    window._bgTrackingStartedAt = Date.now(); // anchors the NOT_AUTHORIZED grace window above
     window._bgWatcherId = await BG.addWatcher({
       backgroundTitle: 'GroundLink is sharing your location',
       backgroundMessage: 'Your group can see you on the map.',
