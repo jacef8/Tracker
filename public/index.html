@@ -2322,7 +2322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 381;
+var APP_BUILD = 382;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2515,6 +2515,102 @@ function _applyCameraOnSelfFix(lng, lat) {
   }
   if (opts) { try { map.easeTo(opts); } catch (e) {} }
 }
+// Merge nearby members' markers into one dot with a "+N" badge (riding together / standing
+// right next to each other) instead of two overlapping icons with no way to tell them apart.
+// Hysteresis (join <15m, split >30m) so walking near the boundary doesn't flicker — the
+// "wasTogether" check keys off the PREVIOUS pass's grouping, not just the raw distance.
+var MERGE_JOIN_M = 15, MERGE_SPLIT_M = 30;
+window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
+window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
+function _setGroupBadge(el, extraCount) {
+  var b = el.querySelector('.mk-group-badge');
+  if (extraCount > 0) {
+    if (!b) {
+      b = document.createElement('div');
+      b.className = 'mk-group-badge';
+      b.style.cssText = 'position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#fff;color:#000;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,.4);box-shadow:0 1px 4px rgba(0,0,0,.5);pointer-events:none';
+      el.appendChild(b);
+    }
+    b.textContent = '+' + extraCount;
+    b.style.display = 'flex';
+  } else if (b) {
+    b.style.display = 'none';
+  }
+}
+function _updateMarkerGrouping() {
+  var uids = Object.keys(userMarkers).filter(function (u) { return userMarkers[u] && userMarkers[u]._ll; });
+  var parent = {};
+  uids.forEach(function (u) { parent[u] = u; });
+  function find(u) { while (parent[u] !== u) { parent[u] = parent[parent[u]]; u = parent[u]; } return u; }
+  function union(a, b) { var ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+
+  for (var i = 0; i < uids.length; i++) {
+    for (var j = i + 1; j < uids.length; j++) {
+      var a = uids[i], b = uids[j];
+      var pa = userMarkers[a]._ll, pb = userMarkers[b]._ll;
+      var d = metersApart(pa[1], pa[0], pb[1], pb[0]);
+      var wasTogether = window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b];
+      if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M)) union(a, b);
+    }
+  }
+
+  var groups = {};
+  uids.forEach(function (u) { var r = find(u); (groups[r] = groups[r] || []).push(u); });
+  var newPrev = {};
+  Object.keys(groups).forEach(function (r) { groups[r].forEach(function (u) { newPrev[u] = r; }); });
+  window._prevGroupOf = newPrev;
+
+  window._markerGroupMembers = {};
+  Object.keys(groups).forEach(function (r) {
+    var members = groups[r];
+    if (members.length < 2) {
+      var mk0 = userMarkers[members[0]];
+      if (mk0 && mk0._el) { mk0._el.style.display = ''; _setGroupBadge(mk0._el, 0); }
+      return;
+    }
+    // "You" wins as the visible primary if you're in the cluster; otherwise first by uid
+    // (stable ordering — doesn't matter who, just needs to not swap arbitrarily each pass).
+    var primary = members.indexOf(userId) !== -1 ? userId : members.slice().sort()[0];
+    members.forEach(function (u) {
+      var mk = userMarkers[u]; if (!mk || !mk._el) return;
+      if (u === primary) { mk._el.style.display = ''; _setGroupBadge(mk._el, members.length - 1); }
+      else mk._el.style.display = 'none';
+    });
+    window._markerGroupMembers[primary] = members;
+  });
+}
+window._showGroupedMemberSheet = function (uids) {
+  window._openMemberUid = null;
+  var sheet = document.getElementById('member-sheet');
+  var body = document.getElementById('member-sheet-body');
+  if (body) {
+    var rows = uids.map(function (u) {
+      var mk = userMarkers[u]; if (!mk) return '';
+      var isMine = u === userId;
+      var nm = isMine ? (userName + ' (you)') : (knownUsers[u] || 'Member');
+      var statusColor = mk._isLive ? '#00e676' : '#888ea0';
+      var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
+      return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:var(--accent,#58a6ff);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</div>' +
+          '<div style="font-size:11px;color:' + statusColor + ';font-weight:800;letter-spacing:.04em">' + statusLabel + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+    body.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">' +
+        '<div style="color:#8b949e;font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + uids.length + ' PEOPLE TOGETHER</div>' +
+        '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
+      '</div>' + rows;
+  }
+  if (sheet) sheet.style.display = 'block';
+  document.body.classList.add('member-open');
+  var primaryMk = userMarkers[uids[0]];
+  if (primaryMk && primaryMk._ll) {
+    try { map.flyTo({ center: primaryMk._ll, zoom: Math.max(map.getZoom(), 16), duration: 700, padding: { top: 0, left: 0, right: 0, bottom: 240 } }); } catch (e) {}
+  }
+};
 // True if a point is more than `marginPx` from the screen center — used so the periodic
 // follow timer only snaps back after you've actually panned away (no jump when centered).
 function _isOffCenter(lngLat, marginPx) {
@@ -8315,7 +8411,7 @@ function listenUsers() {
 
     // Remove markers for users fully gone from Firebase
     Object.keys(userMarkers).forEach(uid => {
-      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; }
+      if (!users[uid]) { userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid]; }
     });
 
     var _frMap = _getFriends();
@@ -8373,6 +8469,8 @@ function listenUsers() {
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
         el.addEventListener('click', function() {
           if (window._pauseFollow) window._pauseFollow(9000);
+          var _grpMembers = window._markerGroupMembers && window._markerGroupMembers[uid];
+          if (_grpMembers && _grpMembers.length > 1) { window._showGroupedMemberSheet(_grpMembers); return; }
           if (isMine) { window._followUser(userId, 'you'); return; }
           window._showMemberSheet(uid);
         });
@@ -8515,6 +8613,10 @@ function listenUsers() {
       });
       if (!isMine) listEl.appendChild(row);   // you're already on the map — don't list yourself
     });
+
+    // Riding together / standing right next to each other — merge into one dot + badge
+    // now that every marker for this snapshot has an up-to-date _ll.
+    try { _updateMarkerGrouping(); } catch (e) {}
 
     // A PC/desktop viewer typically has no local GPS, so onGpsFix's own "default to Follow
     // Group on first entering the map" (above) never fires for them at all — that logic is
