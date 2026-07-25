@@ -2337,7 +2337,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 406;
+var APP_BUILD = 407;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6284,6 +6284,10 @@ function enterMap(name, group, uid) {
           window._roomOwnerUid = owner;
         }
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {} // refresh "Owner: X" if the sheet is open
+        // The People-list rows (⋮ owner controls, etc.) only rebuild when someone's location
+        // updates, not when ownership itself changes — without this, claiming/transferring
+        // ownership could sit invisible in the list until the next unrelated fix arrived.
+        try { if (typeof listenUsers === 'function' && window._usersListenerUnsub) listenUsers(); } catch (e) {}
         // NOTE: being a signed-in owner no longer auto-sets config.persistent — that used to
         // make every quick-join room created by a signed-in user permanent within seconds of
         // creation, silently defeating the 24h/7-day auto-expire lifecycle for that entire user
@@ -8613,17 +8617,22 @@ var usersInitialLoad = true;
 // currently present, as an "Offline" row (no map marker — there's no position to place one).
 window._roomMembersRoster = null;
 function _listenRoomMembersRoster() {
+  try { if (window._roomMembersUnsub) window._roomMembersUnsub(); } catch (e) {}
+  window._roomMembersUnsub = null;
   window._roomMembersRoster = null;
   if (!groupName || typeof _isCircleMember !== 'function' || !_isCircleMember(groupName)) return;
   try {
-    fbOnValue(fbRef(db, `gl/${groupName}/members`), function (snap) {
+    window._roomMembersUnsub = fbOnValue(fbRef(db, `gl/${groupName}/members`), function (snap) {
       window._roomMembersRoster = snap.val() || {};
     });
   } catch (e) {}
 }
+// Re-entrant: safe to call again to force an immediate People-list refresh (e.g. right after
+// claiming ownership) without leaking a second copy of either listener alongside the first.
 function listenUsers() {
   _listenRoomMembersRoster();
-  fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+  try { if (window._usersListenerUnsub) window._usersListenerUnsub(); } catch (e) {}
+  window._usersListenerUnsub = fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
     const allUsers = snap.val() || {};
     const now = Date.now();
 
