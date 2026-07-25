@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 419;
+var APP_BUILD = 420;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10497,6 +10497,23 @@ function _renderInvitePeople(q) {
   var circleMode = window._invitePickerMode === 'circle';
   var circleMembers = window._circleInviteMembers || {};
   var circleTarget = window._circleInviteTarget;
+  // Authoritative correction: everything above is built from a general-purpose, laggy presence
+  // guess (gl/_presence, the account-session heartbeat, or "recently active in some circle") —
+  // none of it actually asks "is this uid live in the SPECIFIC room being invited to right now."
+  // That mismatch produced exactly the two symptoms reported: a device that WAS live in the
+  // target room showing as offline, and someone who was NOT actually there still showing "in
+  // this room" off a stale claim. The room being invited to already has its own live-subscribed
+  // snapshot available (window._circleUsersAll for a Crew, or userMarkers for whatever room is
+  // currently open) — trust that over the general guess for every candidate.
+  var targetKey = circleMode ? (circleTarget && circleTarget.key) : groupName;
+  var liveHereSet = circleMode
+    ? ((circleTarget && window._circleUsersAll && window._circleUsersAll[circleTarget.key]) || {})
+    : (typeof userMarkers !== 'undefined' ? userMarkers : {});
+  people.forEach(function (pp) {
+    if (!targetKey) return;
+    if (liveHereSet[pp.uid]) { pp.room = targetKey; pp.online = true; }
+    else if (pp.room === targetKey) { pp.room = null; }
+  });
   function rank(pp) {
     if (circleMode) {
       if (circleMembers[pp.uid]) return 0;
