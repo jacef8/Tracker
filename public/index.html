@@ -2137,11 +2137,11 @@
          kept up top. Circle/secure-devices/expiry/passcode/visibility below are configuration,
          reached far less often, so they moved toward the bottom instead of burying the action
          people actually want under a wall of settings. -->
-    <button onclick="closeRoomInfo();window._openInvitePicker();" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;width:100%;text-align:left">
+    <button onclick="window._riOpenInvite()" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;width:100%;text-align:left">
       <svg class="licon" style="color:var(--accent)"><use href="#ic-link"/></svg>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text)">Invite someone to this room</div>
-        <div style="font-size:11px;color:var(--muted)">Send a link, or invite a favorite directly</div>
+        <div id="ri-invite-title" style="font-size:13px;font-weight:600;color:var(--text)">Invite someone to this room</div>
+        <div id="ri-invite-sub" style="font-size:11px;color:var(--muted)">Send a link, or invite a favorite directly</div>
       </div>
     </button>
     <div id="ri-fav-row" onclick="window._riToggleFav()" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 418;
+var APP_BUILD = 419;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4667,7 +4667,20 @@ function _renderRiCircle() {
   // one-way decision and shouldn't keep looking like one.
   if (row) row.style.borderColor = on ? 'var(--border)' : 'rgba(167,139,250,.4)';
   if (sub) sub.textContent = on ? 'This room is a Crew — everyone always shows up here, no matter what room they\'re in or if they\'re in the background. Tap to invite more people.' : 'Everyone here always shows up in this room, no matter where else they are — permanent, can\'t be undone';
+  // The main "Invite" button up top used to always send a generic room-link invite, even
+  // inside a Crew — someone accepting that just joined the live room without ever landing in
+  // the permanent members roster (confirmed: a Crew member showed up live for weeks but was
+  // never actually in gl/<key>/members). Keep its copy honest about which invite it's about
+  // to send, matching whatever window._riOpenInvite (below) actually does.
+  var it = document.getElementById('ri-invite-title'), is = document.getElementById('ri-invite-sub');
+  if (it) it.textContent = on ? 'Invite someone to this Crew' : 'Invite someone to this room';
+  if (is) is.textContent = on ? 'They\'ll always show up here once they accept — permanent Crew membership' : 'Send a link, or invite a favorite directly';
 }
+window._riOpenInvite = function () {
+  closeRoomInfo();
+  if (_riIsCircle()) { window._openCircleInvitePicker(groupName, _prettyGroup(groupName)); return; }
+  window._openInvitePicker();
+};
 // One-way: turning this on for an EXISTING room is the same conversion a brand-new group's
 // "Make this a Circle" checkbox does at creation, just applied after the fact. No "undo" here —
 // once it's a Circle, other people may already hold a permanent gl/<key>/members entry, and
