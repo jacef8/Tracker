@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 417;
+var APP_BUILD = 418;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8972,7 +8972,9 @@ function listenUsers() {
           '</div>' +
           '<div style="display:flex;align-items:flex-start;gap:12px;margin-top:2px">' +
             '<div style="min-width:0;flex:1">' +
-              '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(_withDev(data)) + '</div>' +
+              '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(_withDev(data)) +
+                (!isMine && window._roomMembersRoster && window._roomMembersRoster[uid] ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+              '</div>' +
               (_hereLine ? '<div style="font-size:12px;color:#58a6ff;font-weight:700;margin-top:3px">' + _hereLine + '</div>' : '') +
               (_distLine ? '<div style="font-size:12px;color:#8b949e;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
               '<div style="font-size:12px;color:#8b949e;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
@@ -9007,7 +9009,13 @@ function listenUsers() {
       row.innerHTML =
         '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + escapeHtmlJs(initials(data.name)) + '</div>' +
         '<div style="min-width:0">' +
-          '<div class="uname">' + escapeHtmlJs(_withDev(data)) + (isMine ? ' (you)' : '') + '</div>' +
+          '<div class="uname">' + escapeHtmlJs(_withDev(data)) + (isMine ? ' (you)' : '') +
+            // Crew membership vs. just currently being in the room are two different things —
+            // anyone with the room link can show up live without ever being added to the
+            // permanent roster (window._roomMembersRoster, Crew rooms only). Nothing shown for
+            // regular rooms, where there's no membership concept to display.
+            (!isMine && window._roomMembersRoster && window._roomMembersRoster[uid] ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap">MEMBER</span>' : '') +
+          '</div>' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Resting (battery saver) · ' + timeLabel : 'Last seen: ' + timeLabel) +
             (_shouldShowSpeed(uid, data) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
