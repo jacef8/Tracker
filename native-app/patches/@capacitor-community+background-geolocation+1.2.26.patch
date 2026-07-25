@@ -97,3 +97,27 @@ index fafbb86..fff8291 100644
              locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
              locationRequest.setSmallestDisplacement(distanceFilter);
  
+diff --git a/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift b/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
+index d4a5965..8f030f3 100644
+--- a/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
++++ b/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
+@@ -130,8 +130,17 @@ public class BackgroundGeolocation: CAPPlugin,
+                 if (
+                     background && status == .authorizedWhenInUse
+                 ) {
+-                    // Attempt to escalate.
+-                    manager.requestAlwaysAuthorization()
++                    // Attempt to escalate — but only ONCE ever, not on every watcher start
++                    // (i.e. every app launch that wants background tracking). Without this
++                    // guard, a user who granted "While Using" but not "Always" got asked
++                    // again every single time they opened the app, instead of Apple's
++                    // intended one-time upgrade prompt. If she still wants "Always" later,
++                    // she can grant it manually in Settings — this just stops the repeat nag.
++                    let escalationKey = "glBgAlwaysEscalationAttempted"
++                    if !UserDefaults.standard.bool(forKey: escalationKey) {
++                        UserDefaults.standard.set(true, forKey: escalationKey)
++                        manager.requestAlwaysAuthorization()
++                    }
+                 }
+             }
+             return watcher.start()
