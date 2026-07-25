@@ -1438,6 +1438,17 @@
   </div>
 </div>
 
+<!-- ══ QUICK TRAIL SHEET (one-tap "recent trail" from a member's card — no picker) ══ -->
+<div id="quick-trail-sheet" style="display:none;position:fixed;inset:0;z-index:410;background:rgba(0,0,0,.55);align-items:flex-end;justify-content:center">
+  <div style="width:100%;max-width:440px;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px) 16px 16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div id="qt-title" style="font-size:15px;font-weight:800;color:var(--text)">Recent trail</div>
+      <button onclick="document.getElementById('quick-trail-sheet').style.display='none'" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;padding:2px 4px">✕</button>
+    </div>
+    <div id="qt-body"></div>
+  </div>
+</div>
+
 <!-- ══ PLACES DRAWER (manage a Circle's alert places) ══ -->
 <div id="places-drawer">
   <div class="panel-header">
@@ -2349,7 +2360,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 411;
+var APP_BUILD = 412;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8896,7 +8907,7 @@ function listenUsers() {
         var _msNav = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
-        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-history"/></svg>History</button>';
+        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-history"/></svg>Recent trail</button>';
         var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
@@ -11933,27 +11944,8 @@ window._historyCircleChanged = function () {
     memberSel.innerHTML = uids.map(function (uid) {
       return '<option value="' + _escHtml(uid) + '">' + _escHtml(members[uid].name || uid) + '</option>';
     }).join('');
-    // Arriving here via the "History" shortcut on someone's member card (see
-    // _openHistoryForMember) takes priority over the plain "default to yourself" fallback.
-    if (window._histPendingUid && uids.indexOf(window._histPendingUid) !== -1) {
-      memberSel.value = window._histPendingUid;
-      window._histPendingUid = null;
-      if (window._histAutoView) { window._histAutoView = false; window._viewHistory(); }
-    } else if (userId && uids.indexOf(userId) !== -1) {
-      memberSel.value = userId; // default to yourself
-    }
+    if (userId && uids.indexOf(userId) !== -1) memberSel.value = userId; // default to yourself
   }, { onlyOnce: true });
-};
-// One-tap shortcut from a member's card ("History" button) straight into the History tab,
-// pre-selecting them (and the current room, if it's one of your Circles) instead of making
-// someone re-pick a Circle and a member they just tapped on.
-window._openHistoryForMember = function (uid, name) {
-  try { window._closeMemberSheet(); } catch (e) {}
-  window._histPendingUid = uid;
-  window._histAutoView = true;
-  var drawer = document.getElementById('tracks-drawer');
-  if (drawer) drawer.classList.add('open');
-  window._showHistoryTab();
 };
 window._viewHistory = function () {
   var circleKey = document.getElementById('hist-circle-pick').value;
@@ -11964,15 +11956,18 @@ window._viewHistory = function () {
   resultEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
   window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + circleKey + '/history/' + uid + '/' + dateStr), function (snap) {
     var raw = snap.val() || {};
-    var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, ts: p.ts, alt: 0, sp: null, ac: p.acc }; })
-      .sort(function (a, b) { return a.ts - b.ts; });
+    // NOTE: field is `t`, not `ts` — _trackStats/_drawSavedTrack both key off `.t` for every
+    // other track source (recorded Tracks, live recording); this was mismatched here, which
+    // silently produced NaN duration/speed stats for every History lookup.
+    var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
+      .sort(function (a, b) { return a.t - b.t; });
     if (!pts.length) {
       resultEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No history for that day — either nothing was recorded, or Location history wasn\'t on yet.</div>';
       return;
     }
     var st = _trackStats(pts);
     var memberName = (document.getElementById('hist-member-pick').selectedOptions[0] || {}).textContent || 'Member';
-    var synthTrack = { id: 'hist_' + uid + '_' + dateStr, name: memberName + ' — ' + dateStr, ts: pts[0].ts, pts: pts, stats: st };
+    var synthTrack = { id: 'hist_' + uid + '_' + dateStr, name: memberName + ' — ' + dateStr, ts: pts[0].t, pts: pts, stats: st };
     window._lastHistoryTrack = synthTrack;
     function stat(v, l) { return '<div class="trk-stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
     resultEl.innerHTML = '<div class="trk-stat-grid">' +
@@ -11983,6 +11978,46 @@ window._viewHistory = function () {
       '</div>' +
       '<div style="padding:10px 12px 18px"><button onclick="window._drawSavedTrack(window._lastHistoryTrack, true); document.getElementById(\'tracks-drawer\').classList.remove(\'open\')" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button></div>';
   }, { onlyOnce: true });
+};
+// One-tap "recent trail" from a member's card — deliberately NOT the Circle/day-picker History
+// above. That feature answers "where was this Circle member on some past day" and needs a
+// Circle+date picked because it can span many days/Circles. This answers a narrower, more
+// common question — "where has the person I'm looking at right now been the last couple
+// hours" — which is already fully scoped by context (this room, this uid, right now), so no
+// picker is needed at all. Reuses the room's own rolling Breadcrumb trail (gl/<room>/trails/<uid>,
+// same 2-hour window listenTrails() already draws on the map for anyone with it enabled) rather
+// than the Circle-scoped History data, since that's keyed to a Circle this pairing might not share.
+window._openHistoryForMember = function (uid, name) {
+  try { window._closeMemberSheet(); } catch (e) {}
+  if (!groupName) { toast('Join a room first', 2200); return; }
+  var titleEl = document.getElementById('qt-title'), bodyEl = document.getElementById('qt-body');
+  titleEl.textContent = (name || 'Their') + ' recent trail';
+  bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
+  document.getElementById('quick-trail-sheet').style.display = 'flex';
+  window._fb.get(window._fb.ref(window._fb.db, 'gl/' + groupName + '/trails/' + uid)).then(function (snap) {
+    var raw = snap.val() || {};
+    var now = Date.now();
+    var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
+      .filter(function (p) { return now - p.t < TRAIL_MAX_MS; })
+      .sort(function (a, b) { return a.t - b.t; });
+    if (pts.length < 2) {
+      bodyEl.innerHTML = '<div style="padding:16px 4px;text-align:center;color:var(--muted);font-size:13px">No recent trail for ' + _escHtml(name || 'them') + ' — they need <b>Location trail</b> (the footprints icon) turned on for one to build up.</div>';
+      return;
+    }
+    var st = _trackStats(pts);
+    var synthTrack = { id: 'trail_' + uid, name: (name || 'Member') + ' — recent trail', ts: pts[0].t, pts: pts, stats: st };
+    window._lastHistoryTrack = synthTrack;
+    function stat(v, l) { return '<div class="trk-stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
+    var spanMin = Math.round((pts[pts.length - 1].t - pts[0].t) / 60000);
+    bodyEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:0 4px 8px">Last ' + spanMin + ' min</div>' +
+      '<div class="trk-stat-grid">' +
+      stat(_trkFmtDist(st.distM), 'Distance') +
+      stat(_trkFmtDur(st.durMs), 'Span') +
+      stat(st.avgMph.toFixed(1) + ' mph', 'Avg speed') +
+      stat(st.maxMph.toFixed(1) + ' mph', 'Max speed') +
+      '</div>' +
+      '<div style="padding:10px 4px 4px"><button onclick="window._drawSavedTrack(window._lastHistoryTrack, true); document.getElementById(\'quick-trail-sheet\').style.display=\'none\'" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button></div>';
+  }).catch(function () { bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>'; });
 };
 
 // ── Places (geofence arrive/leave alerts) — management UI ──────────
@@ -14485,7 +14520,7 @@ window._voiceMod().then(function (m) {
   var IDS = ['user-drawer','track-detail-drawer','tracks-drawer','saved-pins-drawer','places-drawer',
     'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','voice-log-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
-    'pin-modal','place-modal','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
+    'pin-modal','place-modal','quick-trail-sheet','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
     'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup'];
   function g(id) { return document.getElementById(id); }
   // On-screen ⟺ has real size AND overlaps the viewport. Handles BOTH display-toggled
