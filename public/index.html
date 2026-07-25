@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 423;
+var APP_BUILD = 424;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5448,7 +5448,7 @@ window._toggleCircleSwitcher = function () {
   var circles = _getCircles();
   var keys = Object.keys(circles);
   if (keys.length === 1) {
-    var key = keys[0], name = circles[key] || key;
+    var key = keys[0], name = _prettyGroup(key);
     window._joinFriendRoom(key, name);
     return;
   }
@@ -5463,8 +5463,13 @@ function _renderCircleSwitcherList() {
   var el = document.getElementById('circle-switcher-list'); if (!el) return;
   var circles = _getCircles();
   var now = Date.now();
-  el.innerHTML = Object.keys(circles).sort(function (a, b) { return (circles[a] || a).localeCompare(circles[b] || b); }).map(function (key) {
-    var name = circles[key] || key;
+  // Display name comes from _prettyGroup (live-snapshot-aware, picks up a rename immediately) —
+  // NOT circles[key], which is just this device's local cache of whatever the name was the
+  // moment it joined/converted and never refreshes after that (confirmed: renaming a Crew via
+  // Room Info updated everywhere that calls _prettyGroup fresh, but this switcher kept showing
+  // the old name since it was reading straight from that stale cache instead).
+  el.innerHTML = Object.keys(circles).sort(function (a, b) { return _prettyGroup(a).localeCompare(_prettyGroup(b)); }).map(function (key) {
+    var name = _prettyGroup(key);
     var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
     // A backgrounded/stationary Crew member on battery-saver "resting" (heartbeat every few
     // minutes, still within its 6h grace) is legitimately present — just not "live" in the
@@ -5499,7 +5504,7 @@ window._renderCircleSwitcher = function () {
   var keys = Object.keys(circles);
   if (!keys.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
-  label.textContent = keys.length === 1 ? (circles[keys[0]] || keys[0]) : ('My Crews (' + keys.length + ')');
+  label.textContent = keys.length === 1 ? _prettyGroup(keys[0]) : ('My Crews (' + keys.length + ')');
   // Keep an already-open dropdown's contents live (e.g. a live-count changing) without forcing it shut.
   var list = document.getElementById('circle-switcher-list');
   if (list && list.style.display !== 'none') _renderCircleSwitcherList();
@@ -5524,7 +5529,7 @@ function _renderRoomSwitcherList() {
   var now = Date.now(), seen = {}, rows = [];
   Object.keys(circles).forEach(function (key) {
     if (key === groupName || seen[key]) return; seen[key] = 1;
-    var name = circles[key] || key;
+    var name = _prettyGroup(key);
     var users = (window._circleUsersAll && window._circleUsersAll[key]) || {};
     // Same resting-aware count as the Home-screen Crew switcher — see comment there.
     var liveCount = 0, restingCount = 0;
@@ -5939,10 +5944,13 @@ function renderRoomList(all) {
     // Index nodes (_users profiles, _presence, _invites, _directory) are NOT rooms — never list
     // or prune them, or the husk-cleanup below would delete them and break cross-device sync.
     if (key.charAt(0) === '_') return;
-    // In search mode, only consider rooms whose name (or key) contains the query.
+    // In search mode, only consider rooms whose name (or key) contains the query — checks the
+    // real display name (_prettyGroup, picks up a rename) too, not just the mechanically-derived
+    // one, or searching for a renamed Crew by its new name would silently find nothing.
     if (_searching) {
       var _nm = key.replace(/_/g, ' ').toLowerCase();
-      if (_nm.indexOf(_sq) === -1 && key.toLowerCase().indexOf(_sq) === -1) return;
+      var _pretty = _prettyGroup(key).toLowerCase();
+      if (_nm.indexOf(_sq) === -1 && key.toLowerCase().indexOf(_sq) === -1 && _pretty.indexOf(_sq) === -1) return;
     }
     var users = group.users ? Object.values(group.users) : [];
     var pins = group.pins ? Object.keys(group.pins).length : 0;
@@ -6009,7 +6017,11 @@ function renderRoomList(all) {
     // visible even when dormant.
     if (!_searching && !hasUsers && (!lastSeen || (now - lastSeen) > EMPTY_GRACE_MS) && !isFav && !keptUntil) return;
 
-    var displayName = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    // Was its own duplicate copy of the mechanical name-derivation logic, entirely bypassing
+    // _prettyGroup — meaning a real rename (gl/<key>/config/name) never showed up in the home
+    // room list even though it correctly updated the topbar and Room Info, which do call
+    // _prettyGroup. Now the single shared source of truth for every display context.
+    var displayName = _prettyGroup(key);
     var diffMin = Math.floor((now - lastSeen) / 60000), diffHr = Math.floor(diffMin / 60);
     var lastStr = diffMin < 1 ? 'just now' : diffMin < 60 ? diffMin + 'm ago' : diffHr < 24 ? diffHr + 'h ago' : 'over a day ago';
     var vis = config.visibility || 'public'; // existing/unset groups stay public
