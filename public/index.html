@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 402;
+var APP_BUILD = 403;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6989,33 +6989,42 @@ function buildPinCats() {
 
 // Teardrop map pin: colored teardrop body (ringColor outline) with a white inset disc
 // holding the category emoji. `glyph` is an emoji; falls back to a short text label.
+// Redesigned per direct feedback: the old teardrop-with-tiny-inset-glyph made the actual
+// icon only ~14 screen px across (SIZE=72 canvas px / pixelRatio 2 / the ~0.20 fraction of
+// that the old inset disc occupied) — far too small to read regardless of which icon/emoji
+// was used. Now: no container shape at all, just the icon itself drawn LARGE, with a soft
+// colored glow (still conveys "mine" vs "theirs" — gold vs white, same as the old ring color —
+// just as a halo instead of a solid background) plus a small dark drop-shadow so it stays
+// legible against any map background/color.
 function makePinImage(catColor, ringColor, glyph) {
   var SIZE = 72;
   var cv = document.createElement('canvas');
   cv.width = SIZE; cv.height = SIZE;
   var ctx = cv.getContext('2d');
-  var cx = SIZE / 2, cy = SIZE * 0.38, R = SIZE * 0.30;
-  function teardrop(rad) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-    ctx.moveTo(cx - rad * 0.62, cy + rad * 0.52);
-    ctx.lineTo(cx, cy + rad * 1.95);
-    ctx.lineTo(cx + rad * 0.62, cy + rad * 0.52);
-    ctx.closePath();
-  }
-  teardrop(R + 3); ctx.fillStyle = ringColor; ctx.fill();   // outline / ring
-  teardrop(R);     ctx.fillStyle = catColor;  ctx.fill();   // colored body
-  ctx.beginPath(); ctx.arc(cx, cy, R * 0.66, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); // inset disc
+  var cx = SIZE / 2, cy = SIZE / 2;
   var isEmoji = glyph && !/^[A-Za-z!]{1,3}$/.test(glyph); // anything that isn't a 2-letter fallback
-  if (isEmoji) {
-    ctx.font = Math.round(R * 0.95) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif';
-    ctx.fillStyle = '#000';
-  } else {
-    ctx.font = 'bold ' + Math.round(R * 0.7) + 'px system-ui,sans-serif';
-    ctx.fillStyle = catColor;
-  }
+  ctx.font = isEmoji
+    ? Math.round(SIZE * 0.62) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif'
+    : 'bold ' + Math.round(SIZE * 0.44) + 'px system-ui,sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(glyph || '', cx, cy + 1);
+  var fill = isEmoji ? '#000' : catColor;
+
+  // Pass 1: colored glow behind the glyph (ownership cue).
+  ctx.save();
+  ctx.shadowColor = ringColor;
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = fill;
+  ctx.fillText(glyph || '', cx, cy);
+  ctx.fillText(glyph || '', cx, cy); // second pass deepens the glow
+  ctx.restore();
+
+  // Pass 2: crisp glyph on top with a subtle dark shadow for contrast on any background.
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 3;
+  ctx.shadowOffsetY = 1;
+  ctx.fillStyle = fill;
+  ctx.fillText(glyph || '', cx, cy);
+
   return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
 }
 
@@ -7057,10 +7066,10 @@ function initMap() {
         id: 'pins-layer', type: 'symbol', source: 'pins',
         layout: {
           'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
-          'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 0.2], 'text-optional': true,
+          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 1.3], 'text-optional': true,
         },
         paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
       });
@@ -10892,10 +10901,10 @@ function setBaseLayer(btn) {
         id: 'pins-layer', type: 'symbol', source: 'pins',
         layout: {
           'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
-          'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 0.2], 'text-optional': true,
+          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 1.3], 'text-optional': true,
         },
         paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
       });
