@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 401;
+var APP_BUILD = 402;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2451,6 +2451,33 @@ function userColor(uid) {
   let h = 0;
   for (const c of uid) h = (h << 5) - h + c.charCodeAt(0);
   return COLORS[Math.abs(h) % COLORS.length];
+}
+// Give everyone who HASN'T customized their own color a DISTINCT auto color within this room,
+// instead of each person's color being picked independently by hash — with only 15 palette
+// colors, that gets an uncomfortably high chance of two members colliding on the same color
+// in anything but a very small group. Stable in the common case (starts from each person's
+// usual hash color) and only nudges someone to the next free palette color when a real
+// collision would otherwise happen, so most people's color doesn't shift just because the
+// room's membership changed.
+function _assignDistinctAutoColors(usersMap, myUid, myColor) {
+  var taken = {}, result = {}, needsAuto = [];
+  Object.keys(usersMap).forEach(function (uid) {
+    var d = usersMap[uid] || {};
+    var override = _getUserColorOverride(uid);
+    var own = (uid === myUid) ? myColor : d.color;
+    if (override) { result[uid] = override; taken[override] = true; }
+    else if (own) { result[uid] = own; taken[own] = true; }
+    else needsAuto.push(uid);
+  });
+  needsAuto.sort();
+  needsAuto.forEach(function (uid) {
+    var idx = COLORS.indexOf(userColor(uid)); if (idx === -1) idx = 0;
+    var color = COLORS[idx], tries = 0;
+    while (taken[color] && tries < COLORS.length) { idx = (idx + 1) % COLORS.length; color = COLORS[idx]; tries++; }
+    result[uid] = color;
+    taken[color] = true;
+  });
+  return result;
 }
 var _cpTargetUid = null;
 window._pickUserColor = function(uid, name) {
@@ -8585,6 +8612,7 @@ function listenUsers() {
             : (now - (d.ts || 0)) < (d.rest ? BS_REST_MAX_MS : STALE_MS))
       )
     );
+    var _autoColors = _assignDistinctAutoColors(users, userId, window._myColor);
 
     // Auto-remove ghosts. A truly disconnected client (conn:false) clears within the grace;
     // otherwise 3min for no-GPS, the long window for battery-saver "resting", 20min normally.
@@ -8682,7 +8710,7 @@ function listenUsers() {
       // Your own dot uses YOUR chosen color everywhere now, including on your own device —
       // no more hardcoded gold. Border stays status-based (live/resting/stale) for everyone,
       // including yourself, so it's consistent rather than a special case just for "you".
-      const fillColor   = isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid));
+      const fillColor   = _autoColors[uid] || (isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid)));
       const borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
