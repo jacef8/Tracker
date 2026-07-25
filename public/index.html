@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 400;
+var APP_BUILD = 401;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8679,8 +8679,11 @@ function listenUsers() {
       // chosen color, which beats the auto-assigned fallback. Was backwards before — data.color
       // was checked first, so a viewer's own per-person override never even got consulted once
       // the person had picked any color for themselves.
-      const fillColor   = isMine ? '#f0a500' : (_getUserColorOverride(uid) || data.color || userColor(uid));
-      const borderColor = isMine ? '#f0a500' : isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
+      // Your own dot uses YOUR chosen color everywhere now, including on your own device —
+      // no more hardcoded gold. Border stays status-based (live/resting/stale) for everyone,
+      // including yourself, so it's consistent rather than a special case just for "you".
+      const fillColor   = isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid));
+      const borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
@@ -8690,7 +8693,7 @@ function listenUsers() {
         Object.assign(el.style, {
           width: '44px', height: '44px', borderRadius: '50%',
           background: fillColor,
-          border: isMine ? '4px solid #f0a500' : `3px solid ${borderColor}`,
+          border: isMine ? `4px solid ${borderColor}` : `3px solid ${borderColor}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: '14px', fontWeight: '800', color: textColor,
           boxShadow: '0 2px 14px rgba(0,0,0,.7), 0 0 0 2px rgba(0,0,0,.4)',
@@ -8717,7 +8720,7 @@ function listenUsers() {
           .addTo(map);
         userMarkers[uid]._el = el;
         userMarkers[uid]._fillColor = fillColor;
-        userMarkers[uid]._borderShorthand = isMine ? '4px solid #f0a500' : ('3px solid ' + borderColor);
+        userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = initials(data.name);
         // Tap marker → open the bottom info card (a full-width bar that never covers the
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
@@ -8738,7 +8741,7 @@ function listenUsers() {
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
         userMarkers[uid]._fillColor = fillColor;
-        userMarkers[uid]._borderShorthand = isMine ? '4px solid #f0a500' : ('3px solid ' + borderColor);
+        userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = initials(data.name);
         if (el) {
           el.style.background   = fillColor;
