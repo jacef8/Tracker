@@ -1415,13 +1415,17 @@
 <!-- ══ PLACE MODAL (name + radius + arrive/leave, after tapping the map) ══ -->
 <div id="place-modal" style="display:none;position:fixed;inset:0;z-index:410;background:rgba(0,0,0,.55);align-items:flex-end;justify-content:center">
   <div style="width:100%;max-width:440px;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px) 16px 16px">
-    <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:12px">New Place</div>
+    <div id="place-modal-title" style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:12px">New Place</div>
     <input id="place-name-input" type="text" placeholder="Name (e.g. Home, School)" maxlength="40" style="width:100%;padding:11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:10px" />
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Alert radius</div>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="place-radius-btn" data-radius="100" onclick="window._pickPlaceRadius(100)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Small (100m)</button>
-      <button class="place-radius-btn" data-radius="200" onclick="window._pickPlaceRadius(200)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--accent);background:var(--accent);color:#000;font-size:12px;font-weight:700;cursor:pointer">Medium (200m)</button>
-      <button class="place-radius-btn" data-radius="400" onclick="window._pickPlaceRadius(400)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Large (400m)</button>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="place-radius-btn" data-radius="300" onclick="window._pickPlaceRadius(300)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Small (300 ft)</button>
+      <button class="place-radius-btn" data-radius="600" onclick="window._pickPlaceRadius(600)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--accent);background:var(--accent);color:#000;font-size:12px;font-weight:700;cursor:pointer">Medium (600 ft)</button>
+      <button class="place-radius-btn" data-radius="1200" onclick="window._pickPlaceRadius(1200)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Large (1200 ft)</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <input id="place-radius-input" type="number" min="25" max="10560" step="25" value="600" oninput="window._onPlaceRadiusInput(this.value)" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px" />
+      <span style="font-size:12px;color:var(--muted);white-space:nowrap;flex-shrink:0">feet radius</span>
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input id="place-alert-arrive" type="checkbox" checked style="width:16px;height:16px" />Notify when someone arrives</label>
@@ -2328,8 +2332,10 @@ function _prettyGroup(g) {
   return String(g == null ? '' : g).replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }
 let pinMode = false, pendingCoords = null;
-let placeMode = false, pendingPlaceCoords = null, placeRadiusPicked = 200;
+let placeMode = false, pendingPlaceCoords = null, placeRadiusPicked = 600; // feet
 let _placesManagerCircleKey = null, _placesManagerCircleName = '';
+let _pendingPlaceEditId = null, _placesListCache = {};
+var FEET_PER_METER = 3.28084;
 let _editingPid = null; // set when the pin sheet is editing an existing pin instead of dropping a new one
 let userMarkers = {}, pinMarkers = {};
 var locationHidden = false; // when true: stay in room, chat & view, but don't broadcast position
@@ -2343,7 +2349,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 409;
+var APP_BUILD = 410;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7158,7 +7164,14 @@ function initMap() {
   });
   // Pinch-zoom / rotate are user interaction too — pause auto-recenter so the gesture isn't
   // fought and any open popup survives. (Programmatic eases have no originalEvent.)
-  map.on('zoomstart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
+  map.on('zoomstart', function(e) {
+    if (!e || !e.originalEvent) return; // ignore our own programmatic eases
+    if (window._pauseFollow) window._pauseFollow();
+    // A manual pinch/zoom during group-follow is a deliberate "let me see them tighter"
+    // choice — remember it so _groupFollowTick stops snapping back out to its padded ideal
+    // zoom every tick. Reset whenever a fresh follow session starts (see _fitAllTapped/_stopFitAll).
+    if (typeof fitAllInterval !== 'undefined' && fitAllInterval) window._groupFollowUserZoomed = true;
+  });
   map.on('rotatestart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
 
   // All map control buttons registered here after map exists
@@ -7199,8 +7212,10 @@ function initMap() {
     if (placeMode) {
       pendingPlaceCoords = e.lngLat;
       window._disablePlaceMode();
+      _pendingPlaceEditId = null;
+      document.getElementById('place-modal-title').textContent = 'New Place';
       document.getElementById('place-name-input').value = '';
-      placeRadiusPicked = 200;
+      window._pickPlaceRadius(600);
       document.getElementById('place-alert-arrive').checked = true;
       document.getElementById('place-alert-leave').checked = true;
       document.getElementById('place-modal').style.display = 'flex';
@@ -11993,11 +12008,18 @@ function _renderPlaceEventsFeed() {
     }).join('');
   });
 }
+// Meters (storage/geofence-math unit, unchanged so headless.html's detection logic needs no
+// changes) -> a friendly feet/miles label, same convention the Measure tool already uses.
+function _fmtRadiusFt(meters) {
+  var ft = Math.round((meters || 200) * FEET_PER_METER);
+  return ft >= 1000 ? (ft / 5280).toFixed(2) + ' mi' : ft + ' ft';
+}
 function _renderPlacesList() {
   var list = document.getElementById('places-list'); if (!list || !_placesManagerCircleKey) return;
   list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
   window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'), function (snap) {
     var places = snap.val() || {};
+    _placesListCache = places;
     var ids = Object.keys(places);
     if (!ids.length) {
       list.innerHTML = '<div style="padding:22px 16px;text-align:center;color:var(--muted);font-size:13px">No places yet.<br>Tap <b>+ Add Place</b> to set one up.</div>';
@@ -12008,11 +12030,11 @@ function _renderPlacesList() {
       var alerts = [];
       if (p.alertOn && p.alertOn.arrive) alerts.push('arrive');
       if (p.alertOn && p.alertOn.leave) alerts.push('leave');
-      return '<div class="trk-row" style="cursor:default">' +
+      return '<div class="trk-row" onclick="window._startEditPlace(\'' + _escHtml(pid) + '\')" style="cursor:pointer">' +
         '<svg class="licon" style="color:#00b0ff;flex-shrink:0"><use href="#ic-target"/></svg>' +
         '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(p.name || 'Place') + '</div>' +
-        '<div style="font-size:11px;color:var(--muted)">' + (p.radius || 200) + 'm radius · alerts on ' + (alerts.length ? alerts.join(' &amp; ') : 'nothing') + '</div></div>' +
-        '<button onclick="window._deletePlace(\'' + _escHtml(pid) + '\')" title="Delete" style="flex-shrink:0;background:none;border:none;color:#f85149;cursor:pointer;padding:6px"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
+        '<div style="font-size:11px;color:var(--muted)">' + _fmtRadiusFt(p.radius) + ' radius · alerts on ' + (alerts.length ? alerts.join(' &amp; ') : 'nothing') + ' · tap to edit</div></div>' +
+        '<button onclick="event.stopPropagation(); window._deletePlace(\'' + _escHtml(pid) + '\')" title="Delete" style="flex-shrink:0;background:none;border:none;color:#f85149;cursor:pointer;padding:6px"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
         '</div>';
     }).join('');
   }, { onlyOnce: true });
@@ -12024,10 +12046,24 @@ window._startAddPlace = function () {
   window._enablePlaceMode();
   toast('Tap the map to set the Place’s center', 3000);
 };
-window._pickPlaceRadius = function (r) {
-  placeRadiusPicked = r;
+window._pickPlaceRadius = function (ft) {
+  placeRadiusPicked = ft;
+  var inp = document.getElementById('place-radius-input');
+  if (inp) inp.value = ft;
   document.querySelectorAll('.place-radius-btn').forEach(function (btn) {
-    var active = Number(btn.getAttribute('data-radius')) === r;
+    var active = Number(btn.getAttribute('data-radius')) === ft;
+    btn.style.background = active ? 'var(--accent)' : 'var(--bg)';
+    btn.style.color = active ? '#000' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+  });
+};
+// Free-form radius entry (feet) — lets someone dial in an exact value like "300" rather than
+// being stuck picking between the 3 quick presets, and is also how editing an existing place's
+// radius works (see _startEditPlace) since its stored value rarely matches a preset exactly.
+window._onPlaceRadiusInput = function (val) {
+  placeRadiusPicked = Math.max(25, Math.round(Number(val) || 0));
+  document.querySelectorAll('.place-radius-btn').forEach(function (btn) {
+    var active = Number(btn.getAttribute('data-radius')) === placeRadiusPicked;
     btn.style.background = active ? 'var(--accent)' : 'var(--bg)';
     btn.style.color = active ? '#000' : 'var(--text)';
     btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
@@ -12036,27 +12072,54 @@ window._pickPlaceRadius = function (r) {
 window._cancelPlaceModal = function () {
   document.getElementById('place-modal').style.display = 'none';
   pendingPlaceCoords = null;
+  _pendingPlaceEditId = null;
   if (_placesManagerCircleKey) document.getElementById('places-drawer').classList.add('open');
+};
+// Opens the same modal used for creating a Place, pre-filled from the existing record, so
+// changing (say) a radius from 200m to 300m is an edit-in-place rather than delete + recreate.
+// Location isn't editable here — only name/radius/alerts — since that needs no map re-tap.
+window._startEditPlace = function (placeId) {
+  var p = _placesListCache[placeId];
+  if (!p) { toast('Could not load this Place — try again', 2200); return; }
+  _pendingPlaceEditId = placeId;
+  pendingPlaceCoords = { lat: p.lat, lng: p.lng };
+  document.getElementById('places-drawer').classList.remove('open');
+  document.getElementById('place-modal-title').textContent = 'Edit Place';
+  document.getElementById('place-name-input').value = p.name || '';
+  window._pickPlaceRadius(Math.round((p.radius || 200) * FEET_PER_METER));
+  document.getElementById('place-alert-arrive').checked = !!(p.alertOn && p.alertOn.arrive);
+  document.getElementById('place-alert-leave').checked = !!(p.alertOn && p.alertOn.leave);
+  document.getElementById('place-modal').style.display = 'flex';
 };
 window._savePlace = function () {
   if (!pendingPlaceCoords || !_placesManagerCircleKey) { toast('Something went wrong — try again', 2400); return; }
   var name = (document.getElementById('place-name-input').value || '').trim();
   if (!name) { toast('Give this Place a name', 2200); return; }
-  var payload = {
-    name: name, lat: pendingPlaceCoords.lat, lng: pendingPlaceCoords.lng, radius: placeRadiusPicked,
-    alertOn: {
-      arrive: !!document.getElementById('place-alert-arrive').checked,
-      leave: !!document.getElementById('place-alert-leave').checked
-    },
-    createdBy: userId || (typeof _myAcct === 'function' && _myAcct()) || '', createdAt: Date.now()
+  var radiusMeters = Math.max(8, Math.round(placeRadiusPicked / FEET_PER_METER));
+  var alertOn = {
+    arrive: !!document.getElementById('place-alert-arrive').checked,
+    leave: !!document.getElementById('place-alert-leave').checked
   };
   try {
-    var placeRef = window._fb.push(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'));
-    window._fb.set(placeRef, payload);
-    try { window._evt('added Place "' + name + '"'); } catch (e) {}
+    if (_pendingPlaceEditId) {
+      window._fb.update(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places/' + _pendingPlaceEditId), {
+        name: name, radius: radiusMeters, alertOn: alertOn, updatedAt: Date.now()
+      });
+      try { window._evt('edited Place "' + name + '"'); } catch (e) {}
+    } else {
+      var payload = {
+        name: name, lat: pendingPlaceCoords.lat, lng: pendingPlaceCoords.lng, radius: radiusMeters,
+        alertOn: alertOn,
+        createdBy: userId || (typeof _myAcct === 'function' && _myAcct()) || '', createdAt: Date.now()
+      };
+      var placeRef = window._fb.push(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'));
+      window._fb.set(placeRef, payload);
+      try { window._evt('added Place "' + name + '"'); } catch (e) {}
+    }
   } catch (e) { toast('Failed to save — try again', 2400); return; }
   document.getElementById('place-modal').style.display = 'none';
   pendingPlaceCoords = null;
+  _pendingPlaceEditId = null;
   document.getElementById('places-drawer').classList.add('open');
   toast('Place saved', 2200);
   _renderPlacesList();
@@ -13130,6 +13193,8 @@ window._chooseHeadingUp = function(e) {
 // ── Fit whole group in view (toggle) ───────────────────────────────
 var fitAllInterval = null;
 function _stopFitAll() {
+  window._groupFollowUserZoomed = false;
+  window._groupFollowOutOfViewSince = null;
   if (fitAllInterval) { clearInterval(fitAllInterval); fitAllInterval = null; }
   // Group-view shares the locate button's active glow; clear it unless follow is on.
   var b = document.getElementById('locate-me');
@@ -13242,14 +13307,40 @@ function _groupFollowTick(force) {
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
-  // targetZoom is the TIGHTEST zoom that still fits everyone with padding — anything more
-  // zoomed in than that WILL clip someone. So a zoom-out is never optional/deferrable: if the
-  // ideal is looser than what we've got, apply it now regardless of the dead-band below, or
-  // the group re-centers on the midpoint between members while cropping them out of frame.
-  // Zooming IN tighter has no correctness cost (nobody gets clipped), so that direction still
-  // gets the small dead-band to avoid jittery re-zooming while the group drifts slowly.
+  // targetZoom is the padded "everyone comfortably fits" ideal zoom — anything tighter than
+  // that MIGHT clip someone, but doesn't necessarily (the padding is generous on purpose).
+  // If the user manually zoomed in past it, respect that choice for as long as everyone is
+  // ACTUALLY still on screen — only give up the manual zoom, after a few seconds' grace, once
+  // someone genuinely falls out of view.
+  if (!force && window._groupFollowUserZoomed && targetZoom < curZoom - 0.05) {
+    var stillVisible = _allPointsVisible(pts, _followPadding());
+    if (stillVisible) {
+      window._groupFollowOutOfViewSince = null;
+      var c0 = map.getCenter();
+      var moved0 = Math.abs(cam.center.lng - c0.lng) + Math.abs(cam.center.lat - c0.lat);
+      if (moved0 > 0.00004) map.easeTo({ center: cam.center, zoom: curZoom, duration: 1300, easing: _linEase });
+      return true;
+    }
+    if (!window._groupFollowOutOfViewSince) window._groupFollowOutOfViewSince = Date.now();
+    if (Date.now() - window._groupFollowOutOfViewSince < 3000) {
+      // Grace period — try recentering at the same zoom first; that alone may bring everyone
+      // back into frame without needing to zoom out at all.
+      map.easeTo({ center: cam.center, zoom: curZoom, duration: 900, easing: _linEase });
+      return true;
+    }
+    // Grace period expired and someone's still off-screen — fall through to the normal
+    // safe-zoom logic below, which will zoom out to fit everyone again.
+    window._groupFollowUserZoomed = false;
+    window._groupFollowOutOfViewSince = null;
+  }
+  // Zoom-out to the safe ideal is never optional/deferrable once we get here: if the ideal is
+  // looser than what we've got, apply it now regardless of the dead-band below, or the group
+  // re-centers on the midpoint between members while cropping them out of frame. Zooming IN
+  // tighter has no correctness cost, so that direction still gets a small dead-band to avoid
+  // jittery re-zooming while the group drifts slowly.
   var needsZoomOut = targetZoom < curZoom - 0.05;
-  var zoom = (force || needsZoomOut || Math.abs(targetZoom - curZoom) > 0.6) ? targetZoom : curZoom;
+  var bigDrift = Math.abs(targetZoom - curZoom) > 0.6;
+  var zoom = (force || needsZoomOut || bigDrift) ? targetZoom : curZoom;
   // Skip when nothing meaningfully changed (stationary group) — avoids needless animation.
   var c = map.getCenter();
   var moved = Math.abs(cam.center.lng - c.lng) + Math.abs(cam.center.lat - c.lat);
@@ -13257,11 +13348,27 @@ function _groupFollowTick(force) {
   map.easeTo({ center: cam.center, zoom: zoom, duration: force ? 700 : 1300, easing: _linEase });
   return true;
 }
+// Checks whether every given [lng,lat] point currently falls within the visible map area,
+// respecting the same live-measured top/bottom/side padding _groupFollowTick uses — a point
+// technically inside the raw viewport but under the toolbar doesn't count as "visible."
+function _allPointsVisible(pts, pad) {
+  try {
+    var w = map.getCanvas().clientWidth, h = map.getCanvas().clientHeight;
+    var minX = pad.left, maxX = w - pad.right, minY = pad.top, maxY = h - pad.bottom;
+    for (var i = 0; i < pts.length; i++) {
+      var p = map.project(pts[i]);
+      if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) return false;
+    }
+    return true;
+  } catch (e) { return false; }
+}
 window._fitAllTapped = function() {
   var btn = document.getElementById('locate-me');
   if (fitAllInterval) { _stopFitAll(); toast('Group follow off', 1400); return; }
   // Follow-me and follow-group are mutually exclusive.
   if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
+  window._groupFollowUserZoomed = false;
+  window._groupFollowOutOfViewSince = null;
   if (_groupFollowTick(true) === false) { toast('No members with a location yet'); return; }
   if (btn) { btn.style.background = '#1f6feb'; btn.style.color = '#fff'; btn.style.borderColor = '#1f6feb'; btn.style.boxShadow = '0 0 15px rgba(31,111,235,0.6)'; }
   // Tick often + ease smoothly so the group view glides instead of lurching every few seconds.
