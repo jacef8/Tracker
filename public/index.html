@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 420;
+var APP_BUILD = 421;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10514,13 +10514,20 @@ function _renderInvitePeople(q) {
     if (liveHereSet[pp.uid]) { pp.room = targetKey; pp.online = true; }
     else if (pp.room === targetKey) { pp.room = null; }
   });
+  // No point offering to invite someone who's already there — for a regular room that means
+  // already in it right now; for a Crew it specifically means already a permanent MEMBER, not
+  // just currently visiting (a live visitor is exactly who this picker is for — inviting them
+  // is how they go from "shows up because they have the link" to actually being in the Crew).
+  people = people.filter(function (pp) {
+    if (circleMode) return !circleMembers[pp.uid];
+    return !(pp.room && groupName && pp.room === groupName);
+  });
   function rank(pp) {
     if (circleMode) {
-      if (circleMembers[pp.uid]) return 0;
-      if (circleTarget && pp.room && pp.room === circleTarget.key) return 1;   // here in this room right now
-      return pp.online ? 2 : pp.friend ? 3 : 4;
+      if (circleTarget && pp.room && pp.room === circleTarget.key) return 0;   // here in this room right now — prime invite target
+      return pp.online ? 1 : pp.friend ? 2 : 3;
     }
-    return (pp.room && groupName && pp.room === groupName) ? 0 : pp.online ? 1 : pp.friend ? 2 : 3;
+    return pp.online ? 0 : pp.friend ? 1 : 2;
   }
   people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
   if (!people.length) {
@@ -10530,12 +10537,12 @@ function _renderInvitePeople(q) {
     return;
   }
   listEl.innerHTML = people.slice(0, 40).map(function(pp) {
-    var alreadyMember = circleMode && !!circleMembers[pp.uid];
-    var inMyRoom = !circleMode && pp.room && groupName && pp.room === groupName;
-    var hereNow = circleMode && !alreadyMember && circleTarget && pp.room && pp.room === circleTarget.key;
-    var already = circleMode ? alreadyMember : inMyRoom;
-    var status = already ? (circleMode ? '<span style="color:#3fb950;font-weight:700">already in this Crew</span>' : '<span style="color:#3fb950;font-weight:700">in this room</span>')
-      : hereNow ? '<span style="color:#a78bfa;font-weight:700">here now</span>'
+    // hereNow = live in the target room right now but NOT yet a permanent Crew member — the
+    // prime invite target (this is exactly how someone goes from "shows up because they have
+    // the link" to actually being in the Crew). Already-members and, for a regular room,
+    // anyone already in it were filtered out above entirely — no "already here" case to render.
+    var hereNow = circleMode && circleTarget && pp.room && pp.room === circleTarget.key;
+    var status = hereNow ? '<span style="color:#a78bfa;font-weight:700">here now — not yet a member</span>'
       : pp.online ? '<span style="color:#3fb950;font-weight:700">online</span>'
       : pp.friend ? '<span style="color:var(--muted)">friend · offline</span>'
       : '<span style="color:var(--muted)">offline</span>';
@@ -10545,9 +10552,7 @@ function _renderInvitePeople(q) {
                '<div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
                '<div style="font-size:11px;margin-top:1px">' + status + '</div>' +
              '</div>' +
-             (already
-               ? '<span style="flex-shrink:0;font-size:11px;color:var(--muted);font-weight:700;padding:7px 8px">here &#10003;</span>'
-               : '<button onclick="' + inviteFn + '(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>') +
+             '<button onclick="' + inviteFn + '(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>' +
            '</div>';
   }).join('');
 }
