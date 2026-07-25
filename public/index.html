@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 426;
+var APP_BUILD = 427;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8852,7 +8852,15 @@ function _listenRoomMembersRoster() {
 function listenUsers() {
   _listenRoomMembersRoster();
   try { if (window._usersListenerUnsub) window._usersListenerUnsub(); } catch (e) {}
-  window._usersListenerUnsub = fbOnValue(fbRef(db, `gl/${groupName}/users`), snap => {
+  // The People list used to do a full innerHTML wipe + rebuild on EVERY single fbOnValue firing
+  // — and with several active people each sending fixes every few seconds, that callback can
+  // fire several times a second, each one visibly flashing/rebuilding the whole list from
+  // scratch ("glitching like a refresh", confirmed reported on-device). Coalescing rapid-fire
+  // snapshots into one render per _USERS_RENDER_DEBOUNCE_MS window fixes that directly — the
+  // actual render logic below is completely unchanged, just called less often, always with the
+  // LATEST snapshot by the time it runs.
+  var _USERS_RENDER_DEBOUNCE_MS = 400;
+  function _processUsersSnap(snap) {
     const allUsers = snap.val() || {};
     const now = Date.now();
 
@@ -9233,6 +9241,14 @@ function listenUsers() {
         } catch (e) {}
       }
     }
+  }
+  window._usersListenerUnsub = fbOnValue(fbRef(db, `gl/${groupName}/users`), function (snap) {
+    window._pendingUsersSnap = snap;
+    if (window._usersRenderTimer) return; // a render is already queued — it'll use the latest snap
+    window._usersRenderTimer = setTimeout(function () {
+      window._usersRenderTimer = null;
+      _processUsersSnap(window._pendingUsersSnap);
+    }, _USERS_RENDER_DEBOUNCE_MS);
   });
 }
 
