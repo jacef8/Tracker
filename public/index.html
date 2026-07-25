@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 397;
+var APP_BUILD = 398;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4818,6 +4818,8 @@ window._placesCache = window._placesCache || {};
 window._placesSubbed = window._placesSubbed || {};
 window._placeGeoState = window._placeGeoState || {}; // 'uid_placeId' -> {inside: bool}
 var PLACE_HYSTERESIS_M = 15; // avoids flapping arrive/leave right on the boundary line
+var PLACE_MIN_TRANSITION_MS = 3 * 60 * 1000; // even a clean transition won't re-fire faster than this
+var PLACE_MAX_TRUST_ACC_M = 150; // a fix this inaccurate can't judge a geofence at all — skip it
 function _ensurePlacesSubscribed(circleKey) {
   if (window._placesSubbed[circleKey]) return;
   window._placesSubbed[circleKey] = true;
@@ -4830,21 +4832,35 @@ function _ensurePlacesSubscribed(circleKey) {
 // Called once per fix (from onGpsFix) with the fix already fan-out to every circle. Checks the
 // CURRENT USER's own position against every place in every circle they belong to — an arrival/
 // departure is only meaningful for the person actually moving, not for someone else's fix.
-function _checkPlaceGeofences(lat, lng, circleKeys) {
+function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
   circleKeys.forEach(function (circleKey) {
     var places = window._placesCache[circleKey]; if (!places) return;
     Object.keys(places).forEach(function (placeId) {
       var p = places[placeId]; if (!p || typeof p.lat !== 'number') return;
+      // A fix this inaccurate can't judge the geofence at all — a tablet/device on weak GPS
+      // (indoors, tree cover, poor sky view) can easily report a 100-300m accuracy circle,
+      // and a "position" that uncertain has no business deciding arrive/leave. Leave state
+      // exactly as it was and wait for a better fix instead of guessing.
+      if (accM && accM > PLACE_MAX_TRUST_ACC_M) return;
       var dist = metersApart(lat, lng, p.lat, p.lng);
       var radius = p.radius || 200;
       var stateKey = userId + '_' + placeId;
-      var state = window._placeGeoState[stateKey] || { inside: null }; // null = not yet known
+      var state = window._placeGeoState[stateKey] || { inside: null, ts: 0 }; // null = not yet known
+      // Hysteresis margin scales with how bad the fix's accuracy actually is — a noisy fix
+      // needs to clearly beat its OWN uncertainty before a transition is trusted, not just
+      // the fixed 15m that's fine for a good fix but far too tight for a noisy one.
+      var hyst = Math.max(PLACE_HYSTERESIS_M, (accM || 0) * 0.75);
       var isInside;
-      if (state.inside === true) isInside = dist <= radius + PLACE_HYSTERESIS_M; // stay inside until well clear
-      else if (state.inside === false) isInside = dist <= radius - PLACE_HYSTERESIS_M; // stay outside until well within
+      if (state.inside === true) isInside = dist <= radius + hyst; // stay inside until well clear
+      else if (state.inside === false) isInside = dist <= radius - hyst; // stay outside until well within
       else isInside = dist <= radius; // first-ever check for this place — no transition to fire, just establish state
       var firstCheck = state.inside === null;
-      window._placeGeoState[stateKey] = { inside: isInside };
+      if (!firstCheck && isInside !== state.inside) {
+        // Even a hysteresis-cleared transition can repeat if the fix is bouncing right at the
+        // (now-wider) edge — don't let the SAME place re-fire faster than this, regardless.
+        if (Date.now() - (state.ts || 0) < PLACE_MIN_TRANSITION_MS) return;
+      }
+      window._placeGeoState[stateKey] = { inside: isInside, ts: (firstCheck || isInside !== state.inside) ? Date.now() : (state.ts || 0) };
       if (firstCheck || isInside === state.inside) return; // no transition
       var kind = isInside ? 'arrive' : 'leave';
       if (p.alertOn && p.alertOn[kind] === false) return; // this transition type isn't wanted
@@ -8162,7 +8178,7 @@ function startLocationSharing() {
         if (_ck === groupName) continue; // already written above, skip the duplicate
         fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
       }
-      if (_circleKeys.length) _checkPlaceGeofences(lat, lng, _circleKeys);
+      if (_circleKeys.length) _checkPlaceGeofences(lat, lng, _circleKeys, _effAccM);
     } catch (e) {}
     // Favorited rooms: the same "always show up here" fan-out as a Circle, but unilateral — no
     // shared config flag, no permanent members roster, no invite/accept flow. Favoriting a room
@@ -8878,20 +8894,15 @@ function listenUsers() {
     // Crew members without a live/recent presence entry still belong in the list — otherwise
     // a Crew just reads as "whoever happens to be actively sharing right now" instead of the
     // actual permanent roster (no map marker for these — there's no position to place one).
+    // Deduping this by NAME was tried and reverted: the roster doesn't store a device label,
+    // so a genuinely different, currently-offline device (e.g. "Jace · PC") sharing a base
+    // name with your live phone entry would get wrongly hidden as if it were a duplicate.
+    // Only exact-uid matches against `users` are excluded here — a real, if imperfect,
+    // trade-off that keeps every distinct roster member visible.
     if (window._roomMembersRoster) {
-      // Dedupe by name against anyone CURRENTLY present (any status) — the same person can
-      // have more than one historical uid in the roster (old reinstalls/device resets), and
-      // without this a person already shown live would also show a second, stale "Offline"
-      // row for themselves under a uid nobody's used in ages.
-      var _presentNamesLower = {};
-      Object.values(users).forEach(function (d) { if (d && d.name) _presentNamesLower[String(d.name).toLowerCase()] = true; });
-      var _shownOfflineNames = {};
       Object.keys(window._roomMembersRoster).forEach(function (uid) {
         if (uid === userId || users[uid]) return;
         var m = window._roomMembersRoster[uid] || {};
-        var nmKey = String(m.name || 'Member').toLowerCase();
-        if (_presentNamesLower[nmKey] || _shownOfflineNames[nmKey]) return;
-        _shownOfflineNames[nmKey] = true;
         var orow = document.createElement('div');
         orow.className = 'user-item';
         orow.style.opacity = '0.55';

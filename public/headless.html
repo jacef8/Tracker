@@ -113,6 +113,8 @@
   // subscription — acceptable since fixes reaching this page are already infrequent (every
   // ~30s-3min in the background), so a few minutes of place-list staleness doesn't matter.
   var PLACE_HYSTERESIS_M = 15;
+  var PLACE_MIN_TRANSITION_MS = 3 * 60 * 1000;
+  var PLACE_MAX_TRUST_ACC_M = 150;
   var placesCache = {}, placesCacheTs = {};
   var placeGeoState = {}; // 'uid_placeId' -> {inside: bool|null}
   var PLACES_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -143,20 +145,26 @@
   function checkPlaceGeofences(uid, c) {
     var circleKeys = Object.keys(getCircles());
     if (!circleKeys.length) return;
+    var accM = c.accuracy || 0;
     circleKeys.forEach(function (circleKey) {
       getPlacesForCircle(circleKey).then(function (places) {
         Object.keys(places).forEach(function (placeId) {
           var p = places[placeId]; if (!p || typeof p.lat !== 'number') return;
+          // Mirrors index.html's _checkPlaceGeofences accuracy guard — a fix this noisy can't
+          // judge a geofence at all (common for a tablet on weak GPS indoors/poor sky view).
+          if (accM > PLACE_MAX_TRUST_ACC_M) return;
           var dist = metersApart(c.latitude, c.longitude, p.lat, p.lng);
           var radius = p.radius || 200;
           var stateKey = uid + '_' + placeId;
-          var state = placeGeoState[stateKey] || { inside: null };
+          var state = placeGeoState[stateKey] || { inside: null, ts: 0 };
+          var hyst = Math.max(PLACE_HYSTERESIS_M, accM * 0.75);
           var isInside;
-          if (state.inside === true) isInside = dist <= radius + PLACE_HYSTERESIS_M;
-          else if (state.inside === false) isInside = dist <= radius - PLACE_HYSTERESIS_M;
+          if (state.inside === true) isInside = dist <= radius + hyst;
+          else if (state.inside === false) isInside = dist <= radius - hyst;
           else isInside = dist <= radius;
           var firstCheck = state.inside === null;
-          placeGeoState[stateKey] = { inside: isInside };
+          if (!firstCheck && isInside !== state.inside && (Date.now() - (state.ts || 0)) < PLACE_MIN_TRANSITION_MS) return;
+          placeGeoState[stateKey] = { inside: isInside, ts: (firstCheck || isInside !== state.inside) ? Date.now() : (state.ts || 0) };
           if (firstCheck || isInside === state.inside) return;
           var kind = isInside ? 'arrive' : 'leave';
           if (p.alertOn && p.alertOn[kind] === false) return;
