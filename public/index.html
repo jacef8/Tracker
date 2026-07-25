@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 425;
+var APP_BUILD = 426;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2645,7 +2645,13 @@ function _applyCameraOnSelfFix(lng, lat) {
 // right next to each other) instead of two overlapping icons with no way to tell them apart.
 // Hysteresis (join <15m, split >30m) so walking near the boundary doesn't flicker — the
 // "wasTogether" check keys off the PREVIOUS pass's grouping, not just the raw distance.
+// Both thresholds ALSO widen with speed (see _mergeSlackM below): the 5s debounce alone wasn't
+// enough at highway speed — two riders in the same seat still send fixes a second or two apart
+// from each other, and at 55-60mph that alone is 25-50m of PURELY TIMING-INDUCED apparent gap,
+// well past these base thresholds, confirmed still flickering on-device despite the debounce.
 var MERGE_JOIN_M = 15, MERGE_SPLIT_M = 30, GROUP_DEBOUNCE_MS = 5000;
+var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
+var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
 window._groupCandidate = window._groupCandidate || {};        // uid -> {sig, since} — proposed grouping being timed
@@ -2717,8 +2723,10 @@ function _updateMarkerGrouping() {
       var a = uids[i], b = uids[j];
       var pa = userMarkers[a]._ll, pb = userMarkers[b]._ll;
       var d = metersApart(pa[1], pa[0], pb[1], pb[0]);
+      var maxSpd = Math.max(userMarkers[a]._spd || 0, userMarkers[b]._spd || 0);
+      var slack = Math.min(MERGE_SPEED_SLACK_CAP_M, maxSpd * MERGE_SPEED_SLACK_M_PER_MPH);
       var wasTogether = window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b];
-      if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M)) union(a, b);
+      if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M) + slack) union(a, b);
     }
   }
 
@@ -9070,6 +9078,7 @@ function listenUsers() {
         var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
+        userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
             '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>' : '') + '</div>' +
