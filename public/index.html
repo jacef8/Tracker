@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 396;
+var APP_BUILD = 397;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8607,14 +8607,11 @@ function listenUsers() {
     const listEl = document.getElementById('user-list');
     listEl.innerHTML = '';
 
-    // Update member count badge on users button — counts people PLUS the private
-    // devices you can see (the watch is a member too), PLUS any Crew roster members without
-    // a live presence entry. _refreshPeopleBadge pops on change.
-    var _offlineRosterCount = 0;
-    if (window._roomMembersRoster) {
-      _offlineRosterCount = Object.keys(window._roomMembersRoster).filter(function (u) { return u !== userId && !users[u]; }).length;
-    }
-    window._roomUserCount = Object.keys(users).filter(function (u) { return u !== userId; }).length + _offlineRosterCount;   // count others, not yourself
+    // Update member count badge on users button — counts active/present people PLUS the
+    // private devices you can see (the watch is a member too). Offline Crew roster members
+    // (shown in the list below, but not currently present at all) are deliberately excluded
+    // from this number — it's meant to read as "how many are here right now," not roster size.
+    window._roomUserCount = Object.keys(users).filter(function (u) { return u !== userId; }).length;   // count others, not yourself
     window._refreshPeopleBadge();
 
     // Remove markers for users fully gone from Firebase
@@ -8882,9 +8879,19 @@ function listenUsers() {
     // a Crew just reads as "whoever happens to be actively sharing right now" instead of the
     // actual permanent roster (no map marker for these — there's no position to place one).
     if (window._roomMembersRoster) {
+      // Dedupe by name against anyone CURRENTLY present (any status) — the same person can
+      // have more than one historical uid in the roster (old reinstalls/device resets), and
+      // without this a person already shown live would also show a second, stale "Offline"
+      // row for themselves under a uid nobody's used in ages.
+      var _presentNamesLower = {};
+      Object.values(users).forEach(function (d) { if (d && d.name) _presentNamesLower[String(d.name).toLowerCase()] = true; });
+      var _shownOfflineNames = {};
       Object.keys(window._roomMembersRoster).forEach(function (uid) {
         if (uid === userId || users[uid]) return;
         var m = window._roomMembersRoster[uid] || {};
+        var nmKey = String(m.name || 'Member').toLowerCase();
+        if (_presentNamesLower[nmKey] || _shownOfflineNames[nmKey]) return;
+        _shownOfflineNames[nmKey] = true;
         var orow = document.createElement('div');
         orow.className = 'user-item';
         orow.style.opacity = '0.55';
