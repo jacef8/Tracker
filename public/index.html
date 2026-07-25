@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 398;
+var APP_BUILD = 399;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6292,7 +6292,13 @@ function enterMap(name, group, uid) {
     try {
       var _existingSnap = await fb.get(fbRef(db, `gl/${groupName}/users/${userId}`));
       var _existing = _existingSnap && _existingSnap.val();
-      if (_existing && _existing.name && !_existing.claiming && (Date.now() - (_existing.ts || 0)) < 5 * 60 * 1000) {
+      // No freshness cutoff — a real, named, non-claiming entry should never be blanked out
+      // by this placeholder no matter how stale, since a real fix is coming moments later
+      // via the normal write cycle regardless and will naturally refresh it. A cutoff here
+      // (previously 5 minutes) meant a device that updates less often (weaker/spottier
+      // connectivity, e.g. a tablet) could still get its last-known position wiped on rejoin
+      // just because that entry happened to be a few minutes older than the cutoff.
+      if (_existing && _existing.name && !_existing.claiming) {
         _skipClaimPlaceholder = true;
       }
     } catch (e) {}
