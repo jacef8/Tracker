@@ -2334,7 +2334,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 399;
+var APP_BUILD = 400;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10492,14 +10492,17 @@ window._dismissInvite = function(key) {
   }, 500);
 })();
 
-// Remove user from Firebase on page unload (tab close, browser close)
-window.addEventListener('beforeunload', function() {
-  try {
-    if (db && groupName && userId) {
-      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + userId));
-    }
-  } catch(_) {}
-});
+// REMOVED: this used to unconditionally fbRemove() the user's own presence on every page
+// unload (tab close, browser close, AND every reload). That directly contradicted the "still
+// showing up here" design the rest of the app now follows (EXIT, room-switching, and Crew
+// auto-resume all reload the page on purpose without meaning to actually leave) — it fired
+// on every single one of those reloads, immediately deleting a presence entry regardless of
+// how carefully onDisconnect had been cancelled beforehand. This was the actual root cause
+// of "member disappears the moment EXIT is pressed," surviving every onDisconnect-focused fix
+// because it's a completely separate, direct removal that bypasses onDisconnect entirely.
+// A genuine tab-close/crash/network-loss is already correctly handled server-side by
+// onDisconnect (see the .info/connected watcher in startLocationSharing) — no client-side
+// unload hook is needed for that case, and one that fires on every reload is actively wrong.
 
 // == INSTALL TIP ==================================================
 function initInstallTip() {
