@@ -2077,6 +2077,7 @@
       <div class="section-title" style="margin-bottom:0">Room</div>
       <div id="ri-room" style="font-size:16px;font-weight:700;color:var(--accent);word-break:break-word;margin-top:2px"></div>
       <div id="ri-owner" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
+      <button id="ri-claim-owner-btn" onclick="window._claimRoomOwnership()" style="display:none;margin-top:9px;width:100%;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12.5px;font-weight:700;cursor:pointer">Claim ownership</button>
     </div>
     <!-- Invite + Favorite are the two things people actually open this sheet to DO most often —
          kept up top. Circle/secure-devices/expiry/passcode/visibility below are configuration,
@@ -2336,7 +2337,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 405;
+var APP_BUILD = 406;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4409,6 +4410,11 @@ function openRoomInfo() {
   var nameEl = document.getElementById('ri-room'); if (nameEl) nameEl.textContent = label;
   var ownerEl = document.getElementById('ri-owner');
   if (ownerEl) ownerEl.textContent = window._roomOwnerUid ? ('Owner: ' + _resolveNameForUid(window._roomOwnerUid)) : '';
+  // Escape hatch for an owner uid nobody can currently reach (e.g. an old identity from
+  // before a reinstall/data reset) — lets any member claim ownership instead of the room
+  // being permanently stuck with no one able to manage it.
+  var claimBtn = document.getElementById('ri-claim-owner-btn');
+  if (claimBtn) claimBtn.style.display = window._isRoomOwner ? 'none' : 'block';
   var row = document.getElementById('ri-pin-row');
   if (row) {
     var head = '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Passcode</div>';
@@ -10127,6 +10133,21 @@ window._makeOwner = function() {
   window._isRoomOwner = false;
   try { window._evt('transferred room ownership to ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member')); } catch (e) {}
   toast('Ownership transferred', 2500);
+};
+// Escape hatch: takes over ownership of the CURRENT room regardless of who's currently
+// recorded as owner. Exists because ownership can get stuck pointing at an identity nobody
+// can reach anymore (e.g. after a reinstall/data reset changed your device's uid) — with no
+// current owner able to act, nobody could ever transfer it the normal way. Deliberately not
+// restricted to "only if the old owner looks abandoned" — that's hard to verify reliably, and
+// for a small trusted group the bigger risk is a permanently stuck room, not someone
+// mischievously grabbing ownership of their own family's Crew.
+window._claimRoomOwnership = function () {
+  if (!db || !groupName || !userId || window._isRoomOwner) return;
+  _confirm('Claim ownership of this room? You\'ll be able to manage members, passcode, and visibility.', function () {
+    try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (e) {}
+    try { window._evt(userName + ' claimed room ownership'); } catch (e) {}
+    toast('You are now the owner', 2500);
+  }, { yes: 'Claim ownership' });
 };
 
 // Owner deletes the entire group — step 1: open the "Are you sure?" confirmation.
