@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 414;
+var APP_BUILD = 415;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4829,6 +4829,15 @@ function _syncSettings() {
   // Status-icons toggle (voice + location notification icons, merged into one) — native app only.
   var siRow = document.getElementById('set-statusicons-row');
   if (siRow) { siRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-statusicons-pill', _voiceNotifIconOn() && _locNotifIconOn()); } catch (e) {} }
+  // Hide the "Advanced" disclosure itself when every row inside it is hidden (e.g. a web
+  // session with no linked devices) — otherwise it's a dead-end that expands to nothing.
+  try {
+    var advBanner = document.getElementById('set-advanced-banner'), advBody = document.getElementById('set-advanced-body');
+    var anyAdvRowVisible = ['set-devlisten-row', 'set-secdevall-row', 'set-hearothers-row', 'set-caraudio-row', 'set-statusicons-row']
+      .some(function (id) { var r = document.getElementById(id); return r && r.style.display !== 'none'; });
+    if (advBanner) advBanner.style.display = anyAdvRowVisible ? 'flex' : 'none';
+    if (advBody && !anyAdvRowVisible) advBody.style.display = 'none';
+  } catch (e) {}
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
   var bgRow = document.getElementById('set-bgtrack-row');
