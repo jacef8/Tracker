@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 416;
+var APP_BUILD = 417;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5381,6 +5381,16 @@ window._promptJoinCrew = function (key, label) {
 // the ONE place circle navigation AND management live (previously split across a Quick Join
 // list box and a separate Account-page section).
 window._toggleCircleSwitcher = function () {
+  // With only one Crew, there's nothing to "switch" between — a dropdown that just shows the
+  // same single row you already tapped is a wasted extra click. Go straight in instead, same
+  // as tapping that row would have done.
+  var circles = _getCircles();
+  var keys = Object.keys(circles);
+  if (keys.length === 1) {
+    var key = keys[0], name = circles[key] || key;
+    window._joinFriendRoom(key, name);
+    return;
+  }
   var list = document.getElementById('circle-switcher-list');
   var chev = document.getElementById('circle-switcher-chevron');
   if (!list) return;
