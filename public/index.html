@@ -1559,11 +1559,17 @@
 
 <!-- ══ OWNER: member controls (kick / transfer ownership) ══════════════ -->
 <div id="owner-member-modal" style="display:none;position:fixed;inset:0;z-index:1160;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
-  <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:320px">
-    <div style="font-size:16px;font-weight:800;margin-bottom:3px">Owner controls</div>
+  <div style="background:rgba(22,27,34,0.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:320px;max-height:85vh;overflow-y:auto">
+    <div style="font-size:16px;font-weight:800;margin-bottom:3px">Member actions</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:16px">For <b id="ownmem-name" style="color:var(--accent)"></b></div>
-    <button onclick="window._makeOwner()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
-    <button onclick="window._kickMember()" style="width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove &amp; block from room</button>
+    <!-- These three used to be separate icons on every row — moved here once the row ran out
+         of width for six icons + the status badge. Available to anyone, not owner-only. -->
+    <button id="ownmem-mute-btn" onclick="window._modalToggleMute()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg><span id="ownmem-mute-label">Mute</span></button>
+    <button id="ownmem-pinmute-btn" onclick="window._modalTogglePinMute()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg><span id="ownmem-pinmute-label">Hide their pins</span></button>
+    <button id="ownmem-hidemap-btn" onclick="window._modalToggleHideMap()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px">👁<span id="ownmem-hidemap-label" style="margin-left:2px">Hide their dot from my map</span></button>
+    <div id="ownmem-owner-divider" style="display:none;border-top:1px solid var(--border);margin:6px 0 12px"></div>
+    <button id="ownmem-makeowner-btn" onclick="window._makeOwner()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
+    <button id="ownmem-kick-btn" onclick="window._kickMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove &amp; block from room</button>
     <button id="ownmem-remove-crew-btn" onclick="window._removeCircleMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Remove from this Crew</button>
     <button onclick="document.getElementById('owner-member-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Cancel</button>
   </div>
@@ -2337,7 +2343,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 408;
+var APP_BUILD = 409;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8929,10 +8935,11 @@ function listenUsers() {
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + '">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
-          (!isMine ? '<button class="umute-btn" title="' + (window._isMuted(uid) ? 'Unmute' : 'Mute — silence their voice/alerts to you') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isMuted(uid) ? 'ic-mic-off' : 'ic-mic') + '"/></svg></button>' : '') +
-          (!isMine ? '<button class="upinmute-btn" title="' + (window._isPinMuted(uid) ? 'Show their pins on your map again' : 'Hide their pins from your map') + '" style="background:none;border:none;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;color:' + (window._isPinMuted(uid) ? '#f85149' : 'var(--muted)') + '"><svg class="licon licon-sm"><use href="#' + (window._isPinMuted(uid) ? 'ic-pin-off' : 'ic-pin') + '"/></svg></button>' : '') +
-          (!isMine ? '<button class="uhidemap-btn" title="' + (_hiddenFromMap ? 'Show on your map again' : 'Hide their dot from your map') + '" style="background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:0;display:flex;align-items:center;color:' + (_hiddenFromMap ? '#f85149' : 'var(--muted)') + '">' + (_hiddenFromMap ? '🙈' : '👁') + '</button>' : '') +
-          ((window._isRoomOwner && !isMine) ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
+          // Mute/pin-mute/hide-from-map used to each be their own icon here — six icons plus
+          // the status badge stopped fitting on a phone-width row (names started wrapping,
+          // the mic button overlapping the text). All three moved into this ⋮ menu, which is
+          // now a general "member actions" menu for everyone, not just owner-only controls.
+          (!isMine ? '<button class="uowner-btn" title="More actions" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>';
       // Tap the avatar dot → set this member's color (only for others). Stops the tap from
@@ -8941,34 +8948,12 @@ function listenUsers() {
       if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
       var _frb = row.querySelector('.ufriend-btn');
       if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
-      var _mub = row.querySelector('.umute-btn');
-      if (_mub) _mub.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var nowMuted = window._toggleMute(uid, data.name);
-        var _use = e.currentTarget.querySelector('use'); if (_use) _use.setAttribute('href', nowMuted ? '#ic-mic-off' : '#ic-mic');
-        e.currentTarget.style.color = nowMuted ? '#f85149' : 'var(--muted)';
-        e.currentTarget.title = nowMuted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
-      });
-      var _pmb = row.querySelector('.upinmute-btn');
-      if (_pmb) _pmb.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var nowPinMuted = window._togglePinMute(uid, data.name);
-        var _use2 = e.currentTarget.querySelector('use'); if (_use2) _use2.setAttribute('href', nowPinMuted ? '#ic-pin-off' : '#ic-pin');
-        e.currentTarget.style.color = nowPinMuted ? '#f85149' : 'var(--muted)';
-        e.currentTarget.title = nowPinMuted ? 'Show their pins on your map again' : 'Hide their pins from your map';
-      });
-      var _hmb = row.querySelector('.uhidemap-btn');
-      if (_hmb) _hmb.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var nowHidden = window._toggleMemberHidden(uid, data.name);
-        e.currentTarget.textContent = nowHidden ? '🙈' : '👁';
-        e.currentTarget.style.color = nowHidden ? '#f85149' : 'var(--muted)';
-        e.currentTarget.title = nowHidden ? 'Show on your map again' : 'Hide their dot from your map';
-      });
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
+      // Mute/pin-mute/hide-from-map are no longer separate row icons (see the ⋮ comment
+      // above) — all three now live inside the member-actions modal this opens.
       var _ob = row.querySelector('.uowner-btn');
-      if (_ob) _ob.addEventListener('click', function(e) { e.stopPropagation(); window._ownerMemberMenu(uid, data.name); });
+      if (_ob) _ob.addEventListener('click', function(e) { e.stopPropagation(); window._memberActionsMenu(uid, data.name); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         setLocateMeVisible(true);
@@ -9012,12 +8997,12 @@ function listenUsers() {
             '<div class="ustatus" style="color:var(--muted)">Offline — not sharing right now</div>' +
           '</div>' +
           '<div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:8px">' +
-            (window._isRoomOwner ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
+            '<button class="uowner-btn" title="More actions" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' +
             '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">OFFLINE</span>' +
           '</div>';
-        if (window._isRoomOwner) {
+        {
           var _orob = orow.querySelector('.uowner-btn');
-          if (_orob) _orob.addEventListener('click', function (e) { e.stopPropagation(); window._ownerMemberMenu(uid, m.name || 'Member'); });
+          if (_orob) _orob.addEventListener('click', function (e) { e.stopPropagation(); window._memberActionsMenu(uid, m.name || 'Member'); });
         }
         listEl.appendChild(orow);
       });
@@ -10111,17 +10096,53 @@ function _removedByOwner() {
 
 // ══ OWNER MEMBER CONTROLS ════════════════════════════════════════════
 var _ownMemUid = null;
-window._ownerMemberMenu = function(uid, name) {
-  if (!window._isRoomOwner || uid === userId) return;
+// Was owner-only ("Owner controls") — now a general member-actions menu, since mute/pin-mute/
+// hide-from-map moved here from their own row icons (see the row-template comment). The
+// owner-only actions (make owner / kick / remove from Crew) still only show for the owner.
+window._memberActionsMenu = function(uid, name) {
+  if (uid === userId) return;
   _ownMemUid = uid;
   var nm = document.getElementById('ownmem-name'); if (nm) nm.textContent = name || 'this member';
+
+  var muted = window._isMuted(uid);
+  var mlbl = document.getElementById('ownmem-mute-label'); if (mlbl) mlbl.textContent = muted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
+
+  var pinMuted = window._isPinMuted(uid);
+  var plbl = document.getElementById('ownmem-pinmute-label'); if (plbl) plbl.textContent = pinMuted ? 'Show their pins on my map again' : 'Hide their pins from my map';
+
+  var hidden = window._isMemberHidden(uid);
+  var hlbl = document.getElementById('ownmem-hidemap-label'); if (hlbl) hlbl.textContent = hidden ? 'Show their dot on my map again' : 'Hide their dot from my map';
+
+  var isOwner = !!window._isRoomOwner;
+  var divider = document.getElementById('ownmem-owner-divider'); if (divider) divider.style.display = isOwner ? 'block' : 'none';
+  var mob = document.getElementById('ownmem-makeowner-btn'); if (mob) mob.style.display = isOwner ? 'flex' : 'none';
+  var kb = document.getElementById('ownmem-kick-btn'); if (kb) kb.style.display = isOwner ? 'flex' : 'none';
   // "Remove & block from room" only ever affected THIS room's live view + ban flag — it never
   // touched a Crew's permanent roster (gl/<key>/members), so someone removed that way was
   // still a Crew member and would keep showing up via circle fan-out. Only show the real
   // "remove from Crew" action when this room actually IS a Crew.
   var rcb = document.getElementById('ownmem-remove-crew-btn');
-  if (rcb) rcb.style.display = (typeof _isCircleMember === 'function' && _isCircleMember(groupName)) ? 'flex' : 'none';
+  if (rcb) rcb.style.display = (isOwner && typeof _isCircleMember === 'function' && _isCircleMember(groupName)) ? 'flex' : 'none';
+
   document.getElementById('owner-member-modal').style.display = 'flex';
+};
+window._modalToggleMute = function () {
+  if (!_ownMemUid) return;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || '';
+  var nowMuted = window._toggleMute(_ownMemUid, nm);
+  var lbl = document.getElementById('ownmem-mute-label'); if (lbl) lbl.textContent = nowMuted ? 'Unmute' : 'Mute — silence their voice/alerts to you';
+};
+window._modalTogglePinMute = function () {
+  if (!_ownMemUid) return;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || '';
+  var nowPinMuted = window._togglePinMute(_ownMemUid, nm);
+  var lbl = document.getElementById('ownmem-pinmute-label'); if (lbl) lbl.textContent = nowPinMuted ? 'Show their pins on my map again' : 'Hide their pins from my map';
+};
+window._modalToggleHideMap = function () {
+  if (!_ownMemUid) return;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || '';
+  var nowHidden = window._toggleMemberHidden(_ownMemUid, nm);
+  var lbl = document.getElementById('ownmem-hidemap-label'); if (lbl) lbl.textContent = nowHidden ? 'Show their dot on my map again' : 'Hide their dot from my map';
 };
 window._kickMember = function() {
   var uid = _ownMemUid;
@@ -12526,15 +12547,16 @@ function _renderSavedOnMap() {
   if (!window._showSavedOnMap) return;
   getSavedPins().filter(_savedMatch).forEach(function(pin) {
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
+    // Matches the redesigned map pins (build 403) — bare oversized icon, no teardrop/inset-
+    // disc container, colored glow (category color) + dark shadow for contrast. This DOM-
+    // marker version of saved pins was missed in that redesign since it's a separate code
+    // path from makePinImage()'s canvas-rendered room/circle pins.
     var el = document.createElement('div');
-    el.style.cssText = 'width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:' + def.color + ';border:2px dashed #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;cursor:pointer';
-    var inner = document.createElement('div');
-    inner.style.cssText = 'transform:rotate(45deg);font-size:11px;line-height:1;color:#fff';
-    inner.textContent = def.emoji || '';
-    el.appendChild(inner);
+    el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 2px 3px rgba(0,0,0,.85))';
+    el.textContent = def.emoji || '📍';
     el.title = (pin.label || pin.cat || 'Saved pin') + (pin.coll ? ' · ' + pin.coll : '');
     try {
-      var m = new mapboxgl.Marker({ element: el, anchor:'bottom' }).setLngLat([pin.lng, pin.lat]).addTo(map);
+      var m = new mapboxgl.Marker({ element: el, anchor:'center' }).setLngLat([pin.lng, pin.lat]).addTo(map);
       if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
         m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
           '<div style="font-weight:800;font-size:12px;color:#111">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
