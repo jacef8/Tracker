@@ -1564,6 +1564,7 @@
     <div style="font-size:12px;color:var(--muted);margin-bottom:16px">For <b id="ownmem-name" style="color:var(--accent)"></b></div>
     <button onclick="window._makeOwner()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
     <button onclick="window._kickMember()" style="width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove &amp; block from room</button>
+    <button id="ownmem-remove-crew-btn" onclick="window._removeCircleMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Remove from this Crew</button>
     <button onclick="document.getElementById('owner-member-modal').style.display='none'" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Cancel</button>
   </div>
 </div>
@@ -2334,7 +2335,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 403;
+var APP_BUILD = 404;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8958,9 +8959,14 @@ function listenUsers() {
             '<div class="uname">' + escapeHtmlJs(m.name || 'Member') + '</div>' +
             '<div class="ustatus" style="color:var(--muted)">Offline — not sharing right now</div>' +
           '</div>' +
-          '<div style="margin-left:auto;flex-shrink:0">' +
+          '<div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:8px">' +
+            (window._isRoomOwner ? '<button class="uowner-btn" title="Owner controls" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' : '') +
             '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">OFFLINE</span>' +
           '</div>';
+        if (window._isRoomOwner) {
+          var _orob = orow.querySelector('.uowner-btn');
+          if (_orob) _orob.addEventListener('click', function (e) { e.stopPropagation(); window._ownerMemberMenu(uid, m.name || 'Member'); });
+        }
         listEl.appendChild(orow);
       });
     }
@@ -10057,6 +10063,12 @@ window._ownerMemberMenu = function(uid, name) {
   if (!window._isRoomOwner || uid === userId) return;
   _ownMemUid = uid;
   var nm = document.getElementById('ownmem-name'); if (nm) nm.textContent = name || 'this member';
+  // "Remove & block from room" only ever affected THIS room's live view + ban flag — it never
+  // touched a Crew's permanent roster (gl/<key>/members), so someone removed that way was
+  // still a Crew member and would keep showing up via circle fan-out. Only show the real
+  // "remove from Crew" action when this room actually IS a Crew.
+  var rcb = document.getElementById('ownmem-remove-crew-btn');
+  if (rcb) rcb.style.display = (typeof _isCircleMember === 'function' && _isCircleMember(groupName)) ? 'flex' : 'none';
   document.getElementById('owner-member-modal').style.display = 'flex';
 };
 window._kickMember = function() {
@@ -10070,6 +10082,26 @@ window._kickMember = function() {
   } catch (e) {}
   try { window._evt('removed ' + ((document.getElementById('ownmem-name') || {}).textContent || 'a member') + ' from the room'); } catch (e) {}
   toast('Removed from the room', 2500);
+};
+// Actually removes someone from a Crew's PERMANENT roster (not just this room's live view) —
+// mirrors _leaveCircle's own effect, just owner-initiated on someone else's behalf instead of
+// self-initiated. Deliberately does NOT set a ban flag (unlike kick) — being taken off a
+// family Crew isn't necessarily punitive, and a future invite should be able to add them back
+// cleanly without a leftover ban blocking it.
+window._removeCircleMember = function() {
+  var uid = _ownMemUid;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  _confirm('Remove ' + nm + ' from this Crew? They\'ll stop showing up here and this room will stop showing up on their devices, until someone invites them back.', function () {
+    try {
+      fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + uid));
+      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
+      fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
+    } catch (e) {}
+    try { window._evt('removed ' + nm + ' from the Crew'); } catch (e) {}
+    toast(nm + ' removed from this Crew', 2500);
+  }, { yes: 'Remove', danger: true });
 };
 window._makeOwner = function() {
   var uid = _ownMemUid;
