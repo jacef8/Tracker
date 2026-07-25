@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 424;
+var APP_BUILD = 425;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8639,6 +8639,38 @@ function startLocationSharing() {
   // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
   window._gpsWatchId = navigator.geolocation.watchPosition(_webFix, onGpsErr,
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
+
+  // ── Ongoing GPS liveness watchdog ───────────────────────────────────
+  // The one-time startup watchdog above (T+40s/T+80s) only ever checks whether background GPS
+  // STARTED — it explicitly bails the moment window._gotNativeFix is ever true, so it can never
+  // fire again for the rest of the session. That leaves a real gap: if the native plugin or the
+  // web watchPosition silently dies partway through a long session (OS suspends it, a plugin
+  // crash, whatever) — confirmed on-device: a normal drive on the installed native app went
+  // completely silent for 19+ minutes with zero recovery and zero error logged — nothing here
+  // would ever notice or attempt to recover. This re-checks periodically for as long as the room
+  // stays open, not just once at the start.
+  // Threshold reasoning: battery-saver's own "resting" heartbeat (BS_HEARTBEAT_MS, ~4 min) is the
+  // slowest legitimate write cadence by design — 10 min gives a comfortable margin above that
+  // worst case so a genuinely healthy idle device never false-positives, while still catching a
+  // real stall far sooner than letting it silently run for however long the user happens to
+  // notice on their own.
+  var GPS_WATCHDOG_STALE_MS = 10 * 60 * 1000;
+  function _gpsWatchdogTick() {
+    if (window._roomClosed || !groupName) return;
+    var lastTs = (window._lastGoodFix && window._lastGoodFix.ts) || 0;
+    if (!lastTs) return; // never got a first fix yet — the startup watchdog above covers that
+    var age = Date.now() - lastTs;
+    if (age < GPS_WATCHDOG_STALE_MS) return;
+    try { window._evt('⚠ no GPS fix in ' + Math.round(age / 60000) + 'm — restarting tracking'); } catch (e) {}
+    try { if (_isNativeApp()) startNativeBackgroundTracking(); } catch (e) {}
+    try {
+      if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId);
+      window._gpsWatchId = navigator.geolocation.watchPosition(_webFix, onGpsErr,
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
+    } catch (e) {}
+  }
+  if (window._gpsWatchdogInterval) clearInterval(window._gpsWatchdogInterval);
+  window._gpsWatchdogInterval = setInterval(_gpsWatchdogTick, 3 * 60 * 1000);
 
   // ── Diagnostics: each device reports its live status to gl/<group>/diag/<uid> so the
   // admin Debug tab can show what's really happening (native? bg service? GPS flowing?).
