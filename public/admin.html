@@ -222,6 +222,10 @@
 
 <!-- GROUPS TAB -->
 <div class="tab-panel active" id="tab-groups">
+  <div id="owner-requests-panel" style="display:none;margin-bottom:14px;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.35);border-radius:10px;padding:12px 14px">
+    <div style="font-size:13px;font-weight:800;color:#f0a500;margin-bottom:8px">Pending ownership requests</div>
+    <div id="owner-requests-list"></div>
+  </div>
   <div class="group-subtabs">
     <button id="gsub-active-btn" class="gsub-btn active" onclick="setGroupSub('active')" title="Live rooms shown in the public home directory">Active &middot; <span id="gsub-active-n">0</span></button>
     <button id="gsub-retired-btn" class="gsub-btn" onclick="setGroupSub('retired')" title="Other rooms you can still manage — private, kept-open, or recently active">Other &middot; <span id="gsub-retired-n">0</span></button>
@@ -1282,6 +1286,46 @@ function goToGroup(key) {
   }, 60);
 }
 
+// Ownership requests: a member files one from Room Info (window._requestRoomOwnership) when
+// the recorded owner is unreachable (e.g. an old identity from a reinstall/data reset).
+// Approving/denying happens here rather than letting anyone self-claim, per explicit request
+// after an earlier instant self-claim version was found too permissive.
+function renderOwnerRequests(all) {
+  var panel = document.getElementById('owner-requests-panel');
+  var list = document.getElementById('owner-requests-list');
+  if (!panel || !list) return;
+  var rows = [];
+  Object.keys(all || {}).forEach(function (key) {
+    if (key.charAt(0) === '_') return;
+    var req = all[key] && all[key].ownerRequest;
+    if (!req || !req.uid) return;
+    rows.push({ key: key, uid: req.uid, name: req.name || 'Someone', ts: req.ts || 0 });
+  });
+  if (!rows.length) { panel.style.display = 'none'; list.innerHTML = ''; return; }
+  panel.style.display = 'block';
+  rows.sort(function (a, b) { return b.ts - a.ts; });
+  list.innerHTML = rows.map(function (r) {
+    var when = r.ts ? new Date(r.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(240,165,0,.2)">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;font-weight:700;color:#e6edf3">' + _esc(r.name) + ' wants ownership of <span style="color:#f0a500">' + _esc(r.key) + '</span></div>' +
+        '<div style="font-size:11px;color:#8b949e">' + when + '</div>' +
+      '</div>' +
+      '<button onclick="approveOwnerRequest(\'' + _esc(r.key) + '\',\'' + _esc(r.uid) + '\')" style="padding:7px 12px;background:#3fb950;border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">Approve</button>' +
+      '<button onclick="denyOwnerRequest(\'' + _esc(r.key) + '\')" style="padding:7px 12px;background:none;border:1px solid #f85149;border-radius:8px;color:#f85149;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">Deny</button>' +
+    '</div>';
+  }).join('');
+}
+function approveOwnerRequest(key, uid) {
+  var fb = window._fb; if (!fb) return;
+  try { fb.set(fb.ref(fb.db, 'gl/' + key + '/config/owner'), uid); } catch (e) {}
+  try { fb.remove(fb.ref(fb.db, 'gl/' + key + '/ownerRequest')); } catch (e) {}
+}
+function denyOwnerRequest(key) {
+  var fb = window._fb; if (!fb) return;
+  try { fb.remove(fb.ref(fb.db, 'gl/' + key + '/ownerRequest')); } catch (e) {}
+}
+
 function renderSummary(all) {
   if (!all || !Object.keys(all).length) return;
   var entries = Object.entries(all).filter(function(e){ return e[0] && e[0].charAt(0) !== '_'; });
@@ -1909,6 +1953,7 @@ function loadAdmin() {
       // Each render is isolated so one failure can't block the Groups list (which would
       // otherwise leave it stuck on "Connecting to Firebase…").
       try { renderSummary(all); } catch (e) { addLog('renderSummary error: ' + e.message, 'error'); }
+      try { renderOwnerRequests(all); } catch (e) { addLog('renderOwnerRequests error: ' + e.message, 'error'); }
       try { renderActiveUsers(all); } catch (e) { addLog('renderActiveUsers error: ' + e.message, 'error'); }
       try { renderAdminDevices(all); } catch (e) { addLog('renderAdminDevices error: ' + e.message, 'error'); }
       // Live-refresh the Map (overview) tab if it's open
