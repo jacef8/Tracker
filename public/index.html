@@ -1354,7 +1354,7 @@
       </span>
     </div>
     <!-- BREADCRUMBS -->
-    <div class="icon-btn" id="breadcrumb-btn" title="Toggle breadcrumbs"><span style="position:relative;display:inline-flex"><svg class="licon"><use href="#ic-footprints"/></svg><span id="breadcrumb-dot" style="position:absolute;top:-4px;right:-5px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></span></div>
+    <div class="icon-btn" id="breadcrumb-btn" title="Show location trail lines on the map (hold to clear)"><span style="position:relative;display:inline-flex"><svg class="licon"><use href="#ic-footprints"/></svg><span id="breadcrumb-dot" style="position:absolute;top:-4px;right:-5px;width:7px;height:7px;border-radius:50%;background:#3fb950;display:none"></span></span></div>
     <!-- MEASURE -->
     <div class="icon-btn" id="measure-btn" title="Measure"><svg class="licon"><use href="#ic-ruler"/></svg></div>
     <!-- SOS -->
@@ -2398,7 +2398,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 415;
+var APP_BUILD = 416;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6512,12 +6512,13 @@ function enterMap(name, group, uid) {
     document.getElementById('chat-title-text').textContent = 'Group Chat';
 
     acquireWakeLock();
-    // Restore breadcrumb setting from last session — defaults ON (opt-out, not opt-in) so a
-    // recent trail exists for people by default instead of silently having none until someone
-    // discovers and taps the footprints icon. Only stays off if explicitly turned off before.
+    // Restore the location-trail-LINE display preference from last session (default off — this
+    // no longer gates whether trail data is recorded, only whether it's drawn on the map; see
+    // _renderTrailLines). Recording itself always happens, so "Recent trail"/History work
+    // without anyone needing to find or enable this first.
     try {
       var savedCrumbs = localStorage.getItem('gl_breadcrumbs');
-      if (savedCrumbs !== '0') {
+      if (savedCrumbs === '1') {
         breadcrumbsOn = true;
         // Apply visual state after a short delay so DOM is ready
         setTimeout(applyBreadcrumbState, 200);
@@ -6681,7 +6682,7 @@ window._maybeOnboard = function () {
     '<div style="font-size:15px;color:var(--muted,#8b949e);margin-bottom:22px">A live map + walkie-talkie for your group — no account needed.</div>' +
     _ob('ic-users', 'See everyone live', 'Real-time positions on a satellite map.') +
     _ob('ic-mic', 'Talk instantly', 'Push-to-talk voice with your whole group.') +
-    _ob('ic-pin', 'Pins, trails &amp; chat', 'Drop & share spots and leave a breadcrumb trail.') +
+    _ob('ic-pin', 'Pins, trails &amp; chat', 'Drop & share spots — your location trail is recorded automatically.') +
     '<button onclick="window._finishOnboard()" style="width:100%;margin-top:22px;padding:14px;background:var(--accent,#f0a500);border:none;border-radius:12px;color:#1a1200;font-size:16px;font-weight:800;cursor:pointer">Get started</button>' +
   '</div>';
   document.body.appendChild(ov);
@@ -8323,7 +8324,7 @@ function startLocationSharing() {
     var _effAccM = (lat === rawLat && lng === rawLng) ? _accNow : window._lastGoodFix.acc;
     var _fixPayload = {
       lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
-      trail: breadcrumbsOn, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
+      trail: true, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       hereSince: window._hereSinceTs,
       color: window._myColor || ''
     };
@@ -8389,11 +8390,13 @@ function startLocationSharing() {
     } catch (e) {}
     window._bsLastWrite = now; // heartbeat clock for the battery saver
 
-    // Write breadcrumb if enabled, moved enough, AND the fix is trustworthy. Low-accuracy
-    // fixes (common when the screen is off and the OS falls back to cell/wifi location) and
-    // impossible teleports are what scatter the trail — so we drop them here. Breadcrumbs are
-    // per-room, so this only applies with a room actually open.
-    if (breadcrumbsOn && groupName) {
+    // Recording the room-scoped location trail is now ALWAYS on (no user toggle gates it) —
+    // it's what backs both the "Recent trail" member-card shortcut and, indirectly, the visual
+    // breadcrumb line (breadcrumbsOn only controls whether that line gets DRAWN, not whether
+    // this data exists at all; see _renderTrailLines). Still requires moving enough AND the
+    // fix being trustworthy: low-accuracy fixes (common when the screen is off and the OS
+    // falls back to cell/wifi location) and impossible teleports are what scatter a trail.
+    if (groupName) {
       const accM = accuracy || 0; // meters, from GPS or the native background fix
       const goodAccuracy = accM > 0 && accM <= TRAIL_MAX_ACC_M;
       const distM = lastBreadcrumbPos
@@ -8645,27 +8648,25 @@ function applyBreadcrumbState() {
   }
 }
 
+// Purely a display preference now — trail data is always recorded regardless (see
+// _renderTrailLines above), so toggling this only shows/hides the line drawn on YOUR map.
 function toggleBreadcrumbs() {
   breadcrumbsOn = !breadcrumbsOn;
   // Persist setting so it survives app close/reopen
   try { localStorage.setItem('gl_breadcrumbs', breadcrumbsOn ? '1' : '0'); } catch(e) {}
-  lastBreadcrumbPos = null;
-  lastBreadcrumbTs = 0;
   applyBreadcrumbState();
-  if (breadcrumbsOn) {
-    toast('Breadcrumbs ON — recording your trail · hold to clear', 2800);
-  } else {
-    toast('Breadcrumbs OFF — hold the button to clear your trail now', 2800);
-  }
+  try { _renderTrailLines(); } catch (e) {}
+  toast(breadcrumbsOn ? 'Location trail lines ON' : 'Location trail lines OFF — still recording for History, just not drawn here', 2800);
 }
 
-// Remove the user's own breadcrumb trail from the map immediately
+// Remove the user's own location trail from the map AND from History/Recent-trail for
+// everyone — same underlying data, so clearing it clears both.
 function clearMyTrail() {
   if (!groupName || !userId || !db) { toast('Join a group first'); return; }
   try { if (navigator.vibrate) navigator.vibrate(40); } catch (e) {}
-  _confirm('Clear your breadcrumb trail from the map now?', function () {
+  _confirm('Clear your recent location trail? This removes it from the map and from Recent trail/History for everyone.', function () {
     fbRemove(fbRef(db, 'gl/' + groupName + '/trails/' + userId));
-    toast('Your breadcrumb trail cleared');
+    toast('Your location trail cleared');
   });
 }
 
@@ -9754,12 +9755,26 @@ function clearTrailLayer(uid) {
   delete trailSources[uid];
 }
 
+// Trail DATA (gl/<room>/trails/<uid>) is now written unconditionally by every device in the
+// room, independent of breadcrumbsOn — that's what lets the "Recent trail" member-card
+// shortcut and Location History always have something to show, without anyone needing to
+// discover or enable a separate "breadcrumbs" concept first. breadcrumbsOn is now purely a
+// personal display preference: whether trail LINES actually get drawn on top of your own map.
+// Cache the latest raw snapshot so toggling that preference can redraw immediately, without
+// waiting for the next Firebase write to trigger a re-render.
+var _lastTrailsSnap = null;
 function listenTrails() {
   fbOnValue(fbRef(db, `gl/${groupName}/trails`), snap => {
-    const allTrails = snap.val() || {};
+    _lastTrailsSnap = snap.val() || {};
+    _renderTrailLines();
+  });
+}
+function _renderTrailLines() {
+    const allTrails = breadcrumbsOn ? (_lastTrailsSnap || {}) : {};
     const now = Date.now();
 
-    // Remove layers only for trails fully deleted from Firebase
+    // Remove layers only for trails fully deleted from Firebase (or ALL of them, if the
+    // display preference is off — the data itself is untouched, only what's drawn changes)
     Object.keys(trailSources).forEach(uid => {
       if (!allTrails[uid]) clearTrailLayer(uid);
     });
@@ -9830,7 +9845,6 @@ function listenTrails() {
         trailSources[uid] = true;
       }
     });
-  });
 }
 
 // ══ CHAT ═════════════════════════════════════════════════════════
@@ -12038,9 +12052,10 @@ window._viewHistory = function () {
 // Circle+date picked because it can span many days/Circles. This answers a narrower, more
 // common question — "where has the person I'm looking at right now been the last couple
 // hours" — which is already fully scoped by context (this room, this uid, right now), so no
-// picker is needed at all. Reuses the room's own rolling Breadcrumb trail (gl/<room>/trails/<uid>,
-// same 2-hour window listenTrails() already draws on the map for anyone with it enabled) rather
-// than the Circle-scoped History data, since that's keyed to a Circle this pairing might not share.
+// picker is needed at all. Reuses the room's own rolling location trail (gl/<room>/trails/<uid>,
+// same 2-hour data — always recorded, regardless of the display-only breadcrumb toggle; see
+// _renderTrailLines) rather than the Circle-scoped History data, since that's keyed to a Circle
+// this pairing might not share.
 window._showStatusLegend = function () {
   var el = document.getElementById('status-legend-sheet'); if (el) el.style.display = 'flex';
 };
@@ -12058,7 +12073,7 @@ window._openHistoryForMember = function (uid, name) {
       .filter(function (p) { return now - p.t < TRAIL_MAX_MS; })
       .sort(function (a, b) { return a.t - b.t; });
     if (pts.length < 2) {
-      bodyEl.innerHTML = '<div style="padding:16px 4px;text-align:center;color:var(--muted);font-size:13px">No recent trail for ' + _escHtml(name || 'them') + ' — they need <b>Location trail</b> (the footprints icon) turned on for one to build up.</div>';
+      bodyEl.innerHTML = '<div style="padding:16px 4px;text-align:center;color:var(--muted);font-size:13px">No recent trail for ' + _escHtml(name || 'them') + ' yet — this builds up automatically as they move around this room, so check back in a bit.</div>';
       return;
     }
     var st = _trackStats(pts);
