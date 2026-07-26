@@ -1939,18 +1939,6 @@
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-        <!-- Liberty County parcels -->
-        <div onclick="var cb=document.getElementById('toggle-parcels');cb.checked=!cb.checked;toggleParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">Liberty County Parcels</div>
-            <div style="font-size:11px;color:var(--muted)">Tap any parcel for owner, acreage & value</div>
-          </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-parcels" onchange="toggleParcels(this.checked)" style="opacity:0;width:0;height:0">
-            <span id="parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
-        </div>
         <!-- Weather radar (RainViewer) -->
         <div onclick="var cb=document.getElementById('toggle-radar');cb.checked=!cb.checked;toggleRadar(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <div style="flex:1">
@@ -1963,52 +1951,85 @@
             <span id="radar-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
         </div>
-        <!-- Florida statewide parcels — live from the FL state GIS (free, no key) -->
-        <div onclick="var cb=document.getElementById('toggle-fl-parcels');cb.checked=!cb.checked;toggleFLParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#f0a500"><use href="#ic-layers"/></svg>Parcels (auto-detect)</div>
-            <div style="font-size:11px;color:var(--muted)">Property lines &amp; owners &middot; loads the right source for where you are &middot; tap for info</div>
+
+        <!-- ══ PARCELS — collapsible folder, states grouped inside ══ -->
+        <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div onclick="var b=document.getElementById('parcels-section-body'),c=document.getElementById('parcels-section-chevron'),open=b.style.display!=='none';b.style.display=open?'none':'block';c.style.transform=open?'':'rotate(180deg)';" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;background:var(--bg)">
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#f0a500"><use href="#ic-layers"/></svg>Parcels</div>
+            <span id="parcels-section-chevron" style="color:var(--muted);display:flex;transition:transform .2s"><svg class="licon licon-sm"><use href="#ic-chevron-down"/></svg></span>
           </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0">
-            <span id="fl-parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
-        </div>
-        <!-- Liberty County government land — local file, instant, works offline -->
-        <div onclick="var cb=document.getElementById('toggle-govland-local');cb.checked=!cb.checked;toggleGovLandLocal(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">Liberty County Gov&#39;t Land</div>
-            <div style="font-size:11px;color:var(--muted)">National forest, WMAs &amp; more &middot; local file, no signal needed</div>
+          <div id="parcels-section-body" style="display:none;padding:0 10px 10px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.04em;padding:8px 4px 6px">FLORIDA</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div onclick="var cb=document.getElementById('toggle-parcels');cb.checked=!cb.checked;toggleParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+                <div style="flex:1">
+                  <div style="font-size:14px;font-weight:700">Liberty County (offline)</div>
+                  <div style="font-size:11px;color:var(--muted)">Tap any parcel for owner, acreage &amp; value &middot; local file, no signal needed</div>
+                </div>
+                <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+                  <input type="checkbox" id="toggle-parcels" onchange="toggleParcels(this.checked)" style="opacity:0;width:0;height:0">
+                  <span id="parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+                  <span id="parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+                </label>
+              </div>
+              <div onclick="var cb=document.getElementById('toggle-fl-parcels');cb.checked=!cb.checked;toggleFLParcels(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+                <div style="flex:1">
+                  <div style="font-size:14px;font-weight:700">Statewide (live)</div>
+                  <div style="font-size:11px;color:var(--muted)">Property lines &amp; owners &middot; loads the right source for where you are (FL + a few counties in GA/AL/IL) &middot; tap for info</div>
+                </div>
+                <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+                  <input type="checkbox" id="toggle-fl-parcels" onchange="toggleFLParcels(this.checked)" style="opacity:0;width:0;height:0">
+                  <span id="fl-parcels-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+                  <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+                </label>
+              </div>
+            </div>
           </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-govland-local" onchange="toggleGovLandLocal(this.checked)" style="opacity:0;width:0;height:0">
-            <span id="govland-local-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="govland-local-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
         </div>
-        <!-- Government land, everywhere else — live from USGS PAD-US (nationwide) -->
-        <div onclick="var cb=document.getElementById('toggle-govland');cb.checked=!cb.checked;toggleGovLand(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-          <div style="flex:1">
-            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e7d32"><use href="#ic-layers"/></svg>Government Land (auto-detect)</div>
-            <div style="font-size:11px;color:var(--muted)">National/state forests, WMAs, water mgmt districts &middot; any state &middot; tap for info</div>
+
+        <!-- ══ GOVERNMENT LAND — collapsible folder, states grouped inside ══ -->
+        <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div onclick="var b=document.getElementById('govland-section-body'),c=document.getElementById('govland-section-chevron'),open=b.style.display!=='none';b.style.display=open?'none':'block';c.style.transform=open?'':'rotate(180deg)';" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;background:var(--bg)">
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e7d32"><use href="#ic-layers"/></svg>Government Land</div>
+            <span id="govland-section-chevron" style="color:var(--muted);display:flex;transition:transform .2s"><svg class="licon licon-sm"><use href="#ic-chevron-down"/></svg></span>
           </div>
-          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="toggle-govland" onchange="toggleGovLand(this.checked)" style="opacity:0;width:0;height:0">
-            <span id="govland-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
-            <span id="govland-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
-          </label>
-        </div>
-        <!-- Government land filters: by type (category) and by state — apply to both the
-             local Liberty layer and the live auto-detect layer at once. -->
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
-          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">GOVERNMENT LAND TYPES</div>
-          <div id="govland-type-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
-          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE — optional</div>
-          <select id="govland-state-select" onchange="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:10px"></select>
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:11px;color:var(--muted);white-space:nowrap">Fill opacity</span>
-            <input id="govland-opacity-range" type="range" min="0" max="0.7" step="0.02" value="0.22" oninput="window._setGovLandOpacity(this.value)" style="flex:1;accent-color:var(--accent)">
+          <div id="govland-section-body" style="display:none;padding:0 10px 10px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.04em;padding:8px 4px 6px">FLORIDA</div>
+            <div onclick="var cb=document.getElementById('toggle-govland-local');cb.checked=!cb.checked;toggleGovLandLocal(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:8px">
+              <div style="flex:1">
+                <div style="font-size:14px;font-weight:700">Liberty County (offline)</div>
+                <div style="font-size:11px;color:var(--muted)">National forest, WMAs &amp; more &middot; local file, no signal needed</div>
+              </div>
+              <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+                <input type="checkbox" id="toggle-govland-local" onchange="toggleGovLandLocal(this.checked)" style="opacity:0;width:0;height:0">
+                <span id="govland-local-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+                <span id="govland-local-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+              </label>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.04em;padding:2px 4px 6px">ALL STATES</div>
+            <div onclick="var cb=document.getElementById('toggle-govland');cb.checked=!cb.checked;toggleGovLand(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:8px">
+              <div style="flex:1">
+                <div style="font-size:14px;font-weight:700">Auto-detect (live)</div>
+                <div style="font-size:11px;color:var(--muted)">National/state forests, WMAs, water mgmt districts &middot; any state &middot; tap for info</div>
+              </div>
+              <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+                <input type="checkbox" id="toggle-govland" onchange="toggleGovLand(this.checked)" style="opacity:0;width:0;height:0">
+                <span id="govland-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+                <span id="govland-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+              </label>
+            </div>
+            <!-- Filters — by type (category) and by state — apply to both the local Liberty
+                 layer and the live auto-detect layer at once. -->
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+              <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">GOVERNMENT LAND TYPES</div>
+              <div id="govland-type-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+              <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE — optional</div>
+              <select id="govland-state-select" onchange="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:10px"></select>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:11px;color:var(--muted);white-space:nowrap">Fill opacity</span>
+                <input id="govland-opacity-range" type="range" min="0" max="0.7" step="0.02" value="0.22" oninput="window._setGovLandOpacity(this.value)" style="flex:1;accent-color:var(--accent)">
+              </div>
+            </div>
           </div>
         </div>
         <div id="user-overlays"></div>
@@ -2457,7 +2478,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 436;
+var APP_BUILD = 437;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
