@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 431;
+var APP_BUILD = 432;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3209,7 +3209,34 @@ window._acctPeopleSearch = function (q) {
     // Last resort: an actual recent GPS fix in a shared Crew — covers background-only tracking
     // (screen off, app not "open"), which neither presence nor the session heartbeat can see.
     var circ = !(p && p.room) && !(msOnline && ms.room) ? _isRecentlyActiveInAnyCircle(uid) : null;
-    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || (circ && circ.name) || 'Friend', friend: true, online: !!(p && p.room) || (msOnline && !!ms.room) || !!circ, active: !!(p && !p.room) || (msOnline && !ms.room), room: (p && p.room) || (ms && ms.room) || (circ && circ.room) });
+    // Same stale-device-id fallback as _friendStatus (People-drawer Friends tab, build 430/431):
+    // a favorite's saved id can go stale (reinstall, new device) while gl/_directory hasn't
+    // caught up, so none of the checks above find them even though they're genuinely online.
+    // Guarded name match across every live room in the snapshot — only trusted when exactly one
+    // distinct person has that exact name, so an unrelated same-named stranger elsewhere in the
+    // app (gl reads aren't scoped to your own rooms) can never be mistaken for the real friend.
+    var nameMatch = null;
+    if (!(p && p.room) && !(msOnline && ms && ms.room) && !circ) {
+      var fname2 = ((friends[uid] || '') + '').trim().toLowerCase();
+      var snap2 = window._lastGlSnap;
+      if (fname2 && snap2) {
+        var nm2 = {};
+        for (var g4 in snap2) {
+          if (!g4 || g4.charAt(0) === '_') continue;
+          var us4 = snap2[g4] && snap2[g4].users; if (!us4) continue;
+          for (var uid4 in us4) {
+            if (uid4 === uid) continue;
+            var uu4 = us4[uid4];
+            if (uu4 && uu4.conn !== false && ((uu4.name || '') + '').trim().toLowerCase() === fname2) {
+              if (!nm2[uid4]) nm2[uid4] = { room: g4, name: uu4.name };
+            }
+          }
+        }
+        var ids2 = Object.keys(nm2);
+        if (ids2.length === 1) nameMatch = nm2[ids2[0]];
+      }
+    }
+    people.push({ uid: uid, name: friends[uid] || (p && p.name) || (ms && ms.name) || (circ && circ.name) || (nameMatch && nameMatch.name) || 'Friend', friend: true, online: !!(p && p.room) || (msOnline && !!ms.room) || !!circ || !!nameMatch, active: !!(p && !p.room) || (msOnline && !ms.room), room: (p && p.room) || (ms && ms.room) || (circ && circ.room) || (nameMatch && nameMatch.room) });
   });
   Object.keys(pres).forEach(function (uid) {
     if (seen[uid] || uid === me) return;
