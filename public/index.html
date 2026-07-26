@@ -2004,8 +2004,8 @@
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
           <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">GOVERNMENT LAND TYPES</div>
           <div id="govland-type-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
-          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE(S) — optional</div>
-          <input id="govland-state-input" type="text" placeholder="e.g. FL, GA — blank = whatever's on screen" oninput="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE — optional</div>
+          <select id="govland-state-select" onchange="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px"></select>
         </div>
         <div id="user-overlays"></div>
         <button type="button" onclick="window._importGeoPdf()" style="width:100%;padding:11px;background:transparent;border:1px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">+ Import a map (geoPDF)</button>
@@ -2453,7 +2453,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 434;
+var APP_BUILD = 435;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11167,6 +11167,7 @@ function openLayerSheet() {
   setLocateMeVisible(false);
   try { _renderOfflineAreas(); } catch (e) {}
   try { _renderGovLandTypeFilters(); } catch (e) {}
+  try { _renderGovLandStateSelect(); } catch (e) {}
 }
 function closeLayerSheet() {
   document.getElementById('layer-sheet').style.display = 'none';
@@ -12175,8 +12176,9 @@ function _renderGovLandTypeFilters() {
   var el = document.getElementById('govland-type-filters'); if (!el) return;
   el.innerHTML = GOVLAND_CATEGORIES.map(function(c) {
     var on = govLandTypeFilter[c.id];
-    return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;padding:5px 9px;border-radius:14px;border:1px solid ' + (on ? c.color : 'var(--border)') + ';cursor:pointer;background:' + (on ? c.color + '22' : 'transparent') + ';color:var(--text)">' +
-      '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="window._toggleGovLandType(\'' + c.id + '\', this.checked)" style="accent-color:' + c.color + ';width:14px;height:14px">' +
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 2px;cursor:pointer;color:var(--text)">' +
+      '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="window._toggleGovLandType(\'' + c.id + '\', this.checked)" style="accent-color:' + c.color + ';width:16px;height:16px;flex-shrink:0">' +
+      '<span style="width:9px;height:9px;border-radius:50%;background:' + c.color + ';flex-shrink:0"></span>' +
       escapeHtmlJs(c.label) +
     '</label>';
   }).join('');
@@ -12186,8 +12188,29 @@ window._toggleGovLandType = function (id, on) {
   _renderGovLandTypeFilters();
   _updateGovLandFilter();
 };
+// All 50 states + DC — a plain dropdown instead of typing abbreviations. "Auto" (blank
+// value) means no state restriction: the live layer just shows whatever's in view.
+var US_STATES = [
+  ['AL','Alabama'],['AK','Alaska'],['AZ','Arizona'],['AR','Arkansas'],['CA','California'],
+  ['CO','Colorado'],['CT','Connecticut'],['DE','Delaware'],['DC','District of Columbia'],
+  ['FL','Florida'],['GA','Georgia'],['HI','Hawaii'],['ID','Idaho'],['IL','Illinois'],
+  ['IN','Indiana'],['IA','Iowa'],['KS','Kansas'],['KY','Kentucky'],['LA','Louisiana'],
+  ['ME','Maine'],['MD','Maryland'],['MA','Massachusetts'],['MI','Michigan'],['MN','Minnesota'],
+  ['MS','Mississippi'],['MO','Missouri'],['MT','Montana'],['NE','Nebraska'],['NV','Nevada'],
+  ['NH','New Hampshire'],['NJ','New Jersey'],['NM','New Mexico'],['NY','New York'],
+  ['NC','North Carolina'],['ND','North Dakota'],['OH','Ohio'],['OK','Oklahoma'],['OR','Oregon'],
+  ['PA','Pennsylvania'],['RI','Rhode Island'],['SC','South Carolina'],['SD','South Dakota'],
+  ['TN','Tennessee'],['TX','Texas'],['UT','Utah'],['VT','Vermont'],['VA','Virginia'],
+  ['WA','Washington'],['WV','West Virginia'],['WI','Wisconsin'],['WY','Wyoming']
+];
+function _renderGovLandStateSelect() {
+  var el = document.getElementById('govland-state-select'); if (!el) return;
+  var cur = govLandStateFilter[0] || '';
+  el.innerHTML = '<option value="">Auto (whatever\'s on screen)</option>' +
+    US_STATES.map(function(s) { return '<option value="' + s[0] + '"' + (s[0] === cur ? ' selected' : '') + '>' + s[1] + '</option>'; }).join('');
+}
 window._setGovLandStates = function (v) {
-  govLandStateFilter = String(v || '').split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean);
+  govLandStateFilter = v ? [String(v).toUpperCase()] : [];
   _updateGovLandFilter();
   if (govLandOn) loadGovLandInView(true);
 };
