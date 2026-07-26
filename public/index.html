@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 429;
+var APP_BUILD = 430;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3087,6 +3087,28 @@ function _friendStatus(fid) {
   // Last resort: an actual recent GPS fix in a shared Crew — see _isRecentlyActiveInAnyCircle.
   var circ = _isRecentlyActiveInAnyCircle(fid);
   if (circ) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && circ.room === groupName, roomKey: circ.room, name: circ.name };
+  // Absolute last resort: the favorited id itself can go stale (their app reinstalled or they
+  // switched devices, generating a brand-new uid) while gl/_directory hasn't caught up yet —
+  // confirmed on-device: a friend showed "Offline" while clearly live and merged with another
+  // marker on the map, because every check above is keyed to the OLD uid. Match by NAME against
+  // every live room in the already-loaded global snapshot as a final fallback — a favorite is a
+  // bookmark on a PERSON, not a specific device identity, so this is safe here even though the
+  // Crew-roster list deliberately avoids name-matching for a different reason (telling apart two
+  // genuinely different devices that happen to share a base name).
+  var fname = ((_getFriends()[fid] || '') + '').trim().toLowerCase();
+  if (fname && snap) {
+    for (var g3 in snap) {
+      if (!g3 || g3.charAt(0) === '_') continue;
+      var us3 = snap[g3] && snap[g3].users; if (!us3) continue;
+      for (var uid3 in us3) {
+        if (uid3 === fid) continue;
+        var uu3 = us3[uid3];
+        if (uu3 && uu3.conn !== false && ((uu3.name || '') + '').trim().toLowerCase() === fname) {
+          return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && g3 === groupName, roomKey: g3, name: uu3.name };
+        }
+      }
+    }
+  }
   return { online: false, active: false, inMyRoom: false, roomKey: '', name: null };
 }
 function _friendsRowsHTML() {
