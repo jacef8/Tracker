@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 428;
+var APP_BUILD = 429;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3418,28 +3418,55 @@ function _renderDevices() {
     if (!seen[id]) { try { window._deviceMarkers[id].remove(); } catch (e) {} delete window._deviceMarkers[id]; }
   });
 }
-// Show owned/shared private devices (e.g. the watch) as member-style rows at the top of the
-// People drawer, each with a Talk button — so a device acts just like any other member.
+// Owned/shared private devices (e.g. the watch) render as normal-looking member rows
+// directly inside the People list (#user-list) — same .user-item/.uname/.ustatus classes and
+// LIVE/PAUSED badge language as a real room member, so a shared watch reads as a member of
+// the room instead of a visually separate special case. The old bespoke #device-list section
+// is retired (left empty). Map marker (_renderDevices/_deviceMarkers) and the Talk mechanism
+// (_talkToDevice — a wake-push to the device's own private channel, NOT a normal room-voice
+// invite, since the watch can't join a live voice room the way a phone can) are unchanged.
 window._renderDeviceList = function _renderDeviceList() {
-  var el = document.getElementById('device-list'); if (!el) return;
-  if (!window._secDevOn || !window._secDevOn()) { el.innerHTML = ''; try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {} return; }
+  try { var oldEl = document.getElementById('device-list'); if (oldEl) oldEl.innerHTML = ''; } catch (e) {}
+  var listEl = document.getElementById('user-list'); if (!listEl) return;
+  // Idempotent: strip any device rows a previous call left behind before re-adding fresh
+  // ones, so this is safe to call from several different triggers (device update, People-list
+  // rebuild, secure-devices toggle) without ever duplicating a row.
+  try {
+    var _old = listEl.querySelectorAll('[data-devrow]');
+    for (var i = 0; i < _old.length; i++) _old[i].remove();
+  } catch (e) {}
+  if (!window._secDevOn || !window._secDevOn()) { try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {} return; }
   var devs = window._devicesAll || {};
-  var html = '';
   Object.keys(devs).forEach(function (id) {
     var d = devs[id] || {}; if (!_canSeeDevice(d)) return;
     var live = d.live || {};
     var nm = live.name || d.ownerName || 'Device';
-    var online = live.ts && (Date.now() - live.ts) < 120000;
-    html += '<div onclick="window._locateDevice(\'' + id + '\')" title="Zoom to ' + _escHtml(nm) + '" style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--border,#1f2630);cursor:pointer;-webkit-tap-highlight-color:transparent">' +
-      '<span style="width:34px;height:34px;border-radius:50%;background:#7c3aed;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">⌚</span>' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--text,#e6edf3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(nm) + ' <span style="font-size:10px;color:var(--muted,#8b949e);font-weight:600">· watch</span></div>' +
-        '<div style="font-size:11px;color:' + (online ? '#3fb950' : 'var(--muted,#8b949e)') + '">' + (live.ts ? ((online ? 'live · ' : 'last seen ') + _devAgo(live.ts)) : 'no location yet') + '</div>' +
+    // Same LIVE window as a real member (LIVE_MS, above) so a watch doesn't flip to a
+    // stale-looking badge on a different cadence than everyone else in the same list.
+    var online = live.ts && (Date.now() - live.ts) < LIVE_MS;
+    var bd = !live.ts ? { t: 'NO GPS', bg: 'var(--border)', c: '#888ea0' }
+      : online ? { t: 'LIVE', bg: '#13361f', c: '#3fb950' }
+      : { t: 'PAUSED', bg: '#3a2a13', c: '#f0a500' };
+    var row = document.createElement('div');
+    row.className = 'user-item';
+    row.setAttribute('data-devrow', '1');
+    row.innerHTML =
+      '<div class="user-avatar" style="background:#7c3aed;color:#fff;font-weight:800">⌚</div>' +
+      '<div style="min-width:0">' +
+        '<div class="uname">' + escapeHtmlJs(nm) + ' <span style="font-size:10px;color:var(--muted,#8b949e);font-weight:600">· watch</span></div>' +
+        '<div class="ustatus" style="color:' + bd.c + '">' + (live.ts ? ((online ? 'Live · ' : 'Last seen: ') + _devAgo(live.ts)) : 'No location yet') + '</div>' +
       '</div>' +
-      '<button onclick="event.stopPropagation();window._talkToDevice(\'' + id + '\')" title="Talk" style="background:#2ea043;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:8px 12px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="15" height="15" fill="#fff" style="flex-shrink:0"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 11a7 7 0 0 1-6 6.92V21h-2v-3.08A7 7 0 0 1 5 11h2a5 5 0 0 0 10 0h2z"/></svg>Talk</button>' +
-    '</div>';
+      '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+        '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' +
+        '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
+      '</div>';
+    (function (id2) {
+      var _tb = row.querySelector('.utalk-btn');
+      if (_tb) _tb.addEventListener('click', function (e) { e.stopPropagation(); window._talkToDevice(id2); });
+      row.addEventListener('click', function () { window._locateDevice(id2); });
+    })(id);
+    listEl.appendChild(row);
   });
-  el.innerHTML = html;
   try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {}
 };
 // People-count badge = room users + the private devices you can see (the watch counts).
@@ -5932,7 +5959,7 @@ function renderRoomList(all) {
   // dormant rooms the directory normally hides — and bypass the public/favorites filter.
   var _searching = !!(window._roomSearch && String(window._roomSearch).trim().length);
   var _sq = _searching ? String(window._roomSearch).trim().toLowerCase() : '';
-  var LIVE_MS = 90 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000, YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  var LIVE_MS = 4 * 60 * 1000, STALE_MS = 24 * 60 * 60 * 1000, EMPTY_GRACE_MS = 5 * 60 * 1000, YEAR_MS = 365 * 24 * 60 * 60 * 1000; // LIVE_MS matches the per-member threshold below
   var HOME_DISC_GRACE_MS = 3 * 60 * 1000; // disconnected clients drop from the count after this grace
   // A member still "counts" unless their live connection has been gone past the grace.
   var _present = function(u) { return !(u.conn === false && (now - (u.discTs || u.ts || 0)) >= HOME_DISC_GRACE_MS); };
@@ -7793,8 +7820,11 @@ const TRAIL_MAX_MS = 2 * 60 * 60 * 1000; // 2 hours of breadcrumb history
 const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
 const TRAIL_MAX_ACC_M = 50;          // skip breadcrumbs from fixes worse than 50 m accuracy
 const TRAIL_MAX_MPH = 150;           // skip breadcrumbs implying an impossible teleport (bad fix)
-const LIVE_MAX_ACC_M = 1000;         // a fix this bad is almost certainly cell-tower/Wi-Fi-only,
-                                      // not real GPS — never let it relocate the live marker
+const LIVE_MAX_ACC_M = 150;           // a fix this bad noticeably drifts the pin off the actual
+                                      // road/position — hold the last good spot instead. 1000 was
+                                      // only catching true cell-tower/Wi-Fi-fallback fixes and let
+                                      // everything in between (still bad, still visibly off-road)
+                                      // through to relocate the live marker
 const LIVE_HOLD_MAX_MS = 3 * 60 * 1000; // never hold longer than this — a chronically bad-GPS
                                          // device should still drift toward reality eventually,
                                          // not freeze forever at its very first fix
@@ -8822,7 +8852,9 @@ function clearMyTrail() {
 })();
 
 // ══ USERS ════════════════════════════════════════════════════════
-const LIVE_MS  = 90 * 1000;       // actively broadcasting GPS
+const LIVE_MS  = 4 * 60 * 1000;   // actively broadcasting GPS — was 90s, too tight against a
+                                   // normal battery-saver heartbeat cadence (~4min), which flipped
+                                   // someone to PAUSED just for sitting still, not actually stale
 const STALE_MS = 20 * 60 * 1000; // 20 min — drop members who've gone quiet (left, app closed, or long signal loss); active-but-no-signal users stay via the No-GPS heartbeat
 const BS_REST_MAX_MS = 6 * 60 * 60 * 1000; // battery-saver "resting" members stay visible far longer (a long sit), with their last position
 const DISC_GRACE_MS  = 3 * 60 * 1000;      // once the live connection is truly gone (conn:false), clear within this grace — absorbs screen-sleep blips, but a closed app drops fast
@@ -9218,6 +9250,11 @@ function listenUsers() {
         listEl.appendChild(orow);
       });
     }
+
+    // Re-append device rows every time this list rebuilds (it's fully wiped at the top of
+    // this function) — otherwise a watch's row would vanish on the next unrelated People-list
+    // refresh until its own device data happened to change again.
+    try { window._renderDeviceList && window._renderDeviceList(); } catch (e) {}
 
     // Riding together / standing right next to each other — merge into one dot + badge
     // now that every marker for this snapshot has an up-to-date _ll.
@@ -13587,7 +13624,13 @@ function _followPadding() {
     var r2 = document.getElementById('map-controls').getBoundingClientRect();
     if (r2.height > 0) bottom = (window.innerHeight - r2.top) + 12;
   } catch (e) {}
-  return { top: top, bottom: bottom, left: 72, right: 72 };
+  // cameraForBounds/_allPointsVisible treat each member as a dimensionless point, but a
+  // rendered marker is a 44px circle (22px radius) plus shadow/border slop, and can also grow
+  // a speed-label chip ~40px further below it while driving. Without reserving that extra
+  // space, a member fitted right at the padded edge still has HALF their visual marker
+  // poking out past it — exactly the clipped-under-the-topbar/toolbar look reported on-device.
+  var MARKER_RADIUS_PAD = 30, MARKER_BOTTOM_EXTRA = 40; // covers radius+shadow, and the speed chip below
+  return { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: 72 + MARKER_RADIUS_PAD, right: 72 + MARKER_RADIUS_PAD };
 }
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
