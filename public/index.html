@@ -2421,7 +2421,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 432;
+var APP_BUILD = 433;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6008,6 +6008,14 @@ function loadRoomList() {
       window._lastGlSnap = snap.val() || {};
       try { renderRoomList(window._lastGlSnap); } catch (e) {}
       try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
+      // The Home-screen circle-switcher pill/label (_renderCircleSwitcher) has its own separate
+      // call sites (join/leave/invite actions) but was never wired to THIS snapshot listener —
+      // if it happens to render once before this listener's first snapshot arrives (a startup
+      // race), or a rename comes from another device, its label falls back to the mechanical
+      // key-transform name and never gets a chance to refresh to the real config.name. Confirmed
+      // on-device: Home screen showed "My Girls" while the room itself correctly showed the
+      // renamed "Fordy Crew".
+      try { window._renderCircleSwitcher(); } catch (e) {}
     });
   });
 }
@@ -7344,8 +7352,18 @@ function initMap() {
     }
   });
 
+  // Keep the map's own reference frame clear of the floating topbar/bottom toolbar at all
+  // times — not just during the group-follow tick's own bounds-fitting (_followPadding was
+  // originally written only for that). Without this, ordinary panning/zooming, "center on me,"
+  // or any fitBounds call elsewhere in the app could still land a pin/marker directly under the
+  // fixed UI chrome, since map.setPadding was never set at all before this. Re-applied on resize
+  // (orientation change, etc.) so it stays accurate as the chrome's real on-screen size changes.
+  try { map.setPadding(_followPadding()); } catch (e) {}
+  window.addEventListener('resize', function () { try { if (map) map.setPadding(_followPadding()); } catch (e) {} });
+
   // Initial map load — set up pins, images, _mapReady
   map.on('load', function() {
+    try { map.setPadding(_followPadding()); } catch (e) {}
     // Add pin images
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
