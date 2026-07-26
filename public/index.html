@@ -1975,6 +1975,38 @@
             <span id="fl-parcels-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
           </label>
         </div>
+        <!-- Liberty County government land — local file, instant, works offline -->
+        <div onclick="var cb=document.getElementById('toggle-govland-local');cb.checked=!cb.checked;toggleGovLandLocal(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:700">Liberty County Gov&#39;t Land</div>
+            <div style="font-size:11px;color:var(--muted)">National forest, WMAs &amp; more &middot; local file, no signal needed</div>
+          </div>
+          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-govland-local" onchange="toggleGovLandLocal(this.checked)" style="opacity:0;width:0;height:0">
+            <span id="govland-local-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="govland-local-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
+        <!-- Government land, everywhere else — live from USGS PAD-US (nationwide) -->
+        <div onclick="var cb=document.getElementById('toggle-govland');cb.checked=!cb.checked;toggleGovLand(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:#2e7d32"><use href="#ic-layers"/></svg>Government Land (auto-detect)</div>
+            <div style="font-size:11px;color:var(--muted)">National/state forests, WMAs, water mgmt districts &middot; any state &middot; tap for info</div>
+          </div>
+          <label onclick="event.stopPropagation()" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
+            <input type="checkbox" id="toggle-govland" onchange="toggleGovLand(this.checked)" style="opacity:0;width:0;height:0">
+            <span id="govland-toggle-track" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:12px;transition:.3s"></span>
+            <span id="govland-toggle-thumb" style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s"></span>
+          </label>
+        </div>
+        <!-- Government land filters: by type (category) and by state — apply to both the
+             local Liberty layer and the live auto-detect layer at once. -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">GOVERNMENT LAND TYPES</div>
+          <div id="govland-type-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+          <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE(S) — optional</div>
+          <input id="govland-state-input" type="text" placeholder="e.g. FL, GA — blank = whatever's on screen" oninput="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+        </div>
         <div id="user-overlays"></div>
         <button type="button" onclick="window._importGeoPdf()" style="width:100%;padding:11px;background:transparent;border:1px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">+ Import a map (geoPDF)</button>
         <input type="file" id="geopdf-file" accept=".pdf,application/pdf" style="display:none" onchange="window._onGeoPdfPicked(this)">
@@ -2421,7 +2453,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 433;
+var APP_BUILD = 434;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7405,6 +7437,8 @@ function initMap() {
   // FL statewide parcels: reload the parcels in view as the map moves/zooms
   map.on('moveend', function() { if (flParcelsOn) loadFLParcelsInView(false); });
   map.on('zoomend', function() { if (flParcelsOn) loadFLParcelsInView(false); });
+  map.on('moveend', function() { if (govLandOn) loadGovLandInView(false); });
+  map.on('zoomend', function() { if (govLandOn) loadGovLandInView(false); });
 
   // Following your OWN position persists through pan/zoom (swipe to look, pinch to zoom,
   // it snaps back — tap the locate button to stop). But panning while following ANOTHER
@@ -7443,6 +7477,7 @@ function initMap() {
   // Parcel suppress flags
   var _parcelSuppressNext   = false;
   var _flParcelSuppressNext = false;
+  var _govSuppressNext      = false;
 
   // ONE unified map click handler — measure > pin > parcels, no conflicts
   map.on('click', function(e) {
@@ -7569,6 +7604,42 @@ function initMap() {
           setTimeout(function() { _parcelSuppressNext = false; }, 400);
         });
         return;
+      }
+    }
+
+    // ── 5. Government land tap (national forest / state forest / WMA / WMD / etc.) ──
+    if ((govLandOn || govLandLocalOn) && map.getZoom() >= 9) {
+      if (_govSuppressNext) { _govSuppressNext = false; return; }
+      var _govLayers = [];
+      if (govLandOn && map.getLayer('govland-fill')) _govLayers.push('govland-fill');
+      if (govLandLocalOn && map.getLayer('liberty-govland-fill')) _govLayers.push('liberty-govland-fill');
+      if (_govLayers.length) {
+        var govFeatures = map.queryRenderedFeatures(e.point, { layers: _govLayers });
+        if (govFeatures.length) {
+          var gp = govFeatures[0].properties;
+          var gCat = _govCategoryOf(gp);
+          var gHoverId = (govFeatures[0].layer.id === 'govland-fill') ? 'govland-hover' : 'liberty-govland-hover';
+          if (map.getLayer(gHoverId)) map.setFilter(gHoverId, ['==', ['id'], govFeatures[0].id]);
+          if (window._activeParcelPopup) { window._activeParcelPopup.remove(); window._activeParcelPopup = null; }
+          window._activeParcelPopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '300px' })
+            .setLngLat(e.lngLat)
+            .setHTML(
+              '<div style="position:relative;padding-right:20px">' +
+              '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:' + gCat.color + ';margin-bottom:6px">&#127794; ' + escapeHtmlJs(gCat.label) + '</div>' +
+              '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(gp.n || 'Unnamed area') + '</div>' +
+              (gp.pa ? '<div style="font-size:12px;color:#8b949e">Public access: ' + escapeHtmlJs(gp.pa) + '</div>' : '') +
+              '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
+              '</div>'
+            ).addTo(map);
+          _keepPopupInView(window._activeParcelPopup);
+          window._activeParcelPopup.on('close', function() {
+            ['govland-hover','liberty-govland-hover'].forEach(function(id) { if (map.getLayer(id)) map.setFilter(id, ['==', ['id'], -1]); });
+            window._activeParcelPopup = null;
+            _govSuppressNext = true;
+            setTimeout(function() { _govSuppressNext = false; }, 400);
+          });
+          return;
+        }
       }
     }
   });
@@ -11095,6 +11166,7 @@ function openLayerSheet() {
   document.getElementById('layer-sheet').style.display = 'block';
   setLocateMeVisible(false);
   try { _renderOfflineAreas(); } catch (e) {}
+  try { _renderGovLandTypeFilters(); } catch (e) {}
 }
 function closeLayerSheet() {
   document.getElementById('layer-sheet').style.display = 'none';
@@ -11972,6 +12044,153 @@ function toggleParcels(on) {
   }
 }
 
+// ── Government Land (national forests, state forests, WMAs, water management
+// districts, etc.) — same two-tier pattern as parcels above: a fast local carve-out
+// for Liberty County (no network, works offline) + a live nationwide auto-detect
+// layer for everywhere else, sourced from USGS PAD-US (the one federally-standardized
+// database that already covers every state, so unlike parcels this needs no
+// per-state onboarding — only Liberty needed its own local file for offline speed).
+var GOVLAND_URL = 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name/FeatureServer/0/query';
+// Categories derived from REAL PAD-US data pulled for Liberty County (Mang_Name/
+// Mang_Type/Des_Tp coded values) — not guessed. Florida has no dedicated "state
+// forest" code in PAD-US; Tate's Hell & Lake Talquin State Forests both came back
+// as Mang_Type=STAT + Des_Tp=SRMA, so that combo is used as the best-available proxy.
+var GOVLAND_CATEGORIES = [
+  { id: 'nf',  label: 'National Forest',        color: '#1b4d1b', test: function(p){ return p.mg === 'USFS'; } },
+  { id: 'sf',  label: 'State Forest',            color: '#2e7d32', test: function(p){ return p.mt === 'STAT' && p.dt === 'SRMA'; } },
+  { id: 'wma', label: 'Wildlife Mgmt Area',       color: '#c77b00', test: function(p){ return p.mg === 'SFW'; } },
+  { id: 'wmd', label: 'Water Mgmt District',      color: '#1976d2', test: function(p){ return p.mg === 'RWD'; } },
+  { id: 'sp',  label: 'State Park',              color: '#6a1b9a', test: function(p){ return p.mg === 'SPR'; } },
+  { id: 'other', label: 'Other public/conservation land', color: '#757575', test: function(){ return true; } } // catch-all, keep last
+];
+function _govColorExpr() {
+  var e = ['case'];
+  GOVLAND_CATEGORIES.forEach(function(c) {
+    if (c.id === 'other') return; // catch-all is the final fallback value, not a case branch
+    if (c.id === 'sf') e.push(['all', ['==', ['get','mt'], 'STAT'], ['==', ['get','dt'], 'SRMA']], c.color);
+    else if (c.id === 'nf') e.push(['==', ['get','mg'], 'USFS'], c.color);
+    else if (c.id === 'wma') e.push(['==', ['get','mg'], 'SFW'], c.color);
+    else if (c.id === 'wmd') e.push(['==', ['get','mg'], 'RWD'], c.color);
+    else if (c.id === 'sp') e.push(['==', ['get','mg'], 'SPR'], c.color);
+  });
+  e.push('#757575'); // 'other' fallback color
+  return e;
+}
+function _govCategoryOf(p) {
+  for (var i = 0; i < GOVLAND_CATEGORIES.length; i++) { if (GOVLAND_CATEGORIES[i].test(p)) return GOVLAND_CATEGORIES[i]; }
+  return GOVLAND_CATEGORIES[GOVLAND_CATEGORIES.length - 1];
+}
+// Which categories are shown (default: all) and which states restrict the LIVE layer
+// (empty = "auto" — whatever the current viewport covers, no state restriction).
+var govLandTypeFilter = {}; GOVLAND_CATEGORIES.forEach(function(c) { govLandTypeFilter[c.id] = true; });
+var govLandStateFilter = []; // e.g. ['FL','GA'] — empty means auto/no restriction
+function _govFilterExpr() {
+  var ors = GOVLAND_CATEGORIES.filter(function(c) { return govLandTypeFilter[c.id]; }).map(function(c) {
+    if (c.id === 'sf') return ['all', ['==', ['get','mt'], 'STAT'], ['==', ['get','dt'], 'SRMA']];
+    if (c.id === 'nf') return ['==', ['get','mg'], 'USFS'];
+    if (c.id === 'wma') return ['==', ['get','mg'], 'SFW'];
+    if (c.id === 'wmd') return ['==', ['get','mg'], 'RWD'];
+    if (c.id === 'sp') return ['==', ['get','mg'], 'SPR'];
+    // 'other' = none of the specific categories matched
+    return ['all',
+      ['!=', ['get','mg'], 'USFS'], ['!=', ['get','mg'], 'SFW'], ['!=', ['get','mg'], 'RWD'], ['!=', ['get','mg'], 'SPR'],
+      ['!', ['all', ['==', ['get','mt'], 'STAT'], ['==', ['get','dt'], 'SRMA']]]
+    ];
+  });
+  var typeExpr = ors.length ? ['any'].concat(ors) : ['==', ['literal', true], false]; // nothing checked → show nothing
+  if (!govLandStateFilter.length) return typeExpr;
+  return ['all', typeExpr, ['in', ['get','st'], ['literal', govLandStateFilter]]];
+}
+function _updateGovLandFilter() {
+  var f = _govFilterExpr();
+  ['govland-fill','govland-line','liberty-govland-fill','liberty-govland-line'].forEach(function(id) {
+    if (map.getLayer(id)) map.setFilter(id, f);
+  });
+}
+function addGovLandLayer() {
+  if (!map.isStyleLoaded()) { setTimeout(addGovLandLayer, 200); return; }
+  if (map.getLayer('liberty-govland-fill')) return;
+  var beforeLayer = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+  var colorExpr = _govColorExpr();
+  if (!map.getSource('liberty-govland')) {
+    map.addSource('liberty-govland', { type: 'geojson', data: '/liberty_govland.geojson', generateId: true });
+  }
+  map.addLayer({ id: 'liberty-govland-fill', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': colorExpr, 'fill-opacity': 0.22 } }, beforeLayer);
+  map.addLayer({ id: 'liberty-govland-line', type: 'line', source: 'liberty-govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
+  map.addLayer({ id: 'liberty-govland-hover', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
+  if (!map.getSource('govland')) {
+    map.addSource('govland', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true });
+  }
+  map.addLayer({ id: 'govland-fill', type: 'fill', source: 'govland', paint: { 'fill-color': colorExpr, 'fill-opacity': 0.22 } }, beforeLayer);
+  map.addLayer({ id: 'govland-line', type: 'line', source: 'govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
+  map.addLayer({ id: 'govland-hover', type: 'fill', source: 'govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
+  _updateGovLandFilter();
+}
+// Normalize PAD-US's full field names to the same short keys used by the local
+// Liberty extract (mg/mt/dt/n/pa/st) so styling/filtering/popups work identically
+// regardless of which source a feature came from.
+function _govNormalize(f) {
+  var p = f.properties || (f.properties = {});
+  p.n = p.Unit_Nm || p.n || ''; p.mg = p.Mang_Name || p.mg || ''; p.mt = p.Mang_Type || p.mt || '';
+  p.dt = p.Des_Tp || p.dt || ''; p.pa = p.Pub_Access || p.pa || ''; p.st = p.State_Nm || p.st || '';
+}
+var govLandLocalOn = false, govLandOn = false, _govLoadTimer = null;
+function toggleGovLandLocal(on) {
+  govLandLocalOn = on;
+  updateToggleUI('govland-local-toggle-track', 'govland-local-toggle-thumb', on);
+  if (on) { addGovLandLayer(); map.setLayoutProperty('liberty-govland-fill', 'visibility', 'visible'); map.setLayoutProperty('liberty-govland-line', 'visibility', 'visible'); }
+  else if (map.getLayer('liberty-govland-fill')) {
+    map.setLayoutProperty('liberty-govland-fill', 'visibility', 'none'); map.setLayoutProperty('liberty-govland-line', 'visibility', 'none');
+  }
+}
+function toggleGovLand(on) {
+  govLandOn = on;
+  updateToggleUI('govland-toggle-track', 'govland-toggle-thumb', on);
+  if (on) { addGovLandLayer(); loadGovLandInView(true); toast('Loading public/government land for this area…', 2200); }
+  else if (map.getSource('govland')) { map.getSource('govland').setData({ type: 'FeatureCollection', features: [] }); }
+}
+function loadGovLandInView(force) {
+  if (!govLandOn || !map.getSource('govland')) return;
+  if (map.getZoom() < 9) { map.getSource('govland').setData({ type: 'FeatureCollection', features: [] }); return; }
+  clearTimeout(_govLoadTimer);
+  _govLoadTimer = setTimeout(function() {
+    if (!govLandOn) return;
+    var b = map.getBounds();
+    var bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+    var where = govLandStateFilter.length ? "State_Nm IN ('" + govLandStateFilter.join("','") + "')" : '1=1';
+    var url = GOVLAND_URL + '?f=geojson&where=' + encodeURIComponent(where)
+      + '&geometry=' + encodeURIComponent(bbox) + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326'
+      + '&spatialRel=esriSpatialRelIntersects&outFields=State_Nm,Mang_Name,Mang_Type,Des_Tp,Unit_Nm,Pub_Access'
+      + '&geometryPrecision=5&resultRecordCount=2000';
+    fetch(url).then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(gj) {
+        var feats = (gj && gj.features) || [];
+        feats.forEach(_govNormalize);
+        if (govLandOn && map.getSource('govland')) map.getSource('govland').setData({ type: 'FeatureCollection', features: feats });
+      })
+      .catch(function(e) { try { window._evt('gov land layer failed — ' + ((e && e.message) || 'net')); } catch (x) {} });
+  }, force ? 0 : 300);
+}
+function _renderGovLandTypeFilters() {
+  var el = document.getElementById('govland-type-filters'); if (!el) return;
+  el.innerHTML = GOVLAND_CATEGORIES.map(function(c) {
+    var on = govLandTypeFilter[c.id];
+    return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;padding:5px 9px;border-radius:14px;border:1px solid ' + (on ? c.color : 'var(--border)') + ';cursor:pointer;background:' + (on ? c.color + '22' : 'transparent') + ';color:var(--text)">' +
+      '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="window._toggleGovLandType(\'' + c.id + '\', this.checked)" style="accent-color:' + c.color + ';width:14px;height:14px">' +
+      escapeHtmlJs(c.label) +
+    '</label>';
+  }).join('');
+}
+window._toggleGovLandType = function (id, on) {
+  govLandTypeFilter[id] = on;
+  _renderGovLandTypeFilters();
+  _updateGovLandFilter();
+};
+window._setGovLandStates = function (v) {
+  govLandStateFilter = String(v || '').split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean);
+  _updateGovLandFilter();
+  if (govLandOn) loadGovLandInView(true);
+};
 
 
 
