@@ -2005,7 +2005,11 @@
           <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">GOVERNMENT LAND TYPES</div>
           <div id="govland-type-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
           <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">LIMIT TO STATE — optional</div>
-          <select id="govland-state-select" onchange="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px"></select>
+          <select id="govland-state-select" onchange="window._setGovLandStates(this.value)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:10px"></select>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:11px;color:var(--muted);white-space:nowrap">Fill opacity</span>
+            <input id="govland-opacity-range" type="range" min="0" max="0.7" step="0.02" value="0.22" oninput="window._setGovLandOpacity(this.value)" style="flex:1;accent-color:var(--accent)">
+          </div>
         </div>
         <div id="user-overlays"></div>
         <button type="button" onclick="window._importGeoPdf()" style="width:100%;padding:11px;background:transparent;border:1px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">+ Import a map (geoPDF)</button>
@@ -2453,7 +2457,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 435;
+var APP_BUILD = 436;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12085,6 +12089,7 @@ function _govCategoryOf(p) {
 // (empty = "auto" — whatever the current viewport covers, no state restriction).
 var govLandTypeFilter = {}; GOVLAND_CATEGORIES.forEach(function(c) { govLandTypeFilter[c.id] = true; });
 var govLandStateFilter = []; // e.g. ['FL','GA'] — empty means auto/no restriction
+var govLandFillOpacity = 0.22; // user-adjustable via the slider in the filter panel
 function _govFilterExpr() {
   var ors = GOVLAND_CATEGORIES.filter(function(c) { return govLandTypeFilter[c.id]; }).map(function(c) {
     if (c.id === 'sf') return ['all', ['==', ['get','mt'], 'STAT'], ['==', ['get','dt'], 'SRMA']];
@@ -12116,13 +12121,13 @@ function addGovLandLayer() {
   if (!map.getSource('liberty-govland')) {
     map.addSource('liberty-govland', { type: 'geojson', data: '/liberty_govland.geojson', generateId: true });
   }
-  map.addLayer({ id: 'liberty-govland-fill', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': colorExpr, 'fill-opacity': 0.22 } }, beforeLayer);
+  map.addLayer({ id: 'liberty-govland-fill', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': colorExpr, 'fill-opacity': govLandFillOpacity } }, beforeLayer);
   map.addLayer({ id: 'liberty-govland-line', type: 'line', source: 'liberty-govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
   map.addLayer({ id: 'liberty-govland-hover', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
   if (!map.getSource('govland')) {
     map.addSource('govland', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true });
   }
-  map.addLayer({ id: 'govland-fill', type: 'fill', source: 'govland', paint: { 'fill-color': colorExpr, 'fill-opacity': 0.22 } }, beforeLayer);
+  map.addLayer({ id: 'govland-fill', type: 'fill', source: 'govland', paint: { 'fill-color': colorExpr, 'fill-opacity': govLandFillOpacity } }, beforeLayer);
   map.addLayer({ id: 'govland-line', type: 'line', source: 'govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
   map.addLayer({ id: 'govland-hover', type: 'fill', source: 'govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
   _updateGovLandFilter();
@@ -12213,6 +12218,12 @@ window._setGovLandStates = function (v) {
   govLandStateFilter = v ? [String(v).toUpperCase()] : [];
   _updateGovLandFilter();
   if (govLandOn) loadGovLandInView(true);
+};
+window._setGovLandOpacity = function (v) {
+  govLandFillOpacity = parseFloat(v);
+  ['liberty-govland-fill', 'govland-fill'].forEach(function (id) {
+    if (map.getLayer(id)) map.setPaintProperty(id, 'fill-opacity', govLandFillOpacity);
+  });
 };
 
 
