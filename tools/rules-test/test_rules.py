@@ -108,6 +108,9 @@ CASES = [
     # --- must keep working ----------------------------------------------------
     ("watch: UNAUTH write to _devices/<id>/live", True, "PUT", "gl/_devices/watch_abc/live", None, {"lat": 1, "ts": 2}),
     ("apple log: UNAUTH write to _debug", True, "PUT", "gl/_debug/appleSignInLog/3", None, {"step": "x"}),
+    ("watch: UNAUTH write to _deviceShares/<code>", True, "PUT", "gl/_deviceShares/ABC123", None, {"id": "watch_abc"}),
+    ("watch: UNAUTH write _devices fcmToken", True, "PUT", "gl/_devices/watch_abc/fcmToken", None, "tok"),
+    ("watch: UNAUTH write _devices wakeLog", True, "PUT", "gl/_devices/watch_abc/wakeLog/1", None, {"t": 1}),
     ("authed write own presence", True, "PUT", f"gl/testroom/users/{ALICE}", ALICE, {"name": "Alice", "ts": 9}),
     ("ghost cleanup: authed DELETE other's presence", True, "DELETE", f"gl/testroom/users/{BOB}", ALICE, None),
     ("authed write members entry", True, "PUT", f"gl/testroom/members/{BOB}", ALICE, {"name": "Bob"}),

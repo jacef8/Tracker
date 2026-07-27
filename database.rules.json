@@ -19,10 +19,21 @@
     "gl": {
       ".read": "auth != null",
 
-      // The Wear OS watch writes gl/_devices/<id>/live over plain REST with no
-      // Firebase auth. Stays open until we know whether it can authenticate —
-      // its source is not in this repo.
+      // The Wear OS watch (C:\Users\jford\Documents\GroundLinkWatch — a separate,
+      // non-git project) uses NO Firebase Auth at all: every call is a raw
+      // HttpURLConnection with no token. Confirmed by grep — zero hits for
+      // FirebaseAuth / signInAnonymously / getIdToken / auth=.
+      //
+      // It writes live, fcmToken, ownerName, voiceLog/<slot> and wakeLog/<slot>
+      // under _devices/<id>, and registers its pairing code at
+      // _deviceShares/<code> (MainActivity.kt:313). Both subtrees must therefore
+      // stay world-writable until the watch can authenticate.
+      //
+      // Gating _deviceShares behind auth broke the watch's pairing-code flow the
+      // first time these rules shipped; it is open here for that reason, not by
+      // oversight.
       "_devices": { ".write": true },
+      "_deviceShares": { ".write": true },
 
       // Apple sign-in diagnostics are written by a raw fetch() DURING sign-in,
       // before any auth session exists. Requiring auth here would silently stop
@@ -32,7 +43,6 @@
       "_activityLog":        { "$day":  { "$uid":  { ".write": "auth != null" } } },
       "_deviceOwners":       { "$acct": { ".write": "auth != null" } },
       "_deviceSharedWithMe": { "$acct": { ".write": "auth != null" } },
-      "_deviceShares":       { "$code": { ".write": "auth != null" } },
       "_devOwner":           { "$uid":  { ".write": "auth != null" } },
       "_directory":          { "$acct": { ".write": "auth != null" } },
       "_invites":            { "$acct": { ".write": "auth != null" } },
