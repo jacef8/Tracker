@@ -2478,7 +2478,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 441;
+var APP_BUILD = 442;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2673,6 +2673,12 @@ function _animateMarker(marker, toLng, toLat) {
     var lng = fromLng + (toLng - fromLng) * t;
     var lat = fromLat + (toLat - fromLat) * t;
     marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
+    // Drag the breadcrumb line's tip along with the marker. The line is drawn from recorded
+    // points and setData lands instantly, but the marker takes ~1.4s to glide there — so
+    // without this the trail visibly arrives first and the pin chases it, which reads as the
+    // breadcrumb bouncing out in front. Welding the tip to the animated position means the
+    // line can only ever trail behind.
+    try { if (marker._uid && window._updateTrailTip) window._updateTrailTip(marker._uid, lng, lat); } catch (e) {}
     if (t < 1) marker._anim = requestAnimationFrame(step); else marker._anim = null;
   }
   marker._anim = requestAnimationFrame(step);
@@ -8590,6 +8596,7 @@ function startLocationSharing() {
             _meEl.textContent = initials(userName);
             userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
             userMarkers[userId]._el = _meEl;
+            userMarkers[userId]._uid = userId;   // your own marker is built here, not in the member loop — without this its gold trail still runs ahead of the pin
           } else {
             _animateMarker(userMarkers[userId], lng, lat);
           }
@@ -9292,6 +9299,7 @@ function listenUsers() {
           .setLngLat([data.lng, data.lat])
           .addTo(map);
         userMarkers[uid]._el = el;
+        userMarkers[uid]._uid = uid;   // lets _animateMarker drag this member's trail tip along
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = initials(data.name);
@@ -10182,6 +10190,7 @@ document.getElementById('unread-pin-bubble').addEventListener('click', function(
 
 // ══ TRAILS ═══════════════════════════════════════════════════════
 const trailSources = {}; // uid -> layer added
+const trailBaseCoords = {}; // uid -> the recorded coords, minus the live tip (see _updateTrailTip)
 
 function clearTrailLayer(uid) {
   const lid = `trail-${uid}`;
@@ -10189,7 +10198,27 @@ function clearTrailLayer(uid) {
   if (map.getLayer(lid+'-dots'))map.removeLayer(lid+'-dots');
   if (map.getSource(lid))       map.removeSource(lid);
   delete trailSources[uid];
+  delete trailBaseCoords[uid];
 }
+
+// Move just the last vertex of a drawn trail, without rebuilding it from the snapshot.
+// Called every animation frame from _animateMarker so the line stays welded to the marker
+// as it glides, instead of snapping to the new fix a second before the pin gets there.
+// The recorded geometry is untouched — the live position is APPENDED as a tip vertex, so a
+// fix that didn't clear TRAIL_MIN_DIST_M still connects the line to the pin rather than
+// leaving it short or distorting the last recorded segment.
+window._updateTrailTip = function (uid, lng, lat) {
+  const base = trailBaseCoords[uid];
+  if (!base || base.length < 2) return;
+  const lid = `trail-${uid}`;
+  if (!map.getSource(lid)) return;
+  const last = base[base.length - 1];
+  // Skip the append when the marker is essentially on the last recorded point already —
+  // avoids a zero-length final segment that some renderers draw as a stray dot.
+  const coords = (Math.abs(last[0] - lng) + Math.abs(last[1] - lat) < 1e-7)
+    ? base : base.concat([[lng, lat]]);
+  map.getSource(lid).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } });
+};
 
 // Trail DATA (gl/<room>/trails/<uid>) is now written unconditionally by every device in the
 // room, independent of breadcrumbsOn — that's what lets the "Recent trail" member-card
@@ -10244,7 +10273,20 @@ function _renderTrailLines() {
       const lineWidth   = isLive || isMineUid ? 2.5  : 1.5;
 
       const coords = allPts.map(p => [p.lng, p.lat]);
-      const geojson = { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } };
+      // Keep the recorded coords so _updateTrailTip can move the last vertex per animation
+      // frame without rebuilding from the snapshot.
+      trailBaseCoords[uid] = coords;
+
+      // Draw to wherever the marker actually IS right now, not where the newest fix says it
+      // should be. A fix lands instantly but the marker glides to it over ~1.4s, so drawing
+      // straight to the fix is what put the line out in front of the pin.
+      const _mk = (typeof userMarkers === 'object' && userMarkers) ? userMarkers[uid] : null;
+      const _tip = _mk && _mk._curLngLat;
+      const _last = coords[coords.length - 1];
+      const drawCoords = (_tip && _last && (Math.abs(_last[0] - _tip[0]) + Math.abs(_last[1] - _tip[1]) >= 1e-7))
+        ? coords.concat([[_tip[0], _tip[1]]])
+        : coords;
+      const geojson = { type: 'Feature', geometry: { type: 'LineString', coordinates: drawCoords } };
 
       if (!map.isStyleLoaded()) return;
 
