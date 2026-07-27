@@ -25,18 +25,29 @@ android {
     // (CN=Android Debug) as an app's official upload key — found out the hard way when Play
     // Console's "signed with the wrong key" error forced a lost-key reset request, which itself
     // then got rejected for the same reason. This one has a real Distinguished Name instead.
+    // The UPLOAD key is a real credential: its keystore is untracked (*.keystore) and its
+    // passwords live in native-app/android/keystore.properties, which is gitignored.
+    // Copy keystore.properties.example and fill it in. Never inline these values here —
+    // an earlier revision did, and this repo is public.
+    def keystoreProps = new Properties()
+    def keystorePropsFile = rootProject.file('keystore.properties')
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.withInputStream { keystoreProps.load(it) }
+    }
     signingConfigs {
         glsign {
+            // Debug/sideload key only. 'android' is the well-known public debug password, so
+            // this one stays committed on purpose — it keeps the sideload signature stable.
             storeFile file('groundlink.keystore')
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
         glupload {
-            storeFile file('groundlink-upload.keystore')
-            storePassword '***REMOVED***'
-            keyAlias 'groundlink_upload'
-            keyPassword '***REMOVED***'
+            storeFile file(keystoreProps.getProperty('uploadStoreFile', 'groundlink-upload.keystore'))
+            storePassword keystoreProps.getProperty('uploadStorePassword', '')
+            keyAlias keystoreProps.getProperty('uploadKeyAlias', 'groundlink_upload')
+            keyPassword keystoreProps.getProperty('uploadKeyPassword', '')
         }
     }
     buildTypes {
