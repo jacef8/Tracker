@@ -2478,7 +2478,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 438;
+var APP_BUILD = 439;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5571,22 +5571,44 @@ var CREW_REASK_MS = 24 * 60 * 60 * 1000;
 window._promptJoinCrew = function (key, label) {
   if (!key || _isCircleMember(key)) return;
   var askedKey = 'gl_crew_asked_' + key;
+  var _ask = function (force) {
+    if (!force) {
+      try {
+        var _lastAsked = parseInt(localStorage.getItem(askedKey), 10) || 0;
+        if (Date.now() - _lastAsked < CREW_REASK_MS) return;
+      } catch (e) {}
+    }
+    try { localStorage.setItem(askedKey, String(Date.now())); } catch (e) {}
+    _confirm(
+      'This is a Crew — accept to always show up here for each other, no matter what other room you\'re in or if the app\'s in the background, even after you leave this room.',
+      function () {
+        try { fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+        var circles = _getCircles(); circles[key] = label || key; _setCircles(circles);
+        try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
+        try { window._renderCircleSwitcher(); } catch (e) {}
+        toast('You’re in the Crew now — you’ll always show up here, no matter what other room you\'re in', 3200);
+      },
+      { title: 'Join this Crew?', yes: 'Join', no: 'Not now' }
+    );
+  };
+  // The roster (gl/<key>/members) and the local gl_circles cache can disagree — a reinstall or
+  // cleared storage drops the local half, and someone can be added to the roster from another
+  // device entirely. Only the LOCAL cache drives onGpsFix's fan-out, so in that state you are
+  // listed on the roster yet broadcast nothing: you simply stop appearing, with no "offline"
+  // marker and nothing in the UI to say sharing is off. That is exactly how a Crew member went
+  // missing from this room for two days without either side noticing. When the roster already
+  // lists us, always re-ask and ignore the 24h "Not now" stall — a stale local cache is a fault
+  // to repair, not a decision to respect.
+  //
+  // Still a PROMPT, deliberately, and never an automatic enable: a roster entry can be written
+  // by anyone (members is world-writable under the current rules), and switching on someone's
+  // continuous background location sharing has to be their own call on their own device.
+  if (!userId) { _ask(false); return; }
   try {
-    var _lastAsked = parseInt(localStorage.getItem(askedKey), 10) || 0;
-    if (Date.now() - _lastAsked < CREW_REASK_MS) return;
-  } catch (e) {}
-  try { localStorage.setItem(askedKey, String(Date.now())); } catch (e) {}
-  _confirm(
-    'This is a Crew — accept to always show up here for each other, no matter what other room you\'re in or if the app\'s in the background, even after you leave this room.',
-    function () {
-      try { fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
-      var circles = _getCircles(); circles[key] = label || key; _setCircles(circles);
-      try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
-      try { window._renderCircleSwitcher(); } catch (e) {}
-      toast('You’re in the Crew now — you’ll always show up here, no matter what other room you\'re in', 3200);
-    },
-    { title: 'Join this Crew?', yes: 'Join', no: 'Not now' }
-  );
+    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + userId))
+      .then(function (s) { _ask(!!(s && s.exists())); })
+      .catch(function () { _ask(false); });
+  } catch (e) { _ask(false); }
 };
 // Home-screen "My Circles" section: each circle you belong to, with a live-count peek, a way to
 // jump straight into its room (full chat/pins/voice — a circle IS a room), and a way to invite
