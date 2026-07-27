@@ -2478,7 +2478,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 445;
+var APP_BUILD = 446;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3116,7 +3116,7 @@ function _isRecentlyActiveInAnyCircle(uid) {
     var age = now - u.ts;
     // A resting (battery-saver) member heartbeats every few minutes for up to 6h and is still
     // legitimately present, not just "recently" active — same reasoning as the Crew switcher.
-    var freshMs = ((u.rest || u.lat || u.lng) && !u.noGps && !u.hidden) ? 24 * 60 * 60 * 1000 : 5 * 60 * 1000;
+    var freshMs = ((u.rest || u.lat || u.lng) && !u.noGps && !u.hidden) ? 3 * 24 * 60 * 60 * 1000 : 5 * 60 * 1000;
     if (age < freshMs) return { room: key, ts: u.ts, name: u.name || null };
   }
   return null;
@@ -5662,7 +5662,7 @@ function _renderCircleSwitcherList() {
       if (uid === userId) return;
       var d = users[uid] || {}, age = now - (d.ts || 0);
       if (d.ts && age < 90000) liveCount++;
-      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 24 * 60 * 60 * 1000) restingCount++;
+      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
     });
     var sub = liveCount > 0
       ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
@@ -5719,7 +5719,7 @@ function _renderRoomSwitcherList() {
       if (uid === userId) return;
       var d = users[uid] || {}, age = now - (d.ts || 0);
       if (d.ts && age < 90000) liveCount++;
-      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 24 * 60 * 60 * 1000) restingCount++;
+      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
     });
     var sub2 = liveCount > 0
       ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
@@ -6194,7 +6194,7 @@ function renderRoomList(all) {
     // low-power and still present — count them so the home screen matches the in-room view
     // (otherwise a stand full of resting hunters would read "0 online" and vanish). A member
     // whose connection has actually dropped past the grace no longer counts.
-    var BS_REST_HOME_MS = 24 * 60 * 60 * 1000;
+    var BS_REST_HOME_MS = 3 * 24 * 60 * 60 * 1000;
     var restingCount = realUsers.filter(function(u) {
       var age = now - (u.ts || 0);
       // (u.rest || a real position) — not the flag alone. A sleeping iPhone parks with a
@@ -9109,15 +9109,15 @@ const LIVE_MS  = 4 * 60 * 1000;   // actively broadcasting GPS — was 90s, too 
                                    // normal battery-saver heartbeat cadence (~4min), which flipped
                                    // someone to PAUSED just for sitting still, not actually stale
 const STALE_MS = 20 * 60 * 1000; // 20 min — drop members who've gone quiet (left, app closed, or long signal loss); active-but-no-signal users stay via the No-GPS heartbeat
-// Parked members keep their last position on the map for a full day. Was 6h, which still
-// blanked the map on an ordinary 8-hour workday — a sleeping iPhone reports nothing while
-// stationary (see the isResting note above), so "parked at work since 8am" hit the ceiling
-// by mid-afternoon and the marker disappeared exactly like the 20-minute STALE_MS used to
-// do. A stale pin honestly labelled "last seen 9h ago" beats an empty map.
+// Parked members keep their last position on the map for three days. Was 6h, then 24h — a
+// day still loses someone over a weekend away or a phone left off. A sleeping iPhone
+// reports nothing while stationary (see the isResting note above), so the marker vanished
+// exactly like the 20-minute STALE_MS used to do. A stale pin honestly labelled "last seen
+// 2d ago" beats an empty map.
 //
 // Members who actually leave still clear promptly: a clean exit sets conn:false and is gone
 // within DISC_GRACE_MS. Only unclean silence lingers, which is the case we WANT to keep.
-const BS_REST_MAX_MS = 24 * 60 * 60 * 1000;
+const BS_REST_MAX_MS = 3 * 24 * 60 * 60 * 1000;
 const DISC_GRACE_MS  = 3 * 60 * 1000;      // once the live connection is truly gone (conn:false), clear within this grace — absorbs screen-sleep blips, but a closed app drops fast
 
 // Track known users to detect joins/leaves
