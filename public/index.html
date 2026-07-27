@@ -2478,7 +2478,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 440;
+var APP_BUILD = 441;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6500,6 +6500,11 @@ function enterMap(name, group, uid) {
   // config/pin listener below, but without this reset a stale true/pin from the last
   // room briefly leaks into this room's invite text (and Firebase writes).
   window._roomHasPin = false; window._roomPlainPin = null;
+  // Per-person breadcrumb choices are scoped to the room you made them in — entering a room
+  // starts with nobody's trail drawn but your own. Without this, uids from the previous room
+  // would keep matching in _renderTrailLines and quietly draw lines you never asked for here.
+  window._trailShow = {};
+  try { localStorage.removeItem('gl_trail_show'); } catch (e) {}   // build 440 persisted these; it no longer does
   try { window._writeSession && window._writeSession(); } catch (e) {}   // userId is finally real — report this device now
 
   saveSession(name, group, uid);
@@ -9003,12 +9008,16 @@ function applyBreadcrumbState() {
 // own line; everyone else is opt-in from their member card.
 //
 // It used to be one global flag: flipping the toolbar button drew EVERY member's trail at
-// once, which is not what "show my breadcrumbs" means to anyone. Keyed by uid and persisted,
-// so "always draw Laura's trail" survives a reload. Entries for people who leave the Crew
-// just never match anything — harmless, and cheaper than trying to garbage-collect them
-// against a roster that changes.
-function _getTrailShow() { try { return JSON.parse(localStorage.getItem('gl_trail_show') || '{}'); } catch (e) { return {}; } }
-function _setTrailShow(m) { try { localStorage.setItem('gl_trail_show', JSON.stringify(m)); } catch (e) {} }
+// once, which is not what "show my breadcrumbs" means to anyone.
+//
+// Deliberately SESSION-ONLY, in memory: showing someone's trail is a "look at this right
+// now" action, not a standing preference. Persisting it (build 440 briefly did) meant a
+// choice made once kept redrawing that person's line every session afterwards, and left
+// entries for people who had since left the Crew. Cleared on room change below, and
+// naturally gone on reload.
+window._trailShow = window._trailShow || {};
+function _getTrailShow() { return window._trailShow || (window._trailShow = {}); }
+function _setTrailShow(m) { window._trailShow = m || {}; }
 function _trailShownFor(uid) {
   if (uid === userId) return breadcrumbsOn;   // toolbar button = MY line only
   return !!_getTrailShow()[uid];              // others: off until explicitly turned on
