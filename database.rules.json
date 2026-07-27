@@ -32,7 +32,20 @@
       // Gating _deviceShares behind auth broke the watch's pairing-code flow the
       // first time these rules shipped; it is open here for that reason, not by
       // oversight.
-      "_devices": { ".write": true },
+      // The watch also READS two of its own fields, and gl's ".read" gate
+      // (auth != null) has blocked both since c619fed — it has been unable to
+      // read its own schedule or owner name. Opened per-field rather than on
+      // _devices as a whole, deliberately: `live` (the child's location) and
+      // `fcmToken` stay unreadable without auth.
+      //   sched     LocationService.kt:195
+      //   ownerName MainActivity.kt:328
+      "_devices": {
+        ".write": true,
+        "$id": {
+          "sched":     { ".read": true },
+          "ownerName": { ".read": true }
+        }
+      },
       "_deviceShares": { ".write": true },
 
       // Apple sign-in diagnostics are written by a raw fetch() DURING sign-in,

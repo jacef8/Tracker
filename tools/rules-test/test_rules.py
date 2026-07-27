@@ -91,6 +91,9 @@ def seed():
     req("PUT", f"gl/testroom/members/{ALICE}", admin=True, body={"name": "Alice"})
     req("PUT", "gl/_devices/watch_abc/live", admin=True, body={"name": "watch", "ts": 1})
     req("PUT", "gl/gcroom/config", admin=True, body={"name": "Doomed"})
+    req("PUT", "gl/_devices/watch_abc/sched", admin=True, body={"on": 1})
+    req("PUT", "gl/_devices/watch_abc/ownerName", admin=True, body="Jace")
+    req("PUT", "gl/_devices/watch_abc/fcmToken", admin=True, body="tok")
     req("PUT", "_forceReload", admin=True, body=1)
 
 
@@ -111,6 +114,10 @@ CASES = [
     ("watch: UNAUTH write to _deviceShares/<code>", True, "PUT", "gl/_deviceShares/ABC123", None, {"id": "watch_abc"}),
     ("watch: UNAUTH write _devices fcmToken", True, "PUT", "gl/_devices/watch_abc/fcmToken", None, "tok"),
     ("watch: UNAUTH write _devices wakeLog", True, "PUT", "gl/_devices/watch_abc/wakeLog/1", None, {"t": 1}),
+    ("watch: UNAUTH read _devices/<id>/sched", True, "GET", "gl/_devices/watch_abc/sched", None, None),
+    ("watch: UNAUTH read _devices/<id>/ownerName", True, "GET", "gl/_devices/watch_abc/ownerName", None, None),
+    ("privacy: UNAUTH read _devices/<id>/live must stay DENIED", False, "GET", "gl/_devices/watch_abc/live", None, None),
+    ("privacy: UNAUTH read _devices/<id>/fcmToken must stay DENIED", False, "GET", "gl/_devices/watch_abc/fcmToken", None, None),
     ("authed write own presence", True, "PUT", f"gl/testroom/users/{ALICE}", ALICE, {"name": "Alice", "ts": 9}),
     ("ghost cleanup: authed DELETE other's presence", True, "DELETE", f"gl/testroom/users/{BOB}", ALICE, None),
     ("authed write members entry", True, "PUT", f"gl/testroom/members/{BOB}", ALICE, {"name": "Bob"}),
