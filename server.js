@@ -171,6 +171,12 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
     // token is filed under another uid. Rather than guess at a fourth explanation, record the
     // decision and read it back after the next real event.
     const decisions = [];
+    // A caller that omits all three identifiers cannot be skipped by ANY of the checks below,
+    // so it will notify itself. That's a caller bug, not a delivery condition — say so loudly
+    // rather than let it look like normal operation (headless.html did exactly this).
+    if (!senderId && !senderFcm && !senderEndpoint) {
+      console.warn('/push: no sender identity (type=' + String(b.type || '') + ', group=' + String(group) + ') — sender cannot be skipped');
+    }
     await Promise.all(Object.entries(targets).map(async function(entry) {
       const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
       if (uid === senderId || !rec) { decisions.push(uid.slice(0, 10) + ':self-or-empty'); return; }

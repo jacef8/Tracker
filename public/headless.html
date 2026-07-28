@@ -136,9 +136,21 @@
       var body = name + (kind === 'arrive' ? ' arrived at ' : ' left ') + (placeName || 'a place');
       // toFavs required — circle members' push subs live only in favSubs, not pushSubs (see
       // _registerFavSub in index.html). Without this the server finds zero recipients.
+      // senderId/senderFcm/senderEndpoint identify THIS device so the server won't notify it
+      // about its own transition. They were missing entirely here, and all three of the
+      // server's self-skip checks depend on them — an absent senderId compares equal to
+      // nothing, so `uid === senderId` never matched and the empty token/endpoint short-
+      // circuited the other two. The result: your own phone buzzing "Jace left Home" about
+      // itself, but ONLY when the transition happened in the background, since the foreground
+      // path (index.html pushNotify) always sent these. Confirmed from gl/_debug/lastPlacePush
+      // on 2026-07-28: senderId "", decisions "TgfQdKOe9m:SENT-fcm".
+      var _sid = getUid();
+      var _fcm = ''; try { _fcm = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
+      var _ep  = ''; try { _ep  = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
       fetch('/push', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ns: 'gl', group: circleKey, type: 'place_' + kind, title: placeName || 'Place alert', body: body, url: '/', toFavs: true })
+        body: JSON.stringify({ ns: 'gl', group: circleKey, type: 'place_' + kind, title: placeName || 'Place alert', body: body, url: '/', toFavs: true,
+                               senderId: _sid, senderFcm: _fcm, senderEndpoint: _ep })
       }).catch(function () {});
     } catch (e) {}
   }
