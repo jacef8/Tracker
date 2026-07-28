@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 483;
+var APP_BUILD = 484;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15391,7 +15391,7 @@ window._refreshInviteLinkBox = function () {
     box.value = pin ? _inviteUrl(true, pin, target) : _inviteUrl(false, null, target);
   } catch (e) {}
 };
-function _shareInvite(url) {
+function _shareInvite(url, roomKey) {
   // Every call site only ever shares a link that's already one-tap-ready — either the room has
   // no passcode at all, or the passcode is embedded in the URL's ?k= — so the recipient never
   // needs to be separately told a passcode. This used to be conditional on a `withPin` flag,
@@ -15401,20 +15401,33 @@ function _shareInvite(url) {
   // shown everywhere as "Our Crew" went out to friends and family as "our_crew" — the
   // underscore and all. The direct-invite path (_sendRoomInvite) already used the display
   // name, so the two invite routes disagreed about what the room was even called.
-  var label = (typeof _prettyGroup === 'function' && groupName) ? _prettyGroup(groupName)
-            : ((typeof groupName === 'string' && groupName) ? groupName : 'our group');
+  // Name the room being SHARED, which isn't always the room you're standing in — the Crew
+  // picker can be opened from the home screen with no room open at all.
+  var _rk = roomKey || window._inviteLinkRoom || groupName;
+  var label = (typeof _prettyGroup === 'function' && _rk) ? _prettyGroup(_rk)
+            : ((typeof _rk === 'string' && _rk) ? _rk : 'our group');
   var text = 'Join me on GroundLink — live map for "' + label + '". ' +
              'Tap the link and you\u2019re in.';
   window._nativeShare({ title: 'GroundLink invite', text: text, url: url }, 'Invite link copied');
 }
 
 function shareRoomInvite() {
-  if (!groupName) { toast('Join a room first'); return; }
-  // Open room — plain one-tap link
-  if (!window._roomHasPin) { _shareInvite(_inviteUrl(false)); return; }
+  // Share whatever room the open picker targets, not just the room you're standing in.
+  //
+  // This was `if (!groupName) { toast('Join a room first'); return; }`, which meant the big
+  // "Share link / text" button did nothing at all when the Crew invite picker was opened from
+  // the HOME screen — where there is no open room by definition. Reported as "this button
+  // doesn't work". My own regression from build 481: I routed _inviteVia and the link box
+  // through _inviteLinkRoom when enabling Crew link-invites, and missed this third path, so
+  // Text message, Email and Copy all worked while Share silently failed.
+  var target = window._inviteLinkRoom || groupName;
+  if (!target) { toast('Join a room first'); return; }
+  // A passcode is only knowable for the room we're actually in — see _inviteVia.
+  var sameRoom = (target === groupName);
+  if (!sameRoom || !window._roomHasPin) { _shareInvite(_inviteUrl(false, null, target), target); return; }
   // Passcode room — include the passcode automatically so it's truly one-tap
   var pin = window._roomPlainPin || _loadRoomPin(groupName);
-  if (pin) { window._roomPlainPin = pin; _shareInvite(_inviteUrl(true, pin)); return; }
+  if (pin) { window._roomPlainPin = pin; _shareInvite(_inviteUrl(true, pin, target), target); return; }
   // We don't know the passcode on this device yet — ask once, remember it, then share
   var modal    = document.getElementById('invite-modal');
   var err      = document.getElementById('invite-pin-error');
