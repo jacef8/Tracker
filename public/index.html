@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 476;
+var APP_BUILD = 477;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14976,19 +14976,22 @@ function _followPadding() {
   } catch (e) {}
   return pad;
 }
-// cameraForBounds consumes TWICE the padding it's given per axis — it fits into
-// (width - 2*(left+right)) x (height - 2*(top+bottom)), not the width minus the padding once.
-// Confirmed against live telemetry from two devices at once (build 475), which is the only
-// reason this is a fact rather than a guess:
-//   phone  canvas 360x780,  pad 185/148/52/52   -> asked for zoom 7.21, formula gives 7.197
-//   PC     canvas 1707x871, pad 107/148/102/102 -> asked for zoom 10.29, formula gives 10.29
-// So halve everything on the way in and the effective margin lands on what _followPadding
-// actually intended. _allPointsVisible deliberately keeps the RAW values: it compares projected
-// pixel positions against real screen edges, where the numbers already mean what they say.
-function _camPadding() {
-  var p = _followPadding();
-  return { top: p.top / 2, bottom: p.bottom / 2, left: p.left / 2, right: p.right / 2 };
-}
+// The chrome padding is ALREADY applied to the map, permanently: initMap calls
+// map.setPadding(_followPadding()) (and again on load/resize). cameraForBounds ADDS its own
+// `padding` option on top of that transform padding — so handing it _followPadding() a second
+// time charged every margin twice and cost roughly a full zoom level of needless zoom-out.
+//
+// Confirmed from live telemetry rather than inferred. Modelling usable width as
+// W - trPadding - optionsPadding reproduces all three measurements exactly:
+//   475, phone 360px, tr 104 + opts 104 -> 152px usable, zoom 7.20 (asked 7.21)
+//   475, PC 1707px,   tr 204 + opts 204 -> 1299px,       zoom 10.29 (asked 10.29)
+//   476, PC 1707px,   tr 204 + opts 102 -> 1401px,       zoom 10.40 (asked 10.40)
+// The 476 halving was therefore only half a fix — it shrank the duplicate instead of removing
+// it. Passing nothing here lets the transform padding be the single source of truth, which is
+// what setPadding is for and what every other camera move in the app already respects.
+// _allPointsVisible still uses the raw _followPadding values: it compares projected pixel
+// positions against real screen edges, where the numbers mean what they say.
+function _camPadding() { return 0; }
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
@@ -15055,7 +15058,7 @@ function _groupFollowTick(force) {
   // Last-ditch: retry with a flat, small padding. cameraForBounds returning nothing used to
   // mean the camera simply never moved — group-follow silently did nothing while its button
   // sat lit. A slightly tight fit beats no fit at all.
-  if (!cam) { try { cam = map.cameraForBounds(b, { padding: 20, maxZoom: 16 }); } catch (e) {} }   // 20 -> ~40px effective, per the doubling above
+  if (!cam) { try { cam = map.cameraForBounds(b, { padding: 20, maxZoom: 16 }); } catch (e) {} }   // on top of the transform padding
   window._gfLastPts = pts.length;
   window._gfLastFail = cam ? '' : 'cameraForBounds';
   if (!cam) return true;
