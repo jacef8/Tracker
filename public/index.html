@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 482;
+var APP_BUILD = 483;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9472,7 +9472,21 @@ function startLocationSharing() {
     // this data exists at all; see _renderTrailLines). Still requires moving enough AND the
     // fix being trustworthy: low-accuracy fixes (common when the screen is off and the OS
     // falls back to cell/wifi location) and impossible teleports are what scatter a trail.
-    if (groupName) {
+    // Record to the open room AND to every Crew, deduped.
+    //
+    // This used to be gated on `if (groupName)` alone, so a trail was only ever recorded while
+    // the person had that room actually OPEN. But a Crew member's live position fans out
+    // continuously (see _circleKeys above) whether or not they're in any room — that's the
+    // entire point of a Crew. The result, confirmed on-device 2026-07-28: you could watch
+    // someone drive home in real time while not one breadcrumb was written, because their app
+    // wasn't sitting on that room. Live tracking worked; "where have they been" silently did
+    // not. Recording follows the same fan-out the position does.
+    const _trailRooms = [];
+    if (groupName) _trailRooms.push(groupName);
+    for (var _tk = 0; _tk < _circleKeys.length; _tk++) {
+      if (_circleKeys[_tk] && _trailRooms.indexOf(_circleKeys[_tk]) === -1) _trailRooms.push(_circleKeys[_tk]);
+    }
+    if (_trailRooms.length) {
       const accM = accuracy || 0; // meters, from GPS or the native background fix
       const goodAccuracy = accM > 0 && accM <= TRAIL_MAX_ACC_M;
       const distM = lastBreadcrumbPos
@@ -9498,18 +9512,20 @@ function startLocationSharing() {
       if (moved && goodAccuracy && plausible) {
         lastBreadcrumbPos = { lat, lng };
         lastBreadcrumbTs = now;
-        const crumbRef = fbPush(fbRef(db, `gl/${groupName}/trails/${userId}`));
-        fbSet(crumbRef, { lat, lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' });
+        _trailRooms.forEach(function (_room) {
+          const crumbRef = fbPush(fbRef(db, `gl/${_room}/trails/${userId}`));
+          fbSet(crumbRef, { lat, lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' });
 
-        // Prune points older than 10 min from Firebase
-        fbOnValue(fbRef(db, `gl/${groupName}/trails/${userId}`), snap => {
-          const trail = snap.val() || {};
-          Object.entries(trail).forEach(([key, pt]) => {
-            if (now - pt.ts > TRAIL_MAX_MS) {
-              fbRemove(fbRef(db, `gl/${groupName}/trails/${userId}/${key}`));
-            }
-          });
-        }, { onlyOnce: true });
+          // Prune points past the retention window.
+          fbOnValue(fbRef(db, `gl/${_room}/trails/${userId}`), snap => {
+            const trail = snap.val() || {};
+            Object.entries(trail).forEach(([key, pt]) => {
+              if (now - pt.ts > TRAIL_MAX_MS) {
+                fbRemove(fbRef(db, `gl/${_room}/trails/${userId}/${key}`));
+              }
+            });
+          }, { onlyOnce: true });
+        });
       }
     }
 
@@ -9518,6 +9534,27 @@ function startLocationSharing() {
     // fan-out), day-bucketed so the viewer never needs a range query, just one day node. Coarser
     // distance filter than breadcrumbs (HIST_MIN_DIST_M) since this is "where was I today", not
     // a smooth live trail — keeps each day's point count small with no server-side retention job.
+    // Location History defaults ON once you're in a Crew — but only if you've never chosen.
+    //
+    // It was opt-in per device and defaulted off, so a Crew member could be shared live for
+    // months with nothing recorded, and nobody realised until they went looking for a past
+    // drive that was never saved. Resolved lazily rather than at startup because Crew
+    // membership isn't known yet when settings load.
+    //
+    // A stored '0' is a deliberate opt-out and is never overridden — only a genuinely unset
+    // key (null) is treated as "not yet decided". The toast is deliberate too: quietly starting
+    // to record where someone goes is not something to do without telling them.
+    if (!historyOn && _circleKeys.length) {
+      try {
+        if (localStorage.getItem('gl_history_on') === null) {
+          historyOn = true;
+          localStorage.setItem('gl_history_on', '1');
+          try { if (typeof _setPill === 'function') _setPill('set-history-pill', true); } catch (e) {}
+          try { toast('Location history is on — your Crew can see where you\'ve been. Turn it off in Settings.', 6000); } catch (e) {}
+          try { window._evt('location history auto-enabled (Crew member, no prior choice)'); } catch (e) {}
+        }
+      } catch (e) {}
+    }
     if (historyOn && _circleKeys.length) {
       const hAccM = accuracy || 0;
       const hGoodAccuracy = hAccM > 0 && hAccM <= TRAIL_MAX_ACC_M;
