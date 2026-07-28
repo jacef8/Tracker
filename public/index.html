@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 449;
+var APP_BUILD = 450;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5588,6 +5588,61 @@ function _isFav(key) { return _getFavs().indexOf(key) !== -1; }
 // { [roomKey]: { name, expires } }
 function _getJoinedRooms() { try { return JSON.parse(localStorage.getItem('gl_joined') || '{}'); } catch (e) { return {}; } }
 function _setJoinedRooms(m) { try { localStorage.setItem('gl_joined', JSON.stringify(m)); } catch (e) {} }
+// Drop local references to rooms that no longer exist on the server.
+//
+// Deleting a room server-side left every device still holding it locally — in gl_circles (the
+// My Crews switcher), gl_favs, gl_joined (the fan-out list), the cached display name, and its
+// gl_crew_asked_<key> stamp. The result was a ghost Crew that could be tapped, showed a name,
+// and pointed at nothing, and the only cure was leaving it by hand on each device.
+//
+// SAFETY: this only ever runs against a snapshot we can trust. An empty or failed read of the
+// gl root must never be mistaken for "every room was deleted" — that would wipe every device's
+// circles and favorites on a transient auth hiccup or offline start. Hence the non-empty
+// requirement below; when in doubt this does nothing, which is always the safe direction.
+function _reconcileLocalRooms(snapObj) {
+  if (!snapObj || typeof snapObj !== 'object') return;
+  var live = Object.keys(snapObj).filter(function (k) { return k.charAt(0) !== '_'; });
+  if (!live.length) return;                       // no rooms at all → almost certainly a bad read
+  var exists = {};
+  live.forEach(function (k) { exists[k] = 1; });
+  var dropped = [];
+
+  try {
+    var c = _getCircles(), cch = false;
+    Object.keys(c).forEach(function (k) { if (!exists[k]) { delete c[k]; cch = true; dropped.push(k); } });
+    if (cch) _setCircles(c);                      // also pushes the removal to the account profile
+  } catch (e) {}
+
+  try {
+    var f = _getFavs(), nf = f.filter(function (k) { return exists[k]; });
+    if (nf.length !== f.length) _setFavs(nf);
+  } catch (e) {}
+
+  try {
+    var j = _getJoinedRooms(), jch = false;
+    Object.keys(j).forEach(function (k) { if (!exists[k]) { delete j[k]; jch = true; } });
+    if (jch) _setJoinedRooms(j);
+  } catch (e) {}
+
+  try {
+    var nm = _cachedRoomNames(), nch = false;
+    Object.keys(nm).forEach(function (k) { if (!exists[k]) { delete nm[k]; nch = true; } });
+    if (nch) localStorage.setItem('gl_room_names', JSON.stringify(nm));
+  } catch (e) {}
+
+  // Per-room "already asked about joining this Crew" stamps, keyed individually.
+  try {
+    for (var i = localStorage.length - 1; i >= 0; i--) {
+      var lk = localStorage.key(i);
+      if (lk && lk.indexOf('gl_crew_asked_') === 0 && !exists[lk.slice(14)]) localStorage.removeItem(lk);
+    }
+  } catch (e) {}
+
+  if (dropped.length) {
+    try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
+    try { window._evt && window._evt('cleared ' + dropped.length + ' deleted room(s) from this device: ' + dropped.join(', ')); } catch (e) {}
+  }
+}
 // Add/refresh a room's fan-out entry — called on entering any room (see enterMap). Skipped for
 // rooms already tracked as a Favorite/Circle, since those already fan out permanently and don't
 // need a second, redundant, shorter-lived entry layered on top.
@@ -6144,6 +6199,7 @@ function loadRoomList() {
   waitForFirebase(fb => {
     fb.onValue(fb.ref(fb.db, 'gl'), snap => {
       window._lastGlSnap = snap.val() || {};
+      try { _reconcileLocalRooms(window._lastGlSnap); } catch (e) {}
       try { renderRoomList(window._lastGlSnap); } catch (e) {}
       try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
       // The Home-screen circle-switcher pill/label (_renderCircleSwitcher) has its own separate
