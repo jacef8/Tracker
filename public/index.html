@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 451;
+var APP_BUILD = 452;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5680,6 +5680,33 @@ function _reconcileLocalRooms(snapObj) {
 function _isDeadRoom(key) {
   try { return !!(window._lastGlSnap && window._lastGlSnap._deadRooms && window._lastGlSnap._deadRooms[key]); } catch (e) { return false; }
 }
+// THE gate. No location write goes to a room the server doesn't currently have.
+//
+// The resurrection bug was structural, not a slip: three independent local lists — gl_circles,
+// gl_favs and gl_joined — each authorized writes to a room on their own, so localStorage was
+// effectively the authority on which rooms exist. Delete a room server-side and every device
+// still holding it in any of those lists rebuilt it with its next fix. Purging those lists
+// (450) could not fix it either, since the room reappears before the purge can see it missing.
+//
+// Local lists are now INTENT; the server snapshot is AUTHORITY. The asymmetry is deliberate:
+// the server can always REVOKE (delete or tombstone a room and writes stop everywhere), but it
+// can never GRANT — being added to a roster still doesn't start anyone's location sharing;
+// that needs consent on the device. Revocation is safe to automate, granting is not.
+//
+// Fails OPEN on an untrusted snapshot (not loaded, unreadable, or empty). A device that can't
+// read gl must keep sharing its location — going silent would be a far worse failure than a
+// stale room lingering, and it is exactly the case where we know least.
+function _roomWritable(key) {
+  if (!key) return false;
+  try {
+    var s = window._lastGlSnap;
+    if (!s || typeof s !== 'object') return true;
+    if (s._deadRooms && s._deadRooms[key]) return false;          // tombstoned: always refuse
+    var live = Object.keys(s).filter(function (k) { return k.charAt(0) !== '_'; });
+    if (!live.length) return true;                                 // empty ⇒ bad read, not "all gone"
+    return Object.prototype.hasOwnProperty.call(s, key);
+  } catch (e) { return true; }
+}
 // Add/refresh a room's fan-out entry — called on entering any room (see enterMap). Skipped for
 // rooms already tracked as a Favorite/Circle, since those already fan out permanently and don't
 // need a second, redundant, shorter-lived entry layered on top.
@@ -8861,7 +8888,7 @@ function startLocationSharing() {
       hereSince: window._hereSinceTs,
       color: window._myColor || ''
     };
-    if (groupName && !window._roomClosed) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
+    if (groupName && !window._roomClosed && _roomWritable(groupName)) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
     // so background location keeps updating there too. This one function is the single place
@@ -8875,6 +8902,7 @@ function startLocationSharing() {
         var _ck = _circleKeys[_ci];
         _ensurePlacesSubscribed(_ck); // no-op after the first call per circle — see the guard inside
         if (_ck === groupName) continue; // already written above, skip the duplicate
+        if (!_roomWritable(_ck)) continue;   // server no longer has it — never recreate it
         fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
       }
       if (_circleKeys.length) _checkPlaceGeofences(lat, lng, _circleKeys, _effAccM);
@@ -8891,6 +8919,7 @@ function startLocationSharing() {
       for (var _fi = 0; _fi < _favKeys.length; _fi++) {
         var _fk = _favKeys[_fi];
         if (_fk === groupName || _circleKeys.indexOf(_fk) !== -1) continue; // already written above
+        if (!_roomWritable(_fk)) continue;
         fbSet(fbRef(db, `gl/${_fk}/users/${userId}`), _fixPayload);
       }
     } catch (e) {}
@@ -8908,6 +8937,7 @@ function startLocationSharing() {
         if (_jk === groupName || _circleKeys.indexOf(_jk) !== -1 || _favKeys.indexOf(_jk) !== -1) continue; // already written above
         var _jEntry = _joined[_jk];
         if (_jEntry && _jEntry.expires && now > _jEntry.expires) { delete _joined[_jk]; _joinedChanged = true; continue; }
+        if (!_roomWritable(_jk)) { delete _joined[_jk]; _joinedChanged = true; continue; }
         fbSet(fbRef(db, `gl/${_jk}/users/${userId}`), _fixPayload);
       }
       if (_joinedChanged) _setJoinedRooms(_joined);
@@ -9164,6 +9194,9 @@ function startLocationSharing() {
   window._noGpsHeartbeat = setInterval(function() {
     if (window._roomClosed) return; // room closed by an admin — stop the heartbeat
     if (!(db && groupName && userId && userName)) return;
+    // Same gate as the fix fan-out. The heartbeat fires on a timer with no GPS involved, so
+    // without this it alone would rebuild a deleted room every interval, forever.
+    if (!_roomWritable(groupName)) return;
     if (locationHidden) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
