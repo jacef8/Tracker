@@ -38,23 +38,25 @@ jobs:
           cd ios/App
           pod install --repo-update
 
-      # Decodes the distribution certificate (.p12) and provisioning profile
-      # (.mobileprovision) from GitHub secrets and installs them into a temporary CI
-      # keychain, exactly as Apple's own GitHub Actions guide recommends. Neither secret
-      # is ever printed or persisted outside this run.
-      - name: Install signing certificate and provisioning profile
+      # Decodes the distribution certificate (.p12) from GitHub secrets into a temporary CI
+      # keychain, as Apple's own GitHub Actions guide recommends. The secret is never printed
+      # or persisted outside this run.
+      #
+      # The provisioning profile is deliberately NOT installed from a secret any more. A
+      # profile is a snapshot of the App ID's capabilities when it was generated, so a stored
+      # one goes stale the instant an entitlement is added — which is exactly how the
+      # associated-domains change broke this build. fastlane's sigh now fetches a fresh one
+      # each run (see the Fastfile), so there is nothing here to rotate.
+      - name: Install signing certificate
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
-          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.IOS_CI_KEYCHAIN_PASSWORD }}
         run: |
           CERT_PATH=$RUNNER_TEMP/dist_cert.p12
-          PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
           echo -n "$CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
-          echo -n "$PROFILE_BASE64" | base64 --decode -o "$PROFILE_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -63,15 +65,23 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
+      # Turn on every capability App.entitlements asks for, using the App Store Connect API
+      # key already configured here. Without this, sigh below would happily regenerate a
+      # profile that still lacks the capability and the build would fail the same way.
+      # Idempotent — capabilities already enabled are skipped.
+      - name: Enable required App ID capabilities
+        working-directory: .
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+        run: node tools/asc-enable-capabilities.mjs com.groundlink.ios ASSOCIATED_DOMAINS APPLE_ID_AUTH
 
       - name: Build and upload to TestFlight
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
-          PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
           cd ios/App
