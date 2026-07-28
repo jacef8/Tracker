@@ -2454,9 +2454,22 @@ let groupName = '', userId = '', userName = '';
 // no separate cache to keep in sync.
 function _prettyGroup(g) {
   var key = String(g == null ? '' : g);
+  // Three sources, cheapest-and-freshest first. The bulk gl-root snapshot alone was not
+  // enough: on a device where that big read hasn't landed, the real name is unavailable and
+  // the mechanical fallback below wins, so a renamed room reverts to its raw key —
+  // "my_girls" showing as "My Girls" long after it was renamed "Fordy Crew".
   try {
     var custom = window._lastGlSnap && window._lastGlSnap[key] && window._lastGlSnap[key].config && window._lastGlSnap[key].config.name;
     if (custom) return custom;
+  } catch (e) {}
+  try {
+    // The current room's own config listener — resolves even when the gl-root read hasn't.
+    if (key === groupName && window._roomCfg && window._roomCfg.name) return window._roomCfg.name;
+  } catch (e) {}
+  try {
+    // Last known good name, so a cold start shows the right thing before either read lands.
+    var cached = _cachedRoomNames()[key];
+    if (cached) return cached;
   } catch (e) {}
   return key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }
@@ -2478,7 +2491,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 446;
+var APP_BUILD = 447;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4839,12 +4852,29 @@ function _riIsCircle() {
 }
 function _renderRiCircle() {
   var on = _riIsCircle();
+  // Third state: the room IS a Crew but you are not in it. Previously indistinguishable from
+  // "this isn't a Crew" — both rendered "Make this a Crew / OFF" — so a visitor had no way to
+  // tell they weren't a member and no way to become one except a transient prompt they may
+  // never have seen. This is the only place membership is now visible AND actionable.
+  var visitor = !on && _roomIsCrew();
   var row = document.getElementById('ri-circle-row');
   var title = document.getElementById('ri-circle-title');
   var pill = document.getElementById('ri-circle-pill');
   var sub = document.getElementById('ri-circle-sub');
-  if (title) title.textContent = on ? 'Invite to this Crew' : 'Make this a Crew';
-  if (pill) { pill.textContent = on ? 'ON' : 'OFF'; pill.style.background = on ? 'rgba(167,139,250,.18)' : 'var(--border)'; pill.style.color = on ? '#a78bfa' : 'var(--muted)'; }
+  if (title) title.textContent = on ? 'Invite to this Crew' : visitor ? 'Join this Crew' : 'Make this a Crew';
+  if (pill) {
+    pill.textContent = on ? 'ON' : visitor ? 'VISITOR' : 'OFF';
+    pill.style.background = on ? 'rgba(167,139,250,.18)' : visitor ? 'rgba(240,165,0,.18)' : 'var(--border)';
+    pill.style.color = on ? '#a78bfa' : visitor ? 'var(--accent)' : 'var(--muted)';
+  }
+  if (visitor) {
+    if (row) row.style.borderColor = 'rgba(240,165,0,.45)';
+    if (sub) sub.textContent = 'You have access to this room but you are NOT in the Crew — you only show up here while you\'re actually in the room. Tap to join and always show up, wherever you are.';
+    var it0 = document.getElementById('ri-invite-title'), is0 = document.getElementById('ri-invite-sub');
+    if (it0) it0.textContent = 'Invite someone to this Crew';
+    if (is0) is0.textContent = 'They\'ll always show up here once they accept — permanent Crew membership';
+    return;
+  }
   // The purple border + "permanent, can't be undone" wording only matter BEFORE conversion —
   // once it's already a Crew, this row's job is just inviting more people, which isn't a
   // one-way decision and shouldn't keep looking like one.
@@ -4901,6 +4931,23 @@ window._riToggleCircle = function () {
   // Already a Crew — this row's job now is just to invite more people, same as the per-Crew
   // invite icon in the My Crews switcher list. No separate "convert" step to repeat.
   if (_riIsCircle()) { window._openCircleInvitePicker(groupName, label); return; }
+  // Visitor in an existing Crew: join it. Same effect as accepting the drive-by prompt, but
+  // reachable on demand instead of only when the prompt happens to fire — which is what left
+  // someone unable to tell whether they were a member, let alone become one.
+  if (_roomIsCrew()) {
+    var _k = groupName, _lbl = label;
+    _confirm('Join "' + _lbl + '" as a Crew member?\n\nYou\'ll always show up here for each other — no matter what other room you\'re in, or if the app\'s in the background. Right now you only appear while you\'re actually in this room.', function () {
+      try { fbSet(fbRef(db, 'gl/' + _k + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+      var circles = _getCircles(); circles[_k] = _lbl || _k; _setCircles(circles);
+      try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
+      try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
+      try { _renderRiCircle(); } catch (e) {}
+      // Suppress the drive-by prompt for this room — they just answered it deliberately.
+      try { localStorage.setItem('gl_crew_asked_' + _k, String(Date.now())); } catch (e) {}
+      toast('You\'re in the Crew now — you\'ll always show up here', 3200);
+    }, { title: 'Join this Crew?', yes: 'Join', no: 'Not now' });
+    return;
+  }
   _confirm('Everyone in "' + label + '" will always show up here for each other from now on, no matter what other room they\'re in or if the app\'s in the background — this also makes the room private, so only people you invite can find it.\n\nThis can\'t be undone.', function () {
     // Suppresses the passive "this room just became a Crew" toast for the person doing the
     // converting — they already get their own dedicated confirmation below (and immediately
@@ -8405,7 +8452,26 @@ function _bgSetupCopyForPlatform() {
     if (card2) card2.style.display = '';
   }
 }
-window._openBgSetup = function() {
+// Re-ask at most once a day, not on every single launch.
+//
+// iOS grants "While Using the App" first and only offers "Always" as a separate later upgrade,
+// so someone who hasn't taken that upgrade trips NOT_AUTHORIZED on EVERY cold start — and this
+// card had no suppression whatsoever, so it reopened every time the app was opened (confirmed
+// on an iPhone). The card is usually telling the truth; the problem is that it says so
+// relentlessly and offers no way to defer. A dismissal now means "not now", honoured for a day.
+// Reuses gl_bg_setup_ts, which _dismissBgSetup has been writing all along — the answer was
+// already being recorded, just never read back here.
+var BG_SETUP_SNOOZE_MS = 24 * 60 * 60 * 1000;
+window._openBgSetup = function(force) {
+  // Never nag when the permission is actually in place — cheap guard against a stale or
+  // mistimed NOT_AUTHORIZED (CoreLocation reports one for a few seconds after a cold launch).
+  try { if (!force && typeof _hasBackgroundLocation === 'function' && _hasBackgroundLocation()) return; } catch (e) {}
+  if (!force) {
+    try {
+      var sn = parseInt(localStorage.getItem('gl_bg_setup_ts'), 10) || 0;
+      if (sn && Date.now() - sn < BG_SETUP_SNOOZE_MS) return;
+    } catch (e) {}
+  }
   var m = document.getElementById('bg-setup-modal');
   if (m) m.style.display = 'flex';
   try { _bgSetupCopyForPlatform(); } catch (e) {}
@@ -9142,7 +9208,49 @@ function _listenRoomMembersRoster() {
 }
 // Re-entrant: safe to call again to force an immediate People-list refresh (e.g. right after
 // claiming ownership) without leaking a second copy of either listener alongside the first.
+// Live view of THIS room's own config, independent of the bulk gl-root snapshot.
+//
+// _prettyGroup and _riIsCircle both used to depend on window._lastGlSnap — one big read of the
+// entire gl node. When that hasn't landed on a device (slow, large, or auth still settling),
+// the room's real name is simply unavailable and _prettyGroup silently falls back to
+// prettifying the key: "my_girls" renders as "My Girls" even though the room was renamed to
+// "Fordy Crew" (confirmed on an iPhone showing the old name while Android showed the new one).
+// A tiny per-room listener always resolves, and the name is cached so it survives a cold start
+// before either read completes.
+window._roomCfg = {};
+function _cachedRoomNames() { try { return JSON.parse(localStorage.getItem('gl_room_names') || '{}'); } catch (e) { return {}; } }
+function _cacheRoomName(key, name) {
+  if (!key || !name) return;
+  try { var m = _cachedRoomNames(); if (m[key] === name) return; m[key] = name; localStorage.setItem('gl_room_names', JSON.stringify(m)); } catch (e) {}
+}
+function _listenRoomConfig() {
+  try { if (window._roomCfgUnsub) window._roomCfgUnsub(); } catch (e) {}
+  window._roomCfgUnsub = null;
+  window._roomCfg = {};
+  if (!groupName || !db) return;
+  try {
+    window._roomCfgUnsub = fbOnValue(fbRef(db, 'gl/' + groupName + '/config'), function (snap) {
+      var c = snap.val() || {};
+      window._roomCfg = c;
+      _cacheRoomName(groupName, c.name);
+      try { if (typeof _renderRiCircle === 'function') _renderRiCircle(); } catch (e) {}
+      try { var el = document.getElementById('group-name-label'); if (el && c.name) el.textContent = c.name; } catch (e) {}
+    });
+  } catch (e) {}
+}
+// Is the CURRENT room a Crew? Distinct from _isCircleMember, which asks whether *you* belong.
+// A visitor in a Crew room is exactly the case that had no representation before: the room is
+// a Crew, they are not in it, and the UI showed "Make this a Crew / OFF" as though neither
+// were true.
+function _roomIsCrew() {
+  try {
+    if (window._roomCfg && (window._roomCfg.circle || window._roomCfg.persistent)) return true;
+    var s = window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config;
+    return !!(s && (s.circle || s.persistent));
+  } catch (e) { return false; }
+}
 function listenUsers() {
+  _listenRoomConfig();
   _listenRoomMembersRoster();
   try { if (window._usersListenerUnsub) window._usersListenerUnsub(); } catch (e) {}
   // The People list used to do a full innerHTML wipe + rebuild on EVERY single fbOnValue firing
