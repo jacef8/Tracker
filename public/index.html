@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 464;
+var APP_BUILD = 465;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7856,46 +7856,25 @@ function makePinImage(catColor, ringColor, glyph) {
   return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
 }
 
-// Where the map should open before anything has repositioned it.
+// The map opens framed on the whole of Liberty County.
 //
-// It used to hard-code [-84.9167, 30.2333] — an empty patch of the Apalachicola National
-// Forest near Central City. Every cold start landed there, showing bare trees and no people,
-// and it only escaped if some later fit happened to run. Reported as "on a fresh restart the
-// map goes to this section and stays there".
+// It used to hard-code center [-84.9167, 30.2333] — an empty patch of the Apalachicola
+// National Forest near Central City. Every cold start landed there, showing bare trees and
+// nobody, and only moved if some later fit happened to run.
 //
-// Prefer, in order: where the map was last left, then this device's last known position, then
-// that original constant as a final fallback for a brand-new install with nothing to go on.
-var _MAP_FALLBACK = { center: [-84.9167, 30.2333], zoom: 11 };
-function _savedMapView() {
-  try {
-    var v = JSON.parse(localStorage.getItem('gl_map_view') || 'null');
-    if (v && isFinite(v.lng) && isFinite(v.lat) && isFinite(v.zoom)) return { center: [v.lng, v.lat], zoom: v.zoom };
-  } catch (e) {}
-  try {
-    var f = JSON.parse(localStorage.getItem('gl_last_fix') || 'null');
-    if (f && isFinite(f.lng) && isFinite(f.lat)) return { center: [f.lng, f.lat], zoom: 14 };
-  } catch (e) {}
-  return _MAP_FALLBACK;
-}
+// These bounds are measured from this app's own liberty_parcels.geojson (110,892 coordinate
+// pairs), not estimated, so they match the county the parcel layer actually draws.
+var LIBERTY_COUNTY_BOUNDS = [[-85.15295, 29.97146], [-84.54269, 30.60585]];  // [[W,S],[E,N]]
 function initMap() {
   if (window._mapStarted) return; // already initialized
   mapboxgl.accessToken = window.MAPBOX_TOKEN;
-  var _view = _savedMapView();
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
-    center: _view.center, zoom: _view.zoom,
+    bounds: LIBERTY_COUNTY_BOUNDS,
+    fitBoundsOptions: { padding: 24 },
     attributionControl: false
   });
-  // Remember where they left it. Throttled to idle rather than every frame of a pan.
-  try {
-    map.on('moveend', function () {
-      try {
-        var c = map.getCenter();
-        localStorage.setItem('gl_map_view', JSON.stringify({ lng: c.lng, lat: c.lat, zoom: map.getZoom() }));
-      } catch (e) {}
-    });
-  } catch (e) {}
   window._mapStarted = true; // set only after the map object actually exists
   // NavigationControl replaced by custom buttons below
 
@@ -9043,15 +9022,6 @@ function startLocationSharing() {
       window._lastGoodFix = { lat: rawLat, lng: rawLng, acc: _accNow, ts: now };
     }
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
-    // Persist it so the map can OPEN near you on a cold start, instead of at a fallback
-    // constant in the middle of a national forest. Throttled to once a minute — this only
-    // needs to be roughly right, and it runs on every fix.
-    try {
-      if (!window._lastFixSaved || (now - window._lastFixSaved) > 60000) {
-        window._lastFixSaved = now;
-        localStorage.setItem('gl_last_fix', JSON.stringify({ lat: lat, lng: lng }));
-      }
-    } catch (e) {}
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
     window._lastAccM = accuracy || 0; // diagnostics: accuracy (meters) of this fix
