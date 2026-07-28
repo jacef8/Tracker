@@ -2536,7 +2536,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 469;
+var APP_BUILD = 470;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7591,9 +7591,79 @@ window._refreshBuildStamp = function () {
     cap.Plugins.App.getInfo().then(function (info) {
       window._nativeAppInfo = info || null;
       try { window._refreshBuildStamp(); } catch (e) {}
+      try { _watchMinNative(); } catch (e) {}
     }).catch(function () {});
   } catch (e) {}
 })();
+
+// ── "Your app is out of date" — for changes the web layer can't deliver ────────────
+//
+// The web app updates itself (_forceReload), so a web fix reaches everyone within seconds. The
+// NATIVE shell can't: a change to the background-location watcher, deep links, or anything in
+// the Capacitor layer needs a store / TestFlight / App Distribution build, and until now
+// nothing told anyone their app was old. The version was captured into diagnostics and never
+// compared, so a device could sit months behind and look completely normal — including to its
+// owner.
+//
+// Lives at root /_minNative, alongside _forceReload, because the Phase 1 rules deny client
+// writes to unknown paths under gl/ and the admin page is itself a client.
+//   { android: <build>, ios: <build>, msg: "...", url: "https://..." }
+// Compared against the NATIVE build number, not the web build.
+function _nativeBuildNum() {
+  try {
+    var b = window._nativeAppInfo && window._nativeAppInfo.build;
+    if (b == null) return null;
+    var n = parseInt(String(b).replace(/[^0-9]/g, ''), 10);
+    return isFinite(n) ? n : null;
+  } catch (e) { return null; }
+}
+function _watchMinNative() {
+  if (window._minNativeWatching) return;
+  window._minNativeWatching = true;
+  var t = setInterval(function () {
+    var fb = window._fb;
+    if (!fb || !fb.onValue) return;
+    clearInterval(t);
+    try {
+      fb.onValue(fb.ref(fb.db, '_minNative'), function (snap) {
+        try {
+          var cfg = snap.val() || {};
+          var mine = _nativeBuildNum();
+          if (mine == null) return;                       // not the native app — nothing to update
+          var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
+          var need = parseInt(ios ? cfg.ios : cfg.android, 10);
+          if (!isFinite(need) || mine >= need) { _hideNativeUpdateBar(); return; }
+          _showNativeUpdateBar(cfg.msg || 'A new version of the GroundLink app is available.', cfg.url || '', mine, need);
+        } catch (e) {}
+      });
+    } catch (e) {}
+  }, 400);
+}
+function _hideNativeUpdateBar() { try { var b = document.getElementById('native-update-bar'); if (b) b.style.display = 'none'; } catch (e) {} }
+function _showNativeUpdateBar(msg, url, mine, need) {
+  var bar = document.getElementById('native-update-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'native-update-bar';
+    // Deliberately persistent rather than a toast: this can only be resolved by installing a
+    // new build, so a message that disappears after four seconds is no use.
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:1200;background:rgba(240,165,0,0.96);color:#000;padding:12px 14px;display:none;align-items:center;gap:12px;font-size:13px;font-weight:700;box-shadow:0 -4px 18px rgba(0,0,0,.5)';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = '';
+  var txt = document.createElement('div');
+  txt.style.cssText = 'flex:1;min-width:0;line-height:1.35';
+  txt.textContent = msg + ' (you have build ' + mine + ', latest is ' + need + ')';
+  bar.appendChild(txt);
+  if (url) {
+    var a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'Update';
+    a.style.cssText = 'flex-shrink:0;background:#000;color:#f0a500;border-radius:8px;padding:8px 14px;text-decoration:none;font-weight:800';
+    bar.appendChild(a);
+  }
+  bar.style.display = 'flex';
+}
 
 // ── Native deep links (Android App Links) ──────────────────────────────────
 // When the app is opened by tapping a shared GroundLink https link, Android hands

@@ -325,6 +325,22 @@
     <div style="font-size:11px;color:var(--muted);margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border)">A reload only reloads the web view — the app process keeps running, and a location watcher stuck in it will keep background tracking broken. This ends the app instead. Android closes and reopens itself; iPhones can't (Apple forbids it) and get on-screen instructions to swipe it away.</div>
     <button class="btn btn-warn" id="force-restart-btn" onclick="forceRestartAll(this)">&#9211; Force all users to RESTART the app</button>
     <div id="force-restart-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
+
+    <!-- Native builds can't be pushed the way web builds can — they need a store / TestFlight /
+         App Distribution install. Setting a minimum here shows a persistent bar to anyone whose
+         installed app is older, which is otherwise invisible to them and to you. -->
+    <div style="font-size:11px;color:var(--muted);margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border)">Minimum <b>native app</b> build. Anyone running an older install sees a persistent "update available" bar with your link. Leave a field blank to not enforce it on that platform. This is the native build number (Android versionCode / iOS build), <b>not</b> the web build.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <input id="minnat-android" type="number" placeholder="Android build" style="flex:1;min-width:120px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px" />
+      <input id="minnat-ios" type="number" placeholder="iOS build" style="flex:1;min-width:120px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px" />
+    </div>
+    <input id="minnat-msg" placeholder="Message (optional)" style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px;margin-bottom:8px" />
+    <input id="minnat-url" placeholder="Update link (Play Store / TestFlight / App Distribution)" style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px;margin-bottom:8px" />
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-warn" onclick="saveMinNative(this)">&#11014; Require this native build</button>
+      <button class="btn" onclick="clearMinNative(this)">Clear requirement</button>
+    </div>
+    <div id="minnat-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
   </div>
 
   <!-- Danger zone -->
@@ -962,6 +978,45 @@ window._forceArmed = false;
 // show the manual swipe-away steps instead. Delivered the same way as _forceReload — a value
 // newer than the page's load — so it needs no push subscription, which matters because a
 // device that never granted notifications has none.
+// Minimum required NATIVE app build. Web builds push themselves; native ones can't — they need
+// a store install — and nothing previously told a user their app was old. Written to root
+// /_minNative (not under gl/, where the Phase 1 rules deny client writes and the admin page is
+// itself a client).
+window.saveMinNative = function(btn) {
+  var status = document.getElementById('minnat-status');
+  function say(m, c) { if (status) { status.textContent = m; status.style.color = c || 'var(--muted)'; } }
+  var fb = window._fb;
+  if (!fb || !fb.set) { say('⚠ Not connected to the database yet.', '#f85149'); return; }
+  var a = parseInt((document.getElementById('minnat-android') || {}).value, 10);
+  var i = parseInt((document.getElementById('minnat-ios') || {}).value, 10);
+  if (!isFinite(a) && !isFinite(i)) { say('Enter at least one build number.', '#f0a500'); return; }
+  var rec = {};
+  if (isFinite(a)) rec.android = a;
+  if (isFinite(i)) rec.ios = i;
+  var m = ((document.getElementById('minnat-msg') || {}).value || '').trim();
+  var u = ((document.getElementById('minnat-url') || {}).value || '').trim();
+  if (m) rec.msg = m;
+  if (u) rec.url = u;
+  rec.ts = Date.now();
+  try {
+    var p = fb.set(fb.ref(fb.db, '_minNative'), rec);
+    if (p && p.then) {
+      p.then(function() { say('✓ Saved. Anyone on an older native build sees the update bar.', '#3fb950'); addLog('Set minimum native build: ' + JSON.stringify(rec), 'warn'); })
+       .catch(function(e) { say('✗ Failed: ' + ((e && e.message) || 'write error'), '#f85149'); });
+    } else { say('✓ Saved.', '#3fb950'); }
+  } catch (e) { say('✗ Failed: ' + ((e && e.message) || 'error'), '#f85149'); }
+};
+window.clearMinNative = function(btn) {
+  var status = document.getElementById('minnat-status');
+  function say(m, c) { if (status) { status.textContent = m; status.style.color = c || 'var(--muted)'; } }
+  var fb = window._fb;
+  if (!fb || !fb.remove) { say('⚠ Not connected to the database yet.', '#f85149'); return; }
+  try {
+    fb.remove(fb.ref(fb.db, '_minNative'));
+    say('✓ Cleared — the update bar disappears for everyone.', '#3fb950');
+    addLog('Cleared minimum native build requirement', 'warn');
+  } catch (e) { say('✗ Failed: ' + ((e && e.message) || 'error'), '#f85149'); }
+};
 window.forceRestartAll = function(btn, statusId) {
   var status = document.getElementById(statusId || 'force-restart-status');
   function say(msg, color) { if (status) { status.textContent = msg; status.style.color = color || 'var(--muted)'; } }
