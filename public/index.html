@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 473;
+var APP_BUILD = 474;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14946,20 +14946,31 @@ function _followPadding() {
   // space, a member fitted right at the padded edge still has HALF their visual marker
   // poking out past it — exactly the clipped-under-the-topbar/toolbar look reported on-device.
   var MARKER_RADIUS_PAD = 30, MARKER_BOTTOM_EXTRA = 40; // covers radius+shadow, and the speed chip below
-  var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: 72 + MARKER_RADIUS_PAD, right: 72 + MARKER_RADIUS_PAD };
+  // The SIDE padding is proportional, not a flat 72. Nothing overlaps the middle of the left
+  // and right edges the way the topbar and toolbar overlap the top and bottom — 72+30 a side
+  // was pure margin, and on a ~390px phone it reserved 204px, over half the width. Fitting a
+  // spread-out group into the remaining 186px forced roughly a full extra zoom level out:
+  // "zooms to the whole group, but way too far" (reported on-device 2026-07-28). Marker radius
+  // still has to be reserved so an edge member isn't half off-screen.
+  var side = MARKER_RADIUS_PAD;
+  try { side += Math.min(72, map.getCanvas().clientWidth * 0.06); } catch (e) { side += 72; }
+  var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: side, right: side };
   // Clamp against the actual canvas. cameraForBounds THROWS when padding exceeds the viewport,
   // and _groupFollowTick swallows that into `if (!cam) return true` — a silent no-op that
   // repeats every tick, so group-follow looks switched on while the camera never moves.
   // The bottom figure is the risky one: it's derived from map-controls' POSITION, so if that
   // element is mid-layout or offscreen its top reads near 0 and bottom balloons past the
-  // screen height. Never let the paddings claim more than 70% of either axis.
+  // screen height. 45%, not 70%: the clamp exists to keep the fit TIGHT as well as legal —
+  // every padded pixel is a pixel the group can't use, paid for in zoom.
   try {
     var cw = map.getCanvas().clientWidth, ch = map.getCanvas().clientHeight;
-    if (cw > 0 && pad.left + pad.right > cw * 0.7) {
-      var sx = (cw * 0.7) / (pad.left + pad.right); pad.left *= sx; pad.right *= sx;
+    if (cw > 0 && pad.left + pad.right > cw * 0.45) {
+      var sx = (cw * 0.45) / (pad.left + pad.right); pad.left *= sx; pad.right *= sx;
     }
-    if (ch > 0 && pad.top + pad.bottom > ch * 0.7) {
-      var sy = (ch * 0.7) / (pad.top + pad.bottom); pad.top *= sy; pad.bottom *= sy;
+    if (ch > 0 && pad.top + pad.bottom > ch * 0.45) {
+      // Scale top and bottom together so the group still sits clear of BOTH bars rather than
+      // being shoved under one of them.
+      var sy = (ch * 0.45) / (pad.top + pad.bottom); pad.top *= sy; pad.bottom *= sy;
     }
   } catch (e) {}
   return pad;
