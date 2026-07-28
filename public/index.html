@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 462;
+var APP_BUILD = 463;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5759,9 +5759,17 @@ function _reconcileLocalRooms(snapObj) {
       try { if (db && userId) fbRemove(fbRef(db, 'gl/' + _deadKey + '/trails/' + userId)); } catch (e) {}
       try { window._evt && window._evt('room ' + _deadKey + ' was deleted — leaving'); } catch (e) {}
       try { toast('This room was deleted', 3200); } catch (e) {}
-      // Stop tracking before leaving, so nothing in flight re-writes the room behind us.
-      try { if (typeof stopNativeBackgroundTracking === 'function') stopNativeBackgroundTracking(); } catch (e) {}
-      try { if (window._gpsWatchId != null) { navigator.geolocation.clearWatch(window._gpsWatchId); window._gpsWatchId = null; } } catch (e) {}
+      // Leave the room, but DO NOT stop tracking.
+      //
+      // This used to call stopNativeBackgroundTracking() and clearWatch() "so nothing in flight
+      // re-writes the room behind us". That was far too blunt: location is shared with every
+      // Crew and favourite too, so killing GPS over one deleted room silently took a device off
+      // the map everywhere. Observed exactly that — a phone tracking natively and healthily
+      // stopped writing to all four of its rooms the moment a fifth was tombstoned, then got
+      // cleaned up as disconnected and disappeared entirely.
+      //
+      // Nothing is needed here anyway: _roomWritable already refuses writes to a tombstoned
+      // room, so no in-flight fix can resurrect it. Clearing groupName is enough.
       groupName = '';
       try { if (typeof showJoinScreen === 'function') showJoinScreen(); } catch (e) {}
     }
