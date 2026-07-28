@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 461;
+var APP_BUILD = 462;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8698,6 +8698,24 @@ async function startNativeBackgroundTracking() {
       if (typeof window._writeDiag === 'function') window._writeDiag();
     };
     window._bgTrackingStartedAt = Date.now(); // anchors the NOT_AUTHORIZED grace window above
+    // Remove any watcher left behind by a PREVIOUS page load before adding this one.
+    //
+    // The watcher id lived only in page memory, but the watcher itself lives in the native
+    // process, which survives a reload. So every reload registered another one while the old
+    // ones stayed alive holding callbacks into a destroyed JS context — and
+    // stopNativeBackgroundTracking couldn't clean them up, because after a reload it had no id
+    // to remove. Symptom: bgStarted=true, gotNative=false, fixSrc=web — registration succeeds
+    // and no fix is ever delivered, so the app silently falls back to the foreground-only web
+    // watch. Confirmed on a device whose native tracking worked all of one evening and stopped
+    // after a day of force-reloads; trail recording died with it.
+    try {
+      var _stale = localStorage.getItem('gl_bg_watcher_id');
+      if (_stale) {
+        try { await BG.removeWatcher({ id: _stale }); } catch (e) {}
+        try { window._evt('cleared a stale background watcher from a previous load'); } catch (e) {}
+        localStorage.removeItem('gl_bg_watcher_id');
+      }
+    } catch (e) {}
     window._bgWatcherId = await BG.addWatcher({
       backgroundTitle: 'GroundLink is sharing your location',
       backgroundMessage: 'Your group can see you on the map.',
@@ -8706,6 +8724,9 @@ async function startNativeBackgroundTracking() {
       distanceFilter: 8,
       interval: BS_INTERVAL_ACTIVE
     }, window._bgWatcherCb);
+    // Persist it so the NEXT page load can remove this watcher even though it won't inherit
+    // the in-memory id. This is the half that makes the cleanup above possible.
+    try { if (window._bgWatcherId != null) localStorage.setItem('gl_bg_watcher_id', String(window._bgWatcherId)); } catch (e) {}
     try { window._evt('background tracking service started'); } catch (e) {}
   } catch (e) { window._bgGeoStarted = false; window._bgGeoError = String(e); console.warn('startNativeBackgroundTracking', e); try { window._evt('background tracking failed to start — ' + String(e)); } catch (e2) {} }
 }
@@ -8715,6 +8736,7 @@ async function stopNativeBackgroundTracking() {
       await window._bgGeo.removeWatcher({ id: window._bgWatcherId });
     }
   } catch (e) {}
+  try { localStorage.removeItem('gl_bg_watcher_id'); } catch (e) {}   // it's gone; don't try to remove it again next load
   window._bgGeoStarted = false; window._bgWatcherId = null;
 }
 
@@ -9101,6 +9123,12 @@ function startLocationSharing() {
     var _effAccM = (lat === rawLat && lng === rawLng) ? _accNow : window._lastGoodFix.acc;
     var _fixPayload = {
       lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
+      // fixTs marks a position confirmed by an ACTUAL GPS fix. `ts` alone can't: the no-GPS
+      // heartbeat bumps it on a timer whether or not a fix ever arrives, so "LIVE" meant only
+      // "their app is running". A device whose background watcher had silently died showed a
+      // confidently green, hour-old position — worse than showing it as stale, because it looks
+      // current. Anything without fixTs (older clients) falls back to ts, as before.
+      fixTs: now,
       trail: true, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       hereSince: window._hereSinceTs,
       color: window._myColor || ''
@@ -9181,7 +9209,17 @@ function startLocationSharing() {
       const goodAccuracy = accM > 0 && accM <= TRAIL_MAX_ACC_M;
       const distM = lastBreadcrumbPos
         ? metersApart(lastBreadcrumbPos.lat, lastBreadcrumbPos.lng, lat, lng) : Infinity;
-      const moved = distM > TRAIL_MIN_DIST_M;
+      // Don't mistake GPS drift for movement. TRAIL_MIN_DIST_M alone is 5 m, but a fix is only
+      // accurate to `accM` metres — commonly 5-20 m on a phone, and worse indoors. A parked
+      // phone whose readings wander within its own uncertainty was logging a trail of movement
+      // that never happened, scribbling around wherever it was sitting.
+      //
+      // Requiring the step to exceed the fix's own accuracy is the standard guard: movement
+      // smaller than your uncertainty isn't measurable, so it isn't recorded. Kept at a
+      // fraction of accM rather than the whole figure, since demanding a full accuracy-radius
+      // of travel would drop real slow movement (walking) on a mediocre fix.
+      const driftFloor = Math.max(TRAIL_MIN_DIST_M, accM * 0.75);
+      const moved = distM > driftFloor;
       let plausible = true;
       if (lastBreadcrumbPos && lastBreadcrumbTs) {
         const dtSec = Math.max(1, (now - lastBreadcrumbTs) / 1000);
@@ -9762,7 +9800,11 @@ function listenUsers() {
         console.log('[GL-debug] removing marker (hide-from-map toggle is ON for this uid):', uid);
         userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid];
       }
-      const isLive   = (now - (data.ts || 0)) < LIVE_MS;
+      // LIVE means the POSITION is fresh, not that the app is alive. data.ts is bumped by the
+      // heartbeat regardless of whether any fix arrived, so keying off it showed a stale
+      // position as green. fixTs is written only by a real fix; fall back to ts for clients
+      // that predate it.
+      const isLive   = (now - (data.fixTs || data.ts || 0)) < LIVE_MS;
       // "Resting": not live, but parked somewhere known rather than lost. A calm, still-present
       // state — not the gray "last known / lost signal".
       //
@@ -9774,7 +9816,9 @@ function listenUsers() {
       // good position.
       const isResting = !isLive && !data.noGps && !data.hidden
                         && (now - (data.ts || 0)) < BS_REST_MAX_MS && (data.lat !== 0 || data.lng !== 0);
-      const ageMin   = Math.floor((now - (data.ts || 0)) / 60000);
+      // Age of the POSITION, matching isLive — "last seen 2:14 PM" has to mean when they were
+      // last actually located, not when their app last checked in.
+      const ageMin   = Math.floor((now - (data.fixTs || data.ts || 0)) / 60000);
       const hasGps   = !data.noGps && (data.lat !== 0 || data.lng !== 0);
       const _ago      = ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago';
       // Plain value — callers add their own prefix. It used to embed "Resting · " for resting
