@@ -2404,6 +2404,15 @@
         <span style="color:var(--muted);font-size:18px;padding:0 1px">›</span>
       </div>
     </div>
+    <!-- Full restart. A page reload (including the admin "Push to all") only reloads the web
+         view — the NATIVE process keeps running, and location watchers live there. A watcher
+         orphaned by an earlier reload keeps holding the GPS callback, so background tracking
+         silently stops delivering and only the foreground web fallback works. Nothing the page
+         can do fixes that; the process has to end. -->
+    <div id="set-restart-row" onclick="window._forceRestartApp()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-history"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Restart the app</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Fixes background tracking that's stopped updating. A normal reload can't — this ends the app completely.</div></div></div>
+      <span style="color:var(--muted);font-size:18px;padding:0 1px">›</span>
+    </div>
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.7">
       <div>Screen stays awake automatically while tracking.</div>
       <div>GroundLink &middot; <a href="/privacy.html" style="color:var(--accent);text-decoration:none">Privacy Policy</a></div>
@@ -2527,7 +2536,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 466;
+var APP_BUILD = 467;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5206,6 +5215,12 @@ function _syncSettings() {
   } catch (e) {}
   // Background-tracking row — native app only. Healthy = service started, no permission
   // error, and a native fix has actually come in.
+  // Only meaningful in the installed app: in a browser tab a reload already tears everything
+  // down, so there's no separate "process" left holding a stale watcher.
+  try {
+    var rsRow = document.getElementById('set-restart-row');
+    if (rsRow) rsRow.style.display = _isNativeApp() ? 'flex' : 'none';
+  } catch (e) {}
   var bgRow = document.getElementById('set-bgtrack-row');
   if (bgRow) {
     if (!_isNativeApp()) { bgRow.style.display = 'none'; }
@@ -6780,6 +6795,61 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
 // can hang and the reload would never fire (the "tap does nothing" bug). So we fire the
 // cache-clear + SW-unregister as best-effort, fire-and-forget, and ALWAYS reload via a
 // short timeout to a cache-busted URL.
+// Full app restart — the thing a reload cannot do.
+//
+// A reload (including the admin "Push to all") only reloads the web view; the native process
+// keeps running and location watchers live there. A watcher orphaned by an earlier reload holds
+// the GPS callback, so background tracking silently stops delivering and only the foreground
+// web fallback works. The process has to actually end.
+//
+// Android can do it: App.exitApp() genuinely terminates. iOS CANNOT — Apple forbids an app
+// terminating itself (exit(0) is grounds for rejection and reads to the user as a crash), so
+// there the honest thing is to say so and give the five-second manual steps.
+window._forceRestartApp = function () {
+  // Clean teardown first, so whatever we CAN release is released either way.
+  try { if (typeof stopNativeBackgroundTracking === 'function') stopNativeBackgroundTracking(); } catch (e) {}
+  var cap = window.Capacitor || {};
+  var AppP = cap.Plugins && cap.Plugins.App;
+  var ios = false;
+  try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
+  if (!ios && AppP && typeof AppP.exitApp === 'function') {
+    try { toast('Restarting GroundLink…', 1800); } catch (e) {}
+    setTimeout(function () { try { AppP.exitApp(); } catch (e) { try { location.reload(); } catch (e2) {} } }, 700);
+    return;
+  }
+  if (!_isNativeApp()) { try { location.reload(); } catch (e) {} return; }   // browser: a reload IS a restart
+  try {
+    _confirm(
+      'iPhone doesn’t let an app close itself, so this one’s by hand — it takes five seconds:\n\n' +
+      '1.  Swipe up from the bottom of the screen and pause\n' +
+      '2.  Swipe the GroundLink card up and off the screen\n' +
+      '3.  Open GroundLink again\n\n' +
+      'This is the only thing that clears a stuck background tracker. Reopening without swiping it away won’t do it.',
+      function () {},
+      { title: 'Restart GroundLink', yes: 'Got it', no: 'Later' }
+    );
+  } catch (e) {}
+};
+// Remote trigger: an admin can ask every running app to restart. Same delivery as
+// _forceReload — a value newer than this page's load — so it needs no push subscription,
+// which matters because a device that has never granted notifications has none.
+(function _forceRestartWatch() {
+  var t = setInterval(function () {
+    var fb = window._fb;
+    if (!fb || !fb.onValue) return;
+    clearInterval(t);
+    try {
+      fb.onValue(fb.ref(fb.db, '_forceRestart'), function (snap) {
+        var v = snap.val();
+        if (v && v.ts && v.ts > window._pageLoadTs && !window._restarting) {
+          window._restarting = true;
+          try { window._forceRestartApp(); } catch (e) {}
+        }
+      });
+    } catch (e) {}
+  }, 300);
+})();
+
 window._applyUpdate = function() {
   var b = document.getElementById('update-banner');
   if (b) { var sp = b.querySelector('span'); if (sp) sp.textContent = 'Updating…'; }
