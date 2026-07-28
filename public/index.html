@@ -1604,6 +1604,7 @@
       <div style="font-size:14px;font-weight:700">&#128274; Private</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">Hidden from the directory. People join only by exact name or your invite link — for real protection against someone who's guessed or been told the name, add a passcode once you're in (Room Info).</div>
     </button>
+    <button onclick="window._cancelVisibility()" style="width:100%;padding:11px;background:transparent;border:none;border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer;margin-top:2px">Cancel</button>
   </div>
 </div>
 
@@ -2060,6 +2061,11 @@
       <span style="font-size:11px;color:var(--muted)">Jot it down — you can use it to rejoin later.</span>
     </div>
     <button id="ij-join" class="btn-primary" style="margin-top:16px;width:100%">Join the map &rarr;</button>
+    <!-- iOS has no hardware Back and a native app fires no popstate, so the global back
+         handler that closes every other overlay does not exist on iPhone. Without this,
+         opening an invite link and changing your mind left you with no way out of a
+         full-screen modal except force-quitting the app. -->
+    <button onclick="window._cancelInviteJoin()" style="margin-top:8px;width:100%;padding:11px;background:transparent;border:none;border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer">Not now</button>
   </div>
 </div>
 
@@ -2491,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 447;
+var APP_BUILD = 448;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6990,6 +6996,22 @@ function showInviteJoin(room, pin) {
   if (nameInput) nameInput.onkeydown = function(e){ if (e.key === 'Enter') doJoin(); };
 }
 
+// Back out of an invite without accepting it. Strips ?room=&k= the same way entering a room
+// does — otherwise the popup is re-shown from the URL on the next render and "Not now" would
+// appear to do nothing.
+window._cancelInviteJoin = function () {
+  try { var p = document.getElementById('invite-join-popup'); if (p) p.style.display = 'none'; } catch (e) {}
+  try {
+    var sp = new URLSearchParams(location.search);
+    if (sp.has('room') || sp.has('k')) {
+      sp.delete('room'); sp.delete('k');
+      var qs = sp.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+    }
+  } catch (e) {}
+  try { if (typeof showJoinScreen === 'function') showJoinScreen(); } catch (e) {}
+};
+
 // If we have a saved session, skip the join screen entirely
 // First-run welcome — a brand-new user used to be dropped cold onto a join form with no
 // explanation. One friendly card, then they're into the normal flow.
@@ -7333,6 +7355,16 @@ window._pickVisibility = function(v) {
   document.getElementById('visibility-modal').style.display = 'none';
   var cb = _visCb; _visCb = null;
   if (cb) cb(v);
+};
+// Abort creating the group. Drops the pending callback WITHOUT calling it, so nothing is
+// written — this modal is a fork in group creation, not a setting being edited.
+//
+// It had only the two choices and no way out. On Android the hardware Back closed it; on iOS
+// there is no Back and no popstate in a native app, so choosing one of them was the only exit.
+window._cancelVisibility = function () {
+  try { document.getElementById('visibility-modal').style.display = 'none'; } catch (e) {}
+  _visCb = null;
+  try { if (typeof showJoinScreen === 'function') showJoinScreen(); } catch (e) {}
 };
 
 // ══ MAP ══════════════════════════════════════════════════════════
