@@ -2536,7 +2536,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 467;
+var APP_BUILD = 468;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6424,7 +6424,20 @@ async function _registerAllFavSubs() {
   try {
     var circles = (typeof _getCircles === 'function') ? _getCircles() : {};
     var keys = Object.keys(circles);
-    for (var j = 0; j < keys.length; j++) { try { await _registerFavSub(keys[j], circles[keys[j]], true); } catch (e) {} }
+    // Crews register NON-silently, so an existing member who has never granted notification
+    // permission actually gets asked.
+    //
+    // Every path here used to pass silent=true, and _ensureFcmToken returns null immediately on
+    // silent when permission isn't granted — so a member with no permission got no subscription,
+    // was never prompted, and had no route that could ever fix it. It checked and gave up
+    // quietly on every launch, forever. Confirmed on an iPhone Crew member with no subscription
+    // in any room and therefore not one alert, ever; iOS never auto-grants, so nothing else
+    // would have.
+    //
+    // Safe to call repeatedly: the OS shows its prompt at most once, and afterwards this just
+    // returns the stored answer with no UI. 461 fixed the JOIN path, but that only fires for new
+    // members — this is what reaches everyone already in a Crew.
+    for (var j = 0; j < keys.length; j++) { try { await _registerFavSub(keys[j], circles[keys[j]], false); } catch (e) {} }
   } catch (e) {}
 }
 async function _unregisterFavSub(key) {
