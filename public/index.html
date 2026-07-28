@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 477;
+var APP_BUILD = 478;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9211,12 +9211,16 @@ function startLocationSharing() {
     window._lastAccM = accuracy || 0; // diagnostics: accuracy (meters) of this fix
     // Timeline events (edge-triggered so we log transitions, not every fix).
     try {
-      if (window._wasNoGps) { window._wasNoGps = false; window._evt('GPS recovered (' + Math.round(accuracy || 0) + ' m)'); }
+      // Logged in FEET. GPS hands us meters and the thresholds stay metric because that's the
+      // unit the sensor and the math work in — but the activity log is something people read,
+      // and everything else they read (±ft on a marker, mph, mi, acres) is US customary.
+      var _ft = function (m) { return Math.round((m || 0) * FEET_PER_METER); };
+      if (window._wasNoGps) { window._wasNoGps = false; window._evt('GPS recovered (' + _ft(accuracy) + ' ft)'); }
       var _accM = accuracy || 0;
       // Hysteresis so accuracy hovering around the threshold doesn't spam low/recovered:
       // go "low" only above the limit, and "recovered" only once it's a clear margin below.
-      if (_accM > TRAIL_MAX_ACC_M && !window._wasLowAcc) { window._wasLowAcc = true; window._evt('GPS accuracy went low (' + Math.round(_accM) + ' m)'); }
-      else if (_accM > 0 && _accM <= (TRAIL_MAX_ACC_M - 15) && window._wasLowAcc) { window._wasLowAcc = false; window._evt('GPS accuracy recovered (' + Math.round(_accM) + ' m)'); }
+      if (_accM > TRAIL_MAX_ACC_M && !window._wasLowAcc) { window._wasLowAcc = true; window._evt('GPS accuracy went low (' + _ft(_accM) + ' ft)'); }
+      else if (_accM > 0 && _accM <= (TRAIL_MAX_ACC_M - 15) && window._wasLowAcc) { window._wasLowAcc = false; window._evt('GPS accuracy recovered (' + _ft(_accM) + ' ft)'); }
     } catch (e) {}
 
     // Instantaneous speed in mph — from the GPS Doppler reading when present, else from
