@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 458;
+var APP_BUILD = 459;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4798,6 +4798,19 @@ function openRoomInfo() {
 function _toLocalDatetime(ts) { var d = new Date(ts - new Date().getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); }
 function _roomExpiresTs() { try { return (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.expires) || 0; } catch (e) { return 0; } }
 function _renderRoomExpire() {
+  // A Crew or favorited room sets config.persistent, and the expiry check is skipped entirely
+  // for those (`if (fb && !persistent)`), so this control governs nothing there. Worse than
+  // useless: a converted room keeps whatever `expires` it was created with, so the row rendered
+  // "✓ Active until <tomorrow>" on a permanent Crew — telling the owner it was about to be
+  // deleted when it can't be. Hide the whole row when the room can't expire.
+  var _persistent = false;
+  try {
+    _persistent = !!((window._roomCfg && window._roomCfg.persistent)
+      || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.persistent));
+  } catch (e) {}
+  var _row = document.getElementById('ri-expire-row');
+  if (_row) _row.style.display = _persistent ? 'none' : '';
+  if (_persistent) return;
   var ts = _roomExpiresTs();
   var status = document.getElementById('ri-expire-status');
   var clearBtn = document.getElementById('ri-expire-clear');
@@ -9555,6 +9568,9 @@ function _listenRoomConfig() {
       window._roomCfg = c;
       _cacheRoomName(groupName, c.name);
       try { if (typeof _renderRiCircle === 'function') _renderRiCircle(); } catch (e) {}
+      // Also re-render the expiry row: converting to a Crew sets persistent and must hide it
+      // immediately, not only the next time Room Info is opened from scratch.
+      try { if (typeof _renderRoomExpire === 'function') _renderRoomExpire(); } catch (e) {}
       try { var el = document.getElementById('group-name-label'); if (el && c.name) el.textContent = c.name; } catch (e) {}
     });
   } catch (e) {}
