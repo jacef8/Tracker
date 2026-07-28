@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 481;
+var APP_BUILD = 482;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11062,6 +11062,7 @@ function clearTrailLayer(uid) {
   const lid = `trail-${uid}`;
   if (map.getLayer(lid))        map.removeLayer(lid);
   if (map.getLayer(lid+'-dots'))map.removeLayer(lid+'-dots');
+  if (map.getLayer(lid+'-case'))map.removeLayer(lid+'-case');   // dark casing under the line
   if (map.getSource(lid))       map.removeSource(lid);
   delete trailSources[uid];
   delete trailBaseCoords[uid];
@@ -11134,9 +11135,18 @@ function _renderTrailLines() {
 
       // Color: gold for mine, green if live, gray if stale
       const color      = isMineUid ? '#f0a500' : isLive ? '#00e676' : '#778090';
-      const lineOpacity = isLive || isMineUid ? 0.75 : 0.35;
-      const dotOpacity  = isLive || isMineUid ? 0.60 : 0.25;
-      const lineWidth   = isLive || isMineUid ? 2.5  : 1.5;
+      // Legibility over SATELLITE imagery, which is the default layer: a thin, semi-transparent
+      // dashed line disappears into busy green/brown ground cover — reported on-device as the
+      // trail being hard to see. Wider, nearly opaque, and backed by a dark casing (the
+      // standard cartographic fix: a dark halo gives the coloured line an edge to read against
+      // no matter what's underneath). The dash is kept, since it's what distinguishes a live
+      // breadcrumb trail from a recorded Track, but tightened so it reads as a line rather than
+      // as scattered specks.
+      const lineOpacity = isLive || isMineUid ? 0.95 : 0.55;
+      const dotOpacity  = isLive || isMineUid ? 0.85 : 0.40;
+      const lineWidth   = isLive || isMineUid ? 3.5  : 2.5;
+      const caseWidth   = lineWidth + 3;
+      const caseOpacity = isLive || isMineUid ? 0.55 : 0.30;
 
       const coords = allPts.map(p => [p.lng, p.lat]);
       // Keep the recorded coords so _updateTrailTip can move the last vertex per animation
@@ -11164,12 +11174,29 @@ function _renderTrailLines() {
           map.setPaintProperty(lid, 'line-opacity', lineOpacity);
           map.setPaintProperty(lid, 'line-width', lineWidth);
         }
+        if (map.getLayer(lid+'-case')) {
+          map.setPaintProperty(lid+'-case', 'line-width', caseWidth);
+          map.setPaintProperty(lid+'-case', 'line-opacity', caseOpacity);
+        }
         if (map.getLayer(lid+'-dots')) {
           map.setPaintProperty(lid+'-dots', 'circle-color', color);
           map.setPaintProperty(lid+'-dots', 'circle-opacity', dotOpacity);
         }
       } else {
         map.addSource(lid, { type: 'geojson', data: geojson });
+
+        // Casing goes in FIRST. Both layers insert immediately before 'pins-layer', so whatever
+        // is added last ends up on top — adding the casing first is what puts it underneath.
+        // Solid (not dashed) so it forms a continuous dark shadow for the dashes to sit on.
+        map.addLayer({
+          id: lid+'-case', type: 'line', source: lid,
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': '#0b0f14',
+            'line-width': caseWidth,
+            'line-opacity': caseOpacity
+          }
+        }, 'pins-layer');
 
         map.addLayer({
           id: lid, type: 'line', source: lid,
@@ -11178,18 +11205,21 @@ function _renderTrailLines() {
             'line-color': color,
             'line-width': lineWidth,
             'line-opacity': lineOpacity,
-            'line-dasharray': [2, 3]
+            'line-dasharray': [2, 1.6]
           }
         }, 'pins-layer');
 
         map.addLayer({
           id: lid+'-dots', type: 'circle', source: lid,
           paint: {
-            'circle-radius': 3,
+            'circle-radius': 3.5,
             'circle-color': color,
             'circle-opacity': dotOpacity,
-            'circle-stroke-width': 1,
-            'circle-stroke-color': '#fff'
+            // Dark stroke, not white. A white ring on a pale dashed line over bright imagery
+            // washes the dots out; a dark one gives them an edge in every condition, matching
+            // the line casing above.
+            'circle-stroke-width': 1.2,
+            'circle-stroke-color': 'rgba(11,15,20,0.85)'
           }
         }, 'pins-layer');
 
@@ -13655,7 +13685,14 @@ window._openHistoryForMember = function (uid, name, circleKey) {
   var dateInput = document.getElementById('qt-date-input');
   if (dateInput) {
     dateInput.style.display = 'none';
-    if (!dateInput.value) { var y = new Date(Date.now() - 86400000); dateInput.value = y.toLocaleDateString('en-CA'); }
+    // Default to TODAY. This used to default to yesterday (Date.now() - 86400000), so tapping
+    // "Day" silently looked up a date you very likely weren't recording on yet and reported
+    // "No trail for <date>" — indistinguishable from the feature being broken, which is exactly
+    // how it was reported. "Where have I been today" is also the common question; yesterday is
+    // one tap away either way.
+    if (!dateInput.value) dateInput.value = new Date().toLocaleDateString('en-CA');
+    // Can't pick a future date — there is never history there.
+    dateInput.max = new Date().toLocaleDateString('en-CA');
   }
   window._setTrailRangeButtons('recent');
   document.getElementById('quick-trail-sheet').style.display = 'flex';
