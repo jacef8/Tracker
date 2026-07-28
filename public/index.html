@@ -1707,6 +1707,36 @@
   </div>
 </div>
 
+<!-- ══ CREW DISCLOSURE — shown once per Crew, must be acknowledged ═══════════════════
+     Membership is automatic on entering a Crew room (see _promptJoinCrew), but always-on
+     background location is not something to start without telling someone plainly and making
+     them acknowledge it. Separate from the room-join/invite accept, which is only about
+     getting into the room — this is about what the Crew itself does.
+     "Leave the Crew" is offered here so the acknowledgement is a real one rather than theatre;
+     without it, "I understand" would be the only possible answer. -->
+<div id="crew-disclaimer-modal" style="display:none;position:fixed;inset:0;z-index:1150;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:22px">
+  <div style="background:rgba(22,27,34,0.94);border:1px solid rgba(167,139,250,0.45);border-radius:16px;padding:22px;width:100%;max-width:360px;max-height:88vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg>
+      <div style="font-size:17px;font-weight:800;color:var(--text)">You're in the <span id="crewdis-name" style="color:#a78bfa">Crew</span></div>
+    </div>
+    <div style="font-size:13.5px;line-height:1.55;color:var(--text);margin-bottom:12px">
+      This room is a <b>Crew</b>. That means your location is shared with everyone in it
+      <b>continuously</b> — not just while you have the app open.
+    </div>
+    <ul style="font-size:12.5px;line-height:1.6;color:var(--muted);margin:0 0 14px 18px;padding:0">
+      <li>You stay on the map even when the app is closed or your phone is locked.</li>
+      <li>You keep showing up here even when you're in a different room.</li>
+      <li>Everyone else in the Crew is shared with you the same way.</li>
+    </ul>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+      You can leave at any time — <b>My Crews</b> on the home screen, then the ✕ next to this Crew.
+    </div>
+    <button onclick="window._ackCrewDisclaimer()" class="btn-primary" style="width:100%">I understand</button>
+    <button onclick="window._declineCrewDisclaimer()" style="margin-top:8px;width:100%;padding:11px;background:transparent;border:1px solid rgba(248,81,73,.45);border-radius:9px;color:var(--danger);font-size:13px;font-weight:700;cursor:pointer">Leave the Crew</button>
+  </div>
+</div>
+
 <!-- ══ USER COLOR PICKER (per-device) ═════════════════════════════════ -->
 <div id="color-picker-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.5);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:20px;width:100%;max-width:300px">
@@ -2497,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 457;
+var APP_BUILD = 458;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5803,11 +5833,40 @@ window._promptJoinCrew = function (key, label) {
     try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
     try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
     try { _renderRiCircle(); } catch (e) {}
-    // Not a prompt, but not covert either: they need to know sharing changed and where to undo
-    // it. Continuous background location is not something to start without saying so.
-    toast('You\'re in the "' + (label || key) + '" Crew — you\'ll show up here even when the app\'s closed. Leave any time from My Crews.', 6000);
+    // Membership is automatic, but the DISCLOSURE is not optional: a blocking, one-time card
+    // explaining that this shares location continuously, with a real way out. A toast was not
+    // enough — it can be missed entirely, and starting always-on background location sharing
+    // without an acknowledgement is not something to do quietly.
+    try { window._showCrewDisclaimer(key, label); } catch (e) {}
   } catch (e) {}
   return;
+};
+// The one-time Crew disclosure. Shown after auto-join; must be acknowledged.
+window._crewDisclaimerFor = null;
+window._showCrewDisclaimer = function (key, label) {
+  window._crewDisclaimerFor = { key: key, label: label || key };
+  try { var n = document.getElementById('crewdis-name'); if (n) n.textContent = '"' + (label || key) + '"'; } catch (e) {}
+  try { var m = document.getElementById('crew-disclaimer-modal'); if (m) m.style.display = 'flex'; } catch (e) {}
+};
+window._ackCrewDisclaimer = function () {
+  try { document.getElementById('crew-disclaimer-modal').style.display = 'none'; } catch (e) {}
+  window._crewDisclaimerFor = null;
+};
+// Declining is a real exit, not a dismissal: undo the auto-join entirely. The "once per room"
+// marker is deliberately LEFT SET, so this doesn't re-add them on the next snapshot — same
+// reasoning as _leaveCircle. Rejoining is deliberate, via Room Info.
+window._declineCrewDisclaimer = function () {
+  var ctx = window._crewDisclaimerFor || {};
+  var key = ctx.key, label = ctx.label || key;
+  try { document.getElementById('crew-disclaimer-modal').style.display = 'none'; } catch (e) {}
+  window._crewDisclaimerFor = null;
+  if (!key) return;
+  try { if (db && userId) fbRemove(fbRef(db, 'gl/' + key + '/members/' + userId)); } catch (e) {}
+  try { var c = _getCircles(); delete c[key]; _setCircles(c); } catch (e) {}
+  try { if (typeof _isFav !== 'function' || !_isFav(key)) _unregisterFavSub(key); } catch (e) {}
+  try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
+  try { _renderRiCircle(); } catch (e) {}
+  toast('Left the "' + label + '" Crew — you\'ll only show up here while you\'re in this room', 5000);
 };
 // Kept for the manual paths (Room Info's Join, invite accept) — see _riToggleCircle.
 window._promptJoinCrewManual = function (key, label) {
