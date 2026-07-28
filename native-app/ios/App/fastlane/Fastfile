@@ -39,6 +39,28 @@ platform :ios do
       force: true
     )
 
+    # Point the Xcode project at the profile sigh just made.
+    #
+    # The project had PROVISIONING_PROFILE_SPECIFIER = "GroundLink App Store" baked into its
+    # Release config, while sigh names what it creates "com.groundlink.ios AppStore". Archiving
+    # resolves that specifier itself, long before export_options are consulted, so the build
+    # died with "No profile for team 'XM3MLRA366' matching 'GroundLink App Store' found" even
+    # though the correct profile was downloaded and installed moments earlier.
+    #
+    # Setting it from SIGH_NAME rather than hardcoding the new string keeps the two in step no
+    # matter what fastlane decides to call the profile later. Release only — Debug builds are
+    # left alone.
+    update_code_signing_settings(
+      path: "App.xcodeproj",
+      use_automatic_signing: false,
+      team_id: "XM3MLRA366",
+      targets: ["App"],
+      build_configurations: ["Release"],
+      bundle_identifier: APP_IDENTIFIER,
+      code_sign_identity: "Apple Distribution",
+      profile_name: lane_context[SharedValues::SIGH_NAME]
+    )
+
     build_app(
       workspace: "App.xcworkspace",
       scheme: "App",
