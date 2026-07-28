@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 478;
+var APP_BUILD = 479;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2750,6 +2750,41 @@ function _refreshUserColor(uid) {
 }
 // Glide a marker from its current spot to a new one over ~1.4s (constant speed) instead
 // of teleporting, so movement looks smooth. Big jumps snap instantly.
+// Is a marker actually drawn where its own coordinate projects to? Reported symptom: pins look
+// like they sit in a different real-world spot depending on zoom. A constant PIXEL offset would
+// look exactly like that — it covers miles zoomed out and feet zoomed in — so the question is
+// whether the on-screen gap between a marker and map.project(its lngLat) is zero.
+//
+// Reading the code didn't settle it: the DOM anchors, the symbol layer's icon-anchor, the
+// animation path and the merge logic (which works in meters, so it can't be zoom-dependent) all
+// check out. So measure it instead of guessing again. Records the worst offender per zoom
+// change; a delta near 0 at every zoom means markers ARE locked to their coordinates and the
+// problem lies in the position data or the basemap, not the marker layer.
+window._pinCheck = '';
+function _checkMarkerAlignment() {
+  try {
+    if (typeof map === 'undefined' || !map || typeof userMarkers === 'undefined') return;
+    var cvRect = map.getCanvas().getBoundingClientRect();
+    var worst = 0, worstName = '', n = 0;
+    Object.keys(userMarkers || {}).forEach(function (uid) {
+      var mk = userMarkers[uid]; if (!mk) return;
+      var el; try { el = mk.getElement(); } catch (e) { el = mk._el; }
+      if (!el || el.style.display === 'none' || !el.getBoundingClientRect) return;
+      var ll; try { ll = mk.getLngLat(); } catch (e) { return; }
+      if (!ll) return;
+      var p = map.project(ll);
+      var r = el.getBoundingClientRect();
+      if (!r.width && !r.height) return;
+      var dx = (r.left + r.width / 2 - cvRect.left) - p.x;
+      var dy = (r.top + r.height / 2 - cvRect.top) - p.y;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      n++;
+      if (d > worst) { worst = d; worstName = (mk._initials || uid.slice(0, 4)); }
+    });
+    window._pinCheck = 'z=' + map.getZoom().toFixed(2) + ' n=' + n
+      + ' worst=' + worst.toFixed(1) + 'px' + (worstName ? ' (' + worstName + ')' : '');
+  } catch (e) {}
+}
 function _animateMarker(marker, toLng, toLat) {
   if (!marker) return;
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
@@ -8126,6 +8161,7 @@ function initMap() {
   map.on('zoomend', function() { if (flParcelsOn) loadFLParcelsInView(false); });
   map.on('moveend', function() { if (govLandOn) loadGovLandInView(false); });
   map.on('zoomend', function() { if (govLandOn) loadGovLandInView(false); });
+  map.on('zoomend', function () { try { _checkMarkerAlignment(); } catch (e) {} });
 
   // Following your OWN position persists through pan/zoom (swipe to look, pinch to zoom,
   // it snaps back — tap the locate button to stop). But panning while following ANOTHER
@@ -9648,6 +9684,7 @@ function startLocationSharing() {
         gfPts: (window._gfLastPts != null ? window._gfLastPts : -1),
         gfFail: window._gfLastFail || '',
         gfDbg: window._gfDbg || '',
+        pinChk: window._pinCheck || '',
         ts: now
       });
     } catch (e) {}
@@ -15042,6 +15079,9 @@ function _groupFollowTick(force) {
   window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
   if (pts.length === 1) {
+    // Record here too — this branch used to return before the debug string was built, so a
+    // group of one logged nothing at all and looked identical to the tick never running.
+    try { window._gfDbg = 'single member, centred (z=' + map.getZoom().toFixed(2) + ')'; } catch (e) {}
     map.easeTo({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(), duration: force ? 700 : 1200, easing: _linEase });
     return true;
   }
