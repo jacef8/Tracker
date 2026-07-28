@@ -87,6 +87,12 @@ async function _dbDelete(path) {
   if (adminDb) { await adminDb.ref(path).remove(); return; }
   await fetch(DB_URL + '/' + path + '.json', { method: 'DELETE' });
 }
+async function _dbSet(path, value) {
+  if (adminDb) { await adminDb.ref(path).set(value); return; }
+  await fetch(DB_URL + '/' + path + '.json', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value)
+  });
+}
 
 // ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
 // The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
@@ -159,14 +165,20 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
     Object.entries(favs).forEach(function(e) { if (!targets[e[0]]) targets[e[0]] = { rec: e[1], from: groupBase + '/favSubs' }; });
     if (!Object.keys(targets).length) return res.json({ ok: true, sent: 0 });
     let sent = 0;
+    // Why each recipient was kept or dropped. A user reported still being notified about his
+    // OWN geofence transitions on the very phone that produced them, and every check below
+    // looks correct against the live data — his uid matches senderId exactly and no duplicate
+    // token is filed under another uid. Rather than guess at a fourth explanation, record the
+    // decision and read it back after the next real event.
+    const decisions = [];
     await Promise.all(Object.entries(targets).map(async function(entry) {
       const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
-      if (uid === senderId || !rec) return;
+      if (uid === senderId || !rec) { decisions.push(uid.slice(0, 10) + ':self-or-empty'); return; }
       // Also skip THIS physical device even under a different/old uid: a stale subscription
       // carrying the sender's own FCM token or push endpoint must never notify the sender.
-      if (senderFcm && rec.fcm && rec.fcm === senderFcm) return;
+      if (senderFcm && rec.fcm && rec.fcm === senderFcm) { decisions.push(uid.slice(0, 10) + ':same-fcm'); return; }
       if (senderEndpoint && rec.sub) {
-        try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) return; } catch (e) {}
+        try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) { decisions.push(uid.slice(0, 10) + ':same-endpoint'); return; } } catch (e) {}
       }
       // Respect the recipient's per-type notification prefs (SOS always goes through).
       if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) return;
@@ -187,6 +199,7 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
       }
       // FCM — native app
       if (fcmAdmin && rec.fcm) {
+        decisions.push(uid.slice(0, 10) + ':SENT-fcm');
         try {
           await fcmAdmin.messaging().send({
             token: rec.fcm,
@@ -203,6 +216,23 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
         }
       }
     }));
+    // Place alerts only — that's the reported case, and this keeps the node tiny rather than
+    // logging every chat and voice ping. Overwrites a single key, so it never accumulates.
+    if (/^place_/.test(String(b.type || ''))) {
+      try {
+        await _dbSet('gl/_debug/lastPlacePush', {
+          ts: Date.now(),
+          type: String(b.type),
+          group: String(group),
+          senderId: String(senderId || '').slice(0, 10),
+          senderFcm: senderFcm ? senderFcm.slice(0, 10) : '(empty)',
+          senderEndpoint: senderEndpoint ? 'set' : '(empty)',
+          targets: Object.keys(targets).map(function (u) { return u.slice(0, 10); }).join(','),
+          decisions: decisions.join(' | '),
+          sent: sent
+        });
+      } catch (e) {}
+    }
     res.json({ ok: true, sent: sent });
   } catch (e) {
     console.warn('/push error:', e.message);
