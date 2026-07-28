@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 459;
+var APP_BUILD = 460;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2541,8 +2541,26 @@ if ('serviceWorker' in navigator) {
     _swReloaded = true;
     location.reload();
   });
+  // Tell the worker which device this is, so it can drop notifications this device caused.
+  // Persisted into a cache on its side, because the worker is restarted between pushes and
+  // cannot read localStorage. Re-sent on every load: cheap, and it self-heals if the uid
+  // changes or the cache is cleared.
+  window._tellSwMyUid = function () {
+    try {
+      if (!navigator.serviceWorker) return;
+      var uid = (typeof userId !== 'undefined' && userId) || localStorage.getItem('gl_uid') || '';
+      if (!uid) return;
+      var msg = { type: 'gl-uid', uid: uid };
+      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage(msg);
+      navigator.serviceWorker.ready.then(function (r) { try { if (r && r.active) r.active.postMessage(msg); } catch (e) {} }).catch(function () {});
+    } catch (e) {}
+  };
   navigator.serviceWorker.register('/sw.js?v=' + APP_BUILD).then(function(reg) {
     try { reg.update(); } catch (e) {}
+    try { window._tellSwMyUid(); } catch (e) {}
+    // Re-send after the uid is definitely resolved (it can be issued asynchronously by
+    // anonymous auth after this registration runs).
+    setTimeout(function () { try { window._tellSwMyUid(); } catch (e) {} }, 6000);
     // Re-check for a new worker periodically and whenever the app regains focus, so an
     // installed home-screen PWA doesn't sit on a stale worker for up to a day.
     setInterval(function() { try { reg.update(); } catch (e) {} }, 30 * 60 * 1000);

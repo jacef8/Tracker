@@ -154,19 +154,59 @@ self.addEventListener('push', function(e) {
   try { data = e.data ? e.data.json() : {}; }
   catch (err) { try { data = { title: 'GroundLink', body: e.data.text() }; } catch (e2) {} }
 
-  var isSOS = data.type === 'sos';
-  var title = data.title || 'GroundLink';
-  var opts = {
-    body: data.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    tag: (data.type || 'groundlink') + (data.group ? '-' + data.group : ''),
-    renotify: true,
-    requireInteraction: isSOS,
-    vibrate: isSOS ? [200, 100, 200, 100, 200] : [100, 50, 100],
-    data: { url: data.url || '/' }
-  };
-  e.waitUntil(self.registration.showNotification(title, opts));
+  e.waitUntil((async function () {
+    // Never notify the device that caused this. "Jace left home" is not news on Jace's own
+    // phone.
+    //
+    // The server already tries to skip the sender by uid / FCM token / push endpoint, but all
+    // three depend on the sender's subscription being filed under the uid it reports and on the
+    // FCM token having reached the web layer — neither survives a device-id change. The payload
+    // now carries the originating uid, and a device can know its own for certain.
+    if (data.fromUid) {
+      var mine = await _glMyUid();
+      if (mine && mine === data.fromUid) return;   // self-triggered — stay quiet
+    }
+    var isSOS = data.type === 'sos';
+    var title = data.title || 'GroundLink';
+    var opts = {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: (data.type || 'groundlink') + (data.group ? '-' + data.group : ''),
+      renotify: true,
+      requireInteraction: isSOS,
+      vibrate: isSOS ? [200, 100, 200, 100, 200] : [100, 50, 100],
+      data: { url: data.url || '/', group: data.group || '' }
+    };
+    return self.registration.showNotification(title, opts);
+  })());
+});
+
+// This device's own uid, readable with no page open.
+//
+// Deliberately NOT a plain variable: the worker is torn down and restarted between pushes, so
+// anything held in memory is gone exactly when a push arrives with the app closed — which is
+// the only case that matters. The Cache API survives restarts and is readable synchronously
+// enough inside the push handler. localStorage is unavailable to a worker, which is why the
+// uid can't simply be read the way the page reads it.
+var _glUidMem = null;
+async function _glMyUid() {
+  if (_glUidMem) return _glUidMem;
+  try {
+    var c = await caches.open('gl-meta');
+    var r = await c.match('/__gl_uid');
+    if (r) { _glUidMem = (await r.text()) || ''; return _glUidMem; }
+  } catch (err) {}
+  return '';
+}
+self.addEventListener('message', function (e) {
+  try {
+    if (!e || !e.data || e.data.type !== 'gl-uid' || !e.data.uid) return;
+    _glUidMem = String(e.data.uid);
+    e.waitUntil(caches.open('gl-meta').then(function (c) {
+      return c.put('/__gl_uid', new Response(String(e.data.uid)));
+    }).catch(function () {}));
+  } catch (err) {}
 });
 
 self.addEventListener('notificationclick', function(e) {

@@ -128,12 +128,19 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
   // DB root namespace — sanitized + defaulted to production ('gl').
   const ns = (typeof b.ns === 'string' && /^[a-z0-9_]{1,20}$/i.test(b.ns)) ? b.ns : 'gl';
+  // fromUid rides along so the RECEIVING device can drop a notification it caused itself.
+  // The uid/token/endpoint matching below already tries to skip the sender, but it depends on
+  // the sender's subscription being filed under the same uid it reports and on senderFcm being
+  // populated — neither is guaranteed after a device-id change or when the native FCM token
+  // hasn't reached the web layer. A stamp on the payload can't miss: the device knows its own
+  // uid for certain.
   const payload = JSON.stringify({
     title: b.title || 'GroundLink',
     body:  b.body  || '',
     type:  b.type  || 'info',
     group: group,
-    url:   b.url   || '/'
+    url:   b.url   || '/',
+    fromUid: senderId || ''
   });
   const groupBase = ns + '/' + group;
   const base = groupBase + '/pushSubs';
@@ -184,7 +191,7 @@ app.post('/push', rateLimit(30, 60000), async function(req, res) {
           await fcmAdmin.messaging().send({
             token: rec.fcm,
             notification: { title: b.title || 'GroundLink', body: b.body || '' },
-            data: { type: String(b.type || 'info'), group: String(group), url: String(b.url || '/') },
+            data: { type: String(b.type || 'info'), group: String(group), url: String(b.url || '/'), fromUid: String(senderId || '') },
             android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink', tag: (b.type || 'gl') + '-' + group } }
           });
           sent++;
