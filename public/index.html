@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 453;
+var APP_BUILD = 454;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11331,7 +11331,11 @@ window._sendRoomInvite = function(uid) {
   var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
-  var rec = { room: label, from: userId, fromName: userName, ts: Date.now() };
+  // `room` is the DISPLAY label (what the invite card shows). Carry the actual room key too:
+  // without it a room invite could not be matched against the rooms you're already in, so it
+  // survived joining and sat on the home screen forever. Circle invites always had `key`;
+  // room invites did not.
+  var rec = { room: label, key: groupName, from: userId, fromName: userName, ts: Date.now() };
   if (pin) rec.pin = pin;
   // The toast used to fire unconditionally AFTER this try/catch — meaning a swallowed exception
   // (network blip, permission hiccup) still showed "Invited ___" even though nothing was ever
@@ -11406,6 +11410,25 @@ function _mergeInvites() {
         try { var f = window._fb; if (f && inv._src) f.remove(f.ref(f.db, 'gl/_invites/' + inv._src + '/' + inv._key)); } catch (e) {}
         return false;
       }
+      // Same self-heal for plain ROOM invites, which had none — so accepting one (or joining
+      // by link, or being invited to a room you were already in) left the card sitting on the
+      // home screen for a room you had already joined. Reported after joining the Crew and
+      // returning home to find the invite still there.
+      //
+      // Older records predate rec.key, so fall back to slugging the display label with the
+      // same transform enterMap uses ("Our Crew" → "our_crew").
+      try {
+        var _ik = inv.key || (inv.room ? String(inv.room).toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_') : '');
+        if (_ik) {
+          var _already = (_ik === groupName)
+            || ((typeof _isCircleMember === 'function') && _isCircleMember(_ik))
+            || ((typeof _getJoinedRooms === 'function') && !!_getJoinedRooms()[_ik]);
+          if (_already) {
+            try { var f2 = window._fb; if (f2 && inv._src) f2.remove(f2.ref(f2.db, 'gl/_invites/' + inv._src + '/' + inv._key)); } catch (e) {}
+            return false;
+          }
+        }
+      } catch (e) {}
       return true;
     })
     .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
