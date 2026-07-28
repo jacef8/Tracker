@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 472;
+var APP_BUILD = 473;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9489,8 +9489,12 @@ function startLocationSharing() {
       // user tapped one manually before this first fix arrived.
       try {
         if (!followUid && !fitAllInterval && typeof window._fitAllTapped === 'function') window._fitAllTapped();
-        else map.flyTo({ center: [lng, lat], zoom: 15 });
-      } catch (e) { try { map.flyTo({ center: [lng, lat], zoom: 15 }); } catch (e2) {} }
+        // Only fly to yourself if NOTHING already owns the camera. The users-listener below
+        // shares this latch and may have started group-follow a moment earlier; flying to your
+        // own position at zoom 15 on top of that is exactly the reported "Follow Group is on
+        // but it just zoomed to me" — the button was lit and correct, and this line overrode it.
+        else if (!followUid && !fitAllInterval) map.flyTo({ center: [lng, lat], zoom: 15 });
+      } catch (e) { try { if (!followUid && !fitAllInterval) map.flyTo({ center: [lng, lat], zoom: 15 }); } catch (e2) {} }
     }
   };
   window._onGpsFix = onGpsFix; // exposed so the Settings location toggle can refresh fast
@@ -9632,6 +9636,13 @@ function startLocationSharing() {
         vis: document.visibilityState,
         hidden: !!locationHidden,
         build: APP_BUILD,
+        // Group-follow state, so "it only zoomed to me" can be diagnosed from the data instead
+        // of reasoned about: gfOn = the 1s tick is running, gfPts = how many members that tick
+        // actually found (1 means it correctly centred on a group of one), gfFail = why the
+        // camera didn't move.
+        gfOn: !!(typeof fitAllInterval !== 'undefined' && fitAllInterval),
+        gfPts: (window._gfLastPts != null ? window._gfLastPts : -1),
+        gfFail: window._gfLastFail || '',
         ts: now
       });
     } catch (e) {}
@@ -14935,7 +14946,23 @@ function _followPadding() {
   // space, a member fitted right at the padded edge still has HALF their visual marker
   // poking out past it — exactly the clipped-under-the-topbar/toolbar look reported on-device.
   var MARKER_RADIUS_PAD = 30, MARKER_BOTTOM_EXTRA = 40; // covers radius+shadow, and the speed chip below
-  return { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: 72 + MARKER_RADIUS_PAD, right: 72 + MARKER_RADIUS_PAD };
+  var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: 72 + MARKER_RADIUS_PAD, right: 72 + MARKER_RADIUS_PAD };
+  // Clamp against the actual canvas. cameraForBounds THROWS when padding exceeds the viewport,
+  // and _groupFollowTick swallows that into `if (!cam) return true` — a silent no-op that
+  // repeats every tick, so group-follow looks switched on while the camera never moves.
+  // The bottom figure is the risky one: it's derived from map-controls' POSITION, so if that
+  // element is mid-layout or offscreen its top reads near 0 and bottom balloons past the
+  // screen height. Never let the paddings claim more than 70% of either axis.
+  try {
+    var cw = map.getCanvas().clientWidth, ch = map.getCanvas().clientHeight;
+    if (cw > 0 && pad.left + pad.right > cw * 0.7) {
+      var sx = (cw * 0.7) / (pad.left + pad.right); pad.left *= sx; pad.right *= sx;
+    }
+    if (ch > 0 && pad.top + pad.bottom > ch * 0.7) {
+      var sy = (ch * 0.7) / (pad.top + pad.bottom); pad.top *= sy; pad.bottom *= sy;
+    }
+  } catch (e) {}
+  return pad;
 }
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
@@ -14980,6 +15007,7 @@ function _groupFollowTick(force) {
   // pushed unconditionally, on top of your own marker, so a lone user produced TWO nearly
   // identical points: bounds collapsed to a dot and the camera zoomed to maxZoom on them.
   if (window._lastGPS) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
+  window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
   if (pts.length === 1) {
     map.easeTo({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(), duration: force ? 700 : 1200, easing: _linEase });
@@ -14991,6 +15019,12 @@ function _groupFollowTick(force) {
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
   // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
   try { cam = map.cameraForBounds(b, { padding: _followPadding(), maxZoom: 16 }); } catch (e) {}
+  // Last-ditch: retry with a flat, small padding. cameraForBounds returning nothing used to
+  // mean the camera simply never moved — group-follow silently did nothing while its button
+  // sat lit. A slightly tight fit beats no fit at all.
+  if (!cam) { try { cam = map.cameraForBounds(b, { padding: 40, maxZoom: 16 }); } catch (e) {} }
+  window._gfLastPts = pts.length;
+  window._gfLastFail = cam ? '' : 'cameraForBounds';
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
