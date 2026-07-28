@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 456;
+var APP_BUILD = 457;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4961,6 +4961,11 @@ window._riToggleCircle = function () {
     var _k = groupName, _lbl = label;
     _confirm('Join "' + _lbl + '" as a Crew member?\n\nYou\'ll always show up here for each other — no matter what other room you\'re in, or if the app\'s in the background. Right now you only appear while you\'re actually in this room.', function () {
       try { fbSet(fbRef(db, 'gl/' + _k + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+      // Deliberate rejoin — clear both "don't auto-add" markers, or the next snapshot would
+      // find them and this join would look like it silently failed. This manual path is the
+      // ONLY thing that clears them; that's what keeps Leave and owner-removal permanent.
+      try { localStorage.removeItem('gl_crew_auto_' + _k); } catch (e) {}
+      try { fbRemove(fbRef(db, 'gl/' + _k + '/config/removed/' + userId)); } catch (e) {}
       var circles = _getCircles(); circles[_k] = _lbl || _k; _setCircles(circles);
       try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
       try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
@@ -5771,6 +5776,42 @@ function _isCircleMember(key) { return !!_getCircles()[key]; }
 var CREW_REASK_MS = 24 * 60 * 60 * 1000;
 window._promptJoinCrew = function (key, label) {
   if (!key || _isCircleMember(key)) return;
+
+  // Being in the room IS joining the Crew — no prompt. Someone who's in a Crew room is expected
+  // to show up on its map; making that a question is how people ended up silently absent for
+  // weeks, looking present to themselves and missing to everyone else.
+  //
+  // ONCE PER ROOM PER DEVICE, and that is the whole safety of it. Without the marker this would
+  // re-add you on the very next config/circle snapshot, so Leave would do nothing and the
+  // owner's "Remove from this Crew" would be undone by the removed person's own device seconds
+  // later. The marker is never cleared, so both exits are permanent; rejoining is deliberate,
+  // via Room Info's "Join this Crew".
+  var autoKey = 'gl_crew_auto_' + key;
+  try { if (localStorage.getItem(autoKey)) return; } catch (e) {}
+  // The owner removed this person from the Crew. That marker lives on the server because the
+  // owner cannot write to their device — without honouring it here, a removed member's own app
+  // would re-add them seconds later and the removal would look broken to everyone.
+  try {
+    var _rm = (window._roomCfg && window._roomCfg.removed)
+           || (window._lastGlSnap && window._lastGlSnap[key] && window._lastGlSnap[key].config && window._lastGlSnap[key].config.removed);
+    if (_rm && _rm[userId]) return;
+  } catch (e) {}
+  try { localStorage.setItem(autoKey, String(Date.now())); } catch (e) {}
+  try {
+    fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+    var _c = _getCircles(); _c[key] = label || key; _setCircles(_c);
+    try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
+    try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
+    try { _renderRiCircle(); } catch (e) {}
+    // Not a prompt, but not covert either: they need to know sharing changed and where to undo
+    // it. Continuous background location is not something to start without saying so.
+    toast('You\'re in the "' + (label || key) + '" Crew — you\'ll show up here even when the app\'s closed. Leave any time from My Crews.', 6000);
+  } catch (e) {}
+  return;
+};
+// Kept for the manual paths (Room Info's Join, invite accept) — see _riToggleCircle.
+window._promptJoinCrewManual = function (key, label) {
+  if (!key || _isCircleMember(key)) return;
   var askedKey = 'gl_crew_asked_' + key;
   var _ask = function (force) {
     if (!force) {
@@ -5952,6 +5993,11 @@ window._leaveCircle = function (key, name) {
   _confirm('Leave "' + name + '"? You\'ll stop showing up for each other until someone invites you back.', function () {
     var fb = window._fb;
     try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gl/' + key + '/members/' + userId)); } catch (e) {}
+    // Make leaving stick. Joining a Crew is automatic on entering its room, so without this
+    // marker the next config/circle snapshot would put you straight back in — Leave would be a
+    // button that undid itself. Set here as well as at auto-join, to cover someone who joined
+    // some other way (invite accept, Room Info) and is leaving for the first time.
+    try { localStorage.setItem('gl_crew_auto_' + key, String(Date.now())); } catch (e) {}
     var circles = _getCircles(); delete circles[key]; _setCircles(circles);
     // Only drop the notification subscription if they haven't ALSO separately favorited this
     // room — favSubs is a single shared entry per room, not tracked by which feature asked for
@@ -11103,6 +11149,12 @@ window._removeCircleMember = function() {
       fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + uid));
       fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
       fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
+      // Make the removal stick. Joining is automatic on entering the room, and the "only once"
+      // guard that protects Leave lives in the OTHER person's localStorage — which this device
+      // cannot write. Without a server-side marker their app would simply re-add them on its
+      // next snapshot, seconds after being removed. Kept under config, which is already
+      // writable under the current rules; a new sibling path would be denied.
+      fbSet(fbRef(db, 'gl/' + groupName + '/config/removed/' + uid), Date.now());
     } catch (e) {}
     try { window._evt('removed ' + nm + ' from the Crew'); } catch (e) {}
     toast(nm + ' removed from this Crew', 2500);
