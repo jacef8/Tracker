@@ -1149,7 +1149,11 @@
           <div id="acct-in" style="display:none;align-items:center;gap:10px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:9px 12px">
             <span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name">Signed in</div>
+              <!-- Deliberately blank, not "Signed in": this is the DEFAULT shown before auth
+                   resolves, so hard-coding "Signed in" made the app claim a signed-in state it
+                   hadn't established yet — and if the signedIn branch never ran, that claim
+                   simply stayed on screen. refreshUI fills this in once it actually knows. -->
+              <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name"></div>
               <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-email"></div>
             </div>
             <button id="btn-signout" type="button" onclick="window.GLAuth ? GLAuth.signOutUser() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
@@ -2548,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 471;
+var APP_BUILD = 472;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3233,7 +3237,10 @@ function _friendStatus(fid) {
   // ELSE's favorite as active.
   var ms = (window._mySessions || {})[fid];
   if (ms && ms.ts && (Date.now() - ms.ts) < 70000) {
-    return { online: !!ms.room, active: !ms.room, inMyRoom: (typeof groupName !== 'undefined') && ms.room === groupName, roomKey: ms.room || '', name: ms.name };
+    // active is unconditionally true here — a live heartbeat IS the app being open. It used to
+    // read `!ms.room`, which made "in a room" cancel out "active" and could land a genuinely
+    // live device on the Offline styling downstream.
+    return { online: !!ms.room, active: true, inMyRoom: (typeof groupName !== 'undefined') && ms.room === groupName, roomKey: ms.room || '', name: ms.name };
   }
   // Last resort: an actual recent GPS fix in a shared Crew — see _isRecentlyActiveInAnyCircle.
   var circ = _isRecentlyActiveInAnyCircle(fid);
@@ -11676,7 +11683,13 @@ function _renderInvitePeople(q) {
     var circ = !(p && p.room) && !msOnline ? _isRecentlyActiveInAnyCircle(uid) : null;
     var dispName = friends[uid] || (p && p.name) || (ms && ms.name) || (circ && circ.name) || 'Friend';
     if (ms && ms.dev && dispName.toLowerCase().indexOf(ms.dev.toLowerCase()) === -1) dispName += ' · ' + ms.dev;
-    people.push({ uid: uid, name: dispName, friend: true, online: !!(p && p.room) || msOnline || !!circ, room: (p && p.room) || (ms && ms.room) || (circ && circ.room) });
+    // online = "the app is open on their device", NOT "they're in a room". gl/_presence keeps
+    // an entry with room:null for someone sitting on Home/Account, and onDisconnect removes it
+    // when they close the app — so the entry EXISTING is the answer. Requiring p.room meant a
+    // person who was plainly in the app, reachable, and about to get the invite notification
+    // was labelled "offline" purely because they hadn't joined a room yet. `room` stays separate
+    // below; it drives the "here now" / already-a-member logic, which is a different question.
+    people.push({ uid: uid, name: dispName, friend: true, online: !!p || msOnline || !!circ, room: (p && p.room) || (ms && ms.room) || (circ && circ.room) });
   });
   // Anyone currently online (not a friend) used to show here by default too — narrowed further
   // than the directory fix below: the default list is now ONLY your actual friends (online or
@@ -11688,7 +11701,7 @@ function _renderInvitePeople(q) {
       if (seen[uid] || uid === me) return;
       var p = pres[uid] || {};
       if (!p.name) return;
-      people.push({ uid: uid, name: p.name, friend: false, online: !!p.room, room: p.room });
+      people.push({ uid: uid, name: p.name, friend: false, online: true, room: p.room });   // in the presence index at all = app open
     });
     // Your OWN other devices, not yet favorited — same gap as People search had (build 356):
     // the global directory below tracks only ONE device per account (whichever was most
@@ -11699,7 +11712,7 @@ function _renderInvitePeople(q) {
       if (seen[id] || id === me) return;
       var d = mySess[id] || {}; if (!d.name) return;
       seen[id] = 1;
-      var msOn = !!(d.ts && (Date.now() - d.ts) < 70000 && d.room);
+      var msOn = !!(d.ts && (Date.now() - d.ts) < 70000);   // heartbeat is enough; a room isn't required
       var circ2 = !msOn ? _isRecentlyActiveInAnyCircle(id) : null;
       people.push({ uid: id, name: (typeof _withDev === 'function' ? _withDev(d) : d.name) || d.name, friend: false, online: msOn || !!circ2, room: d.room || (circ2 && circ2.room) });
     });
@@ -11718,7 +11731,9 @@ function _renderInvitePeople(q) {
       if (!dev || dev === me || seen[dev] || !d.name) return;
       seen[dev] = 1;
       var p = pres[dev];
-      people.push({ uid: dev, name: d.name, friend: false, online: !!(p && p.room), room: p && p.room });
+      var ds = (window._mySessions || {})[dev];
+      people.push({ uid: dev, name: d.name, friend: false,
+                    online: !!p || !!(ds && ds.ts && (Date.now() - ds.ts) < 70000), room: p && p.room });
     });
   }
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
@@ -15446,6 +15461,10 @@ try {
         }
       }
     } catch (e) {}
+    // The synced profile is usually where the display name actually comes from, and it lands
+    // AFTER the account row has already painted. Without this, the row kept whatever it had at
+    // paint time (a bare "Signed in") until the next sign-out/sign-in cycle.
+    try { refreshUI(); } catch (e) {}
   }
   // Live LIBRARY sync: watch this account's cloud profile and merge the saved-pin / track
   // library (additive union — never clobbers local edits) whenever it changes, so a GPX/pin
@@ -15541,9 +15560,27 @@ try {
           + ' UA=' + (navigator.userAgent || '').slice(0, 60));
       }
     } catch (e) {}
+    // Name resolution walks THREE stores, because gl_name alone is empty in ordinary cases
+    // and the row then rendered a bare "Signed in" that looked like a broken session:
+    //   gl_name        — the account display name; Apple withholds displayName on every
+    //                    sign-in after the first, and a brand-new account has no synced
+    //                    profile yet, so this is blank more often than it looks
+    //   session name   — what they typed as "Your name"; always present once they've joined
+    //   email local    — last resort, still better than an anonymous "Signed in"
+    var nEl = document.getElementById('acct-name');
+    var eEl = document.getElementById('acct-email');
     if (signedIn) {
-      var nEl = document.getElementById('acct-name');  if (nEl) nEl.textContent = name() || 'Signed in';
-      var eEl = document.getElementById('acct-email'); if (eEl) eEl.textContent = LS.get('gl_email') || '';
+      var em = LS.get('gl_email') || '';
+      var who = name();
+      if (!who) { try { who = (getSavedSession() || {}).name || ''; } catch (e) {} }
+      if (!who && em) who = em.split('@')[0];
+      if (nEl) nEl.textContent = who || 'Signed in';
+      if (eEl) eEl.textContent = em;
+    } else {
+      // Not signed in — clear it, so a previous session's name can't linger and read as
+      // a live one.
+      if (nEl) nEl.textContent = '';
+      if (eEl) eEl.textContent = '';
     }
     try { if (window._renderAdminActivity) window._renderAdminActivity(); } catch (e) {}
     var dot = document.getElementById('pager-acct-dot'); if (dot) dot.style.display = signedIn ? 'inline-block' : 'none';
