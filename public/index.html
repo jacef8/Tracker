@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 465;
+var APP_BUILD = 466;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14732,17 +14732,46 @@ function _followPadding() {
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   var pts = [];
+  var _seen = {};
+  var _add = function (uid, lng, lat) {
+    if (uid && _seen[uid]) return;                       // no duplicates — see below
+    if (!isFinite(lng) || !isFinite(lat)) return;
+    if (!lng && !lat) return;                            // 0,0 = no position (no-GPS members)
+    if (uid) _seen[uid] = 1;
+    pts.push([lng, lat]);
+  };
+  // Build from the ROOM DATA, not from whichever markers happen to exist yet.
+  //
+  // This used to read only Object.keys(userMarkers), so anyone whose marker hadn't been
+  // created — a member who joined seconds ago, or any render that hadn't caught up — was
+  // silently left out of the fit. Combined with the duplicate below, the usual result was a
+  // "group" of one: the map zoomed hard onto the tapper and looked like Follow Group was
+  // simply centring on them.
+  try {
+    var _ru = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+    Object.keys(_ru).forEach(function (uid) {
+      if (window._groupFollowExcluded(uid)) return;
+      var u = _ru[uid] || {};
+      if (!u.name || u.claiming || u.hidden || u.noGps) return;   // same test the renderer uses
+      _add(uid, u.lng, u.lat);
+    });
+  } catch (e) {}
+  // Markers still count, for anything on the map that isn't a room member (and as a fallback
+  // if the snapshot hasn't arrived). _seen keeps these from double-adding a member.
   Object.keys(userMarkers).forEach(function(uid) {
     if (window._groupFollowExcluded(uid)) return;
-    try { var ll = userMarkers[uid].getLngLat(); pts.push([ll.lng, ll.lat]); } catch (e) {}
+    try { var ll = userMarkers[uid].getLngLat(); _add(uid, ll.lng, ll.lat); } catch (e) {}
   });
   // Devices (the watch) are a SEPARATE marker set from people — include them too, so "Follow
   // group" actually keeps the whole group (people + visible devices) in view, not just people.
   try {
     var _dm = window._deviceMarkers || {};
-    Object.keys(_dm).forEach(function (id) { if (window._groupFollowExcluded(id)) return; try { var dl = _dm[id].getLngLat(); pts.push([dl.lng, dl.lat]); } catch (e) {} });
+    Object.keys(_dm).forEach(function (id) { if (window._groupFollowExcluded(id)) return; try { var dl = _dm[id].getLngLat(); _add(id, dl.lng, dl.lat); } catch (e) {} });
   } catch (e) {}
-  if (window._lastGPS) pts.push([window._lastGPS.lng, window._lastGPS.lat]);
+  // Your own live position — keyed by userId so it can't be counted twice. It previously
+  // pushed unconditionally, on top of your own marker, so a lone user produced TWO nearly
+  // identical points: bounds collapsed to a dot and the camera zoomed to maxZoom on them.
+  if (window._lastGPS) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
   if (!pts.length) return false;
   if (pts.length === 1) {
     map.easeTo({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(), duration: force ? 700 : 1200, easing: _linEase });
