@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 455;
+var APP_BUILD = 456;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15780,11 +15780,18 @@ window._voiceMod().then(function (m) {
     el.style.display = 'none';
   };
 
-  function hasCloseControl(el) {
-    if (el.querySelector('[data-glx]')) return true;
-    if (el.querySelector('[aria-label*="lose" i]')) return true;
-    // A literal ✕/× glyph anywhere in the markup counts as an existing close affordance.
-    return /[✕×]|&times;/.test(el.innerHTML);
+  // Does this overlay have a close control OF ITS OWN — ignoring one we injected?
+  // Deliberately excludes [data-glx]: the whole point is to detect a native control appearing
+  // later so ours can step aside.
+  function hasNativeClose(el) {
+    if (el.querySelector('[aria-label*="lose" i]:not([data-glx])')) return true;
+    var mine = el.querySelector('[data-glx]');
+    var html = el.innerHTML;
+    if (mine) {
+      // Strip our own button before glyph-matching, or we'd always find our own ✕.
+      try { var c = el.cloneNode(true); var m2 = c.querySelector('[data-glx]'); if (m2) m2.remove(); html = c.innerHTML; } catch (e) {}
+    }
+    return /[✕×]|&times;/.test(html);
   }
 
   function addX(el) {
@@ -15810,11 +15817,37 @@ window._voiceMod().then(function (m) {
     panel.appendChild(b);
   }
 
+  // Add ours if there's no native control, remove ours the moment one appears. Several sheets
+  // build their own ✕ into innerHTML when they OPEN — places-drawer and member-sheet both do —
+  // so a one-shot check at load sees an empty container, injects, and the user ends up with two
+  // stacked ✕ buttons (reported on Places). Which sheets do this can't be known statically, so
+  // rather than maintaining an exclusion list this re-checks whenever an overlay changes.
+  function reconcile(el) {
+    if (!el) return;
+    try {
+      var mine = el.querySelector('[data-glx]');
+      if (hasNativeClose(el)) { if (mine) mine.remove(); }
+      else if (!mine) addX(el);
+    } catch (e) {}
+  }
+
   function apply() {
     for (var i = 0; i < OVERLAYS.length; i++) {
       var el = document.getElementById(OVERLAYS[i]);
       if (!el) continue;
-      try { if (!hasCloseControl(el)) addX(el); } catch (e) {}
+      reconcile(el);
+      // Watch for the overlay being shown (style/class) and for content injected into it.
+      try {
+        var root = el;
+        var obs = new MutationObserver(function () {
+          // Debounced: content is often written in several steps, and reconciling mid-write
+          // would judge a half-built sheet. Converges — adding or removing our button fires
+          // the observer once more, and that pass finds nothing left to change.
+          clearTimeout(root._glxT);
+          root._glxT = setTimeout(function () { reconcile(root); }, 60);
+        });
+        obs.observe(el, { attributes: true, attributeFilter: ['style', 'class'], childList: true, subtree: true });
+      } catch (e) {}
     }
   }
 
