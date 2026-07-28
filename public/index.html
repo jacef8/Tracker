@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 479;
+var APP_BUILD = 480;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2765,7 +2765,7 @@ function _checkMarkerAlignment() {
   try {
     if (typeof map === 'undefined' || !map || typeof userMarkers === 'undefined') return;
     var cvRect = map.getCanvas().getBoundingClientRect();
-    var worst = 0, worstName = '', n = 0;
+    var worst = 0, worstName = '', worstDetail = '', n = 0;
     Object.keys(userMarkers || {}).forEach(function (uid) {
       var mk = userMarkers[uid]; if (!mk) return;
       var el; try { el = mk.getElement(); } catch (e) { el = mk._el; }
@@ -2779,10 +2779,22 @@ function _checkMarkerAlignment() {
       var dy = (r.top + r.height / 2 - cvRect.top) - p.y;
       var d = Math.sqrt(dx * dx + dy * dy);
       n++;
-      if (d > worst) { worst = d; worstName = (mk._initials || uid.slice(0, 4)); }
+      if (d > worst) {
+        worst = d; worstName = (mk._initials || uid.slice(0, 4));
+        // dx/dy separately, plus the element box and the transform Mapbox applied. The gap
+        // measured exactly 44.0px — the marker's own height — which is an exact CSS quantity,
+        // so the answer is in one of these three values, not in accumulated drift.
+        worstDetail = 'd=' + dx.toFixed(0) + ',' + dy.toFixed(0)
+          + ' box=' + Math.round(r.width) + 'x' + Math.round(r.height);
+        try {
+          var tf = (el.style.transform || '').replace(/\s+/g, '');
+          worstDetail += ' tf=' + tf.slice(0, 60);
+        } catch (e2) {}
+      }
     });
     window._pinCheck = 'z=' + map.getZoom().toFixed(2) + ' n=' + n
-      + ' worst=' + worst.toFixed(1) + 'px' + (worstName ? ' (' + worstName + ')' : '');
+      + ' worst=' + worst.toFixed(1) + 'px' + (worstName ? ' (' + worstName + ')' : '')
+      + (worstDetail ? ' ' + worstDetail : '');
   } catch (e) {}
 }
 function _animateMarker(marker, toLng, toLat) {

@@ -326,6 +326,35 @@ app.get('/.well-known/assetlinks.json', function(req, res) {
     }
   }]));
 });
+// Apple App Site Association — the iOS half of what assetlinks.json does for Android.
+// Without it, a texted invite ALWAYS opened in Safari on iPhone even with the app installed:
+// this path fell through to the catch-all and returned index.html as text/html, which iOS
+// rejects outright. Apple's requirements are strict and unforgiving:
+//   - exact path /.well-known/apple-app-site-association, no file extension
+//   - Content-Type application/json
+//   - served over HTTPS with NO redirect (Apple's CDN will not follow one)
+// appID is <TeamID>.<BundleID>. The bundle id is com.groundlink.ios — what the Xcode project
+// actually builds — NOT com.groundlink.app, which is the Android package.
+//
+// Only the invite paths are claimed, deliberately. Claiming "/" would make every link to this
+// site open the app and take away any way to reach the web version on a phone that has it.
+app.get('/.well-known/apple-app-site-association', function(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.send(JSON.stringify({
+    applinks: {
+      details: [{
+        appIDs: ["XM3MLRA366.com.groundlink.ios"],
+        components: [
+          { "/": "/j/*", comment: "room invite" },
+          { "/": "/d/*", comment: "device share" },
+          { "/": "/", "?": { room: "?*" }, comment: "long-form room link" },
+          { "/": "/", "?": { dshare: "?*" }, comment: "long-form device share" }
+        ]
+      }]
+    }
+  }));
+});
 // Short room-invite link: /j/<room>[?k=<passcode>] → the app's room-join URL. Keeps shared
 // texts short. The App-Links intent-filter also claims this path, so installed apps open it
 // natively (the web app routes it client-side); browsers follow this 302 into the web app.
