@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 454;
+var APP_BUILD = 455;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4863,10 +4863,27 @@ function _renderRiCircle() {
   // tell they weren't a member and no way to become one except a transient prompt they may
   // never have seen. This is the only place membership is now visible AND actionable.
   var visitor = !on && _roomIsCrew();
+  // Converting a room to a Crew is irreversible ("can't be undone"), force-flips it to private,
+  // and turns everyone's presence into permanent always-on location sharing. That is the room
+  // creator's call, not any member's. Owner-gated now; a room with no recorded owner stays open
+  // to anyone, otherwise such a room could never be converted by anybody.
+  var _cfgOwner = '';
+  try { _cfgOwner = (window._roomCfg && window._roomCfg.owner) || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.owner) || ''; } catch (e) {}
+  var _mayConvert = !_cfgOwner || _cfgOwner === userId;
   var row = document.getElementById('ri-circle-row');
   var title = document.getElementById('ri-circle-title');
   var pill = document.getElementById('ri-circle-pill');
   var sub = document.getElementById('ri-circle-sub');
+  // Not the owner, and it isn't a Crew yet → there is nothing here for them to do. Shown rather
+  // than hidden so it's clear the room simply isn't a Crew, instead of the row vanishing.
+  if (!on && !visitor && !_mayConvert) {
+    if (title) title.textContent = 'Not a Crew';
+    if (pill) { pill.textContent = 'OFF'; pill.style.background = 'var(--border)'; pill.style.color = 'var(--muted)'; }
+    if (sub) sub.textContent = 'Only whoever created this room can make it a Crew. Ask them, or use Request ownership above.';
+    if (row) { row.style.borderColor = 'var(--border)'; row.style.opacity = '0.65'; }
+    return;
+  }
+  if (row) row.style.opacity = '';
   if (title) title.textContent = on ? 'Invite to this Crew' : visitor ? 'Join this Crew' : 'Make this a Crew';
   if (pill) {
     pill.textContent = on ? 'ON' : visitor ? 'VISITOR' : 'OFF';
@@ -4954,6 +4971,12 @@ window._riToggleCircle = function () {
     }, { title: 'Join this Crew?', yes: 'Join', no: 'Not now' });
     return;
   }
+  // Owner-gated, matching _renderRiCircle. Belt-and-braces: the row shouldn't be tappable for a
+  // non-owner, but this is an irreversible action so it re-checks rather than trusting the UI.
+  try {
+    var _o = (window._roomCfg && window._roomCfg.owner) || '';
+    if (_o && _o !== userId) { toast('Only whoever created this room can make it a Crew', 3200); return; }
+  } catch (e) {}
   _confirm('Everyone in "' + label + '" will always show up here for each other from now on, no matter what other room they\'re in or if the app\'s in the background — this also makes the room private, so only people you invite can find it.\n\nThis can\'t be undone.', function () {
     // Suppresses the passive "this room just became a Crew" toast for the person doing the
     // converting — they already get their own dedicated confirmation below (and immediately
@@ -7451,7 +7474,19 @@ function handleJoin() {
   var gkey = group.toLowerCase().replace(/[^a-z0-9_-]/g,'_').replace(/__+/g,'_');
   // Only prompt when we actually have the directory loaded and the group truly isn't in it,
   // so we never overwrite an existing group's visibility.
-  if (window._lastGlSnap && !window._lastGlSnap[gkey] && !window._inviteRoom) {
+  // Decide "is this a brand-new room?" from a DIRECT read of that room's config, not from the
+  // bulk gl-root snapshot.
+  //
+  // This branch used to require window._lastGlSnap to be loaded. When it wasn't — a slow or
+  // not-yet-arrived read of the whole gl node, the same weakness behind the room-name bug —
+  // the ENTIRE creation branch was skipped: the "make this a Crew" checkbox was never read and
+  // the public/private prompt never appeared, so the room was created with none of the
+  // creator's choices. Confirmed on a real room: "Our Crew" was created with the Crew box
+  // ticked and came out with no circle flag, no visibility, no name, and a 24h expiry — a
+  // plain temporary room that would have quietly vanished the next day.
+  //
+  // A single-path read always resolves; falls back to the snapshot only if it fails outright.
+  var _proceedNew = function () {
     var makeCircle = false;
     try { makeCircle = !!document.getElementById('inp-make-circle').checked; } catch (e) {}
     // A Circle's own room continuously carries every member's live location (that's the whole
@@ -7468,10 +7503,24 @@ function handleJoin() {
       window._pendingCircle = makeCircle;
       checkGroupPasscode(name, group, uid, invitePin);
     });
-    return;
-  }
-  // Check passcode before entering
-  checkGroupPasscode(name, group, uid, invitePin);
+  };
+  var _enterExisting = function () { checkGroupPasscode(name, group, uid, invitePin); };
+
+  if (window._inviteRoom) { _enterExisting(); return; }
+  try {
+    var _f = window._fb;
+    if (_f && _f.get) {
+      _f.get(_f.ref(_f.db, 'gl/' + gkey + '/config'))
+        .then(function (s) { (s && s.exists()) ? _enterExisting() : _proceedNew(); })
+        .catch(function () {
+          // Read failed — fall back to the old snapshot test rather than risking a prompt that
+          // overwrites an existing room's visibility.
+          (window._lastGlSnap && !window._lastGlSnap[gkey]) ? _proceedNew() : _enterExisting();
+        });
+      return;
+    }
+  } catch (e) {}
+  (window._lastGlSnap && !window._lastGlSnap[gkey]) ? _proceedNew() : _enterExisting();
 }
 
 var _visCb = null;
