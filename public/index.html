@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 474;
+var APP_BUILD = 475;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9643,6 +9643,7 @@ function startLocationSharing() {
         gfOn: !!(typeof fitAllInterval !== 'undefined' && fitAllInterval),
         gfPts: (window._gfLastPts != null ? window._gfLastPts : -1),
         gfFail: window._gfLastFail || '',
+        gfDbg: window._gfDbg || '',
         ts: now
       });
     } catch (e) {}
@@ -15027,6 +15028,14 @@ function _groupFollowTick(force) {
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
   var cam;
+  // Record what the camera math actually saw. Reverse-engineering these numbers by measuring
+  // pixel margins in a screenshot is guesswork with big error bars; this is the ground truth.
+  try {
+    var _p = _followPadding();
+    window._gfDbg = 'cv=' + Math.round(map.getCanvas().clientWidth) + 'x' + Math.round(map.getCanvas().clientHeight)
+      + ' pad=' + Math.round(_p.top) + '/' + Math.round(_p.bottom) + '/' + Math.round(_p.left) + '/' + Math.round(_p.right)
+      + ' cur=' + map.getZoom().toFixed(2);
+  } catch (e) {}
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
   // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
   try { cam = map.cameraForBounds(b, { padding: _followPadding(), maxZoom: 16 }); } catch (e) {}
@@ -15039,6 +15048,7 @@ function _groupFollowTick(force) {
   if (!cam) return true;
   var curZoom = map.getZoom();
   var targetZoom = Math.min(cam.zoom, 16);
+  try { window._gfDbg = (window._gfDbg || '') + ' tgt=' + targetZoom.toFixed(2) + (force ? ' F' : ''); } catch (e) {}
   // targetZoom is the padded "everyone comfortably fits" ideal zoom — anything tighter than
   // that MIGHT clip someone, but doesn't necessarily (the padding is generous on purpose).
   // If the user manually zoomed in past it, respect that choice for as long as everyone is
