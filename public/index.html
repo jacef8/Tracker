@@ -2497,7 +2497,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 448;
+var APP_BUILD = 449;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15510,6 +15510,104 @@ window._voiceMod().then(function (m) {
       });
     }
   } catch (e) {}
+})();
+</script>
+
+<!-- ══ CONSISTENT ✕ ON EVERY OVERLAY ═════════════════════════════════════════
+     Every sheet, drawer and modal gets the SAME close control in the SAME place.
+
+     Why this exists: the only universal way out used to be the hardware Back button, wired
+     to popstate + Cap App 'backButton'. Both are Android-only in practice — a native iOS app
+     fires neither — so on iPhone the only exits were whatever each overlay happened to
+     provide, and those were a mix of ✕, "Done", "Close", "Cancel" and text links in
+     different corners. Two had nothing at all (fixed in 448).
+
+     Additive by design: nothing existing is removed. "Done" and "Cancel" carry meaning that
+     ✕ does not (apply vs abort), so they stay; this only guarantees a way out is always
+     present, always top-right. Overlays that already have a ✕ are skipped, so no duplicates.
+-->
+<script>
+(function () {
+  // Same set the Back handler walks. Duplicated deliberately: that list lives inside an IIFE
+  // which returns early outside the installed app, and this must work everywhere.
+  // member-sheet is deliberately absent: it builds its own ✕ into innerHTML each time it
+  // opens (see _sheetHTML). At load its markup is empty, so the check below would see no
+  // close control, inject one, and the sheet would then show TWO.
+  var OVERLAYS = ['user-drawer','track-detail-drawer','tracks-drawer','saved-pins-drawer','places-drawer',
+    'chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','voice-log-sheet','layer-sheet',
+    'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
+    'pin-modal','place-modal','quick-trail-sheet','status-legend-sheet','visibility-modal','passcode-modal',
+    'set-passcode-modal','trk-name-modal','trk-confirm-modal','delete-confirm-modal','color-picker-modal',
+    'voice-pick','invite-join-popup'];
+
+  // Overlays whose close needs real cleanup, not just display:none. Mirrors the Back
+  // handler's SPECIAL map — hiding these without their teardown leaves state behind
+  // (a drawer flag stuck open, the locate-me button hidden, a pending callback alive).
+  var SPECIAL = {
+    'layer-sheet':        function () { if (typeof closeLayerSheet === 'function') return closeLayerSheet(); },
+    'member-sheet':       function () { if (window._closeMemberSheet) return window._closeMemberSheet(); },
+    'voice-log-sheet':    function () { if (window._closeVoiceLog) return window._closeVoiceLog(); },
+    'room-info-sheet':    function () { if (typeof closeRoomInfo === 'function') return closeRoomInfo(); },
+    'visibility-modal':   function () { if (window._cancelVisibility) return window._cancelVisibility(); },
+    'invite-join-popup':  function () { if (window._cancelInviteJoin) return window._cancelInviteJoin(); },
+    'bg-setup-modal':     function () { if (window._dismissBgSetup) return window._dismissBgSetup(false); },
+    'saved-pins-drawer':  function () {
+      var e = document.getElementById('saved-pins-drawer');
+      if (e) { e.classList && e.classList.remove('open'); e.style.display = 'none'; }
+      try { pinFeedOpen = false; } catch (_) {}
+      try { window._togglePinsOverflow(false); } catch (_) {}
+      try { if (typeof setLocateMeVisible === 'function') setLocateMeVisible(true); } catch (_) {}
+    }
+  };
+
+  window._glDismiss = function (id) {
+    try { if (SPECIAL[id]) { SPECIAL[id](); return; } } catch (e) {}
+    var el = document.getElementById(id);
+    if (!el) return;
+    try { if (el.classList) el.classList.remove('open'); } catch (e) {}
+    el.style.display = 'none';
+  };
+
+  function hasCloseControl(el) {
+    if (el.querySelector('[data-glx]')) return true;
+    if (el.querySelector('[aria-label*="lose" i]')) return true;
+    // A literal ✕/× glyph anywhere in the markup counts as an existing close affordance.
+    return /[✕×]|&times;/.test(el.innerHTML);
+  }
+
+  function addX(el) {
+    // Anchor to the overlay's panel (its first element child) rather than the full-screen
+    // backdrop, so the ✕ sits on the card itself and not floating in a corner of the screen.
+    var panel = el.firstElementChild || el;
+    try {
+      var pos = getComputedStyle(panel).position;
+      if (pos === 'static') panel.style.position = 'relative';
+    } catch (e) {}
+    var b = document.createElement('button');
+    b.setAttribute('data-glx', '1');
+    b.setAttribute('aria-label', 'Close');
+    b.textContent = '✕';
+    b.style.cssText = 'position:absolute;top:8px;right:8px;z-index:5;width:32px;height:32px;' +
+      'display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);' +
+      'border:none;border-radius:50%;color:var(--muted);font-size:15px;line-height:1;cursor:pointer;' +
+      '-webkit-tap-highlight-color:transparent;padding:0';
+    b.onclick = function (ev) {
+      ev.stopPropagation();
+      window._glDismiss(el.id);
+    };
+    panel.appendChild(b);
+  }
+
+  function apply() {
+    for (var i = 0; i < OVERLAYS.length; i++) {
+      var el = document.getElementById(OVERLAYS[i]);
+      if (!el) continue;
+      try { if (!hasCloseControl(el)) addX(el); } catch (e) {}
+    }
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+  else apply();
 })();
 </script>
 </body>
