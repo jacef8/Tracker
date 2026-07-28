@@ -2527,7 +2527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 460;
+var APP_BUILD = 461;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5033,6 +5033,9 @@ window._riToggleCircle = function () {
       try { _renderRiCircle(); } catch (e) {}
       // Suppress the drive-by prompt for this room — they just answered it deliberately.
       try { localStorage.setItem('gl_crew_asked_' + _k, String(Date.now())); } catch (e) {}
+      // Not silent: a deliberate join is the right moment to ask for notification permission.
+      // Registering silently here left members with no subscription and nothing to fix it.
+      try { _registerFavSub(_k, _lbl || _k, false).catch(function () {}); } catch (e) {}
       toast('You\'re in the Crew now — you\'ll always show up here', 3200);
     }, { title: 'Join this Crew?', yes: 'Join', no: 'Not now' });
     return;
@@ -5880,8 +5883,24 @@ window._showCrewDisclaimer = function (key, label) {
   try { var m = document.getElementById('crew-disclaimer-modal'); if (m) m.style.display = 'flex'; } catch (e) {}
 };
 window._ackCrewDisclaimer = function () {
+  var ctx = window._crewDisclaimerFor || {};
   try { document.getElementById('crew-disclaimer-modal').style.display = 'none'; } catch (e) {}
   window._crewDisclaimerFor = null;
+  // Ask for notification permission HERE, once, right after they've agreed to be in the Crew.
+  //
+  // Every join path registered its push subscription with silent=true, and _ensureFcmToken
+  // returns null on silent when permission isn't already granted — so a member who had never
+  // granted notifications got no subscription, was never asked, and had no path that would
+  // ever fix it. Confirmed: a Crew member with a members entry and no favSubs entry at all,
+  // unable to receive a single place alert. Not passing silent means the OS prompt actually
+  // appears, at the one moment it makes sense.
+  try {
+    if (ctx.key && typeof _registerFavSub === 'function') {
+      _registerFavSub(ctx.key, ctx.label || ctx.key, false).then(function (ok) {
+        if (ok) toast('Alerts on for this Crew', 2600);
+      }).catch(function () {});
+    }
+  } catch (e) {}
 };
 // Declining is a real exit, not a dismissal: undo the auto-join entirely. The "once per room"
 // marker is deliberately LEFT SET, so this doesn't re-add them on the next snapshot — same
@@ -6670,6 +6689,19 @@ function _showRoomPeek(key, name, touchY) {
   el.style.display = 'block';
 }
 function _hideRoomPeek() { var el = document.getElementById('room-peek'); if (el) el.style.display = 'none'; }
+// Safety net. The peek is dismissed by releasing the long-press on the row that opened it —
+// but if that release never lands there (mouse dragged off the row, window lost focus, a
+// pointercancel from the OS), nothing hides it. It is pointer-events:none, so a stranded peek
+// cannot even be clicked away: it just sits over the map permanently with no way out.
+// Reported on the desktop PWA, where a click-and-hold with a mouse makes this easy to trigger.
+(function _roomPeekSafetyNet() {
+  var kill = function () { try { _hideRoomPeek(); } catch (e) {} try { document.querySelectorAll('.room-item.peeking').forEach(function (n) { n.classList.remove('peeking'); }); } catch (e) {} };
+  ['pointerup', 'pointercancel', 'blur', 'wheel', 'touchend'].forEach(function (ev) {
+    try { window.addEventListener(ev, kill, true); } catch (e) {}
+  });
+  try { window.addEventListener('keydown', function (e) { if (e.key === 'Escape') kill(); }, true); } catch (e) {}
+  try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'visible') kill(); }); } catch (e) {}
+})();
 function _attachRoomPeek(item, key, name) {
   var timer = null, sx = 0, sy = 0;
   function clearT() { if (timer) { clearTimeout(timer); timer = null; } }
@@ -15930,6 +15962,11 @@ window._voiceMod().then(function (m) {
   // later so ours can step aside.
   function hasNativeClose(el) {
     if (el.querySelector('[aria-label*="lose" i]:not([data-glx])')) return true;
+    // The app's own close buttons are an SVG icon, not a character: class="panel-close" with
+    // <use href="#ic-x">. Matching only ✕/× glyphs and aria-labels missed all 21 of them, so
+    // every such sheet got a second, redundant ✕ injected next to the real one.
+    if (el.querySelector('.panel-close:not([data-glx])')) return true;
+    if (el.querySelector('use[href="#ic-x"], use[*|href="#ic-x"]')) return true;
     var mine = el.querySelector('[data-glx]');
     var html = el.innerHTML;
     if (mine) {
