@@ -2536,7 +2536,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 468;
+var APP_BUILD = 469;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6495,6 +6495,18 @@ function loadRoomList() {
 function renderRoomList(all) {
   var listEl = document.getElementById('room-list');
   if (!listEl) return;
+  // Hide tombstoned rooms. Writes to them are already refused (_roomWritable) and local
+  // references purged (_reconcileLocalRooms), but the list itself was never filtered — so a
+  // deleted room kept appearing here for as long as any device recreated its node, which is
+  // exactly what the tombstone is for. Reported after updating a device: "still seeing the
+  // my girls room".
+  try {
+    if (all && all._deadRooms) {
+      var _live = {};
+      Object.keys(all).forEach(function (k) { if (!all._deadRooms[k]) _live[k] = all[k]; });
+      all = _live;
+    }
+  } catch (e) {}
   var fb = window._fb;
   var now = Date.now();
   // Room search: when the box has text, find ANY group by name — including private and
