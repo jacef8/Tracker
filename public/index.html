@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 485;
+var APP_BUILD = 486;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6004,6 +6004,20 @@ window._ackCrewDisclaimer = function () {
       }).catch(function () {});
     }
   } catch (e) {}
+  // THIS is the moment someone actually joins a Crew — accepting the notice, once, ever.
+  //
+  // The join push used to fire from opening the map, which meant existing members announced
+  // themselves every time they glanced at it while a genuinely new member arrived silently
+  // (nothing here notified anyone). Both halves were wrong. Announcing here fires exactly once
+  // per person, when it's true.
+  try {
+    if (ctx.key && typeof _announceJoinOn === 'function' && _announceJoinOn() && typeof pushNotify === 'function') {
+      var _lbl = ctx.label || (typeof _prettyGroup === 'function' ? _prettyGroup(ctx.key) : ctx.key);
+      _ensurePushIdentity().then(function () {
+        pushNotify('join', _lbl, (userName || 'Someone') + ' joined the Crew', { toFavs: true }, ctx.key);
+      }).catch(function () {});
+    }
+  } catch (e) {}
 };
 // Declining is a real exit, not a dismissal: undo the auto-join entirely. The "once per room"
 // marker is deliberately LEFT SET, so this doesn't re-add them on the next snapshot — same
@@ -7290,7 +7304,19 @@ function enterMap(name, group, uid) {
     // Real push notification (not just the in-app toast/activity-log entry above) — same
     // "genuine fresh join only" gate, and uses the pretty display name instead of the raw
     // gl/ key (was showing literal slugs like "my_girls" in the notification title).
-    if (!_skipClaimPlaceholder && _announceJoinOn()) {
+    // A Crew member opening the map is NOT a join.
+    //
+    // Crew membership is permanent — you're on the roster whether the app is open or not, and
+    // your location fans out to the Crew regardless. So "X joined the group" every time
+    // someone glances at the map is just noise, and it misrepresents what happened: nobody
+    // joined anything. A genuinely new member is already announced by the invite/accept flow,
+    // which is the moment that actually matters.
+    //
+    // Ad-hoc (non-Crew) rooms keep the notification: there, entering the room IS the event,
+    // and it's how people know to look.
+    var _isCrewRoom = false;
+    try { _isCrewRoom = (typeof _isCircleMember === 'function') && _isCircleMember(groupName); } catch (e) {}
+    if (!_skipClaimPlaceholder && _announceJoinOn() && !_isCrewRoom) {
       _ensurePushIdentity().then(function () { pushNotify('join', _prettyGroup(groupName), userName + ' joined the group', { toFavs: true }); });
     }
     // Reliable presence cleanup: Firebase removes us server-side the instant this
