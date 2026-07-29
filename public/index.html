@@ -2550,7 +2550,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 493;
+var APP_BUILD = 494;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3524,6 +3524,23 @@ window._acctAddFriend = function (uid) {
 // owner adds to sharedWith). Owner identity = the Google account uid (must be signed in).
 window._devicesAll = {};
 window._deviceMarkers = window._deviceMarkers || {};
+// The id a room should be OWNED by: your ACCOUNT when signed in, else this device.
+//
+// Ownership used to be the device id (gl_uid) alone, which a fresh install regenerates — so
+// reinstalling the app permanently orphaned every room you owned. The in-app owner controls
+// only render for the owner, so nobody could hand ownership on and the room was stuck with no
+// self-service recovery. Confirmed 2026-07-29: all three of Jace's rooms were owned by devices
+// that no longer existed.
+//
+// An account id survives reinstalls, new phones, and the device-id churn entirely. Guests have
+// no account, so they still own by device — unchanged behaviour for them.
+function _ownerId() { try { return _myAcct() || userId; } catch (e) { return userId; } }
+// Does `owner` refer to ME? Accepts either id, because rooms created before this change store
+// a device id and must keep working for that device.
+function _ownerIsMe(owner) {
+  if (!owner) return false;
+  try { return owner === _myAcct() || owner === userId; } catch (e) { return owner === userId; }
+}
 function _myAcct() { try { return localStorage.getItem('gl_account_uid') || localStorage.getItem('gl_profile_key') || ''; } catch (e) { return ''; } }
 function _canSeeDevice(d) {
   var me = _myAcct(); if (!me || !d) return false;
@@ -7177,7 +7194,7 @@ function enterMap(name, group, uid) {
     if (window._pendingVisibility) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), window._pendingVisibility); } catch (_) {}
       // The creator of a brand-new group is its owner.
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (_) {}
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), _ownerId()); } catch (_) {}
       // Every brand-new quick-join room gets a hard lifecycle stamp: expires 24h from now by
       // default (extendable later via Room Info's "Keep active until…", capped at 7 days from
       // createdAt — see _applyRoomExpire) — a fixed wall-clock deadline that does NOT reset on
@@ -7225,12 +7242,23 @@ function enterMap(name, group, uid) {
         if (window._roomClosed) return;
         var owner = snap.val();
         if (!owner) {
-          try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), userId); } catch (e) {}
+          try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), _ownerId()); } catch (e) {}
           window._isRoomOwner = true;
-          window._roomOwnerUid = userId;
+          window._roomOwnerUid = _ownerId();
         } else {
-          window._isRoomOwner = (owner === userId);
+          window._isRoomOwner = _ownerIsMe(owner);
           window._roomOwnerUid = owner;
+          // Migrate a legacy DEVICE-id record to the account id, once, when the owner is
+          // signed in and standing here. Without this every pre-existing room keeps its
+          // device id and orphans itself the next time that person reinstalls — the fix
+          // would only ever apply to rooms created after today.
+          try {
+            var _acct = _myAcct();
+            if (_acct && owner === userId && owner !== _acct) {
+              fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), _acct);
+              window._roomOwnerUid = _acct;
+            }
+          } catch (e) {}
         }
         try { if (typeof renderRoomInfoOwner === 'function') renderRoomInfoOwner(); } catch (e) {} // refresh "Owner: X" if the sheet is open
         // The People-list rows (⋮ owner controls, etc.) only rebuild when someone's location
@@ -11767,7 +11795,22 @@ window._makeOwner = function() {
   // Also used to fire immediately — handing away your own ownership (kick/transfer power over
   // everyone else in the room) had no confirmation at all, unlike every other action in this menu.
   _confirm('Make ' + nm + ' the owner of this room? You\'ll no longer be the owner — they\'ll control who\'s kicked, Crew membership, and room settings.', function () {
-    try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), uid); } catch (e) {}
+    // Hand over their ACCOUNT id when we can resolve one, so the new owner keeps the room
+    // through a reinstall or a new phone. gl/_devOwner/<device> is the device -> account index
+    // maintained at sign-in. Falls back to the device id for a guest with no account, which is
+    // the old behaviour and still works via _ownerIsMe.
+    var _write = function (ownerId) {
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/owner'), ownerId); } catch (e) {}
+    };
+    try {
+      var f = window._fb;
+      if (f && f.get) {
+        f.get(f.ref(f.db, 'gl/_devOwner/' + uid)).then(function (s) {
+          var acct = s && s.val() && s.val().acct;
+          _write(acct || uid);
+        }).catch(function () { _write(uid); });
+      } else { _write(uid); }
+    } catch (e) { _write(uid); }
     window._isRoomOwner = false;
     try { window._evt('transferred room ownership to ' + nm); } catch (e) {}
     toast('Ownership transferred', 2500);

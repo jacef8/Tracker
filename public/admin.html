@@ -296,11 +296,10 @@
 <!-- OVERVIEW TAB — all members + pins on one map -->
 <div class="tab-panel" id="tab-overview">
   <div id="ov-summary" style="margin-bottom:12px"></div>
-  <!-- Private devices (the watch) — they also plot on the map below -->
-  <div id="admin-devices"></div>
-  <!-- Member list first so it's easy to reach without scrolling over the map -->
-  <div id="ov-list" style="margin-bottom:16px"></div>
-  <!-- Map + its layer toggles moved below the list -->
+  <!-- MAP FIRST. It used to sit below the member list "so it is easy to reach without
+       scrolling over the map" — but with 9 members plus the devices block above it, the map
+       was several screens down and the Map tab appeared to contain no map at all. On a tab
+       called Map, the map is the point; the list reads fine underneath it. -->
   <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Map view</div>
   <div style="display:flex;gap:8px;margin-bottom:10px">
     <button id="ov-toggle-users" onclick="ovToggleLayer('users')" style="display:flex;align-items:center;gap:7px;background:var(--accent);border:1px solid var(--accent);color:#0d1117;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer">
@@ -311,6 +310,9 @@
     </button>
   </div>
   <div id="ov-map" style="height:340px;border-radius:12px;overflow:hidden;background:#0d1117;border:1px solid var(--border)"></div>
+  <!-- Private devices (the watch) — they also plot on the map above -->
+  <div id="admin-devices" style="margin-top:16px"></div>
+  <div id="ov-list" style="margin-bottom:16px"></div>
 </div>
 
 <!-- SYSTEM TAB — ops first (maintenance, danger), then data export -->
@@ -2513,8 +2515,31 @@ function initOvMap() {
   return _ovMap;
 }
 
+// Fly the overview map to a point — switching to the Map tab and creating the map first if
+// needed.
+//
+// This used to be `if (_ovMap) flyTo(...)`, which silently did nothing whenever the map hadn't
+// been built yet. The pin list lives in the KPI detail panel at the top of the page and is
+// reachable from ANY tab, so tapping a pin from the Groups tab hit exactly that dead branch:
+// no map existed, no tab changed, nothing happened. Reported as "clicking the pins doesn't take
+// me to a map".
 window.ovFlyTo = function(lng, lat) {
-  if (_ovMap) { _ovMap.flyTo({ center: [lng, lat], zoom: 15, duration: 800 }); }
+  try {
+    var panel = document.getElementById('tab-overview');
+    if (panel && !panel.classList.contains('active')) switchTab('overview');
+  } catch (e) {}
+  // initOvMap is idempotent and returns the existing instance; renderOverview (called by
+  // switchTab) also builds it, but calling here covers the already-on-Map-tab case.
+  var m;
+  try { m = initOvMap(); } catch (e) { return; }
+  if (!m) return;
+  // resize() because the container may have been display:none until the tab switch a moment
+  // ago, in which case Mapbox measured it as 0x0 and would render blank.
+  setTimeout(function () {
+    try { m.resize(); } catch (e) {}
+    try { m.flyTo({ center: [lng, lat], zoom: 16, duration: 800 }); } catch (e) {}
+    try { document.getElementById('ov-map').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+  }, 60);
 };
 
 function renderOverview() {
