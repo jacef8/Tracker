@@ -20,8 +20,18 @@ copy/paste-ready text for your court reporting program.
 
 ## Setup
 
-Requirements: Node.js 18+, [ffmpeg](https://ffmpeg.org) on your PATH
-(needed for recordings over ~25 MB — i.e., almost any full court day).
+Everything runs on your own PC — the browser page is served from `localhost`
+(your machine talking to itself); nothing is hosted on the internet.
+
+Requirements: Node.js 18+ ([nodejs.org](https://nodejs.org)), and
+[ffmpeg](https://ffmpeg.org) on your PATH (needed for recordings over ~25 MB —
+i.e., almost any full court day).
+
+**Windows, no command line:** copy `.env.example` to `.env`, put your two API
+keys in it, then double-click `start.bat`. It installs dependencies on first
+run and opens the page for you.
+
+**Manual (any OS):**
 
 ```sh
 cd court-minutes
@@ -34,7 +44,8 @@ npm start
 # open http://localhost:3100
 ```
 
-On Windows (PowerShell): `$env:ANTHROPIC_API_KEY="sk-ant-..."` etc.
+On Windows (PowerShell): `$env:ANTHROPIC_API_KEY="sk-ant-..."` etc. — or use
+the `.env` file, which the server reads automatically.
 
 Optional environment variables:
 
@@ -62,11 +73,16 @@ Optional environment variables:
   names, numbers, and dispositions. Every entry — flagged or not — should be
   verified against the recording before it becomes part of the official
   minutes. The document header and UI say so on purpose.
-- **Data handling:** audio is sent to OpenAI for transcription and the
-  transcript + docket are sent to Anthropic for drafting, under your own API
-  accounts. Confirm this is acceptable under your office's policies for court
+- **Data handling:** the app itself is local, but the AI steps use cloud APIs —
+  audio is sent to OpenAI for transcription, and the transcript + docket are
+  sent to Anthropic for drafting, over encrypted connections under your own API
+  accounts. Both providers' API terms exclude customer API data from model
+  training (Anthropic retains API data ~30 days for safety monitoring, then
+  deletes). Confirm this is acceptable under your office's policies for court
   records before using it on real hearings. Uploaded audio files are deleted
-  from the server after processing; jobs are held in memory and vanish on
-  restart.
+  locally after processing; jobs are held in memory and vanish on restart. If
+  your policy requires that audio never leave the machine, transcription can be
+  switched to a locally-run Whisper model — only the text would then go to
+  Anthropic.
 - **Cost:** roughly $0.36/hour of audio for transcription, plus a few dollars
   per court day for drafting, depending on transcript length.

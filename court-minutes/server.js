@@ -10,6 +10,16 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// Load API keys from a local .env file so the launcher can be double-clicked
+// without setting environment variables first. Real env vars take precedence.
+try {
+  const env = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+  for (const line of env.split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && !line.trim().startsWith('#') && !(m[1] in process.env)) process.env[m[1]] = m[2];
+  }
+} catch { /* no .env file — env vars must be set another way */ }
+
 const { transcribeFile } = require('./lib/transcribe');
 const { generateMinutes } = require('./lib/minutes');
 const { buildDocx, entryPlainText } = require('./lib/document');
