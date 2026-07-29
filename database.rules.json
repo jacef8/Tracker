@@ -107,7 +107,19 @@
             ".write": "auth != null && auth.uid === $uid"
           }
         },
-        "$other": { ".write": true }
+        // Location history, relocated OUT of gl/ (2026-07-29). It was the heaviest node in the
+    // tree — 1.1 MB of 1.5 MB within a day of defaulting history on — and the home screen
+    // holds a listener on all of gl/, so every device re-parsed mostly-history payloads on
+    // every write from anyone. Declared explicitly here because the $other fallback below is
+    // world-read/write; without this block the relocation would have LOOSENED access.
+    "glh": {
+      ".read": "auth != null",
+      "$room": {
+        ".write": "auth != null && !newData.exists()",
+        "$uid": { ".write": "auth != null" }
+      }
+    },
+    "$other": { ".write": true }
       }
     },
 

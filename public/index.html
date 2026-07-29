@@ -2577,7 +2577,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 499;
+var APP_BUILD = 500;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5450,12 +5450,12 @@ function _sweepOldHistory() {
     var circles = _getCircles(); // gl_circles in localStorage — same source headless.html reads
     var cutoff = Date.now() - HIST_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
     Object.keys(circles).forEach(function (circleKey) {
-      fbOnValue(fbRef(db, 'gl/' + circleKey + '/history/' + userId), function (snap) {
+      fbOnValue(fbRef(db, 'glh/' + circleKey + '/' + userId), function (snap) {
         var byDate = snap.val() || {};
         Object.keys(byDate).forEach(function (dateStr) {
           var dayMs = Date.parse(dateStr + 'T00:00:00');
           if (!isNaN(dayMs) && dayMs < cutoff) {
-            fbRemove(fbRef(db, 'gl/' + circleKey + '/history/' + userId + '/' + dateStr));
+            fbRemove(fbRef(db, 'glh/' + circleKey + '/' + userId + '/' + dateStr));
           }
         });
       }, { onlyOnce: true });
@@ -6637,18 +6637,30 @@ function loadRoomList() {
   try { var _le = document.getElementById("room-list"); if (_le && !_le.children.length) _le.innerHTML = "<div class=\"room-empty\">Loading your groups…</div>"; } catch (e) {}
   waitForFirebase(fb => {
     fb.onValue(fb.ref(fb.db, 'gl'), snap => {
-      window._lastGlSnap = snap.val() || {};
-      try { _reconcileLocalRooms(window._lastGlSnap); } catch (e) {}
-      try { renderRoomList(window._lastGlSnap); } catch (e) {}
-      try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
-      // The Home-screen circle-switcher pill/label (_renderCircleSwitcher) has its own separate
-      // call sites (join/leave/invite actions) but was never wired to THIS snapshot listener —
-      // if it happens to render once before this listener's first snapshot arrives (a startup
-      // race), or a rename comes from another device, its label falls back to the mechanical
-      // key-transform name and never gets a chance to refresh to the real config.name. Confirmed
-      // on-device: Home screen showed "My Girls" while the room itself correctly showed the
-      // renamed "Fordy Crew".
-      try { window._renderCircleSwitcher(); } catch (e) {}
+      // DEBOUNCED. This listener covers the whole gl tree, so it fires for every GPS fix,
+      // trail crumb and heartbeat from every device — several times a second with a handful
+      // of people live. snap.val() re-serializes the entire tree (measured 1.5 MB) and then
+      // three renders run, per event. On a mid-range tablet that alone pegged the CPU and the
+      // app read as "slow and borderline unresponsive". The first snapshot still processes
+      // immediately so startup isn't delayed; after that, once per 2.5 s is far more than the
+      // home list, friends panel and switcher label need.
+      window._pendingGlSnapVal = snap;
+      var _process = function () {
+        window._glSnapTimer = null;
+        var sv = window._pendingGlSnapVal; if (!sv) return;
+        window._pendingGlSnapVal = null;
+        window._lastGlSnap = sv.val() || {};
+        try { _reconcileLocalRooms(window._lastGlSnap); } catch (e) {}
+        try { renderRoomList(window._lastGlSnap); } catch (e) {}
+        try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
+        try { window._renderCircleSwitcher(); } catch (e) {}
+      };
+      // _renderCircleSwitcher rides inside _process above — it was wired to this listener
+      // because a rename from another device otherwise left the Home-screen pill on the
+      // mechanical key-transform name ("My Girls" vs the renamed "Fordy Crew").
+      if (!window._glSnapSeen) { window._glSnapSeen = true; _process(); return; }
+      if (window._glSnapTimer) return;
+      window._glSnapTimer = setTimeout(_process, 2500);
     });
   });
 }
@@ -9687,7 +9699,13 @@ function startLocationSharing() {
         lastHistoryTs = now;
         const dateStr = new Date(now).toLocaleDateString('en-CA'); // yyyy-mm-dd, local date
         for (var _hi = 0; _hi < _circleKeys.length; _hi++) {
-          const histRef = fbPush(fbRef(db, `gl/${_circleKeys[_hi]}/history/${userId}/${dateStr}`));
+          // glh/ (top level), NOT gl/<room>/history. History is the single heaviest thing the app
+          // stores — 1.1 MB of the 1.5 MB tree within one day of defaulting it on — and the home
+          // screen keeps a listener on the whole gl/ tree. Keeping history inside gl/ meant every
+          // device re-downloaded, re-parsed and re-rendered a tree that is mostly history it never
+          // displays, on every write from anyone. glh/ is only ever read by the Trail sheet, on
+          // demand, for one person and one day at a time.
+          const histRef = fbPush(fbRef(db, `glh/${_circleKeys[_hi]}/${userId}/${dateStr}`));
           fbSet(histRef, { lat, lng, ts: now, acc: Math.round(hAccM) });
         }
       }
@@ -13890,7 +13908,7 @@ window._openHistoryForMember = function (uid, name, circleKey) {
     try {
       dateInput.min = new Date(Date.now() - HIST_MAX_AGE_DAYS * 86400000).toLocaleDateString('en-CA');
       if (isCrew && window._fb && window._fb.get) {
-        window._fb.get(window._fb.ref(window._fb.db, 'gl/' + room + '/history/' + uid)).then(function (s) {
+        window._fb.get(window._fb.ref(window._fb.db, 'glh/' + room + '/' + uid)).then(function (s) {
           var days = Object.keys(s.val() || {}).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort();
           if (days.length) dateInput.min = days[0];
         }).catch(function () {});
@@ -13931,7 +13949,7 @@ window._loadTrailRange = function () {
     }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lng) && p.t; });
   };
 
-  var histP = F.get(F.ref(F.db, 'gl/' + ctx.room + '/history/' + ctx.uid + '/' + dateStr))
+  var histP = F.get(F.ref(F.db, 'glh/' + ctx.room + '/' + ctx.uid + '/' + dateStr))
     .then(function (s) { return toPts(s.val()); }).catch(function () { return []; });
   // The live trail is a rolling window with no date bucket, so it only belongs to today.
   var trailP = isToday
