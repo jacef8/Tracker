@@ -1476,14 +1476,12 @@
       <div id="qt-title" style="font-size:15px;font-weight:800;color:var(--text)">Trail</div>
       <button onclick="document.getElementById('quick-trail-sheet').style.display='none'" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;padding:2px 4px">✕</button>
     </div>
-    <!-- Range picker — Recent (rolling ~2hr, this room) vs a specific past day (Crew-only,
-         since only a Crew's data persists that long). Hidden entirely outside a Crew, where
-         Recent is the only thing that's ever possible. -->
-    <div id="qt-range-row" style="display:none;gap:8px;margin-bottom:10px">
-      <button id="qt-range-recent" onclick="window._pickTrailRange('recent')" style="flex:1;padding:8px;border-radius:9px;border:1px solid var(--accent);background:var(--accent);color:#000;font-size:12px;font-weight:700;cursor:pointer">Recent</button>
-      <button id="qt-range-day" onclick="window._pickTrailRange('day')" style="flex:1;padding:8px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Pick a day</button>
-    </div>
-    <input id="qt-date-input" type="date" onchange="window._loadTrailRange('day')" style="display:none;width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:10px" />
+    <!-- One view, one date. The old "Recent" / "Pick a day" pair exposed an internal storage
+         split as a user-facing choice: "Recent" read the fine-grained 2-hour trail, "Pick a day"
+         read 30-day location history, and neither ever consulted the other. So a member with a
+         full morning of driving in history showed "No recent trail", because the wrong store was
+         asked. Now the date drives everything, and TODAY merges both stores. -->
+    <input id="qt-date-input" type="date" onchange="window._loadTrailRange()" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:10px" />
     <div id="qt-body"></div>
   </div>
 </div>
@@ -2552,7 +2550,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 488;
+var APP_BUILD = 489;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13785,11 +13783,13 @@ window._openHistoryForMember = function (uid, name, circleKey) {
   var isCrew = !!(circleKey || (typeof _isCircleMember === 'function' && groupName && _isCircleMember(groupName)));
   window._trailCtx = { uid: uid, name: name || 'Member', room: room, isCrew: isCrew };
   document.getElementById('qt-title').textContent = (name || 'Their') + ' trail';
-  var rangeRow = document.getElementById('qt-range-row');
-  if (rangeRow) rangeRow.style.display = isCrew ? 'flex' : 'none';
   var dateInput = document.getElementById('qt-date-input');
   if (dateInput) {
-    dateInput.style.display = 'none';
+    // Past days only exist for a Crew (that's where location history is kept), so outside one
+    // the picker is pointless — pin it to today and hide it rather than offering dates that
+    // can never hold anything.
+    dateInput.style.display = isCrew ? 'block' : 'none';
+    if (!isCrew) dateInput.value = new Date().toLocaleDateString('en-CA');
     // Default to TODAY. This used to default to yesterday (Date.now() - 86400000), so tapping
     // "Day" silently looked up a date you very likely weren't recording on yet and reported
     // "No trail for <date>" — indistinguishable from the feature being broken, which is exactly
@@ -13799,62 +13799,73 @@ window._openHistoryForMember = function (uid, name, circleKey) {
     // Can't pick a future date — there is never history there.
     dateInput.max = new Date().toLocaleDateString('en-CA');
   }
-  window._setTrailRangeButtons('recent');
   document.getElementById('quick-trail-sheet').style.display = 'flex';
-  window._loadTrailRange('recent');
+  window._loadTrailRange();
 };
-window._setTrailRangeButtons = function (mode) {
-  var r = document.getElementById('qt-range-recent'), d = document.getElementById('qt-range-day');
-  if (r) { r.style.background = mode === 'recent' ? 'var(--accent)' : 'var(--bg)'; r.style.color = mode === 'recent' ? '#000' : 'var(--text)'; r.style.borderColor = mode === 'recent' ? 'var(--accent)' : 'var(--border)'; }
-  if (d) { d.style.background = mode === 'day' ? 'var(--accent)' : 'var(--bg)'; d.style.color = mode === 'day' ? '#000' : 'var(--text)'; d.style.borderColor = mode === 'day' ? 'var(--accent)' : 'var(--border)'; }
-};
-window._pickTrailRange = function (mode) {
-  window._setTrailRangeButtons(mode);
-  var dateInput = document.getElementById('qt-date-input');
-  if (dateInput) dateInput.style.display = mode === 'day' ? 'block' : 'none';
-  window._loadTrailRange(mode);
-};
-window._loadTrailRange = function (mode) {
+// Kept as no-op shims: older cached pages and any stray call site still reference these, and a
+// ReferenceError inside an onclick silently does nothing, which is exactly the failure mode
+// this whole area has been plagued by.
+window._setTrailRangeButtons = function () {};
+window._pickTrailRange = function () { window._loadTrailRange(); };
+// One view for one date. For TODAY it merges both stores; for a past date, history is all
+// there is.
+//
+// The old split asked exactly one store and reported nothing when that store was empty, even
+// though the other one held the answer. "Recent" read the fine-grained 2-hour trail; "Pick a
+// day" read 30-day location history; neither consulted the other. So a member with a full
+// morning of driving in history was told "No recent trail" — a storage detail leaking out as a
+// user-facing dead end.
+//
+// Both stores use the same point shape but different keys: `ts` on disk, `t` in the track
+// helpers (_trackStats/_drawSavedTrack key off `.t` for every track source). Getting that wrong
+// once produced NaN stats for every day lookup, so the mapping happens in exactly one place.
+window._loadTrailRange = function () {
   var ctx = window._trailCtx; if (!ctx) return;
   var bodyEl = document.getElementById('qt-body');
   bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
-  if (mode === 'day') {
-    var dateStr = (document.getElementById('qt-date-input') || {}).value;
-    if (!dateStr) return;
-    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + ctx.room + '/history/' + ctx.uid + '/' + dateStr)).then(function (snap) {
-      var raw = snap.val() || {};
-      // NOTE: field is `t`, not `ts` — _trackStats/_drawSavedTrack both key off `.t` for every
-      // other track source (recorded Tracks, live recording); this was mismatched here once,
-      // which silently produced NaN duration/speed stats for every day lookup.
-      var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
-        .sort(function (a, b) { return a.t - b.t; });
-      _renderTrailResult(pts, dateStr, 'No trail for ' + dateStr + ' — either nothing was recorded, or Location history wasn\'t on yet.');
-    }).catch(function () { bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>'; });
-  } else {
-    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + ctx.room + '/trails/' + ctx.uid)).then(function (snap) {
-      var raw = snap.val() || {};
-      var now = Date.now();
-      var all = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
-        .sort(function (a, b) { return a.t - b.t; });
-      var pts = all.filter(function (p) { return now - p.t < TRAIL_MAX_MS; });
-      // Fall back to the whole trail once the 2-hour window comes up empty.
-      //
-      // TRAIL_MAX_MS is a RETENTION rule, not an answer to "where have they been" — and the
-      // pruning that enforces it only runs when a new point is written, so a parked phone keeps
-      // its trail indefinitely while every point ages out of the window. Reported on-device:
-      // a member with 668 stored points, none newer than 167 minutes, showed "No recent trail"
-      // — the app holding a full morning's driving and flatly denying it. Showing the real span
-      // is strictly better than showing nothing, as long as the label is honest about the age.
-      var stale = false;
-      if (pts.length < 2 && all.length >= 2) { pts = all; stale = true; }
-      var spanMin = pts.length ? Math.round((pts[pts.length - 1].t - pts[0].t) / 60000) : 0;
-      var agoMin  = pts.length ? Math.round((now - pts[pts.length - 1].t) / 60000) : 0;
-      var label = stale
-        ? (spanMin + ' min, ending ' + (agoMin < 60 ? agoMin + 'm' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm') + ' ago')
-        : ('last ' + spanMin + ' min');
-      _renderTrailResult(pts, label, 'No trail recorded for ' + _escHtml(ctx.name) + ' yet — this builds up as they move, so check back in a bit.');
-    }).catch(function () { bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>'; });
-  }
+  var dateStr = (document.getElementById('qt-date-input') || {}).value || new Date().toLocaleDateString('en-CA');
+  var isToday = dateStr === new Date().toLocaleDateString('en-CA');
+  var F = window._fb;
+  var toPts = function (raw) {
+    return Object.keys(raw || {}).map(function (k) {
+      var p = raw[k] || {};
+      return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc };
+    }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lng) && p.t; });
+  };
+
+  var histP = F.get(F.ref(F.db, 'gl/' + ctx.room + '/history/' + ctx.uid + '/' + dateStr))
+    .then(function (s) { return toPts(s.val()); }).catch(function () { return []; });
+  // The live trail is a rolling window with no date bucket, so it only belongs to today.
+  var trailP = isToday
+    ? F.get(F.ref(F.db, 'gl/' + ctx.room + '/trails/' + ctx.uid))
+        .then(function (s) { return toPts(s.val()); }).catch(function () { return []; })
+    : Promise.resolve([]);
+
+  Promise.all([histP, trailP]).then(function (res) {
+    var merged = res[0].concat(res[1]).sort(function (a, b) { return a.t - b.t; });
+    // Drop near-duplicates. The two stores record the same movement at different resolutions,
+    // so a merged series would otherwise double up wherever both were active.
+    var pts = [];
+    for (var i = 0; i < merged.length; i++) {
+      if (!pts.length || (merged[i].t - pts[pts.length - 1].t) > 3000) pts.push(merged[i]);
+    }
+    var now = Date.now();
+    var label = dateStr;
+    if (pts.length >= 2) {
+      var spanMin = Math.round((pts[pts.length - 1].t - pts[0].t) / 60000);
+      var agoMin  = Math.round((now - pts[pts.length - 1].t) / 60000);
+      var ago = agoMin < 2 ? 'just now'
+              : agoMin < 60 ? agoMin + 'm ago'
+              : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
+      label = isToday ? (spanMin + ' min · last point ' + ago) : (dateStr + ' · ' + spanMin + ' min');
+    }
+    _renderTrailResult(pts, label,
+      isToday
+        ? 'Nothing recorded for ' + _escHtml(ctx.name) + ' today yet — this builds up as they move.'
+        : 'No trail for ' + dateStr + ' — either nothing was recorded, or Location history wasn\'t on yet.');
+  }).catch(function () {
+    bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>';
+  });
 };
 function _renderTrailResult(pts, label, emptyMsg) {
   var ctx = window._trailCtx; if (!ctx) return;
