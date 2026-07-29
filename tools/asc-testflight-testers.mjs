@@ -151,9 +151,15 @@ if (mode === 'diagnose' || mode === 'addgroup') {
     process.exit(0);
   }
 
-  // addgroup: put them in the build-carrying group with the most builds, then re-invite.
+  // addgroup: prefer an EXTERNAL group, then most builds.
+  //
+  // Sorting by build count alone picks the wrong group here. This app has an internal group
+  // with 13 builds and an external one with 1 — but internal testers must be members of the
+  // App Store Connect team, so an ordinary email cannot be one. Verified against a tester who
+  // actually works: INSTALLED, and in the EXTERNAL group only. Build count is a tiebreaker,
+  // never the primary key.
   const target = groupInfo.filter(g => g.buildCount > 0 && !g.hasTester)
-    .sort((a, b) => b.buildCount - a.buildCount)[0];
+    .sort((a, b) => (a.internal === b.internal) ? (b.buildCount - a.buildCount) : (a.internal ? 1 : -1))[0];
   if (!target) { console.error('\nNothing to do — no build-carrying group they are missing from.'); process.exit(1); }
 
   console.log(`\nAdding ${argEmail} to "${target.name}"…`);
