@@ -26,8 +26,8 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup'].includes(mode)) {
-  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup] [email] [--all]');
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore'].includes(mode)) {
+  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore] [email] [--all]');
   process.exit(2);
 }
 
@@ -74,6 +74,62 @@ if (!apps.ok || !apps.json?.data?.length) {
 }
 const app = apps.json.data[0];
 console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
+
+// ── builds / assignbuild / appstore ───────────────────────────────────────────────────
+// These don't need the tester roster, so they run before it's fetched.
+if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
+  if (mode === 'appstore') {
+    // What's actually standing between this app and the public App Store.
+    const vers = await asc('GET', `/apps/${app.id}/appStoreVersions?limit=10`);
+    const list = vers.json?.data || [];
+    console.log(`App Store versions: ${list.length}`);
+    for (const v of list) {
+      const a = v.attributes || {};
+      console.log(`  ${String(a.versionString || '?').padEnd(10)} state=${a.appStoreState || a.appVersionState || '?'}  platform=${a.platform || '?'}  created=${(a.createdDate || '').slice(0, 10)}`);
+    }
+    if (!list.length) console.log('  (none — the app has never had an App Store version created)');
+
+    // Beta App Review gates EXTERNAL TestFlight, and is a separate queue from App Store review.
+    const bars = await asc('GET', `/apps/${app.id}/builds?limit=5&include=betaAppReviewSubmission&sort=-version`);
+    const inc = bars.json?.included || [];
+    console.log(`\nBeta App Review submissions on the 5 newest builds: ${inc.length}`);
+    for (const s of inc) console.log(`  ${s.id}  state=${s.attributes?.betaReviewState || '?'}`);
+    process.exit(0);
+  }
+
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const groups = groupsRes.json?.data || [];
+  const ext = groups.filter(g => !g.attributes?.isInternalGroup);
+
+  const buildsRes = await asc('GET', `/apps/${app.id}/builds?limit=10&sort=-version`);
+  const builds = buildsRes.json?.data || [];
+  console.log(`Newest ${builds.length} build(s):`);
+  const groupBuilds = {};
+  for (const g of groups) {
+    const gb = await asc('GET', `/betaGroups/${g.id}/builds?limit=200`);
+    groupBuilds[g.id] = new Set((gb.json?.data || []).map(b => b.id));
+  }
+  for (const b of builds) {
+    const a = b.attributes || {};
+    const inGroups = groups.filter(g => groupBuilds[g.id].has(b.id)).map(g => g.attributes?.name).join(', ') || '(none)';
+    console.log(`  v${String(a.version || '?').padEnd(5)} ${String(a.processingState || '?').padEnd(11)} expired=${String(!!a.expired).padEnd(5)} uploaded=${(a.uploadedDate || '').slice(0, 16)}  groups: ${inGroups}`);
+  }
+
+  if (mode === 'builds') { console.log('\n(builds mode — nothing was changed)'); process.exit(0); }
+
+  // assignbuild: attach the newest VALID, unexpired build to every external group missing it.
+  const newest = builds.find(b => (b.attributes?.processingState === 'VALID') && !b.attributes?.expired);
+  if (!newest) { console.error('\nNo VALID unexpired build to assign.'); process.exit(1); }
+  console.log(`\nAssigning build v${newest.attributes?.version} to external group(s)…`);
+  let bad = 0;
+  for (const g of ext) {
+    if (groupBuilds[g.id].has(newest.id)) { console.log(`  = already in "${g.attributes?.name}"`); continue; }
+    const r = await asc('POST', `/betaGroups/${g.id}/relationships/builds`, { data: [{ type: 'builds', id: newest.id }] });
+    if (r.ok) console.log(`  + added to "${g.attributes?.name}"`);
+    else { console.error(`  ! "${g.attributes?.name}" FAILED (HTTP ${r.status}): ${r.json?.errors?.map(e => e.detail || e.title).join('; ') || r.text.slice(0, 200)}`); bad++; }
+  }
+  process.exit(bad ? 1 : 0);
+}
 
 // Page through every tester — a short list today shouldn't silently truncate later.
 let testers = [], next = `/betaTesters?filter[apps]=${app.id}&limit=200`;
