@@ -26,8 +26,8 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing'].includes(mode)) {
-  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing] [email] [--all]');
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink'].includes(mode)) {
+  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
 
@@ -74,6 +74,39 @@ if (!apps.ok || !apps.json?.data?.length) {
 }
 const app = apps.json.data[0];
 console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
+
+// ── publiclink ────────────────────────────────────────────────────────────────────────
+// A TestFlight public link is a plain URL that installs the app — no invitation email, no
+// redeem code, nothing to be lost in a spam folder. Reported symptom: a tester opened the
+// TestFlight app directly, landed on its Redeem screen, and had no code to type, because the
+// invitation flow expects you to arrive from the email link rather than from the app.
+//
+// Read-only unless --enable is passed: turning it on makes the build installable by anyone who
+// has the URL (up to the limit), which is a real exposure decision, not a formatting one.
+if (mode === 'publiclink') {
+  const enable = process.argv.includes('--enable');
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const groups = (groupsRes.json?.data || []).filter(g => !g.attributes?.isInternalGroup);
+  if (!groups.length) { console.error('No external beta group to publish.'); process.exit(1); }
+  for (const g of groups) {
+    const a = g.attributes || {};
+    console.log(`"${a.name}"  publicLinkEnabled=${!!a.publicLinkEnabled}  limit=${a.publicLinkLimitEnabled ? a.publicLinkLimit : 'none'}`);
+    if (a.publicLink) console.log(`   ${a.publicLink}`);
+    if (!enable || a.publicLinkEnabled) continue;
+    // 100 is TestFlight's external ceiling anyway; capping makes the exposure explicit rather
+    // than unbounded-by-default.
+    const r = await asc('PATCH', `/betaGroups/${g.id}`, {
+      data: { type: 'betaGroups', id: g.id,
+              attributes: { publicLinkEnabled: true, publicLinkLimitEnabled: true, publicLinkLimit: 100 } },
+    });
+    if (!r.ok) {
+      console.error(`   ! enable FAILED (HTTP ${r.status}): ${r.json?.errors?.map(e => e.detail || e.title).join('; ') || r.text.slice(0, 300)}`);
+      continue;
+    }
+    console.log(`   + enabled -> ${r.json?.data?.attributes?.publicLink || '(link pending, re-run to read it)'}`);
+  }
+  process.exit(0);
+}
 
 // ── listing ───────────────────────────────────────────────────────────────────────────
 // Exactly which App Store listing fields are filled and which are blank. PREPARE_FOR_SUBMISSION
