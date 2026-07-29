@@ -1,0 +1,34 @@
+name: TestFlight testers
+
+# Manual only. "list" is read-only and sends nothing; "invite" sends real, unrecallable email
+# to real people, so it is never the default and never runs automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "list (read-only) or invite (SENDS Apple's invitation email)"
+        required: true
+        default: list
+        type: choice
+        options: [list, invite]
+      all:
+        description: "invite mode only — also re-invite testers who already installed"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  testers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+        run: |
+          node tools/asc-testflight-testers.mjs "${{ inputs.action }}" ${{ inputs.all && '--all' || '' }}
