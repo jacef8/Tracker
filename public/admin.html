@@ -495,10 +495,46 @@ function _renderStatDetail(kind) {
   }
 
   if (kind === 'pins') {
-    var pr = keys.map(function(gk){ return { gk: gk, pins: all[gk] && all[gk].pins ? Object.keys(all[gk].pins).length : 0 }; })
-      .filter(function(r){ return r.pins > 0; }).sort(function(a,b){ return b.pins - a.pins; });
-    var pi = pr.map(function(r){ return _statRow(_esc(_gname(r.gk)), r.pins + ' pin' + (r.pins!==1?'s':''), "goToGroup('" + r.gk + "')"); }).join('');
-    return _statWrap('Pins by group', pi);
+    // Every pin, not just a count per group. "3 pins" answers nothing on its own — you still
+    // have to go hunting to find out WHAT they are, which is the actual question when you tap
+    // a number. Group headers stay as dividers so the by-group view isn't lost.
+    var byGroup = {};
+    var totalPins = 0;
+    keys.forEach(function (gk) {
+      var pins = all[gk] && all[gk].pins;
+      if (!pins) return;
+      Object.keys(pins).forEach(function (pid) {
+        var p = pins[pid] || {};
+        (byGroup[gk] = byGroup[gk] || []).push({ id: pid, p: p });
+        totalPins++;
+      });
+    });
+    var gks = Object.keys(byGroup).sort(function (a, b) { return byGroup[b].length - byGroup[a].length; });
+    if (!gks.length) return _statWrap('All pins', '');
+    var out = gks.map(function (gk) {
+      var list = byGroup[gk].sort(function (a, b) { return (b.p.ts || 0) - (a.p.ts || 0); });
+      var head = '<div onclick="goToGroup(\'' + gk + '\')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 4px;padding-bottom:4px;border-bottom:1px solid rgba(240,165,0,.25)">' +
+        '<span style="font-size:12px;font-weight:800;color:var(--accent)">' + _esc(_gname(gk)) + '</span>' +
+        '<span style="font-size:11px;color:var(--muted)">' + list.length + ' pin' + (list.length !== 1 ? 's' : '') + '</span></div>';
+      var rows = list.map(function (it) {
+        var p = it.p;
+        var lat = (typeof p.lat === 'number') ? p.lat.toFixed(5) : '?';
+        var lng = (typeof p.lng === 'number') ? p.lng.toFixed(5) : '?';
+        var who = p.by || p.name || p.author || '';
+        var when = p.ts ? timeAgo(p.ts) : '';
+        var label = p.label || p.name || p.cat || 'Pin';
+        // Tapping a pin flies the overview map to it — the map is the point of a pin.
+        var jump = (typeof p.lat === 'number' && typeof p.lng === 'number')
+          ? ' onclick="ovFlyTo(' + p.lng + ',' + p.lat + ')" style="cursor:pointer;' : ' style="';
+        return '<div' + jump + 'padding:7px 0 7px 8px;border-bottom:1px solid rgba(255,255,255,.05)">' +
+          '<div style="font-size:12.5px;color:var(--text)">' + _esc(label) +
+            (p.cat && p.cat !== label ? ' <span style="color:var(--muted)">&middot; ' + _esc(p.cat) + '</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + lat + ', ' + lng +
+            (who ? ' &middot; ' + _esc(who) : '') + (when ? ' &middot; ' + when : '') + '</div></div>';
+      }).join('');
+      return head + rows;
+    }).join('');
+    return _statWrap('All pins (' + totalPins + ')', out);
   }
 
   if (kind === 'messages') {
