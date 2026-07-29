@@ -285,15 +285,24 @@ if (mode === 'diagnose' || mode === 'addgroup') {
     process.exit(0);
   }
 
-  // addgroup: prefer an EXTERNAL group, then most builds.
+  // Already in a group that has builds? Then there is nothing wrong and nothing to do.
   //
-  // Sorting by build count alone picks the wrong group here. This app has an internal group
-  // with 13 builds and an external one with 1 — but internal testers must be members of the
-  // App Store Connect team, so an ordinary email cannot be one. Verified against a tester who
-  // actually works: INSTALLED, and in the EXTERNAL group only. Build count is a tiebreaker,
-  // never the primary key.
-  const target = groupInfo.filter(g => g.buildCount > 0 && !g.hasTester)
-    .sort((a, b) => (a.internal === b.internal) ? (b.buildCount - a.buildCount) : (a.internal ? 1 : -1))[0];
+  // This check was missing, so a correctly-configured tester still got "fixed": the only group
+  // they were missing from was the INTERNAL one, and the script dutifully tried to add them
+  // there and took a 409 "Tester(s) cannot be assigned". Internal testers must be App Store
+  // Connect team members, so an ordinary email can never join that group — attempting it is
+  // always wrong, not merely unlucky.
+  const settled = groupInfo.find(g => g.hasTester && g.buildCount > 0);
+  if (settled) {
+    console.log(`\nAlready in "${settled.name}" (${settled.buildCount} build(s)) — nothing to fix.`);
+    console.log(`State is ${who.state}${/INVITED/i.test(who.state) ? ' — they have an installable build and simply have not redeemed the invite yet.' : '.'}`);
+    process.exit(0);
+  }
+
+  // EXTERNAL groups only. An internal group can hold more builds and still be the wrong answer,
+  // for the team-membership reason above — so it is excluded outright rather than ranked lower.
+  const target = groupInfo.filter(g => g.buildCount > 0 && !g.hasTester && !g.internal)
+    .sort((a, b) => b.buildCount - a.buildCount)[0];
   if (!target) { console.error('\nNothing to do — no build-carrying group they are missing from.'); process.exit(1); }
 
   console.log(`\nAdding ${argEmail} to "${target.name}"…`);
