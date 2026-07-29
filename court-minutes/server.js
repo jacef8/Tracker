@@ -54,7 +54,7 @@ async function runJob(job, audioFiles, docketText, meta) {
       const text = await transcribeFile(f.path, f.originalname, (done, total) => {
         setStage(job, 'transcribing',
           `Transcribing ${f.originalname} (file ${i + 1} of ${audioFiles.length}) — segment ${done}/${total}`);
-      });
+      }, docketText);
       parts.push(`--- Recording: ${f.originalname} ---\n${text}`);
     }
     job.transcript = parts.join('\n\n');

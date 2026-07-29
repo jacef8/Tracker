@@ -45,7 +45,24 @@ async function chunkAudio(inputPath, workDir) {
     .map(f => path.join(workDir, f));
 }
 
-async function transcribeChunk(filePath) {
+// Build a vocabulary hint from the docket for Whisper's `prompt` parameter —
+// it biases the model toward the correct spellings of names, attorneys, and
+// case numbers, which is where courtroom transcription errs most. Whisper
+// keeps only the last ~224 tokens of the prompt, so the hint is kept short
+// and recent conversational context (prevTail) goes last.
+function buildVocabularyHint(docketText) {
+  if (!docketText) return '';
+  const words = docketText.match(/\b(?:[A-Z][a-zA-Z'’-]+|\d{2,4}-[A-Z]{1,3}-?\d+)\b/g) || [];
+  const seen = new Set();
+  const vocab = [];
+  for (const w of words) {
+    const key = w.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); vocab.push(w); }
+  }
+  return vocab.join(', ').slice(0, 400);
+}
+
+async function transcribeChunk(filePath, promptHint) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set (needed for audio transcription)');
 
@@ -55,6 +72,7 @@ async function transcribeChunk(filePath) {
   form.append('model', WHISPER_MODEL);
   form.append('response_format', 'verbose_json');
   form.append('language', 'en');
+  if (promptHint) form.append('prompt', promptHint);
 
   const res = await fetch(`${OPENAI_BASE}/audio/transcriptions`, {
     method: 'POST',
@@ -77,8 +95,9 @@ function fmtTime(totalSeconds) {
 }
 
 // Transcribe one uploaded recording. onProgress(done, total) reports chunk
-// progress. Returns timestamped transcript text like "[00:14:32] ...".
-async function transcribeFile(inputPath, originalName, onProgress) {
+// progress; docketText (optional) seeds a spelling-bias vocabulary hint.
+// Returns timestamped transcript text like "[00:14:32] ...".
+async function transcribeFile(inputPath, originalName, onProgress, docketText) {
   const stat = await fs.promises.stat(inputPath);
   let chunks;
   let workDir = null;
@@ -97,11 +116,19 @@ async function transcribeFile(inputPath, originalName, onProgress) {
     );
   }
 
+  const vocabHint = buildVocabularyHint(docketText);
   const lines = [];
+  let prevTail = '';
   try {
     for (let i = 0; i < chunks.length; i++) {
-      const result = await transcribeChunk(chunks[i]);
+      // Vocabulary first, running context last — Whisper keeps the prompt's tail.
+      const promptHint = [vocabHint, prevTail].filter(Boolean).join('\n');
+      const result = await transcribeChunk(chunks[i], promptHint);
       const offset = i * CHUNK_SECONDS;
+      const chunkText = Array.isArray(result.segments)
+        ? result.segments.map(s => (s.text || '').trim()).join(' ')
+        : (result.text || '');
+      prevTail = chunkText.slice(-300);
       if (Array.isArray(result.segments) && result.segments.length) {
         for (const seg of result.segments) {
           const text = (seg.text || '').trim();
