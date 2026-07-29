@@ -233,9 +233,23 @@ if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
   if (!newest) { console.error('\nNo VALID unexpired build to assign.'); process.exit(1); }
   console.log(`\nAssigning build v${newest.attributes?.version} to external group(s)…`);
   let bad = 0;
+  // Sanity-check the id before blaming the relationship call. Apple answered
+  // "no resource of type 'builds' with id <uuid>" for an id it had just returned from
+  // /builds?filter[app], twice, minutes apart — so the first question is whether the id
+  // resolves on its own at all.
+  const probe = await asc('GET', `/builds/${newest.id}`);
+  console.log(`  build ${newest.id} direct GET -> HTTP ${probe.status}`
+    + (probe.ok ? ` (processing=${probe.json?.data?.attributes?.processingState})` : ''));
+
   for (const g of ext) {
     if (groupBuilds[g.id].has(newest.id)) { console.log(`  = already in "${g.attributes?.name}"`); continue; }
-    const r = await asc('POST', `/betaGroups/${g.id}/relationships/builds`, { data: [{ type: 'builds', id: newest.id }] });
+    let r = await asc('POST', `/betaGroups/${g.id}/relationships/builds`, { data: [{ type: 'builds', id: newest.id }] });
+    if (!r.ok) {
+      // Same association, stated from the other side. The two endpoints are not always
+      // interchangeable in practice, and one succeeding where the other 404s is cheap to try.
+      console.log(`  … group->build gave HTTP ${r.status}; trying build->group`);
+      r = await asc('POST', `/builds/${newest.id}/relationships/betaGroups`, { data: [{ type: 'betaGroups', id: g.id }] });
+    }
     if (r.ok) console.log(`  + added to "${g.attributes?.name}"`);
     else { console.error(`  ! "${g.attributes?.name}" FAILED (HTTP ${r.status}): ${r.json?.errors?.map(e => e.detail || e.title).join('; ') || r.text.slice(0, 200)}`); bad++; }
   }
