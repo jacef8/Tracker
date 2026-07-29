@@ -74,9 +74,28 @@ platform :ios do
       }
     )
 
+    # Upload AND hand it to the external testers. Uploading alone is not shipping.
+    #
+    # This lane used to stop at upload, and a build that is merely uploaded reaches nobody:
+    # TestFlight distributes to GROUPS, and nothing here ever added the build to one. The result
+    # was every build from v6 to v17 sitting in the internal group — which contains no real
+    # testers — while all 13 external testers stayed on v5 from 16 July. Thirteen days of
+    # feedback against stale code, and it looked like everything was working.
+    #
+    # skip_waiting_for_build_processing MUST be false here: fastlane rejects combining it with
+    # distribute_external, and Apple cannot hand out a build it has not finished processing. It
+    # makes the job longer (processing is usually 5-15 min) but the job then means what it says —
+    # green equals "testers can install it", not "the bytes arrived somewhere".
+    #
+    # The group name is hardcoded on purpose. If it is ever renamed this fails loudly, which is
+    # strictly better than the silent non-distribution it replaces.
     upload_to_testflight(
       api_key: api_key,
-      skip_waiting_for_build_processing: true
+      skip_waiting_for_build_processing: false,
+      distribute_external: true,
+      groups: ["Family Testers (External)"],
+      # Required by Apple for external distribution — it becomes the "What to Test" note.
+      changelog: ENV["CHANGELOG"] || "Bug fixes and improvements."
     )
   end
 end
