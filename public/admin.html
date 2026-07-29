@@ -960,10 +960,18 @@ function copyLog() {
   });
 }
 
+// Deletes SURFACE their failures. Every remove here used to be fire-and-forget, and a
+// permission denial produced the worst possible UX: the button "worked", the log said
+// DELETED, and the data was still there — reported verbatim as "I'm hitting clear and it's
+// not clearing". If a rule denies the write, say so, loudly, with the path.
 window.deleteNode = function(path, label) {
   if (confirm('Delete ' + label + '?\nPath: ' + path + '\n\nCannot be undone.')) {
-    window._fb.remove(window._fb.ref(window._fb.db, path));
-    addLog('DELETED: ' + path, 'warn');
+    window._fb.remove(window._fb.ref(window._fb.db, path))
+      .then(function () { addLog('DELETED: ' + path, 'warn'); })
+      .catch(function (e) {
+        addLog('DELETE FAILED: ' + path + ' — ' + (e && e.message), 'error');
+        alert('Delete FAILED (' + label + '):\n' + (e && e.message) + '\n\nPath: ' + path);
+      });
   }
 };
 
@@ -1348,9 +1356,21 @@ window.clearAllPins = function() {
 // untouched, unlike nukeEverything() which deletes the whole gl/ tree.
 window.clearAllUserSessions = function() {
   var fb = window._fb;
-  fb.remove(fb.ref(fb.db, 'gl/_sessions'));
-  addLog('Cleared all user activity history', 'warn');
-  try { _sessionsData = {}; renderUsers(); } catch (e) {}
+  // The local blank happens only AFTER the server confirms. Blanking optimistically hid the
+  // failure: the rules only granted child-level writes on _sessions, so this parent-level
+  // remove was permission-denied, the UI cleared for a moment, and the live subscription
+  // repopulated it from the server — reported as "hitting clear and it's not clearing". The
+  // rules now carry a delete-only parent grant, and the catch makes any future denial
+  // visible instead of cosmetic.
+  fb.remove(fb.ref(fb.db, 'gl/_sessions'))
+    .then(function () {
+      addLog('Cleared all user activity history', 'warn');
+      try { _sessionsData = {}; renderUsers(); } catch (e) {}
+    })
+    .catch(function (e) {
+      addLog('Clear User History FAILED — ' + (e && e.message), 'error');
+      alert('Clear User History FAILED:\n' + (e && e.message));
+    });
 };
 
 function renderAllData(all) {

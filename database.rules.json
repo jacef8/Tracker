@@ -61,7 +61,13 @@
       "_directory":          { "$acct": { ".write": "auth != null" } },
       "_invites":            { "$acct": { ".write": "auth != null" } },
       "_presence":           { "$uid":  { ".write": "auth != null" } },
-      "_sessions":           { "$sid":  { ".write": "auth != null" } },
+      // Parent grant is DELETE-ONLY (!newData.exists()): the admin's "Clear User History"
+      // removes the whole node, and a write aimed at the parent is never satisfied by a
+      // child-level grant — the button failed silently for exactly that reason. A plain
+      // parent-level "auth != null" would also let any client overwrite everyone's sessions
+      // in one write; delete-only permits the wipe and nothing else.
+      "_sessions":           { ".write": "auth != null && !newData.exists()",
+                               "$sid":  { ".write": "auth != null" } },
       "_users":              { "$acct": { ".write": "auth != null" } },
 
       "$room": {
@@ -77,7 +83,8 @@
         "favSubs":      { "$uid": { ".write": "auth != null" } },
         "history":      { "$uid": { ".write": "auth != null" } },
         "pushSubs":     { "$uid": { ".write": "auth != null" } },
-        "trails":       { "$uid": { ".write": "auth != null" } },
+        "trails":       { ".write": "auth != null && !newData.exists()",
+                          "$uid": { ".write": "auth != null" } },
         "voice":        { "$uid": { ".write": "auth != null" } },
         "chat":         { ".write": "auth != null" },
         "closed":       { ".write": "auth != null" },
