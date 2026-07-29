@@ -26,7 +26,7 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify'].includes(mode)) {
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add'].includes(mode)) {
   console.error('usage: asc-testflight-testers.mjs [verify|list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
@@ -74,6 +74,43 @@ if (!apps.ok || !apps.json?.data?.length) {
 }
 const app = apps.json.data[0];
 console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
+
+// ── add ───────────────────────────────────────────────────────────────────────────────
+// Create a brand-new tester and put them straight into the external group. For an external
+// group, that single POST is also what makes Apple send the invitation email — there is no
+// separate "send" step. Idempotent-ish: if the email already exists as a tester, fall through
+// to the same group-attach the addgroup mode does.
+if (mode === 'add') {
+  if (!argEmail) { console.error('add needs an email: node asc-testflight-testers.mjs add someone@example.com'); process.exit(2); }
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const ext = (groupsRes.json?.data || []).filter(g => !g.attributes?.isInternalGroup)
+    .sort((a, b) => 0)[0];
+  if (!ext) { console.error('No external beta group exists.'); process.exit(1); }
+
+  const create = await asc('POST', '/betaTesters', {
+    data: {
+      type: 'betaTesters',
+      attributes: { email: argEmail },
+      relationships: { betaGroups: { data: [{ type: 'betaGroups', id: ext.id }] } },
+    },
+  });
+  if (create.ok) {
+    console.log(`+ created ${argEmail} in "${ext.attributes?.name}" — Apple is sending the invitation email now.`);
+    process.exit(0);
+  }
+  const detail = create.json?.errors?.map(e => e.detail || e.title).join('; ') || create.text.slice(0, 300);
+  if (create.status !== 409) { console.error(`! create FAILED (HTTP ${create.status}): ${detail}`); process.exit(1); }
+
+  // Already a tester — attach them to the group instead, which also (re)invites.
+  console.log(`= ${argEmail} already exists (${detail}) — attaching to "${ext.attributes?.name}" instead.`);
+  const found = await asc('GET', `/betaTesters?filter[email]=${encodeURIComponent(argEmail)}&filter[apps]=${app.id}&limit=5`);
+  const who = (found.json?.data || [])[0];
+  if (!who) { console.error('! could not look the existing tester up'); process.exit(1); }
+  const attach = await asc('POST', `/betaGroups/${ext.id}/relationships/betaTesters`, { data: [{ type: 'betaTesters', id: who.id }] });
+  console.log(attach.ok ? '+ attached — invitation on its way'
+    : `! attach FAILED (HTTP ${attach.status}): ${attach.json?.errors?.map(e => e.detail || e.title).join('; ') || attach.text.slice(0, 200)}`);
+  process.exit(attach.ok ? 0 : 1);
+}
 
 // ── publiclink ────────────────────────────────────────────────────────────────────────
 // A TestFlight public link is a plain URL that installs the app — no invitation email, no
