@@ -24,8 +24,10 @@ const BUNDLE_ID = 'com.groundlink.ios';
 
 const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
-if (!['list', 'invite'].includes(mode)) {
-  console.error('usage: asc-testflight-testers.mjs [list|invite] [--all]');
+// Positional arg for diagnose/addgroup: the tester's email.
+const argEmail = (process.argv[3] || '').trim().toLowerCase();
+if (!['list', 'invite', 'diagnose', 'addgroup'].includes(mode)) {
+  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup] [email] [--all]');
   process.exit(2);
 }
 
@@ -102,6 +104,80 @@ for (const r of rows) console.log(`  ${r.state.padEnd(22)} ${r.email.padEnd(34)}
 if (mode === 'list') {
   console.log('\n(list mode — nothing was sent)');
   process.exit(0);
+}
+
+// ── diagnose / addgroup ───────────────────────────────────────────────────────────────
+// "Tester has no installable build" (HTTP 409 on invite) means the tester isn't in any beta
+// group that has a build attached — they're registered, but there is nothing for them to
+// install, so Apple refuses to invite them. Show which groups exist, how many builds each
+// has, and which groups this tester belongs to.
+if (mode === 'diagnose' || mode === 'addgroup') {
+  if (!argEmail) { console.error(`${mode} needs an email: node asc-testflight-testers.mjs ${mode} someone@example.com`); process.exit(2); }
+  const who = rows.find(r => r.email.toLowerCase() === argEmail);
+  if (!who) { console.error(`no tester with email ${argEmail}`); process.exit(1); }
+
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const groups = groupsRes.json?.data || [];
+  console.log(`\nBeta groups for this app: ${groups.length}`);
+
+  const groupInfo = [];
+  for (const g of groups) {
+    const builds = await asc('GET', `/betaGroups/${g.id}/builds?limit=200`);
+    const members = await asc('GET', `/betaGroups/${g.id}/betaTesters?limit=200`);
+    const memberIds = new Set((members.json?.data || []).map(m => m.id));
+    const info = {
+      id: g.id,
+      name: g.attributes?.name || '(unnamed)',
+      internal: !!g.attributes?.isInternalGroup,
+      buildCount: (builds.json?.data || []).length,
+      hasTester: memberIds.has(who.id),
+    };
+    groupInfo.push(info);
+    console.log(`  ${info.name.padEnd(28)} builds=${String(info.buildCount).padEnd(4)} internal=${String(info.internal).padEnd(6)} has-${argEmail}=${info.hasTester}`);
+  }
+
+  console.log(`\n${who.email}: state=${who.state}, in ${groupInfo.filter(g => g.hasTester).length} group(s)`);
+
+  if (mode === 'diagnose') {
+    const fixable = groupInfo.filter(g => g.buildCount > 0 && !g.hasTester);
+    if (!groupInfo.some(g => g.buildCount > 0)) {
+      console.log('\nNo group has any build attached — that is the blocker, not this tester.');
+    } else if (fixable.length) {
+      console.log(`\nFix: add them to a group that HAS builds, e.g. "${fixable[0].name}":`);
+      console.log(`  node tools/asc-testflight-testers.mjs addgroup ${argEmail}`);
+    } else {
+      console.log('\nThey are already in a group with builds — the 409 has another cause.');
+    }
+    process.exit(0);
+  }
+
+  // addgroup: put them in the build-carrying group with the most builds, then re-invite.
+  const target = groupInfo.filter(g => g.buildCount > 0 && !g.hasTester)
+    .sort((a, b) => b.buildCount - a.buildCount)[0];
+  if (!target) { console.error('\nNothing to do — no build-carrying group they are missing from.'); process.exit(1); }
+
+  console.log(`\nAdding ${argEmail} to "${target.name}"…`);
+  const add = await asc('POST', `/betaGroups/${target.id}/relationships/betaTesters`, {
+    data: [{ type: 'betaTesters', id: who.id }],
+  });
+  if (!add.ok) {
+    console.error(`  ! FAILED (HTTP ${add.status}): ${add.json?.errors?.map(e => e.detail || e.title).join('; ') || add.text.slice(0, 300)}`);
+    process.exit(1);
+  }
+  console.log('  + added');
+
+  const inv = await asc('POST', '/betaTesterInvitations', {
+    data: {
+      type: 'betaTesterInvitations',
+      relationships: {
+        app: { data: { type: 'apps', id: app.id } },
+        betaTester: { data: { type: 'betaTesters', id: who.id } },
+      },
+    },
+  });
+  console.log(inv.ok ? '  + invitation sent'
+    : `  ! invite FAILED (HTTP ${inv.status}): ${inv.json?.errors?.map(e => e.detail || e.title).join('; ') || inv.text.slice(0, 200)}`);
+  process.exit(inv.ok ? 0 : 1);
 }
 
 // ── invite ────────────────────────────────────────────────────────────────────────────

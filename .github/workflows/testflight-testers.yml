@@ -6,11 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "list (read-only) or invite (SENDS Apple's invitation email)"
+        description: "list/diagnose are read-only; invite and addgroup SEND real email"
         required: true
         default: list
         type: choice
-        options: [list, invite]
+        options: [list, diagnose, invite, addgroup]
+      email:
+        description: "tester email — required for diagnose and addgroup"
+        required: false
+        type: string
       all:
         description: "invite mode only — also re-invite testers who already installed"
         required: false
@@ -31,4 +35,4 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
         run: |
-          node tools/asc-testflight-testers.mjs "${{ inputs.action }}" ${{ inputs.all && '--all' || '' }}
+          node tools/asc-testflight-testers.mjs "${{ inputs.action }}" "${{ inputs.email }}" ${{ inputs.all && '--all' || '' }}
