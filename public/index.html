@@ -78,11 +78,28 @@
     // original, now-orphaned sender id, same as a one-time device swap would look like. Rules
     // still don't enforce auth.uid match yet — that's the next step, once this has had time to
     // actually converge existing sessions in the field.
+    // ADOPT the auth uid only when this device has no identity yet. Never replace one.
+    //
+    // This used to do the opposite — overwrite gl_uid whenever it differed from the Firebase
+    // anonymous-auth uid. But gl_uid IS the device on every map: rooms, trails, friends'
+    // favorites, ownership all key on it. Swapping it mid-session forks the device in two —
+    // the foreground page starts broadcasting under the new id while the background tracking
+    // service, which read gl_uid at ITS startup, keeps broadcasting under the old one. One
+    // phone, two dots, BOTH updating "just now", so neither ever looks stale enough to clean
+    // up. Confirmed live on 2026-07-29: Jace's phone as qAPGsevk8Ud4Iy (foreground) and
+    // J2rhhBZd7YMHKB (background) simultaneously, minutes after a sign-in issued a fresh
+    // anonymous uid. Every reinstall or auth-storage reset minted another duplicate.
+    //
+    // Keeping the established id costs only this: gl_uid may be a locally-generated id the
+    // auth session can't cryptographically vouch for. Today's rules never check that (they
+    // require auth != null, not uid equality). If Phase 2 per-user rules ever need
+    // gl_uid === auth.uid, identity migration has to be built as a deliberate, atomic move of
+    // the device's data — not a localStorage swap that races the background service.
     function _reconcileAuthIdentity(u) {
       try {
         if (!u || !u.uid) return;
         var current = localStorage.getItem('gl_uid');
-        if (current && current !== u.uid) {
+        if (!current) {
           localStorage.setItem('gl_uid', u.uid);
           sessionStorage.setItem('gl_uid', u.uid);
         }
@@ -2560,7 +2577,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 497;
+var APP_BUILD = 498;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
