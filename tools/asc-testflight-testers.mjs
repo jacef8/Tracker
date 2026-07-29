@@ -26,8 +26,8 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink'].includes(mode)) {
-  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify'].includes(mode)) {
+  console.error('usage: asc-testflight-testers.mjs [verify|list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
 
@@ -177,6 +177,66 @@ if (mode === 'listing') {
 
 // ── builds / assignbuild / appstore ───────────────────────────────────────────────────
 // These don't need the tester roster, so they run before it's fetched.
+// ── verify ────────────────────────────────────────────────────────────────────────────
+// One unambiguous answer to "did it ship?": what can external testers install RIGHT NOW.
+//
+// Everything upstream of this lies in its own way. A green build job means the binary
+// compiled; "Successfully uploaded" means the bytes arrived; processingState=VALID means
+// Apple unpacked them; group membership means the build was offered. None of those put an
+// update on a tester's phone — six weeks of builds passed every one of those gates while
+// every tester sat on v5. The authoritative field is buildBetaDetail.externalBuildState:
+// IN_BETA_TESTING is shipped, and everything else is some flavour of not yet.
+if (mode === 'verify') {
+  const STATE = {
+    IN_BETA_TESTING:            'INSTALLABLE NOW',
+    READY_FOR_BETA_SUBMISSION:  'not submitted for Beta App Review',
+    WAITING_FOR_BETA_REVIEW:    'waiting in Apple review queue',
+    IN_BETA_REVIEW:             'in Apple review',
+    BETA_APPROVED:              'approved, not yet released to the group',
+    BETA_REJECTED:              'REJECTED by Beta App Review',
+    PROCESSING:                 'still processing at Apple',
+    PROCESSING_EXCEPTION:       'processing FAILED at Apple',
+    MISSING_EXPORT_COMPLIANCE:  'blocked on export compliance',
+    EXPIRED:                    'expired',
+  };
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const extGroups = (groupsRes.json?.data || []).filter(g => !g.attributes?.isInternalGroup);
+  if (!extGroups.length) { console.error('No external group exists — nothing can ship.'); process.exit(1); }
+
+  const newestRes = await asc('GET', `/builds?filter[app]=${app.id}&limit=1&sort=-uploadedDate`);
+  const newest = (newestRes.json?.data || [])[0];
+  if (newest) console.log(`Newest upload: v${newest.attributes?.version} (${(newest.attributes?.uploadedDate || '').slice(0, 16)})
+`);
+
+  let shippedNewest = false, bad = 0;
+  for (const g of extGroups) {
+    const testers = await asc('GET', `/betaGroups/${g.id}/betaTesters?limit=200`);
+    const nTesters = (testers.json?.data || []).length;
+    const gb = await asc('GET', `/betaGroups/${g.id}/builds?limit=200`);
+    if (!gb.ok) { console.error(`"${g.attributes?.name}": could not list builds (HTTP ${gb.status}) — ASC API may be having a bad day; re-run before trusting anything.`); bad++; continue; }
+    const builds = gb.json?.data || [];
+    console.log(`"${g.attributes?.name}" — ${nTesters} tester(s), ${builds.length} build(s):`);
+    if (!builds.length) console.log('  (no builds — testers can install nothing)');
+    // Sort newest first by version number where possible.
+    builds.sort((a, b) => Number(b.attributes?.version || 0) - Number(a.attributes?.version || 0));
+    for (const b of builds) {
+      const det = await asc('GET', `/builds/${b.id}/buildBetaDetail`);
+      const st = det.json?.data?.attributes?.externalBuildState || '(unknown)';
+      const label = STATE[st] || st;
+      const mark = st === 'IN_BETA_TESTING' ? '✓' : ' ';
+      console.log(`  ${mark} v${String(b.attributes?.version || '?').padEnd(5)} ${label}`);
+      if (st === 'IN_BETA_TESTING' && newest && b.id === newest.id) shippedNewest = true;
+    }
+  }
+  console.log('');
+  if (newest) {
+    console.log(shippedNewest
+      ? `VERDICT: the newest upload (v${newest.attributes?.version}) is installable by external testers. Shipped.`
+      : `VERDICT: the newest upload (v${newest.attributes?.version}) is NOT what external testers can install — there is drift.`);
+  }
+  process.exit(bad ? 1 : 0);
+}
+
 if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
   if (mode === 'appstore') {
     // What's actually standing between this app and the public App Store.
