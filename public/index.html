@@ -2550,7 +2550,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 489;
+var APP_BUILD = 490;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8765,7 +8765,18 @@ function clearUnreadPins() {
   var pinBadge = document.getElementById('pin-badge');
   if (pinBadge) pinBadge.style.display = 'none';
 }
-const TRAIL_MAX_MS = 2 * 60 * 60 * 1000; // 2 hours of breadcrumb history
+// How far back the live breadcrumb LINE is drawn on the map, and how long those raw points are
+// kept. This is a map-clutter and storage budget — NOT how long location is tracked.
+//
+// Location is recorded all day: gl/<circle>/history/<uid>/<date> keeps 30 days, and that's what
+// the Trail sheet reads. The old name TRAIL_MAX_MS with the comment "2 hours of breadcrumb
+// history" read as the app's entire memory, which it never was, and that misreading is what led
+// to a member's whole morning of driving being reported as "No recent trail".
+//
+// Two names for one value on purpose: they answer different questions and can diverge later
+// (drawing less than is retained is reasonable; the reverse is not).
+const TRAIL_DRAW_MS = 2 * 60 * 60 * 1000;  // on-map line window
+const TRAIL_KEEP_MS = TRAIL_DRAW_MS;       // retention for gl/<room>/trails/<uid>
 const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
 const TRAIL_MAX_ACC_M = 50;          // skip breadcrumbs from fixes worse than 50 m accuracy
 const TRAIL_MAX_MPH = 150;           // skip breadcrumbs implying an impossible teleport (bad fix)
@@ -9569,7 +9580,7 @@ function startLocationSharing() {
           fbOnValue(fbRef(db, `gl/${_room}/trails/${userId}`), snap => {
             const trail = snap.val() || {};
             Object.entries(trail).forEach(([key, pt]) => {
-              if (now - pt.ts > TRAIL_MAX_MS) {
+              if (now - pt.ts > TRAIL_KEEP_MS) {
                 fbRemove(fbRef(db, `gl/${_room}/trails/${userId}/${key}`));
               }
             });
@@ -11215,9 +11226,10 @@ function _renderTrailLines() {
     Object.entries(allTrails).forEach(([uid, pts]) => {
       const lid = `trail-${uid}`;
 
-      // Get all points within 2 hour window, sorted oldest first
+      // Points inside the on-map draw window, oldest first. This bounds the LINE, not the
+      // record — Location History holds the full day.
       const allPts = Object.values(pts)
-        .filter(p => now - p.ts < TRAIL_MAX_MS)
+        .filter(p => now - p.ts < TRAIL_DRAW_MS)
         .sort((a, b) => a.ts - b.ts);
 
       if (allPts.length < 2) { clearTrailLayer(uid); return; }
@@ -13771,10 +13783,12 @@ window._showStatusLegend = function () {
 };
 // Unified "Trail" sheet — one place covering what used to be three separately-located,
 // confusingly overlapping features (the footprints-icon Breadcrumbs toggle, this member-card
-// shortcut, and the Tracks drawer's old day-picker History tab). Recent (rolling ~2hr, this
-// room's own gl/<room>/trails/<uid> — see _renderTrailLines) is always available; a specific
-// past day (gl/<circleKey>/history/<uid>/<date>, kept 30 days) only makes sense for a Crew,
-// since that's the only context whose data outlives the room itself.
+// shortcut, and the Tracks drawer's old day-picker History tab).
+//
+// One date, one answer. Today merges the live breadcrumb (gl/<room>/trails/<uid>, bounded by
+// TRAIL_DRAW_MS) with that day's Location History (gl/<circleKey>/history/<uid>/<date>, kept
+// HIST_MAX_AGE_DAYS); past dates are history alone, which only a Crew has, since that's the
+// only context whose data outlives the room itself.
 window._trailCtx = null;
 window._openHistoryForMember = function (uid, name, circleKey) {
   try { window._closeMemberSheet(); } catch (e) {}
@@ -13795,9 +13809,23 @@ window._openHistoryForMember = function (uid, name, circleKey) {
     // "No trail for <date>" — indistinguishable from the feature being broken, which is exactly
     // how it was reported. "Where have I been today" is also the common question; yesterday is
     // one tap away either way.
-    if (!dateInput.value) dateInput.value = new Date().toLocaleDateString('en-CA');
+    dateInput.value = new Date().toLocaleDateString('en-CA');
     // Can't pick a future date — there is never history there.
     dateInput.max = new Date().toLocaleDateString('en-CA');
+    // Floor the picker at the OLDEST day actually stored for this person, rather than letting
+    // it roam 30 days back into dates that were never recorded. Retention is 30 days
+    // (HIST_MAX_AGE_DAYS), but Location History only started defaulting on for Crew members in
+    // build 483, so most people have a day or two — a picker offering empty dates reads as a
+    // broken feature. One shallow read; falls back to the retention window if it fails.
+    try {
+      dateInput.min = new Date(Date.now() - HIST_MAX_AGE_DAYS * 86400000).toLocaleDateString('en-CA');
+      if (isCrew && window._fb && window._fb.get) {
+        window._fb.get(window._fb.ref(window._fb.db, 'gl/' + room + '/history/' + uid)).then(function (s) {
+          var days = Object.keys(s.val() || {}).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort();
+          if (days.length) dateInput.min = days[0];
+        }).catch(function () {});
+      }
+    } catch (e) {}
   }
   document.getElementById('quick-trail-sheet').style.display = 'flex';
   window._loadTrailRange();
