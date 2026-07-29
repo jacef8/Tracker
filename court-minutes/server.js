@@ -38,6 +38,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const jobs = new Map(); // id -> job
 
+// Dockets arrive however the case management system exports them — plain
+// text/CSV, PDF, or Word. Pull the text out of whichever one we got.
+async function extractDocketText(file) {
+  const name = (file.originalname || '').toLowerCase();
+  if (name.endsWith('.pdf')) {
+    const pdfParse = require('pdf-parse');
+    const data = await pdfParse(await fs.promises.readFile(file.path));
+    return data.text || '';
+  }
+  if (name.endsWith('.docx')) {
+    const mammoth = require('mammoth');
+    const result = await mammoth.extractRawText({ path: file.path });
+    return result.value || '';
+  }
+  return fs.promises.readFile(file.path, 'utf8');
+}
+
 function setStage(job, stage, detail) {
   job.stage = stage;
   job.detail = detail || '';
@@ -93,7 +110,7 @@ app.post('/api/jobs', upload.fields([
     let docketText = (req.body.docketText || '').trim();
     const docketUpload = req.files && req.files.docketFile && req.files.docketFile[0];
     if (docketUpload) {
-      const fileText = (await fs.promises.readFile(docketUpload.path, 'utf8')).trim();
+      const fileText = (await extractDocketText(docketUpload)).trim();
       fs.promises.unlink(docketUpload.path).catch(() => {});
       docketText = [docketText, fileText].filter(Boolean).join('\n\n');
     }

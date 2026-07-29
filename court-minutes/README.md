@@ -59,7 +59,8 @@ Optional environment variables:
 
 1. Fill in court/judge/date (optional but improves the header and matching).
 2. Add the audio file(s) for the day, in order (e.g. morning, afternoon).
-3. Paste the docket (or upload it as `.txt`/`.csv`). Include docket numbers,
+3. Paste the docket, or upload it as a file — PDF, Word (`.docx`), `.txt`, or
+   `.csv` all work. Include docket numbers,
    defendant names, and — if you have them — charges and attorneys of record;
    the more that's on the docket, the better the matching and spellings.
 4. Click **Build Minutes**. A full court day takes several minutes to process;
