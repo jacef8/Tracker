@@ -101,7 +101,16 @@ if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
   const groups = groupsRes.json?.data || [];
   const ext = groups.filter(g => !g.attributes?.isInternalGroup);
 
-  const buildsRes = await asc('GET', `/apps/${app.id}/builds?limit=10&sort=-version`);
+  // Sort by -uploadedDate, not -version: `version` is a STRING on this endpoint, so it sorts
+  // lexically and Apple rejects some sort keys outright. And check ok — swallowing the error
+  // into `|| []` reported "Newest 0 build(s)" for an app with 13, which reads as "no builds"
+  // rather than "the query was rejected".
+  const buildsRes = await asc('GET', `/apps/${app.id}/builds?limit=10&sort=-uploadedDate`);
+  if (!buildsRes.ok) {
+    console.error(`could not list builds (HTTP ${buildsRes.status})`);
+    console.error(buildsRes.text.slice(0, 600));
+    process.exit(1);
+  }
   const builds = buildsRes.json?.data || [];
   console.log(`Newest ${builds.length} build(s):`);
   const groupBuilds = {};
