@@ -384,6 +384,15 @@ function _realUser(u) {
   return !!(u && u.name && !u.claiming &&
     !(u.conn === false && (Date.now() - (u.discTs || u.ts || 0)) >= DISC_GRACE_MS));
 }
+// THE definition of "live". There were three: the Live Groups card counted rooms with anyone
+// seen in the last 20 MINUTES, the "Live right now" panel listed users seen in the last 90
+// SECONDS, and the room badges used LIVE_MS. So the card could read 1 Live Group while the
+// panel underneath it said "Live right now (0) — Nothing to show", which is a flat
+// contradiction. Everything that says "live" now asks this one function.
+function _liveNow(u, now) {
+  if (!_realUser(u) || u.noGps) return false;
+  return ((now || Date.now()) - (u.ts || 0)) < LIVE_MS;
+}
 var eventLog = [];
 var prevSnapshot = {};
 
@@ -487,7 +496,7 @@ function _renderStatDetail(kind) {
     var us = [];
     keys.forEach(function(gk) {
       var users = all[gk] && all[gk].users; if (!users) return;
-      Object.values(users).forEach(function(u){ if (_realUser(u) && now - (u.ts||0) < 90000 && !u.noGps) us.push({ name: u.name, gk: gk, ts: u.ts }); });
+      Object.values(users).forEach(function(u){ if (_liveNow(u, now)) us.push({ name: u.name, gk: gk, ts: u.ts }); });
     });
     us.sort(function(a,b){ return b.ts - a.ts; });
     var li = us.map(function(u){
@@ -2050,7 +2059,23 @@ function renderUsers() {
   if (sm) sm.textContent = users.length + ' user' + (users.length !== 1 ? 's' : '') + ' · ' + totalSessions + ' session' + (totalSessions !== 1 ? 's' : '') + ' in range';
   if (!users.length) { listEl.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">No user activity in this range.</div>'; return; }
   listEl.innerHTML = users.map(function(u) {
-    var online = (now - u.lastSeen) < 90000;
+    // Online if the session heartbeat is fresh OR they are live in a room right now. The two
+    // can disagree: this tab is built from gl/_users/<acct>/sessions, which lags behind room
+    // presence, so someone plainly live on the map could show as offline here.
+    var online = (now - u.lastSeen) < LIVE_MS;
+    if (!online) {
+      try {
+        var _snap = window._allDataSnapshot || {};
+        Object.keys(_snap).forEach(function (gk) {
+          if (gk.charAt(0) === '_' || online) return;
+          var _us = _snap[gk] && _snap[gk].users; if (!_us) return;
+          Object.keys(_us).forEach(function (id) {
+            var _u = _us[id];
+            if (_u && _u.name === u.name && _liveNow(_u, now)) online = true;
+          });
+        });
+      } catch (e) {}
+    }
     var grps = Object.keys(u.groups).map(_gname).join(', ');
     var loc = (u.lat != null) ? '<a href="https://maps.google.com/?q=' + u.lat + ',' + u.lng + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">' + u.lat.toFixed(4) + ', ' + u.lng.toFixed(4) + '</a>' : '<span style="color:var(--muted)">—</span>';
     var sess = u.sessions.slice().sort(function(a, b) { return (b.j || 0) - (a.j || 0); }).map(function(s) {
@@ -2059,7 +2084,7 @@ function renderUsers() {
     return '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:11px 13px;margin-bottom:8px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
         '<div style="font-weight:700;font-size:14px">' + _esc(u.name) + (u.dev ? ' <span style="font-size:11px;color:#8b949e;font-weight:500">· ' + _esc(u.dev) + '</span>' : '') + '</div>' +
-        '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;background:' + (online ? '#13361f' : '#30363d') + ';color:' + (online ? '#3fb950' : '#8b949e') + '">' + (online ? 'ONLINE' : _ago(u.lastSeen)) + '</span>' +
+        '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;background:' + (online ? '#13361f' : '#30363d') + ';color:' + (online ? '#3fb950' : '#8b949e') + '">' + (online ? 'ONLINE' : 'OFFLINE &middot; ' + _ago(u.lastSeen)) + '</span>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11px;color:#8b949e;margin-top:6px">' +
         '<div>Sessions: <b style="color:#e6edf3">' + u.sessions.length + '</b></div>' +
@@ -2370,7 +2395,10 @@ function loadAdmin() {
         // grace. Everything else that still exists (private / persistent / recently-active)
         // goes under "Off home" so the admin can still manage it — just not counted as on-home.
         var hasUsers = presentUsers.length > 0;
-        if (hasUsers) liveGroups++;
+        // Counts rooms that are LIVE, matching the "Live right now" panel. presentUsers (20
+        // minutes) still drives the "in room" badge and the home-directory logic below, which
+        // are a different question — "is anyone about" rather than "is anyone broadcasting".
+        if (users.some(function (e) { return _liveNow(e[1], now); })) liveGroups++;
         var withinGrace = !!(lastActive && (now - lastActive) < HOME_GRACE_MS);
         var recentlyActive = lastActive && (now - lastActive) < STALE_24H;
         var onHome = (vis === 'public') && (hasUsers || keptUntil || withinGrace);
@@ -2663,9 +2691,17 @@ function renderOverview() {
 
     if (_ovShowPins) {
       pins.forEach(function(p) {
-        var el = document.createElement('div');
+        // The clickable element is a 36px transparent square with the diamond centred inside,
+        // rather than the diamond itself. A 14px marker rotated 45 degrees presents barely
+        // 10px of actual target — reported as very small and hard to hit. The visual grows
+        // only slightly (14 -> 18); almost all of the gain is invisible padding, so the map
+        // does not get noisier while the target becomes roughly three times the area.
         var color = p.sos ? '#f85149' : '#f0a500';
-        el.style.cssText = 'width:14px;height:14px;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.6);background:' + color + ';transform:rotate(45deg);border-radius:2px';
+        var el = document.createElement('div');
+        el.style.cssText = 'width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:transparent';
+        var dot = document.createElement('div');
+        dot.style.cssText = 'width:18px;height:18px;border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.7);background:' + color + ';transform:rotate(45deg);border-radius:3px;pointer-events:none';
+        el.appendChild(dot);
         var popup = new mapboxgl.Popup({ offset: 14, closeButton: false })
           .setHTML('<div style="font-weight:700;color:#111">' + ovEsc(p.label) + '</div>' +
                    '<div style="font-size:11px;color:#555">' + ovEsc(p.group) + (p.name ? ' &middot; ' + ovEsc(p.name) : '') + '</div>');
