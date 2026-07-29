@@ -1437,7 +1437,12 @@ function _roomControlHTML(key, group, now) {
     '</div>';
   }).join('');
 
-  return '<details style="margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px">' +
+  // The Groups tab re-renders every card on every live snapshot update — with active rooms
+  // that's every couple of seconds, and innerHTML rebuilds destroy an open <details>. Reported
+  // as the drop-down flashing open then snapping shut. Remember the open state per room and
+  // re-apply it when the card is rebuilt, so the panel survives the re-render churn.
+  if (!window._roomCtlOpen) window._roomCtlOpen = {};
+  return '<details' + (window._roomCtlOpen[key] ? ' open' : '') + ' data-rk="' + key + '" ontoggle="window._roomCtlOpen[this.dataset.rk]=this.open" style="margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px">' +
     '<summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);outline:none">Room control &middot; owner + members</summary>' +
     '<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">Owner: ' + (owner ? owner.slice(0, 14) : '—') + ' — ' + ownerName +
       (ownerStale ? ' <span style="color:#f85149;font-weight:700">⚠ stale owner: nobody can use the in-app owner controls</span>' : '') + '</div>' +
@@ -2090,6 +2095,20 @@ function renderUsers() {
         '<div>Sessions: <b style="color:#e6edf3">' + u.sessions.length + '</b></div>' +
         '<div>Total time: <b style="color:#e6edf3">' + _fmtDur(u.total) + '</b></div>' +
         '<div style="grid-column:1/3">Groups: <b style="color:#e6edf3">' + (_esc(grps) || '—') + '</b></div>' +
+      (function () {
+        // Remove-from-room actions. Built from CURRENT membership in the live snapshot, not
+        // from session history — sessions say where they HAVE been, users/<uid> says where
+        // they ARE, and only the latter can be kicked.
+        var snap = window._allDataSnapshot || {};
+        var btns = Object.keys(snap).filter(function (gk) {
+          return gk.charAt(0) !== '_' && snap[gk] && snap[gk].users && snap[gk].users[u.uid];
+        }).map(function (gk) {
+          return '<button class="btn btn-danger" style="font-size:10.5px;padding:4px 9px;margin:3px 6px 0 0" ' +
+            'onclick="removeRoomMember(&quot;' + gk + '&quot;,&quot;' + u.uid + '&quot;,&quot;' + _esc(u.name).replace(/["']/g, '') + '&quot;)">Remove from ' + _esc(_gname(gk)) + '</button>';
+        }).join('');
+        return btns ? '<div style="grid-column:1/3;margin-top:2px">' + btns + '</div>' : '';
+      })() +
+
         '<div style="grid-column:1/3">Last seen: ' + loc + '</div>' +
       '</div>' +
       '<details style="margin-top:6px"><summary style="font-size:11px;color:#f0a500;cursor:pointer">Session detail</summary>' + sess + '</details>' +
