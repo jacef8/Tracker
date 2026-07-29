@@ -16,7 +16,7 @@ on:
         required: false
         type: string
       all:
-        description: "invite mode only — also re-invite testers who already installed"
+        description: "invite: also re-invite installed testers · publiclink: actually ENABLE the link"
         required: false
         default: false
         type: boolean
@@ -34,5 +34,8 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+        # Single quotes inside ${{ }} — GitHub Actions expressions reject double-quoted string
+        # literals, and the whole workflow then fails to COMPILE: it loses its name, shows up by
+        # filename, and every run dies in 0s with no useful error.
         run: |
-          node tools/asc-testflight-testers.mjs "${{ inputs.action }}" "${{ inputs.email }}" ${{ inputs.all && (inputs.action == "publiclink" && "--enable" || "--all") || "" }}
+          node tools/asc-testflight-testers.mjs "${{ inputs.action }}" "${{ inputs.email }}" ${{ inputs.all && (inputs.action == 'publiclink' && '--enable' || '--all') || '' }}
