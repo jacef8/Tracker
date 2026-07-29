@@ -90,7 +90,7 @@ if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
     if (!list.length) console.log('  (none — the app has never had an App Store version created)');
 
     // Beta App Review gates EXTERNAL TestFlight, and is a separate queue from App Store review.
-    const bars = await asc('GET', `/apps/${app.id}/builds?limit=5&include=betaAppReviewSubmission&sort=-version`);
+    const bars = await asc('GET', `/builds?filter[app]=${app.id}&limit=5&include=betaAppReviewSubmission&sort=-uploadedDate`);
     const inc = bars.json?.included || [];
     console.log(`\nBeta App Review submissions on the 5 newest builds: ${inc.length}`);
     for (const s of inc) console.log(`  ${s.id}  state=${s.attributes?.betaReviewState || '?'}`);
@@ -105,7 +105,9 @@ if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
   // lexically and Apple rejects some sort keys outright. And check ok — swallowing the error
   // into `|| []` reported "Newest 0 build(s)" for an app with 13, which reads as "no builds"
   // rather than "the query was rejected".
-  const buildsRes = await asc('GET', `/apps/${app.id}/builds?limit=10&sort=-uploadedDate`);
+  // Top-level /builds with filter[app], NOT /apps/{id}/builds — the relationship endpoint
+  // rejects `sort` outright ("The parameter 'sort' can not be used with this request").
+  const buildsRes = await asc('GET', `/builds?filter[app]=${app.id}&limit=10&sort=-uploadedDate`);
   if (!buildsRes.ok) {
     console.error(`could not list builds (HTTP ${buildsRes.status})`);
     console.error(buildsRes.text.slice(0, 600));
