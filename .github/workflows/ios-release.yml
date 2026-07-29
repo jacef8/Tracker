@@ -3,7 +3,18 @@ name: iOS TestFlight release
 # Manual trigger only — this uploads a real build to App Store Connect, so it shouldn't
 # fire on every push. Run it from the Actions tab when you want a new TestFlight build.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "beta = build + upload · distribute = hand an already-uploaded build to external testers"
+        required: true
+        default: beta
+        type: choice
+        options: [beta, distribute]
+      changelog:
+        description: "What to Test note (external distribution requires one)"
+        required: false
+        type: string
 
 jobs:
   build-and-upload:
@@ -98,6 +109,8 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
           BUILD_NUMBER: ${{ github.run_number }}
+          LANE: ${{ inputs.lane || 'beta' }}
+          CHANGELOG: ${{ inputs.changelog }}
         run: |
           cd ios/App
-          fastlane beta
+          fastlane "${LANE}"

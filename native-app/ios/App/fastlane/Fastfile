@@ -89,12 +89,44 @@ platform :ios do
     #
     # The group name is hardcoded on purpose. If it is ever renamed this fails loudly, which is
     # strictly better than the silent non-distribution it replaces.
+    # Upload only. Distribution is the `distribute` lane below, deliberately separated.
+    #
+    # Combining them requires skip_waiting_for_build_processing: false, and fastlane's readiness
+    # check disagreed with reality: it polled "Waiting for App Store Connect to finish
+    # processing the new build (1.0 - 19)" every 30s for forty minutes while the App Store
+    # Connect API simultaneously reported that same build as processingState=VALID. It would
+    # have waited indefinitely. Splitting the steps means a stuck poll can never hold the build
+    # hostage — the binary is uploaded and safe, and distribution can be retried on its own.
     upload_to_testflight(
       api_key: api_key,
-      skip_waiting_for_build_processing: false,
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Distribute an ALREADY-UPLOADED build to the external testers"
+  lane :distribute do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      is_key_content_base64: true,
+      in_house: false
+    )
+
+    # distribute_only skips the upload entirely and acts on a build already in App Store
+    # Connect, which is what makes this retryable without burning a build number.
+    #
+    # This is the step nothing has ever performed: TestFlight hands builds to GROUPS, and an
+    # external group additionally requires Beta App Review. Without both, a build sits at
+    # "Ready to Submit" and reaches no one — which is why 13 testers stayed on v5 from 16 July
+    # while a dozen newer builds showed as "Complete" in App Store Connect.
+    pilot(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      distribute_only: true,
       distribute_external: true,
       groups: ["Family Testers (External)"],
-      # Required by Apple for external distribution — it becomes the "What to Test" note.
+      build_number: ENV["DISTRIBUTE_BUILD"],   # optional; newest is used when unset
       changelog: ENV["CHANGELOG"] || "Bug fixes and improvements."
     )
   end
