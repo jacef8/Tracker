@@ -26,8 +26,8 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore'].includes(mode)) {
-  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore] [email] [--all]');
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing'].includes(mode)) {
+  console.error('usage: asc-testflight-testers.mjs [list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing] [email] [--all]');
   process.exit(2);
 }
 
@@ -74,6 +74,73 @@ if (!apps.ok || !apps.json?.data?.length) {
 }
 const app = apps.json.data[0];
 console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
+
+// ── listing ───────────────────────────────────────────────────────────────────────────
+// Exactly which App Store listing fields are filled and which are blank. PREPARE_FOR_SUBMISSION
+// means Apple is waiting on content, not on code — this says what content.
+if (mode === 'listing') {
+  const show = (label, val, required) => {
+    const empty = !val || !String(val).trim();
+    console.log(`  ${empty ? (required ? 'MISSING ' : 'blank   ') : 'ok      '} ${label.padEnd(22)} ${empty ? '' : String(val).replace(/\s+/g, ' ').slice(0, 70)}`);
+  };
+
+  const infoRes = await asc('GET', `/apps/${app.id}/appInfos?limit=5`);
+  const info = (infoRes.json?.data || [])[0];
+  if (info) {
+    const locs = await asc('GET', `/appInfos/${info.id}/appInfoLocalizations?limit=20`);
+    console.log('App information (applies to every version):');
+    for (const l of (locs.json?.data || [])) {
+      const a = l.attributes || {};
+      console.log(` locale ${a.locale}`);
+      show('name', a.name, true);
+      show('subtitle', a.subtitle, false);
+      show('privacyPolicyUrl', a.privacyPolicyUrl, true);
+    }
+  }
+
+  const vers = await asc('GET', `/apps/${app.id}/appStoreVersions?limit=5`);
+  const ver = (vers.json?.data || [])[0];
+  if (!ver) { console.log('\nNo App Store version exists.'); process.exit(0); }
+  console.log(`\nVersion ${ver.attributes?.versionString} — ${ver.attributes?.appStoreState || ver.attributes?.appVersionState}`);
+
+  const vlocs = await asc('GET', `/appStoreVersions/${ver.id}/appStoreVersionLocalizations?limit=20`);
+  for (const l of (vlocs.json?.data || [])) {
+    const a = l.attributes || {};
+    console.log(` locale ${a.locale}`);
+    show('description', a.description, true);
+    show('keywords', a.keywords, true);
+    show('supportUrl', a.supportUrl, true);
+    show('marketingUrl', a.marketingUrl, false);
+    show('promotionalText', a.promotionalText, false);
+    show('whatsNew', a.whatsNew, false);
+    // Screenshots are per-localization; count them so "missing" is a fact, not a guess.
+    const sets = await asc('GET', `/appStoreVersionLocalizations/${l.id}/appScreenshotSets?limit=20`);
+    const setList = sets.json?.data || [];
+    let total = 0;
+    for (const s of setList) {
+      const shots = await asc('GET', `/appScreenshotSets/${s.id}/appScreenshots?limit=20`);
+      total += (shots.json?.data || []).length;
+    }
+    console.log(`  ${total ? 'ok      ' : 'MISSING '} screenshots            ${setList.length} set(s), ${total} image(s)`);
+  }
+
+  const rd = await asc('GET', `/appStoreVersions/${ver.id}/appStoreReviewDetail`);
+  console.log('\nApp Review details:');
+  if (rd.ok && rd.json?.data) {
+    const a = rd.json.data.attributes || {};
+    show('contactFirstName', a.contactFirstName, true);
+    show('contactLastName', a.contactLastName, true);
+    show('contactEmail', a.contactEmail, true);
+    show('contactPhone', a.contactPhone, true);
+    show('demoAccountName', a.demoAccountName, false);
+    show('demoAccountRequired', String(a.demoAccountRequired), false);
+    show('notes', a.notes, true);
+  } else console.log('  MISSING  (no review detail record at all)');
+
+  const age = await asc('GET', `/apps/${app.id}/ageRatingDeclaration`);
+  console.log(`\nAge rating declaration: ${age.ok && age.json?.data ? 'present' : 'MISSING'}`);
+  process.exit(0);
+}
 
 // ── builds / assignbuild / appstore ───────────────────────────────────────────────────
 // These don't need the tester roster, so they run before it's fetched.
