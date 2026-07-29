@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 486;
+var APP_BUILD = 487;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13649,6 +13649,12 @@ window._shownTrackId=null;
 function _drawSavedTrack(t, fit){
   try {
     if (!map || !map.isStyleLoaded()) return;
+    // Showing a track is an explicit request to look at ONE thing, so it has to own the camera.
+    // Group-follow re-fits every second, so it yanked the view straight back off the track —
+    // which looked exactly like "I clicked Show on map and nothing happened", especially for a
+    // short track (55 ft over 22 s in the reported case) that is sub-pixel at group zoom.
+    try { if (typeof fitAllInterval !== 'undefined' && fitAllInterval && typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {}
+    try { if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}
     _clearSavedTrack();
     var coords=t.pts.map(function(p){return [p.lng,p.lat];});
     var gj={type:'Feature',geometry:{type:'LineString',coordinates:coords}};
@@ -13656,7 +13662,10 @@ function _drawSavedTrack(t, fit){
     map.addLayer({id:'saved-track-glow',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':8,'line-opacity':0.25}});
     map.addLayer({id:'saved-track',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':3.5,'line-opacity':0.95}});
     window._shownTrackId=t.id;
-    if (fit && coords.length){ var b=coords.reduce(function(bb,c){return bb.extend(c);}, new mapboxgl.LngLatBounds(coords[0],coords[0])); map.fitBounds(b,{padding:60,maxZoom:16,duration:800}); }
+    // maxZoom 18, not 16: a short walk is a legitimate track, and 55 ft capped at zoom 16 is a
+    // few dozen pixels — technically drawn, effectively invisible. Long tracks are bounded by
+    // the fit itself, so raising the cap only affects the short ones that need it.
+    if (fit && coords.length){ var b=coords.reduce(function(bb,c){return bb.extend(c);}, new mapboxgl.LngLatBounds(coords[0],coords[0])); map.fitBounds(b,{padding:60,maxZoom:18,duration:800}); }
     _showTrackViewBar(t, t.stats||_trackStats(t.pts||[]));
   } catch(e){}
 }
@@ -15245,6 +15254,26 @@ function _groupFollowTick(force) {
   } catch (e) {}
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
   // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
+  // Re-assert the chrome padding before fitting — do NOT trust it to still be right.
+  //
+  // Since 477 this tick passes no padding of its own and relies entirely on the transform
+  // padding from map.setPadding(). But that value is persistent GLOBAL state, and several
+  // camera calls overwrite it: the member-sheet fly-to sets {top:0,left:0,right:0,bottom:240}
+  // and _drawSavedTrack's fitBounds sets a flat 60. Opening a member sheet — which is how you
+  // reach someone's trail — therefore left horizontal padding at ZERO, and group-follow then
+  // fitted the group flush to the screen edges with the pins half cut off. Reported on-device
+  // 2026-07-29, immediately after viewing a track.
+  //
+  // Only written when it has actually drifted: setPadding triggers a transform update, and
+  // doing that every second would fight the eased camera.
+  try {
+    var _wantPad = _followPadding();
+    var _havePad = (typeof map.getPadding === 'function') ? map.getPadding() : null;
+    var _off = !_havePad || ['top', 'bottom', 'left', 'right'].some(function (k) {
+      return Math.abs((_havePad[k] || 0) - _wantPad[k]) > 1;
+    });
+    if (_off) map.setPadding(_wantPad);
+  } catch (e) {}
   try { cam = map.cameraForBounds(b, { padding: _camPadding(), maxZoom: 16 }); } catch (e) {}
   // Last-ditch: retry with a flat, small padding. cameraForBounds returning nothing used to
   // mean the camera simply never moved — group-follow silently did nothing while its button
