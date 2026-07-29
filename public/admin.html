@@ -1377,6 +1377,88 @@ function renderAdminDevices(all) {
   }).join('');
   el.innerHTML = '<div class="group-card" style="border-top-color:#7c3aed"><div class="group-name" style="margin-bottom:6px">&#8986; Private devices (' + ids.length + ')</div>' + rows + '</div>';
 }
+// ── Room control: who owns a room, and who is in it ────────────────────────────────────
+//
+// Built because ownership is stored as a DEVICE id (gl/<room>/config/owner), and a device dies
+// permanently the moment its owner reinstalls the app — a fresh install generates a new
+// gl_uid. When that happens the room has an owner nobody can act as: the in-app owner controls
+// (kick / transfer / remove-from-Crew) only appear for the owner, so nobody can hand ownership
+// on, and the room is stuck. Confirmed on 2026-07-29 with three of Jace's own rooms, every one
+// of them owned by a device that no longer existed.
+//
+// The admin panel is the right home for this precisely because it is NOT gated on being the
+// owner — it's the only place that can break the deadlock.
+function _roomControlHTML(key, group, now) {
+  var users = (group && group.users) || {};
+  var cfg = (group && group.config) || {};
+  var owner = cfg.owner || '';
+  var uids = Object.keys(users).filter(function (u) { return users[u] && typeof users[u] === 'object'; });
+
+  var ownerName = '(nobody — room has no owner)';
+  var ownerStale = false;
+  if (owner) {
+    var ou = users[owner];
+    if (ou) {
+      var oAge = now - (ou.ts || 0);
+      ownerStale = oAge > 30 * 60 * 1000;
+      ownerName = (ou.name || '(unnamed)') + ' · ' + timeAgo(ou.ts);
+    } else {
+      // Owner id isn't in the room at all — the device is gone. This is the deadlock case.
+      ownerStale = true;
+      ownerName = '<span style="color:#f85149">device no longer in this room</span>';
+    }
+  }
+
+  var rows = uids.sort(function (a, b) { return (users[b].ts || 0) - (users[a].ts || 0); }).map(function (uid) {
+    var u = users[uid] || {};
+    var isOwner = uid === owner;
+    var age = now - (u.ts || 0);
+    var live = age < LIVE_MS;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
+      '<span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' + (live ? '#3fb950' : '#888ea0') + '"></span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:12.5px;color:var(--text)">' + _esc(u.name || '(unnamed)') +
+          (isOwner ? ' <span style="color:var(--accent);font-weight:700">· OWNER</span>' : '') + '</div>' +
+        '<div style="font-size:10.5px;color:var(--muted)">' + uid.slice(0, 14) + ' · ' + timeAgo(u.ts) + '</div>' +
+      '</div>' +
+      (isOwner ? '' : '<button class="btn" onclick="makeRoomOwner(\'' + key + '\',\'' + uid + '\',\'' + _esc(u.name || uid.slice(0, 8)).replace(/'/g, '') + '\')" style="font-size:10.5px;padding:4px 8px;flex-shrink:0">Make owner</button>') +
+      '<button class="btn btn-danger" onclick="removeRoomMember(\'' + key + '\',\'' + uid + '\',\'' + _esc(u.name || uid.slice(0, 8)).replace(/'/g, '') + '\')" style="font-size:10.5px;padding:4px 8px;flex-shrink:0">Remove</button>' +
+    '</div>';
+  }).join('');
+
+  return '<details style="margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px">' +
+    '<summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);outline:none">Room control &middot; owner + members</summary>' +
+    '<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">Owner: ' + (owner ? owner.slice(0, 14) : '—') + ' — ' + ownerName +
+      (ownerStale ? ' <span style="color:#f85149;font-weight:700">⚠ stale owner: nobody can use the in-app owner controls</span>' : '') + '</div>' +
+    (rows || '<div style="font-size:11.5px;color:var(--muted);padding:6px 0">No members.</div>') +
+    '</details>';
+}
+
+// Hand a room to a different member. Writes the same path the app reads, so the new owner sees
+// the owner controls immediately.
+window.makeRoomOwner = function (key, uid, name) {
+  if (!confirm('Make "' + name + '" the owner of ' + key + '?\n\nThey get the kick / transfer / remove-from-Crew controls. The current owner loses them.')) return;
+  var fb = window._fb; if (!fb) return;
+  fb.set(fb.ref(fb.db, 'gl/' + key + '/config/owner'), uid)
+    .then(function () { /* panel live-updates from the snapshot; no toast helper exists here */ })
+    .catch(function (e) { alert('Failed: ' + (e && e.message)); });
+};
+
+// Remove a member from a room. Also clears their Crew roster entry, presence and diagnostics —
+// deleting only the live marker leaves a Crew member who reappears via circle fan-out seconds
+// later, which is the exact trap the in-app "Remove & block" button fell into.
+window.removeRoomMember = function (key, uid, name) {
+  if (!confirm('Remove "' + name + '" from ' + key + '?\n\nClears their marker, Crew membership, presence and diagnostics for this room. They can rejoin unless the room is passcode-protected.')) return;
+  var fb = window._fb; if (!fb) return;
+  Promise.all([
+    fb.remove(fb.ref(fb.db, 'gl/' + key + '/users/' + uid)),
+    fb.remove(fb.ref(fb.db, 'gl/' + key + '/members/' + uid)),
+    fb.remove(fb.ref(fb.db, 'gl/' + key + '/diag/' + uid)),
+    fb.remove(fb.ref(fb.db, 'gl/_presence/' + uid))
+  ]).then(function () { /* panel live-updates from the snapshot */ })
+    .catch(function (e) { alert('Failed: ' + (e && e.message)); });
+};
+
 function renderActiveUsers(all) {
   var el = document.getElementById('active-users-list');
   if (!el) return;
@@ -2277,7 +2359,8 @@ function loadAdmin() {
             (voicelog ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/voicelog\',\'transmissions for '+displayName+'\')">Clear Clips</button>' : '') +
             (keptUntil ? '<button class="btn btn-warn" onclick="deleteNode(\'gl/'+key+'/config/expires\',\'expiry for '+displayName+'\')">Clear Expiry</button>' : '') +
             '<button class="btn btn-danger" onclick="closeAndNukeRoom(\''+key+'\',\''+displayName.replace(/\'/g,"")+'\')">Close &amp; Nuke</button>' +
-          '</div>';
+          '</div>' +
+          _roomControlHTML(key, group, now);
         // "On home" = EXACTLY what the public home directory shows, so the counts match the
         // home screen. That's a PUBLIC room that (a) has members, (b) has a future expiry, or
         // (c) emptied within the last 5 min (home grace). Private rooms are join-by-name and
