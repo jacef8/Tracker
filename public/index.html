@@ -2550,7 +2550,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 491;
+var APP_BUILD = 492;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16195,15 +16195,20 @@ try {
       // Anonymous sessions are the app's baseline, not a sign-in. Bail before touching any
       // account state — see afterFirebaseUser for the full account of what this caused.
       if (user.isAnonymous) {
-        // Repair devices the old bug already lied to. If the LIVE session is anonymous, then
-        // this device is definitively not signed into anything, so a stored gl_account of
-        // 'google' is false and has to go — otherwise every existing install keeps showing a
-        // phantom signed-in state forever, since the flag outlives the bug that wrote it.
-        // Keyed off the live session rather than a heuristic like "no email", which would
-        // misfire on Apple sign-in (Apple withholds the email on every authorization after
-        // the first).
+        // Repair devices the old bug already lied to — WEB ONLY.
+        //
+        // On native, skipNativeAuth is false: the Capacitor plugin runs the entire Firebase
+        // sign-in against the NATIVE SDK, which is a separate auth instance from this JS one.
+        // The JS session legitimately stays anonymous while the real account lives natively, so
+        // "live session is anonymous" does NOT mean "not signed in" there. Running this repair
+        // on native wiped gl_account moments after a SUCCESSFUL Google sign-in and dropped the
+        // user back to the signed-out home screen — reported on Android within minutes of 491.
+        //
+        // The isAnonymous guard above still applies on every platform, so no new device gets
+        // falsely marked. This clean-up only exists for already-poisoned web installs; a
+        // poisoned native install corrects itself as soon as its owner actually signs in.
         try {
-          if (LS.get('gl_account') === 'google') {
+          if (!_isNativeApp() && LS.get('gl_account') === 'google') {
             LS.set('gl_account', '');
             try { localStorage.removeItem('gl_account_uid'); } catch (e2) {}
             try { refreshUI(); } catch (e2) {}
