@@ -33,10 +33,25 @@ jobs:
       - name: Sync Capacitor iOS project (copies latest public/ web assets in)
         run: npx cap sync ios
 
+      # `cap sync` regenerates the Podfile's pod list, which can drop the :subspecs => ['Google']
+      # that Google sign-in depends on. Re-apply it if it went missing, then PROVE GoogleSignIn
+      # actually made it into the lockfile — without that pod the plugin's Google code is
+      # compiled out and signInWithGoogle() silently never settles, which shipped once already.
+      # Failing here is far better than shipping another build with a dead sign-in button.
       - name: Install CocoaPods
         run: |
           cd ios/App
+          if ! grep -q "subspecs => \['Google'\]" Podfile; then
+            echo "Podfile lost the Google subspec (cap sync rewrote it) — re-applying"
+            sed -i '' "s#pod 'CapacitorFirebaseAuthentication', :path => '\(.*\)'\$#pod 'CapacitorFirebaseAuthentication', :path => '\1', :subspecs => ['Google']#" Podfile
+            grep -n "CapacitorFirebaseAuthentication" Podfile
+          fi
           pod install --repo-update
+          if ! grep -q "GoogleSignIn" Podfile.lock; then
+            echo "::error::GoogleSignIn is absent from Podfile.lock — Google sign-in would be dead in this build."
+            exit 1
+          fi
+          echo "GoogleSignIn linked: $(grep -m1 'GoogleSignIn' Podfile.lock)"
 
       # Decodes the distribution certificate (.p12) from GitHub secrets into a temporary CI
       # keychain, as Apple's own GitHub Actions guide recommends. The secret is never printed
