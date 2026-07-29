@@ -2552,7 +2552,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 487;
+var APP_BUILD = 488;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4493,6 +4493,31 @@ function _shouldShowSpeed(uid, data, eligibleOverride) {
   var show = was ? data.spd > 18 : data.spd > 25;
   window._speedShownState[uid] = show;
   return show;
+}
+// Show how OLD a stale pin is, right on the pin.
+//
+// A parked phone and a dead phone produce byte-identical data: iOS suspends the WebView when
+// backgrounded, and the location plugin is movement-gated (distanceFilter 8m), so a stationary
+// device emits no events and its timestamp simply freezes. Nothing can be written to refresh
+// it — there is no timer running to write one. So the only honest fix is to stop implying the
+// pin is current. The border colour alone (white vs teal vs grey) was far too subtle: a member
+// parked for over an hour read as present, and someone looked at the map and reasonably
+// concluded she was at that shop right now.
+function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
+  var a = el && el.querySelector ? el.querySelector('.mk-age') : null;
+  if (!a) return;
+  // Live, yours, or already labelled some other way — nothing to say.
+  if (isLive || isMine || hidden || noGps || !isFinite(ageMin) || ageMin < 5) {
+    a.style.display = 'none';
+    el.style.filter = '';
+    return;
+  }
+  a.textContent = ageMin < 60 ? (ageMin + 'm') : (Math.floor(ageMin / 60) + 'h ' + (ageMin % 60) + 'm');
+  a.style.display = 'block';
+  // Drain the colour as it ages so "a while ago" is visible at a glance without reading the
+  // label: barely touched under an hour, clearly washed out past six.
+  var g = ageMin < 60 ? 0.35 : ageMin < 360 ? 0.65 : 0.85;
+  el.style.filter = 'grayscale(' + g + ')';
 }
 function _updateMarkerSpeed(el, data, isLive, uid) {
   var s = el && el.querySelector ? el.querySelector('.mk-speed') : null;
@@ -10222,7 +10247,14 @@ function listenUsers() {
         _spdEl.className = 'mk-speed';
         _spdEl.style.cssText = 'position:absolute;top:48px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:800;color:#fff;background:rgba(0,0,0,.62);padding:1px 6px;border-radius:7px;white-space:nowrap;display:none;pointer-events:none;letter-spacing:.02em';
         el.appendChild(_spdEl);
+        // Age chip for a stale pin. Sits where the speed chip does — the two are mutually
+        // exclusive in practice, since a member reporting speed is by definition live.
+        var _ageEl = document.createElement('div');
+        _ageEl.className = 'mk-age';
+        _ageEl.style.cssText = 'position:absolute;top:48px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:800;color:#e6edf3;background:rgba(11,15,20,.82);border:1px solid rgba(255,255,255,.22);padding:1px 6px;border-radius:7px;white-space:nowrap;display:none;pointer-events:none;letter-spacing:.02em';
+        el.appendChild(_ageEl);
         _updateMarkerSpeed(el, data, isLive || isMine, uid);
+        _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
 
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
@@ -10259,6 +10291,7 @@ function listenUsers() {
           el.style.opacity      = opacity;
           el.style.color        = textColor;
           _updateMarkerSpeed(el, data, isLive || isMine, uid);
+          _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
         }
       }
 
@@ -13801,11 +13834,25 @@ window._loadTrailRange = function (mode) {
     window._fb.get(window._fb.ref(window._fb.db, 'gl/' + ctx.room + '/trails/' + ctx.uid)).then(function (snap) {
       var raw = snap.val() || {};
       var now = Date.now();
-      var pts = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
-        .filter(function (p) { return now - p.t < TRAIL_MAX_MS; })
+      var all = Object.keys(raw).map(function (k) { var p = raw[k]; return { lat: p.lat, lng: p.lng, t: p.ts, alt: 0, sp: null, ac: p.acc }; })
         .sort(function (a, b) { return a.t - b.t; });
+      var pts = all.filter(function (p) { return now - p.t < TRAIL_MAX_MS; });
+      // Fall back to the whole trail once the 2-hour window comes up empty.
+      //
+      // TRAIL_MAX_MS is a RETENTION rule, not an answer to "where have they been" — and the
+      // pruning that enforces it only runs when a new point is written, so a parked phone keeps
+      // its trail indefinitely while every point ages out of the window. Reported on-device:
+      // a member with 668 stored points, none newer than 167 minutes, showed "No recent trail"
+      // — the app holding a full morning's driving and flatly denying it. Showing the real span
+      // is strictly better than showing nothing, as long as the label is honest about the age.
+      var stale = false;
+      if (pts.length < 2 && all.length >= 2) { pts = all; stale = true; }
       var spanMin = pts.length ? Math.round((pts[pts.length - 1].t - pts[0].t) / 60000) : 0;
-      _renderTrailResult(pts, 'last ' + spanMin + ' min', 'No recent trail for ' + _escHtml(ctx.name) + ' yet — this builds up automatically as they move around this room, so check back in a bit.');
+      var agoMin  = pts.length ? Math.round((now - pts[pts.length - 1].t) / 60000) : 0;
+      var label = stale
+        ? (spanMin + ' min, ending ' + (agoMin < 60 ? agoMin + 'm' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm') + ' ago')
+        : ('last ' + spanMin + ' min');
+      _renderTrailResult(pts, label, 'No trail recorded for ' + _escHtml(ctx.name) + ' yet — this builds up as they move, so check back in a bit.');
     }).catch(function () { bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>'; });
   }
 };
