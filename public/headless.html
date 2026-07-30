@@ -92,9 +92,15 @@
     }).catch(function () {});
   } catch (e) {}
 
+  // Stationary heartbeat state — see the interval below the start() call.
+  var _lastFixCache = null, _lastWriteTs = 0;
+
   function onFix(pos) {
     var uid = getUid();
     if (!uid) return; // never used the real app on this device — nothing to report or fan out to
+    // Cache for the heartbeat. Speed is nulled in the replay copy: a cached 40 mph re-sent
+    // three minutes later would reset the here-since anchor and show phantom motion.
+    try { _lastFixCache = { coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, speed: null } }; _lastWriteTs = Date.now(); } catch (e) {}
     var keys = fanOutKeys();
     if (!keys.length) return;
     var c = pos.coords;
@@ -288,6 +294,19 @@
     // would just be a second, redundant, battery-costing GPS source competing with the native one
     // for the same writes over the page's whole (now much longer) lifetime. window._nativeDriven
     // is set via a WKUserScript before this script ever runs — see AppDelegate.swift.
+    // Stationary heartbeat — the Android mirror of iOS's native staleFixTimer. watchPosition
+    // is movement-gated, so a parked phone writes NOTHING and its dot goes stale overnight
+    // even though the service is healthy (observed: 45 minutes of silence from a phone
+    // sitting on a nightstand). Re-report the last known fix every 3 minutes so "parked and
+    // fine" is distinguishable from "dead" — the exact gap already closed on iOS. Guarded on
+    // _nativeDriven so the iOS instance (which has the native timer) can't double-report.
+    setInterval(function () {
+      try {
+        if (window._nativeDriven || !_lastFixCache) return;
+        if (Date.now() - _lastWriteTs < 170000) return;   // movement is already reporting
+        onFix(_lastFixCache);
+      } catch (e) {}
+    }, 180000);
     if (window._nativeDriven) { log('native-driven (iOS) — skipping own watchPosition'); return; }
     if (!navigator.geolocation) { log('no geolocation API'); return; }
     started = true;
