@@ -1659,6 +1659,11 @@
       <div style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase">Owner actions</div>
     </div>
     <button id="ownmem-makeowner-btn" onclick="window._makeOwner()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.4);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
+    <!-- Plain remove vs. remove-and-ban are different intents — clearing out a stale device
+         or an accidental joiner isn't punitive, and the only removal on offer used to be the
+         ban. No ban flag is set, so they can rejoin (or reappear on their own if their app is
+         still actively reporting — the confirm says so). -->
+    <button id="ownmem-remove-btn" onclick="window._removeMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove from room &mdash; can rejoin</button>
     <button id="ownmem-kick-btn" onclick="window._kickMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-x"/></svg>Remove &amp; block from room</button>
     <button id="ownmem-remove-crew-btn" onclick="window._removeCircleMember()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:10px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Remove from this Crew</button>
     <!-- Shown for someone who is IN a Crew room but not on its roster — a visitor who has the
@@ -2594,7 +2599,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 516;
+var APP_BUILD = 517;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11997,6 +12002,7 @@ window._memberActionsMenu = function(uid, name) {
   var divider = document.getElementById('ownmem-owner-divider'); if (divider) divider.style.display = isOwner ? 'block' : 'none';
   var mob = document.getElementById('ownmem-makeowner-btn'); if (mob) mob.style.display = isOwner ? 'flex' : 'none';
   var kb = document.getElementById('ownmem-kick-btn'); if (kb) kb.style.display = isOwner ? 'flex' : 'none';
+  var rmb = document.getElementById('ownmem-remove-btn'); if (rmb) rmb.style.display = isOwner ? 'flex' : 'none';
   // "Remove & block from room" only ever affected THIS room's live view + ban flag — it never
   // touched a Crew's permanent roster (gl/<key>/members), so someone removed that way was
   // still a Crew member and would keep showing up via circle fan-out. Only show the real
@@ -12057,6 +12063,24 @@ window._modalToggleHideMap = function () {
     try { _updateMarkerGrouping(); } catch (e) {}
     try { window._closeMemberSheet(); } catch (e) {}
   } catch (e) {}
+};
+// The non-punitive removal: clears them out of this room's live view and diag, sets NO ban
+// flag. If their app is still actively reporting in this room they will reappear on their
+// next fix — that's inherent to a no-ban remove and the confirm says so; the real use is
+// clearing stale devices and accidental joiners without locking the person out.
+window._removeMember = function() {
+  var uid = _ownMemUid;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  _confirm('Remove ' + nm + ' from this room? No block — they can rejoin any time, and if their app is still sharing here they\'ll reappear on their own.', function () {
+    try {
+      fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
+      fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
+    } catch (e) {}
+    try { window._evt('removed ' + nm + ' from the room'); } catch (e) {}
+    toast('Removed from the room — not blocked', 2500);
+  }, { yes: 'Remove', danger: true });
 };
 window._kickMember = function() {
   var uid = _ownMemUid;
