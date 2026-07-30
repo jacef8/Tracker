@@ -2616,7 +2616,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 523;
+var APP_BUILD = 524;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14136,6 +14136,32 @@ function setSavedTracks(arr) {
   try { localStorage.setItem('gl_saved_tracks', JSON.stringify(arr)); } catch (e) {}
   try { if (window._glSync) window._glSync(); } catch (e) {}
 }
+// CONTENT identity for library entries — same spot + label is the same pin, same
+// name/size/endpoints is the same track, whatever pid/id it was stamped with. Every import
+// used to mint fresh ids, so the id-keyed merge treated re-imports as new and the library
+// doubled (observed: 358 cloud pins, 210 of them duplicates). Used by the import dedupe,
+// the profile merges, and the startup sweep below.
+window._pinKey = function (pn) { try { return (+pn.lat).toFixed(6) + ',' + (+pn.lng).toFixed(6) + '|' + (pn.label || ''); } catch (e) { return String(pn && pn.pid); } };
+window._trackKey = function (tk) {
+  try {
+    var p0 = tk.pts[0], pn2 = tk.pts[tk.pts.length - 1];
+    return (tk.name || '') + '|' + tk.pts.length + '|' + p0.lat.toFixed(6) + ',' + p0.lng.toFixed(6) + '|' + pn2.lat.toFixed(6) + ',' + pn2.lng.toFixed(6);
+  } catch (e) { return String(tk && tk.id); }
+};
+// One-time-per-load sweep for duplicates that already exist from earlier imports. Delayed so
+// the account module's _glSync exists by then — the cleaned lists get pushed to the cloud.
+setTimeout(function () {
+  try {
+    var arr = getSavedPins(), seen = {}, out = [];
+    arr.forEach(function (pn) { if (!pn) return; var k = window._pinKey(pn); if (seen[k]) return; seen[k] = 1; out.push(pn); });
+    if (out.length !== arr.length) { setSavedPins(out); try { console.log('[GL] swept ' + (arr.length - out.length) + ' duplicate saved pins'); } catch (e) {} }
+    var tA = getSavedTracks(), tSeen = {}, tOut = [];
+    tA.forEach(function (tk) { if (!tk) return; var k = window._trackKey(tk); if (tSeen[k]) return; tSeen[k] = 1; tOut.push(tk); });
+    if (tOut.length !== tA.length) setSavedTracks(tOut);
+    try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+    try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
+  } catch (e) {}
+}, 6000);
 function _trkMi(m){ return m/1609.344; }
 function _trkFt(m){ return m*3.28084; }
 function _trkFmtDist(m){ return m < 1609.344 ? Math.round(_trkFt(m)) + ' ft' : _trkMi(m).toFixed(2) + ' mi'; }
@@ -16461,7 +16487,7 @@ try {
         var localPins = []; try { localPins = JSON.parse(LS.get('gl_saved_pins') || '[]'); } catch (e2) {}
         if (cloud && cloud.length) {
           var seen = {}, merged = [];
-          localPins.concat(cloud).forEach(function(pn){ if(!pn) return; var k = pn.pid || (pn.lat+','+pn.lng+','+(pn.cat||'')); if(!seen[k]){seen[k]=1;merged.push(pn);} });
+          localPins.concat(cloud).forEach(function(pn){ if(!pn) return; var k = window._pinKey ? window._pinKey(pn) : pn.pid; if(!seen[k]){seen[k]=1;merged.push(pn);} });
           LS.set('gl_saved_pins', JSON.stringify(merged));
         }
       }
@@ -16470,7 +16496,7 @@ try {
         var localT = []; try { localT = JSON.parse(LS.get('gl_saved_tracks') || '[]'); } catch (e3) {}
         if (cloudT && cloudT.length) {
           var seenT = {}, mergedT = [];
-          localT.concat(cloudT).forEach(function(tk){ if(!tk) return; var k = tk.id || (tk.ts+'_'+(tk.name||'')); if(!seenT[k]){seenT[k]=1;mergedT.push(tk);} });
+          localT.concat(cloudT).forEach(function(tk){ if(!tk) return; var k = window._trackKey ? window._trackKey(tk) : tk.id; if(!seenT[k]){seenT[k]=1;mergedT.push(tk);} });
           LS.set('gl_saved_tracks', JSON.stringify(mergedT));
         }
       }
@@ -16499,7 +16525,7 @@ try {
             var loc = []; try { loc = JSON.parse(LS.get('gl_saved_pins') || '[]'); } catch (e) {}
             if (cloud && cloud.length) {
               var seen = {}, merged = [];
-              loc.concat(cloud).forEach(function (pn) { if (!pn) return; var k = pn.pid || (pn.lat + ',' + pn.lng + ',' + (pn.cat || '')); if (!seen[k]) { seen[k] = 1; merged.push(pn); } });
+              loc.concat(cloud).forEach(function (pn) { if (!pn) return; var k = window._pinKey ? window._pinKey(pn) : pn.pid; if (!seen[k]) { seen[k] = 1; merged.push(pn); } });
               if (merged.length !== loc.length) { LS.set('gl_saved_pins', JSON.stringify(merged)); changed = true; }
             }
           }
@@ -16510,7 +16536,7 @@ try {
             var locT = []; try { locT = JSON.parse(LS.get('gl_saved_tracks') || '[]'); } catch (e) {}
             if (cloudT && cloudT.length) {
               var seenT = {}, mergedT = [];
-              locT.concat(cloudT).forEach(function (tk) { if (!tk) return; var k = tk.id || (tk.ts + '_' + (tk.name || '')); if (!seenT[k]) { seenT[k] = 1; mergedT.push(tk); } });
+              locT.concat(cloudT).forEach(function (tk) { if (!tk) return; var k = window._trackKey ? window._trackKey(tk) : tk.id; if (!seenT[k]) { seenT[k] = 1; mergedT.push(tk); } });
               if (mergedT.length !== locT.length) { LS.set('gl_saved_tracks', JSON.stringify(mergedT)); changed = true; }
             }
           }
