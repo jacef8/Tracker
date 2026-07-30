@@ -2653,11 +2653,15 @@ function renderOverview() {
     if (!g || !g.users) return;
     Object.keys(g.users).forEach(function(uid) {
       var u = g.users[uid] || {};
+      // A no-GPS entry (PC/desktop) writes lat:0,lng:0 — a REAL coordinate in the Gulf of
+      // Guinea. One of those in the bounds made fitBounds span Florida-to-Africa, which is
+      // why the map opened showing the whole Atlantic. No position → no marker, no bounds.
+      var _noPos = u.noGps || (u.lat === 0 && u.lng === 0);
       members.push({
         group: gk, uid: uid,
         name: u.name || '(unnamed)',
-        lat: (typeof u.lat === 'number') ? u.lat : null,
-        lng: (typeof u.lng === 'number') ? u.lng : null,
+        lat: (!_noPos && typeof u.lat === 'number') ? u.lat : null,
+        lng: (!_noPos && typeof u.lng === 'number') ? u.lng : null,
         accuracy: u.accuracy || 0,
         ts: u.ts || 0
       });
