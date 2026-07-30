@@ -22,7 +22,8 @@ const FAKE_MINUTES = {
   session: { court: 'Test Circuit Court', judge: 'Hon. J. Smith', date: '2026-07-29', summary: 'One case heard.' },
   entries: [{
     docket_number: '2026-CF-101', defendant: 'John Doe', charges: 'Burglary',
-    state_counsel: 'ASA Jones', defense_counsel: 'PD Brown', proceeding_type: 'Arraignment',
+    state_counsel: 'ASA Jones', defense_counsel: 'PD Brown',
+    defendant_presence: 'Present in custody', bond: 'Continued', proceeding_type: 'Arraignment',
     minutes: 'Defendant appeared with counsel and entered a plea of not guilty. Bond continued.',
     rulings: ['Not guilty plea entered', 'Bond continued'],
     next_setting: 'August 15, 2026 — pretrial', timestamps: '00:00:12-00:00:45',
@@ -113,8 +114,11 @@ async function main() {
 
     const entry = job.minutes.entries[0];
     if (entry.docket_number !== '2026-CF-101') fail('minutes entry mismatch');
-    if (!job.copyText[0].text.includes('For the State: ASA Jones')) fail('copy text malformed');
-    ok('minutes JSON and copy text look right');
+    for (const line of ['Date: 2026-07-29', 'Judge: Hon. J. Smith', 'For the State: ASA Jones',
+                        'Defendant: Present in custody', 'Bond: Continued']) {
+      if (!job.copyText[0].text.includes(line)) fail(`copy text missing field: ${line}`);
+    }
+    ok('minutes JSON and fixed-template copy text look right');
 
     const docx = await fetch(`http://localhost:${PORT}/api/jobs/${id}/minutes.docx`);
     const buf = Buffer.from(await docx.arrayBuffer());

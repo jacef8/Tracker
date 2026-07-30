@@ -16,7 +16,23 @@ function labeled(label, value) {
   });
 }
 
-function entryParagraphs(entry) {
+// The fixed field block every entry prints, in this order, every time.
+// A field the record didn't establish still appears (the model writes
+// "Not reflected in the recording") so gaps are visible, not silent.
+function entryFields(entry, session) {
+  return [
+    ['Date', session && session.date],
+    ['Judge', session && session.judge],
+    ['Proceeding', entry.proceeding_type],
+    ['Charges', entry.charges],
+    ['For the State', entry.state_counsel],
+    ['For the Defendant', entry.defense_counsel],
+    ['Defendant', entry.defendant_presence],
+    ['Bond', entry.bond],
+  ];
+}
+
+function entryParagraphs(entry, session) {
   const paras = [];
 
   paras.push(new Paragraph({
@@ -26,10 +42,9 @@ function entryParagraphs(entry) {
     children: [new TextRun({ text: `${entry.docket_number}  —  ${entry.defendant}`, bold: true })],
   }));
 
-  if (entry.charges) paras.push(labeled('Charges', entry.charges));
-  paras.push(labeled('Proceeding', entry.proceeding_type));
-  paras.push(labeled('For the State', entry.state_counsel));
-  paras.push(labeled('For the Defendant', entry.defense_counsel));
+  for (const [label, value] of entryFields(entry, session)) {
+    paras.push(labeled(label, value));
+  }
 
   for (const line of String(entry.minutes || '').split(/\n+/)) {
     if (line.trim()) paras.push(new Paragraph({ text: line.trim(), spacing: { after: 100 } }));
@@ -89,7 +104,7 @@ async function buildDocx(minutes) {
   if (s.summary) children.push(new Paragraph({ text: s.summary, spacing: { after: 200 } }));
 
   for (const entry of minutes.entries || []) {
-    children.push(...entryParagraphs(entry));
+    children.push(...entryParagraphs(entry, s));
   }
 
   if (Array.isArray(minutes.not_heard) && minutes.not_heard.length) {
@@ -123,13 +138,13 @@ async function buildDocx(minutes) {
 }
 
 // Plain-text rendering of one entry, for the per-case "Copy" button.
-function entryPlainText(entry) {
+// Includes the session's date and judge so each pasted minute stands alone.
+function entryPlainText(entry, session) {
   const lines = [];
   lines.push(`${entry.docket_number}  —  ${entry.defendant}`);
-  if (entry.charges) lines.push(`Charges: ${entry.charges}`);
-  lines.push(`Proceeding: ${entry.proceeding_type || '—'}`);
-  lines.push(`For the State: ${entry.state_counsel || '—'}`);
-  lines.push(`For the Defendant: ${entry.defense_counsel || '—'}`);
+  for (const [label, value] of entryFields(entry, session)) {
+    lines.push(`${label}: ${value || '—'}`);
+  }
   lines.push('');
   lines.push(entry.minutes || '');
   if (Array.isArray(entry.rulings) && entry.rulings.length) {

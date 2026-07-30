@@ -29,14 +29,17 @@ const MINUTES_SCHEMA = {
         additionalProperties: false,
         required: [
           'docket_number', 'defendant', 'charges', 'state_counsel', 'defense_counsel',
-          'proceeding_type', 'minutes', 'rulings', 'next_setting', 'timestamps', 'needs_review', 'review_reason',
+          'defendant_presence', 'bond', 'proceeding_type', 'minutes', 'rulings',
+          'next_setting', 'timestamps', 'needs_review', 'review_reason',
         ],
         properties: {
           docket_number: { type: 'string', description: 'Docket/case number exactly as it appears on the docket' },
           defendant: { type: 'string' },
-          charges: { type: 'string', description: 'Charges if listed on the docket or stated on the record; empty string otherwise' },
-          state_counsel: { type: 'string', description: 'Prosecutor / State attorney; empty string if not identified' },
-          defense_counsel: { type: 'string', description: 'Defense attorney; note if public defender or if defendant appeared pro se; empty string if not identified' },
+          charges: { type: 'string', description: 'Charges as listed on the docket or stated on the record; "Not reflected in the recording" if neither source has them' },
+          state_counsel: { type: 'string', description: 'Prosecutor / State attorney; "Not reflected in the recording" if not identified' },
+          defense_counsel: { type: 'string', description: 'Defense attorney; note if public defender or if defendant appeared pro se; "Not reflected in the recording" if not identified' },
+          defendant_presence: { type: 'string', description: 'Whether and how the defendant appeared — e.g. "Present", "Present in custody", "Present on bond", "Appeared remotely", "Not present"; "Not reflected in the recording" if the record does not show it' },
+          bond: { type: 'string', description: 'Bond status or action taken — e.g. "Continued", "Set at $25,000", "Revoked", "ROR"; "No bond action taken" if none, "Not reflected in the recording" if unclear' },
           proceeding_type: { type: 'string', description: 'e.g. Arraignment, Plea, Pretrial Conference, Sentencing, Motion Hearing, Violation of Probation' },
           minutes: {
             type: 'string',
@@ -72,6 +75,8 @@ const SYSTEM_PROMPT = `You are an assistant to a clerk of court, preparing draft
 You are given (1) the day's docket and (2) a timestamped transcript of the courtroom audio, machine-transcribed and therefore imperfect: names, docket numbers, and legal terms may be garbled. Use the docket as the source of truth for spellings of names, docket numbers, and charges; use the transcript for what actually happened.
 
 Correlate transcript passages to docket entries by docket number when called, by defendant name, and by context (attorney names, charges, sequence). Draft minutes in formal clerk-of-court style: past tense, third person, factual, no speculation. Record appearances (State, defense, defendant present/absent/in custody), the nature of the proceeding, pleas, motions and rulings, bond action, sentences pronounced, and the next setting.
+
+Every entry must address every field the same way so the minutes are uniform and complete: the judge, both attorneys, the defendant's presence, bond, and next setting are stated for every case. When the record does not establish a field, write "Not reflected in the recording" for that field rather than leaving it blank or guessing — a visible gap the clerk can fill beats a silent omission.
 
 Accuracy over completeness: if the audio is unclear or a match is uncertain, still draft what you can but set needs_review to true and say why. Never invent a docket number, name, disposition, or date that is not supported by the docket or the recording. Cases on the docket that were never taken up on the record go in not_heard, and audio you cannot tie to a case goes in unmatched_audio.`;
 

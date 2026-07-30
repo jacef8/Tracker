@@ -87,7 +87,7 @@ async function runJob(job, audioFiles, docketText, meta) {
     job.docx = await buildDocx(minutes);
     job.copyText = (minutes.entries || []).map(e => ({
       docket_number: e.docket_number,
-      text: entryPlainText(e),
+      text: entryPlainText(e, minutes.session),
     }));
 
     setStage(job, 'done', '');
