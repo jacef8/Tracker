@@ -314,9 +314,19 @@ async function connectOneMonitor(id, name) {
     // clears the slot and retries after a short delay, same as the main Talk bar already does.
     r.on(RoomEvent.Disconnected, () => {
       const slot = monRooms[id];
+      // CONNECT-DROP CYCLING is a failure too. The 3-strike guard below only counted attempts
+      // that THREW — but a connection that succeeds, lives seconds, and drops resets the
+      // counter on every success, so an unstable link (one weak-wifi room is enough) engaged
+      // the preemptive duck on every 4s reconnect forever, and 4s retries beat the 10s
+      // duck-release debounce. That is the reported "music pulses in and out with nobody
+      // talking, only in certain rooms". A connection that died young now counts as a strike,
+      // and reconnects back off exactly like failed connects do.
+      const aliveMs = (slot && slot.connectedAt) ? (Date.now() - slot.connectedAt) : 0;
+      if (aliveMs < 60000) monRetryCount[id] = (monRetryCount[id] || 0) + 1;
       if (slot && slot.room === r) delete monRooms[id];
       _syncCarAudio();   // this room just went away — turn car-audio mode off unless something else needs it
-      setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, 4000);
+      const rdelay = Math.min(4000 * Math.pow(2, Math.min((monRetryCount[id] || 0), 4)), 60000);
+      setTimeout(() => { try { connectOneMonitor(id, name); } catch (e) {} }, rdelay);
     });
     // NOT forcing iceTransportPolicy:'relay' here — decompiling the Android SDK's equivalent
     // merge logic proved that supplying a custom rtcConfig makes it skip loading the server's
@@ -324,7 +334,13 @@ async function connectOneMonitor(id, name) {
     // config with no servers to relay through is strictly worse than the default, since it also
     // excludes host candidates. Default connect() lets the SDK load the real server ICE list.
     await r.connect(opts.livekitUrl, token);
-    monRetryCount[id] = 0;   // a real connection landed — this device isn't in a failure loop anymore
+    // The counter only resets once the connection PROVES itself by surviving a minute —
+    // resetting instantly on connect is what let connect-drop cycles evade the 3-strike guard.
+    if (monRooms[id]) monRooms[id].connectedAt = Date.now();
+    setTimeout(() => {
+      const slot = monRooms[id];
+      if (slot && slot.room === r && r.state === 'connected') monRetryCount[id] = 0;
+    }, 60000);
     try { await r.startAudio(); } catch (e) {}
     // Route monitor (auto-listen) audio to the LOUDSPEAKER (media path), not the earpiece —
     // but only while a session is genuinely active (_syncCarAudio checks real state, so this
