@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 513;
+var APP_BUILD = 514;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10672,7 +10672,8 @@ function listenUsers() {
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;flex-shrink:0;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">' +
-          '<div class="ustatus" style="flex:1;min-width:0;color:' + statusColor + '">' +
+          '<div style="flex:1;min-width:0">' +
+          '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Parked · last seen ' + formatTime(data.ts) + ' (' + timeLabel + ')' : 'Last seen: ' + timeLabel) +
             (_shouldShowSpeed(uid, data) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
             // Battery on the row itself (written with every fix since 503; Android/PC only —
@@ -10681,6 +10682,18 @@ function listenUsers() {
             (typeof data.batt === 'number'
               ? ' <span style="color:' + (data.batt <= 15 && !data.chg ? '#f85149' : 'var(--muted)') + '">· ' + (isLive ? '' : 'was ') + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? String.fromCodePoint(0x26A1) : '') + '</span>'
               : '') +
+          '</div>' +
+          // The member card's location lines, right on the row — dwell time ("Here 1h 5m" /
+          // "Moving" / "Was moving when signal was lost") and distance/bearing from you.
+          // Both are computed above for anyone with a GPS marker; the buttons are 40px tall
+          // anyway, so this second text line costs no extra row height.
+          ((_hereLine || _distLine)
+            ? '<div class="ustatus" style="margin-top:2px">' +
+                (_hereLine ? '<span style="color:#58a6ff;font-weight:700">' + _hereLine + '</span>' : '') +
+                (_hereLine && _distLine ? ' <span style="color:var(--muted)">·</span> ' : '') +
+                (_distLine ? '<span style="color:var(--muted)">' + _distLine + '</span>' : '') +
+              '</div>'
+            : '') +
           '</div>' +
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center;flex-shrink:0"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + ';flex-shrink:0">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
