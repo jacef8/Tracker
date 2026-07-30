@@ -2582,7 +2582,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 502;
+var APP_BUILD = 503;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4445,8 +4445,11 @@ window._renderMySessions = function () {
     var isThis = id === userId;
     var dev = (d.dev || '').toLowerCase();
     var icon = /tablet/.test(dev) ? '▦' : /pc|desktop|mac|windows|computer/.test(dev) ? '🖥️' : /watch/.test(dev) ? '⌚' : '📱';
-    var col = d.talking ? '#ff453a' : online ? '#3fb950' : '#8b949e';
-    var status = d.talking ? ('🔊 Talking' + (d.room ? ' · ' + d.room : '')) : online ? (d.room ? 'In ' + d.room : 'Online') : ('Offline · ' + (typeof _devAgo === 'function' ? _devAgo(d.ts) : 'a while ago'));
+    // `talking` is a stored flag, and a device that dies mid-transmission leaves it set — the
+    // same stale-quantity trap as the dead 64 mph speed. Freshness outranks it: an offline
+    // device is Offline, whatever its last flags claim.
+    var col = (online && d.talking) ? '#ff453a' : online ? '#3fb950' : '#8b949e';
+    var status = (online && d.talking) ? ('🔊 Talking' + (d.room ? ' · ' + d.room : '')) : online ? (d.room ? 'In ' + d.room : 'Online') : ('Offline · ' + (typeof _devAgo === 'function' ? _devAgo(d.ts) : 'a while ago'));
     // _withDev combines name + device label ("Jace Ford · tablet") — using just d.name here hid
     // the device label almost always (every session has a name, so d.name || d.dev never fell
     // through), making every one of a person's devices look like an identical duplicate row.
@@ -4456,7 +4459,7 @@ window._renderMySessions = function () {
       '<span style="width:32px;height:32px;border-radius:8px;background:var(--bg2,#0d1117);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">' + icon + '</span>' +
       '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) + (isThis ? ' <span style="font-size:10px;color:var(--muted);font-weight:400">· this device</span>' : '') + '</div>' +
         '<div style="font-size:11px;color:' + col + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(status) + '</div></div>' +
-      (online && !isThis && d.room ? '<button onclick="window._joinDeviceRoom(\'' + _escHtml(d.room) + '\')" style="background:' + (d.talking ? '#2ea043' : 'var(--bg)') + ';border:1px solid ' + (d.talking ? '#2ea043' : 'var(--border)') + ';border-radius:8px;color:' + (d.talking ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">' + (d.talking ? 'Listen' : 'Join') + '</button>' : '') +
+      (online && !isThis && d.room ? '<button onclick="window._joinDeviceRoom(\'' + _escHtml(d.room) + '\')" style="background:' + ((online && d.talking) ? '#2ea043' : 'var(--bg)') + ';border:1px solid ' + ((online && d.talking) ? '#2ea043' : 'var(--border)') + ';border-radius:8px;color:' + ((online && d.talking) ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer;flex-shrink:0">' + (d.talking ? 'Listen' : 'Join') + '</button>' : '') +
       rmBtn +
     '</div>';
   });
@@ -4533,6 +4536,23 @@ window._joinFriendRoom = function(roomKey, roomName) {
 // drops below 18. State is kept per-uid (not per-DOM-element) so all three displays for the
 // same person agree with each other and stay in sync across re-renders.
 window._speedShownState = window._speedShownState || {};
+// Battery state, cached and event-driven, riding along on every position write. Exists to
+// answer the question a stale dot always raises: WHY did it go quiet? A last report of
+// "4%, discharging" says the phone died; "72%, discharging, was doing 64 mph" says the app
+// was killed or lost signal mid-drive; "38%, charging" says parked on a charger asleep.
+// navigator.getBattery is Chromium-only (Android, the PC app); iOS never exposes it, so the
+// fields are simply absent there — absence itself then means "iPhone".
+(function _battWatch() {
+  try {
+    if (!navigator.getBattery) return;
+    navigator.getBattery().then(function (b) {
+      var up = function () { window._batt = { pct: Math.round(b.level * 100), chg: !!b.charging }; };
+      up();
+      b.addEventListener('levelchange', up);
+      b.addEventListener('chargingchange', up);
+    }).catch(function () {});
+  } catch (e) {}
+})();
 function _shouldShowSpeed(uid, data, eligibleOverride) {
   // Speed is an INSTANTANEOUS quantity — it has no meaning past the fix that measured it.
   // This gate had no freshness check, so a member whose phone stopped reporting mid-drive
@@ -9540,6 +9560,9 @@ function startLocationSharing() {
       hereSince: window._hereSinceTs,
       color: window._myColor || ''
     };
+    // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
+    // encoding of "this platform doesn't say" (iOS).
+    try { if (window._batt) { _fixPayload.batt = window._batt.pct; _fixPayload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
     if (groupName && !window._roomClosed && _roomWritable(groupName)) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
@@ -10399,15 +10422,30 @@ function listenUsers() {
           const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
           _distLine = _d + ' from you · ' + _b;
         }
-        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : isResting ? 'RESTING' : 'LAST KNOWN';
+        // Stale with a last-known highway speed is NOT "resting". RESTING claims "parked
+        // somewhere known", but a phone that stopped reporting at 64 mph was driving when it
+        // went dark — killed, dead battery, or no signal. Saying RESTING there asserts a
+        // parked presence that is false (observed: "RESTING · 64 mph" for a member an hour
+        // gone). SIGNAL LOST states exactly what is known: they were moving, then nothing.
+        const wasDriving = !isLive && !isMine && (data.spd || 0) >= 15;
+        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : wasDriving ? 'SIGNAL LOST' : isResting ? 'RESTING' : 'LAST KNOWN';
         const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#888ea0';
         var _safeName = data.name.replace(/'/g, '');
         var _driving = _shouldShowSpeed(uid, data);
         var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
+        // A stale dot explains itself where the data allows: last-known battery + charging
+        // state (Android/PC only; iOS never exposes battery, so nothing shows there).
+        if (!isLive && typeof data.batt === 'number') {
+          _meta += ' · was ' + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? ', charging' : (data.batt <= 15 ? ' — LOW, not charging' : ', not charging'));
+        }
         // "Here for Xm" / "Moving" — how long they've been sitting at ~this spot (or that
         // they're currently in motion), from the always-on hereSince anchor written in onGpsFix.
         var _hereLine = '';
-        if (!data.noGps && !data.hidden && data.hereSince) {
+        if (wasDriving) {
+          // "Here Xm" asserts present-tense presence. A driver whose reports stopped is by
+          // definition NOT still at this spot — say what happened instead.
+          _hereLine = 'Was moving when signal was lost';
+        } else if (!data.noGps && !data.hidden && data.hereSince) {
           if (isLive && (data.spd || 0) >= 3) {
             _hereLine = 'Moving';
           } else {

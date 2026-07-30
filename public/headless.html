@@ -84,6 +84,14 @@
     return Object.keys(keys);
   }
 
+  // Battery cache — mirrors index.html's _battWatch (this page shares no code with it).
+  try {
+    if (navigator.getBattery) navigator.getBattery().then(function (b) {
+      var up = function () { window._batt = { pct: Math.round(b.level * 100), chg: !!b.charging }; };
+      up(); b.addEventListener('levelchange', up); b.addEventListener('chargingchange', up);
+    }).catch(function () {});
+  } catch (e) {}
+
   function onFix(pos) {
     var uid = getUid();
     if (!uid) return; // never used the real app on this device — nothing to report or fan out to
@@ -100,6 +108,9 @@
       accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
       spd: spdMph, spdH: 1, rest: 0, hereSince: hereSinceTs, color: getMyColor()
     };
+    // Same battery ride-along as index.html's _fixPayload — a stale dot's last report should
+    // say whether the phone was dying, and background fixes are exactly the ones that go stale.
+    try { if (window._batt) { payload.batt = window._batt.pct; payload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
     keys.forEach(function (k) {
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
     });
