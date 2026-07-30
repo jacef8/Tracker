@@ -1524,7 +1524,7 @@
 <div id="places-drawer">
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-target"/></svg><span id="places-drawer-title">Places</span></span>
-    <button class="panel-close" onclick="document.getElementById('places-drawer').classList.remove('open'); if (typeof window._placeEventsUnsub === 'function') { window._placeEventsUnsub(); window._placeEventsUnsub = null; }"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
+    <button class="panel-close" onclick="document.getElementById('places-drawer').classList.remove('open'); if (typeof window._placeEventsUnsub === 'function') { window._placeEventsUnsub(); window._placeEventsUnsub = null; } if (window._hidePlaceMarkers) window._hidePlaceMarkers();"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
   <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Get notified when a Circle member arrives at or leaves a place.</div>
   <div style="padding:10px 12px 0">
@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 511;
+var APP_BUILD = 512;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11714,6 +11714,9 @@ window._enablePlaceMode = function () {
   map.getCanvas().style.cursor = 'crosshair';
 };
 window._disablePlaceMode = function () {
+  // Leaving placement without saving: if the manager drawer isn't open to return to, the
+  // tool is being exited entirely — take the markers with it.
+  try { var _pd = document.getElementById('places-drawer'); if (!_pd || !_pd.classList.contains('open')) window._hidePlaceMarkers && window._hidePlaceMarkers(); } catch (e) {}
   placeMode = false;
   document.getElementById('place-mode-bar').classList.remove('active');
   map.getCanvas().style.cursor = '';
@@ -14270,6 +14273,58 @@ function _renderTrailResult(pts, label, emptyMsg) {
 // A Place lives at gl/<circleKey>/places/<placeId>, distinct from room pins
 // (gl/<group>/pins, session-scoped) and My Saved Pins (personal, localStorage-only) — it needs
 // to be readable by every circle member's device, same tier as members/<uid>.
+// Existing Places drawn on the map while the Places tool is engaged — markers plus their
+// actual alert-radius rings. Placing or editing an alert blind, with the current ones
+// invisible, meant guessing at overlaps and re-covering spots that already had coverage;
+// you could not see what "600 ft around Home" even looked like. Shown from manager-open
+// through add-mode and the edit modal; torn down only when the tool is genuinely left.
+window._placeMkrs = [];
+function _circlePolygon(lat, lng, rMeters) {
+  var pts = [];
+  var latR = rMeters / 111320;
+  var lngR = rMeters / (111320 * Math.cos(lat * Math.PI / 180));
+  for (var i = 0; i <= 48; i++) {
+    var a = (i / 48) * 2 * Math.PI;
+    pts.push([lng + lngR * Math.cos(a), lat + latR * Math.sin(a)]);
+  }
+  return pts;
+}
+window._showPlaceMarkers = function () {
+  try {
+    if (typeof map === 'undefined' || !map || !map.isStyleLoaded()) return;
+    window._hidePlaceMarkers(true);
+    var feats = [];
+    Object.keys(_placesListCache || {}).forEach(function (pid) {
+      var pl = _placesListCache[pid];
+      if (!pl || typeof pl.lat !== 'number' || typeof pl.lng !== 'number') return;
+      feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [_circlePolygon(pl.lat, pl.lng, pl.radius || 100)] } });
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none';
+      el.innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:#58a6ff;border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.7)"></div>' +
+        '<div style="margin-top:3px;font-size:11px;font-weight:800;color:#fff;background:rgba(11,15,20,.78);padding:1px 7px;border-radius:8px;white-space:nowrap">' + escapeHtmlJs(pl.name || 'Place') + '</div>';
+      var mk = new mapboxgl.Marker({ element: el, anchor: 'top' }).setLngLat([pl.lng, pl.lat]).addTo(map);
+      window._placeMkrs.push(mk);
+    });
+    if (feats.length) {
+      map.addSource('gl-place-rings', { type: 'geojson', data: { type: 'FeatureCollection', features: feats } });
+      map.addLayer({ id: 'gl-place-rings-fill', type: 'fill', source: 'gl-place-rings',
+        paint: { 'fill-color': '#58a6ff', 'fill-opacity': 0.12 } });
+      map.addLayer({ id: 'gl-place-rings-line', type: 'line', source: 'gl-place-rings',
+        paint: { 'line-color': '#58a6ff', 'line-width': 1.6, 'line-dasharray': [2, 2], 'line-opacity': 0.85 } });
+    }
+  } catch (e) {}
+};
+window._hidePlaceMarkers = function (soft) {
+  try {
+    (window._placeMkrs || []).forEach(function (m) { try { m.remove(); } catch (e) {} });
+    window._placeMkrs = [];
+    if (typeof map !== 'undefined' && map) {
+      if (map.getLayer('gl-place-rings-fill')) map.removeLayer('gl-place-rings-fill');
+      if (map.getLayer('gl-place-rings-line')) map.removeLayer('gl-place-rings-line');
+      if (map.getSource('gl-place-rings')) map.removeSource('gl-place-rings');
+    }
+  } catch (e) {}
+};
 window._openPlacesManager = function (circleKey, circleName) {
   // Stop Follow-me/Follow-group as soon as the tool is opened, not only once "+ Add Place" is
   // tapped — the map re-centering on your own live position fights you the moment you're even
@@ -14321,6 +14376,7 @@ function _renderPlacesList() {
   window._fb.onValue(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'), function (snap) {
     var places = snap.val() || {};
     _placesListCache = places;
+    try { window._showPlaceMarkers(); } catch (e) {}   // keep the on-map markers in step
     var ids = Object.keys(places);
     if (!ids.length) {
       list.innerHTML = '<div style="padding:22px 16px;text-align:center;color:var(--muted);font-size:13px">No places yet.<br>Tap <b>+ Add Place</b> to set one up.</div>';
