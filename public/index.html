@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 514;
+var APP_BUILD = 515;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8063,6 +8063,20 @@ function _showNativeUpdateBar(msg, url, mine, need) {
     if (_q.get('notif') === 'voice') window._pendingNotif = 'voice';   // opened from a voice ping
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
+    // ?room= is not only invite links — push notifications deep-link with it too. Treating
+    // every arrival as a stranger showed the OWNER "You've been invited to..." for their own
+    // Crew when they tapped a join notification. With a saved identity and a room that's
+    // already ours (Crew membership, or the very room the session was in), there is nothing
+    // to ask: go straight in. checkGroupPasscode still enforces bans and the passcode.
+    try {
+      var _s0 = getSavedSession() || {};
+      var _rk = _invRoom.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+      var _sg = (_s0.group || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+      if (_s0.uid && _s0.name && (_isCircleMember(_rk) || _sg === _rk)) {
+        checkGroupPasscode(_s0.name, _invRoom, _s0.uid, window._invitePin || null);
+        return;
+      }
+    } catch (e) {}
     showInviteJoin(_invRoom, window._invitePin || null);
     return;
   }
