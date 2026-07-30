@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 507;
+var APP_BUILD = 508;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4577,6 +4577,32 @@ window._speedShownState = window._speedShownState || {};
 // navigator.getBattery is Chromium-only (Android, the PC app); iOS never exposes it, so the
 // fields are simply absent there — absence itself then means "iPhone".
 (function _battWatch() {
+  // NATIVE first. Apple blocks the web Battery Status API outright, which is why iPhones
+  // reported nothing — but the native UIDevice API is fully allowed (it's how Life360 shows
+  // iPhone battery), and the @capacitor/device plugin exposes it on both platforms. The
+  // native path polls (no battery events cross the bridge): every 60s, plus on app-resume,
+  // since coming back to foreground is exactly when a stale reading would otherwise linger.
+  // Web builds and native shells predating the plugin fall back to navigator.getBattery.
+  try {
+    var cap = window.Capacitor;
+    var Dev = cap && cap.Plugins && cap.Plugins.Device;
+    if (Dev && Dev.getBatteryInfo) {
+      var pull = function () {
+        Dev.getBatteryInfo().then(function (bi) {
+          if (bi && typeof bi.batteryLevel === 'number') {
+            window._batt = { pct: Math.round(bi.batteryLevel * 100), chg: !!bi.isCharging };
+          }
+        }).catch(function () {});
+      };
+      pull();
+      setInterval(pull, 60000);
+      try {
+        var AppP = cap.Plugins.App;
+        if (AppP && AppP.addListener) AppP.addListener('appStateChange', function (st) { if (st && st.isActive) pull(); });
+      } catch (e) {}
+      return;
+    }
+  } catch (e) {}
   try {
     if (!navigator.getBattery) return;
     navigator.getBattery().then(function (b) {
