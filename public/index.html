@@ -2616,7 +2616,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 520;
+var APP_BUILD = 521;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3575,11 +3575,15 @@ window._acctPeopleSearch = function (q) {
     var statusCol = inMine ? '#f0a500' : pp.online ? '#3fb950' : pp.active ? '#58a6ff' : 'var(--muted)';
     var safeRoom = pp.online ? String(pp.room).replace(/'/g, '') : '';
     var safeDisp = disp.replace(/'/g, '');
-    var joinBtn = (pp.online && !inMine) ? '<button onclick="window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
+    var joinBtn = (pp.online && !inMine) ? '<button onclick="event.stopPropagation();window._joinFriendRoom(\'' + safeRoom + '\',\'' + safeDisp + '\')" style="padding:7px 12px;background:#00e676;border:none;border-radius:9px;font-size:12px;font-weight:800;color:#000;cursor:pointer;flex-shrink:0;white-space:nowrap">Join</button>' : '';
     var addRm = pp.friend
-      ? '<button onclick="window._removeFriend(\'' + pp.uid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">&times;</button>'
-      : '<button onclick="window._acctAddFriend(\'' + pp.uid + '\')" title="Add to favorites" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer;flex-shrink:0;white-space:nowrap">&#9733; Add</button>';
-    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
+      ? '<button onclick="event.stopPropagation();window._removeFriend(\'' + pp.uid + '\')" title="Remove favorite" style="background:none;border:none;color:#f85149;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1">&times;</button>'
+      : '<button onclick="event.stopPropagation();window._acctAddFriend(\'' + pp.uid + '\')" title="Add to favorites" style="background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer;flex-shrink:0;white-space:nowrap">&#9733; Add</button>';
+    // The whole row is tappable, not just the Join pill — "why is Laura not clickable?" In a
+    // room: join it. Active or offline: nothing to join, but say WHY instead of dead silence
+    // (the buttons stop propagation so their own actions still work untouched).
+    var safeName = String(pp.name || '').replace(/['"\\]/g, '');
+    return '<div onclick="window._friendRowTap(\'' + pp.uid + '\',\'' + safeName + '\',\'' + safeRoom + '\',\'' + safeDisp + '\')" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer">' +
         '<div style="width:34px;height:34px;border-radius:50%;background:' + (pp.online ? '#13361f' : pp.active ? '#0d2b47' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;font-weight:800;color:' + (pp.online ? '#3fb950' : pp.active ? '#58a6ff' : 'var(--muted)') + ';flex-shrink:0">' + escapeHtmlJs(initials(pp.name)) + '</div>' +
         '<div style="min-width:0;flex:1">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
@@ -3587,6 +3591,15 @@ window._acctPeopleSearch = function (q) {
         '</div>' + joinBtn + addRm +
       '</div>';
   }).join('');
+};
+// Row tap on the home people list. In a room → join it (same as the Join pill). Not in a
+// room → there is genuinely nothing to open (their location only exists inside rooms/Crews
+// you share), so explain the state instead of silently ignoring the tap.
+window._friendRowTap = function (uid, name, room, disp) {
+  if (room) { window._joinFriendRoom(room, disp || room); return; }
+  var pres = window._presenceAll || {};
+  var p = pres[uid];
+  toast(name + (p ? ' has the app open but isn\'t in any room — there\'s nothing to join yet. Invite them to a room to see them on a map.' : ' is offline — their device isn\'t reporting right now.'), 4200);
 };
 // Add an online non-friend to favorites (name looked up from presence — avoids inline escaping),
 // then refresh the search results so the row flips to ★/remove.
