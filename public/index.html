@@ -2616,7 +2616,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 521;
+var APP_BUILD = 522;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14051,7 +14051,11 @@ window._handleGpxFile = function (file) {
     try {
       var doc = new DOMParser().parseFromString(String(reader.result || ''), 'application/xml');
       var wpts = doc.getElementsByTagName('wpt');
-      if (!wpts || !wpts.length) { try { toast('No waypoints found in that GPX file'); } catch (e) {} return; }
+      // Tracks and routes too — OnX exports lines AND area boundaries as <trk> (a closed
+      // shape is just a track that ends where it started), and this importer used to skip
+      // them silently, so "did my areas come over?" was answered with nothing at all.
+      var trkEls = [].slice.call(doc.getElementsByTagName('trk')).concat([].slice.call(doc.getElementsByTagName('rte')));
+      if ((!wpts || !wpts.length) && !trkEls.length) { try { toast('No waypoints, tracks, or areas found in that GPX file'); } catch (e) {} return; }
       var coll = (file.name || 'GPX').replace(/\.gpx$/i, '').slice(0, 40) || 'Imported';
       var arr = getSavedPins(); var added = 0;
       for (var i = 0; i < wpts.length; i++) {
@@ -14065,10 +14069,40 @@ window._handleGpxFile = function (file) {
         added++;
       }
       setSavedPins(arr);
+      // Tracks/routes/areas → the saved-tracks library (same shape the recorder writes, so
+      // the existing viewer/stats/sync all just work). GPX points may carry no <time>; the
+      // synthetic 1ms-apart stamps keep the stats math valid while showing ~0 duration.
+      var addedTrk = 0;
+      try {
+        var tArr = getSavedTracks();
+        trkEls.forEach(function (trk, ti) {
+          var ptEls = [].slice.call(trk.getElementsByTagName('trkpt')).concat([].slice.call(trk.getElementsByTagName('rtept')));
+          var pts = [];
+          var base = Date.now();
+          ptEls.forEach(function (pe, pi) {
+            var la = parseFloat(pe.getAttribute('lat')), lo = parseFloat(pe.getAttribute('lon'));
+            if (isNaN(la) || isNaN(lo)) return;
+            var eleEl = pe.getElementsByTagName('ele')[0], timeEl = pe.getElementsByTagName('time')[0];
+            var alt = eleEl ? parseFloat(eleEl.textContent) : null;
+            var t = timeEl ? Date.parse(timeEl.textContent) : NaN;
+            pts.push({ lat: la, lng: lo, alt: (alt != null && !isNaN(alt)) ? alt : null, t: isNaN(t) ? (base + pi) : t, sp: null, ac: 0 });
+          });
+          if (pts.length < 2) return;
+          var nmEl2 = trk.getElementsByTagName('name')[0];
+          var tName = (nmEl2 ? (nmEl2.textContent || '').trim() : '') || (coll + ' ' + (ti + 1));
+          tArr.unshift({ id: 'gpxt_' + Date.now().toString(36) + '_' + ti, name: tName, ts: Date.now(), pts: pts, stats: _trackStats(pts) });
+          addedTrk++;
+        });
+        if (addedTrk) setSavedTracks(tArr);
+      } catch (e) {}
       try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
       try { if (typeof openSavedPins === 'function') openSavedPins(); } catch (e) {}
-      try { if (window._evt) window._evt('imported ' + added + ' GPX waypoints (' + coll + ')'); } catch (e) {}
-      try { toast('Imported ' + added + ' waypoint' + (added !== 1 ? 's' : '') + ' into My Saved Pins. Select the ones you want and add them to the room.', 5500); } catch (e) {}
+      try { if (window._evt) window._evt('imported ' + added + ' GPX waypoints, ' + addedTrk + ' tracks (' + coll + ')'); } catch (e) {}
+      try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+      var _sum = [];
+      if (added) _sum.push(added + ' waypoint' + (added !== 1 ? 's' : '') + ' into My Saved Pins');
+      if (addedTrk) _sum.push(addedTrk + ' track' + (addedTrk !== 1 ? 's' : '') + '/area' + (addedTrk !== 1 ? 's' : '') + ' into My Tracks');
+      try { toast('Imported ' + _sum.join(' and ') + ' — they\'re on your map now (only you see them). To share any with the room, use Select in My Saved.', 7000); } catch (e) {}
     } catch (e) { try { toast('Couldn’t read that GPX file'); } catch (_) {} }
   };
   reader.readAsText(file);
@@ -15103,7 +15137,10 @@ function _sortSavedEntries(entries) {
 
 // ── Show saved/imported pins on the map (personal — only this device sees them) ──
 // Distinct from shared room pins: dashed white ring. Respects the active filter.
-window._showSavedOnMap = (function(){ try { return localStorage.getItem('gl_show_saved_map') === '1'; } catch(e){ return false; } })();
+// Default ON: if pins are in your library they show on your map — importing a hundred OnX
+// waypoints and then being told to go select them just to SEE them was backwards. The
+// toggle still exists to hide them; only an explicit '0' keeps them off.
+window._showSavedOnMap = (function(){ try { return localStorage.getItem('gl_show_saved_map') !== '0'; } catch(e){ return true; } })();
 window._savedMapMarkers = [];
 function _clearSavedMapMarkers() {
   (window._savedMapMarkers || []).forEach(function(m) { try { m.remove(); } catch(e){} });
