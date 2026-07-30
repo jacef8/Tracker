@@ -124,6 +124,82 @@ app.post('/wake-device', rateLimit(20, 60000), async function(req, res) {
   }
 });
 
+// Find one uid's push identity (FCM token and/or web-push sub) by scanning every room's
+// pushSubs and favSubs. Subscriptions are per-room with no global index, so this walks the
+// room list — cheap at family scale, and both /bump and /nudge below need it.
+async function findSubsForUid(uid) {
+  let rooms = [];
+  try {
+    const r = await fetch(DB_URL + '/gl.json?shallow=true');
+    rooms = Object.keys((await r.json()) || {}).filter(k => k.charAt(0) !== '_');
+  } catch (e) { return null; }
+  for (const room of rooms) {
+    for (const branch of ['pushSubs', 'favSubs']) {
+      try {
+        const rec = await _dbGet('gl/' + room + '/' + branch + '/' + uid);
+        if (rec && (rec.fcm || rec.sub)) return rec;
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+// Silent wake ("bump"): a content-available push that relaunches the target's app just long
+// enough to report one fresh fix — the Life360 "member updates right when you look at them"
+// mechanic. Invisible on the target's phone; wakes from suspension and from system
+// termination, but nothing can wake a user force-quit (that's what /nudge is for).
+app.post('/bump', rateLimit(30, 60000), async function(req, res) {
+  if (!fcmAdmin) return res.json({ ok: false, reason: 'fcm-not-configured' });
+  const uid = String((req.body || {}).uid || '');
+  if (!uid) return res.json({ ok: false, reason: 'no-uid' });
+  const rec = await findSubsForUid(uid);
+  if (!rec || !rec.fcm) return res.json({ ok: false, reason: 'no-token' });
+  try {
+    await fcmAdmin.messaging().send({
+      token: rec.fcm,
+      data: { type: 'bump', ts: String(Date.now()) },
+      android: { priority: 'high' },
+      apns: {
+        headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+        payload: { aps: { 'content-available': 1 } }
+      }
+    });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
+
+// Loud fallback: a VISIBLE notification asking the person to reopen the app — for the one
+// state no push can silently recover, a user force-quit. Sent deliberately by a member from
+// a stale dot's card, never automatically.
+app.post('/nudge', rateLimit(10, 60000), async function(req, res) {
+  const uid = String((req.body || {}).uid || '');
+  const fromName = String((req.body || {}).fromName || 'Someone');
+  if (!uid) return res.json({ ok: false, reason: 'no-uid' });
+  const rec = await findSubsForUid(uid);
+  if (!rec) return res.json({ ok: false, reason: 'no-subscription' });
+  const title = 'GroundLink stopped sharing';
+  const body = fromName + " can't see your location — open GroundLink to start sharing again.";
+  let sent = false;
+  if (fcmAdmin && rec.fcm) {
+    try {
+      await fcmAdmin.messaging().send({
+        token: rec.fcm,
+        notification: { title: title, body: body },
+        android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+        apns: { payload: { aps: { sound: 'default' } } }
+      });
+      sent = true;
+    } catch (e) {}
+  }
+  if (!sent && pushReady && rec.sub) {
+    try {
+      await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify({ title: title, body: body, url: '/' }), { TTL: 3600, urgency: 'high' });
+      sent = true;
+    } catch (e) {}
+  }
+  res.json({ ok: sent, reason: sent ? undefined : 'send-failed' });
+});
+
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', rateLimit(30, 60000), async function(req, res) {

@@ -114,6 +114,28 @@
     keys.forEach(function (k) {
       try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
     });
+    // Low-battery Crew alert from the background path too — a dying phone is precisely the
+    // one whose foreground app isn't open. Same edge logic and the SAME localStorage flag as
+    // index.html, so the two paths can't double-send for one discharge cycle.
+    try {
+      if (window._batt) {
+        var blSent = localStorage.getItem('gl_lowbatt_sent') === '1';
+        if (window._batt.chg || window._batt.pct >= 30) {
+          if (blSent) localStorage.setItem('gl_lowbatt_sent', '0');
+        } else if (window._batt.pct <= 15 && !blSent) {
+          localStorage.setItem('gl_lowbatt_sent', '1');
+          Object.keys(getCircles()).forEach(function (ck) {
+            fetch('/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ns: 'gl', group: ck, type: 'battlow', title: 'Low battery',
+                body: (getName() || 'Someone') + "'s phone is at " + window._batt.pct + '% and not charging',
+                url: '/', toFavs: true, senderId: uid,
+                senderFcm: (function(){ try { return localStorage.getItem('gl_fcm') || ''; } catch(e){ return ''; } })(),
+                senderEndpoint: (function(){ try { return localStorage.getItem('gl_push_endpoint') || ''; } catch(e){ return ''; } })() })
+            }).catch(function () {});
+          });
+        }
+      }
+    } catch (e) {}
     writeHistoryIfOn(uid, c);
     checkPlaceGeofences(uid, c);
   }

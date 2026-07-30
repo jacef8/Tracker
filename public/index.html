@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 508;
+var APP_BUILD = 509;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5581,6 +5581,27 @@ function _ensurePlacesSubscribed(circleKey) {
 // Called once per fix (from onGpsFix) with the fix already fan-out to every circle. Checks the
 // CURRENT USER's own position against every place in every circle they belong to — an arrival/
 // departure is only meaningful for the person actually moving, not for someone else's fix.
+// Snapshot for the NATIVE side (iOS AppDelegate calls this on every foregrounding). Native
+// code cannot read this WebView's localStorage, and it needs the Places list to register
+// OS-level CLCircularRegion monitoring — geofence crossings then wake the app even when the
+// process was dead, with the actual arrive/leave logic staying in headless.html. Returns a
+// compact JSON array; radius field shortened to r to match the Swift parser.
+window.__nativeSync = function () {
+  try {
+    var out = [];
+    var cache = window._placesCache || {};
+    Object.keys(cache).forEach(function (ck) {
+      var places = cache[ck] || {};
+      Object.keys(places).forEach(function (pid) {
+        var pl = places[pid];
+        if (pl && typeof pl.lat === 'number' && typeof pl.lng === 'number') {
+          out.push({ id: ck + '|' + pid, lat: pl.lat, lng: pl.lng, r: pl.radius || 100 });
+        }
+      });
+    });
+    return JSON.stringify(out);
+  } catch (e) { return ''; }
+};
 function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
   circleKeys.forEach(function (circleKey) {
     var places = window._placesCache[circleKey]; if (!places) return;
@@ -9628,6 +9649,22 @@ function startLocationSharing() {
     // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
     // encoding of "this platform doesn't say" (iOS).
     try { if (window._batt) { _fixPayload.batt = window._batt.pct; _fixPayload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
+    // Low-battery Crew alert — the Life360 "Battery is at 10%" push. Edge-triggered: fires
+    // once when the level first crosses 15% while discharging, and re-arms only after real
+    // recovery (back above 30%, or plugged in) so a battery hovering at the line can't spam.
+    try {
+      if (window._batt && _circleKeys.length) {
+        var _blSent = localStorage.getItem('gl_lowbatt_sent') === '1';
+        if (window._batt.chg || window._batt.pct >= 30) {
+          if (_blSent) localStorage.setItem('gl_lowbatt_sent', '0');
+        } else if (window._batt.pct <= 15 && !_blSent) {
+          localStorage.setItem('gl_lowbatt_sent', '1');
+          for (var _bli = 0; _bli < _circleKeys.length; _bli++) {
+            pushNotify('battlow', 'Low battery', (userName || 'Someone') + "'s phone is at " + window._batt.pct + '% and not charging', { toFavs: true }, _circleKeys[_bli]);
+          }
+        }
+      }
+    } catch (e) {}
     if (groupName && !window._roomClosed && _roomWritable(groupName)) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
@@ -10528,9 +10565,21 @@ function listenUsers() {
           }
         }
         var _coordsStr = (typeof data.lat === 'number' && typeof data.lng === 'number') ? data.lat.toFixed(6) + ', ' + data.lng.toFixed(6) : '';
+        // Stale member: Refresh silently wakes their phone for one fix (content-available
+        // push -> AppDelegate grabs a location -> headless writes it). Nudge is the loud
+        // fallback — a visible notification asking them to reopen the app, for the one case
+        // nothing can wake: a user force-quit. Neither shows for live members; there is
+        // nothing to refresh.
+        var _msRefresh = (!isMine && !isLive)
+          ? '<button onclick="window._bumpMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid #58a6ff;border-radius:9px;font-size:13px;font-weight:800;color:#58a6ff;cursor:pointer;white-space:nowrap">Refresh</button>'
+          : '';
+        var _msNudge = (!isMine && !isLive && (now - (data.fixTs || data.ts || 0)) > 30 * 60 * 1000)
+          ? '<button onclick="window._nudgeMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer;white-space:nowrap">Nudge</button>'
+          : '';
         var _msFollow = !isMine
           ? '<button onclick="window._followUser(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (isLive?'#00e676':'#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>'
           : '';
+        _msFollow = _msRefresh + _msNudge + _msFollow;
         var _msNav = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
@@ -12348,6 +12397,26 @@ window._sendRoomInvite = function(uid) {
 // Delegates to _sendCircleInvite so the recipient experience is byte-identical to a picker
 // invite: the same gl/_invites record, the same account fan-out, the same accept prompt with
 // the Crew disclosure behind it.
+// Silent wake: ask the server to send a content-available push to this member's device.
+// Nothing visible happens on their phone; if it worked, their dot refreshes in ~15-30s.
+window._bumpMember = function (uid, nm) {
+  try {
+    fetch('/bump', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { toast(j && j.ok ? 'Asked ' + (nm || 'their') + "'s phone for a fresh fix — watch for ~30s" : 'Couldn\u2019t reach their device (no push subscription)', 3200); })
+      .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
+  } catch (e) {}
+};
+// Loud fallback for the unwakeable case (force-quit): a visible notification asking them to
+// reopen the app. Confirmed first — this pings a real human.
+window._nudgeMember = function (uid, nm) {
+  _confirm('Send ' + (nm || 'them') + ' a notification asking them to reopen GroundLink? Use this when their location has been stuck a while.', function () {
+    fetch('/nudge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid, fromName: userName || 'Someone' }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { toast(j && j.ok ? 'Nudge sent' : 'Couldn\u2019t reach their device', 2600); })
+      .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
+  }, { yes: 'Send nudge' });
+};
 window._inviteToCrewHere = function () {
   var uid = _ownMemUid;
   try { document.getElementById('owner-member-modal').style.display = 'none'; } catch (e) {}

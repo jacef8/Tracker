@@ -36,6 +36,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var staleFixTimer: Timer?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Battery for the fix payload. iOS forbids the WEB battery API entirely, but the native
+        // one is unrestricted (it's how Life360 reports iPhone battery). Read here, injected
+        // into headless.html alongside each fix — see sendPendingFix.
+        UIDevice.current.isBatteryMonitoringEnabled = true
         let mgr = CLLocationManager()
         mgr.delegate = self
         mgr.allowsBackgroundLocationUpdates = true
@@ -59,6 +63,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             mgr.startMonitoringSignificantLocationChanges()
         }
         bgLocationManager = mgr
+        syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
         // A stationary device (moved less than distanceFilter) never gets another
         // didUpdateLocations callback at all, so its last-known fix would otherwise go stale in
         // Firebase after a few minutes and look exactly like tracking had silently stopped, even
@@ -96,12 +101,80 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
     }
 
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
-    }
-
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
+    }
+
+    // Silent-push wake ("bump"). A content-available push relaunches this app from suspension
+    // AND from system termination (though never from a user force-quit — nothing does, for any
+    // app). The server's /bump endpoint sends one when someone taps Refresh on a stale member;
+    // this handler grabs the current location and reports it through the proven headless path,
+    // which is exactly the Life360 "member refreshes right when you look at them" behaviour.
+    // The remote-notification background mode is already declared in Info.plist.
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        if let loc = bgLocationManager?.location {
+            reportFixInBackground(loc)
+            // Give the headless write a moment before iOS suspends us again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { completionHandler(.newData) }
+        } else {
+            completionHandler(.noData)
+        }
+    }
+
+    // ── Native geofences (Places) ────────────────────────────────────────────────────────
+    // The web layer evaluates geofences only when fixes happen to flow. CLCircularRegion
+    // monitoring is OS-level: crossings wake this app (even system-terminated) at ~zero
+    // battery cost. The regions act purely as WAKE triggers — the actual arrive/leave logic,
+    // hysteresis and pushes stay in headless.html's checkPlaceGeofences, which runs on the fix
+    // this report generates. Place list arrives via __nativeSync (see below), cached in
+    // UserDefaults so region monitoring survives relaunches where the web app never loads.
+    private func syncMonitoredRegions() {
+        guard let mgr = bgLocationManager else { return }
+        guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+        for r in mgr.monitoredRegions where r.identifier.hasPrefix("GL-") {
+            mgr.stopMonitoring(for: r)
+        }
+        guard let json = UserDefaults.standard.string(forKey: "gl_native_places"),
+              let data = json.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        // iOS caps monitored regions at 20 per app; leave headroom for the OS.
+        for pl in arr.prefix(18) {
+            guard let id = pl["id"] as? String,
+                  let lat = pl["lat"] as? Double,
+                  let lng = pl["lng"] as? Double else { continue }
+            let radius = min(max((pl["r"] as? Double) ?? 100, 50), 400)
+            let region = CLCircularRegion(center: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                                          radius: radius, identifier: "GL-" + id)
+            region.notifyOnEntry = true
+            region.notifyOnExit = true
+            mgr.startMonitoring(for: region)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        if let loc = manager.location { reportFixInBackground(loc) }
+    }
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        if let loc = manager.location { reportFixInBackground(loc) }
+    }
+
+    // Pull identity + places out of the LIVE web app whenever it comes to the foreground —
+    // native code can't read the WebView's localStorage directly, so the web side exposes
+    // __nativeSync() returning a JSON snapshot. Cached in UserDefaults for launches where the
+    // UI (and thus the web app) never starts, e.g. a location-triggered background relaunch.
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self = self,
+                  let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
+                  let wv = bridgeVC.webView else { return }
+            wv.evaluateJavaScript("window.__nativeSync ? window.__nativeSync() : ''") { result, _ in
+                guard let json = result as? String, !json.isEmpty else { return }
+                UserDefaults.standard.set(json, forKey: "gl_native_places")
+                self.syncMonitoredRegions()
+            }
+        }
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
@@ -206,7 +279,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         let lng = loc.coordinate.longitude
         let acc = loc.horizontalAccuracy
         let spd = loc.speed
-        let js = "window._writeIOSFix && window._writeIOSFix(\(lat), \(lng), \(acc), \(spd));"
+        // Battery rides along. batteryLevel is -1 when unknown (simulator, monitoring off) —
+        // skip the injection then, so the web layer's "absent means unknown" convention holds.
+        var battJS = ""
+        let lvl = UIDevice.current.batteryLevel
+        if lvl >= 0 {
+            let pct = Int((lvl * 100).rounded())
+            let st = UIDevice.current.batteryState
+            let chg = (st == .charging || st == .full) ? "true" : "false"
+            battJS = "window._batt={pct:\(pct),chg:\(chg)};"
+        }
+        let js = battJS + "window._writeIOSFix && window._writeIOSFix(\(lat), \(lng), \(acc), \(spd));"
         webView.evaluateJavaScript(js) { [weak self] _, _ in
             // Give the Firebase write itself a moment to actually reach the network before
             // ending the background task — evaluateJavaScript's completion only means the
