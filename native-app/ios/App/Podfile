@@ -12,7 +12,7 @@ def capacitor_pods
   pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCommunityBackgroundGeolocation', :path => '../../node_modules/@capacitor-community/background-geolocation'
-  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']
+  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'
   pod 'CapacitorFirebaseMessaging', :path => '../../node_modules/@capacitor-firebase/messaging'
   pod 'CapacitorApp', :path => '../../node_modules/@capacitor/app'
   pod 'CapacitorDevice', :path => '../../node_modules/@capacitor/device'
@@ -23,8 +23,25 @@ end
 target 'App' do
   capacitor_pods
   # Add your Pods here
+  # Google sign-in for CapacitorFirebaseAuthentication — added DIRECTLY instead of via the
+  # pod's :subspecs => ['Google'] mechanism. The subspec route produced a pod that installed
+  # and passed the lockfile guard yet yielded no importable module and no runtime plugin
+  # class (confirmed both ways 2026-07-30: `import CapacitorFirebaseAuthentication` failed to
+  # resolve in CI, and a tester's v25 runtime plugin fingerprint was missing
+  # FirebaseAuthentication entirely — both sign-in buttons dead). Plain pod + explicit
+  # GoogleSignIn + the RGCFA_INCLUDE_GOOGLE flag below is the equivalent, working setup.
+  # This line survives `cap sync` (which only rewrites the capacitor_pods def above).
+  pod 'GoogleSignIn', '7.1.0'
 end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+  # The other half of the subspec replacement: compile the plugin's Google provider code in.
+  # Without this flag the plugin builds its Lite variant and signInWithGoogle() is a no-op.
+  installer.pods_project.targets.each do |t|
+    next unless t.name == 'CapacitorFirebaseAuthentication'
+    t.build_configurations.each do |config|
+      config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -DRGCFA_INCLUDE_GOOGLE'
+    end
+  end
 end

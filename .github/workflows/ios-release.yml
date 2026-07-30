@@ -44,18 +44,22 @@ jobs:
       - name: Sync Capacitor iOS project (copies latest public/ web assets in)
         run: npx cap sync ios
 
-      # `cap sync` regenerates the Podfile's pod list, which can drop the :subspecs => ['Google']
-      # that Google sign-in depends on. Re-apply it if it went missing, then PROVE GoogleSignIn
-      # actually made it into the lockfile — without that pod the plugin's Google code is
-      # compiled out and signInWithGoogle() silently never settles, which shipped once already.
-      # Failing here is far better than shipping another build with a dead sign-in button.
+      # Google sign-in setup changed 2026-07-30: the old :subspecs => ['Google'] mechanism
+      # produced a pod that installed and passed this guard yet yielded NO importable module
+      # and NO runtime plugin class — sign-in shipped dead while every check passed. Now the
+      # Podfile carries a plain CapacitorFirebaseAuthentication pod, a direct GoogleSignIn pod
+      # (inside the target block, which cap sync does not rewrite), and a post_install hook
+      # injecting -DRGCFA_INCLUDE_GOOGLE. Guard all three pieces, then prove the lockfile.
       - name: Install CocoaPods
         run: |
           cd ios/App
-          if ! grep -q "subspecs => \['Google'\]" Podfile; then
-            echo "Podfile lost the Google subspec (cap sync rewrote it) — re-applying"
-            sed -i '' "s#pod 'CapacitorFirebaseAuthentication', :path => '\(.*\)'\$#pod 'CapacitorFirebaseAuthentication', :path => '\1', :subspecs => ['Google']#" Podfile
-            grep -n "CapacitorFirebaseAuthentication" Podfile
+          if ! grep -q "pod 'GoogleSignIn'" Podfile; then
+            echo "::error::Podfile lost the direct GoogleSignIn pod — Google sign-in would be dead in this build."
+            exit 1
+          fi
+          if ! grep -q "RGCFA_INCLUDE_GOOGLE" Podfile; then
+            echo "::error::Podfile lost the RGCFA_INCLUDE_GOOGLE post_install flag — the plugin would build its Lite variant with Google sign-in compiled out."
+            exit 1
           fi
           pod install --repo-update
           if ! grep -q "GoogleSignIn" Podfile.lock; then
