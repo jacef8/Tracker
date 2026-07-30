@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 505;
+var APP_BUILD = 506;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3028,6 +3028,17 @@ window._showGroupedMemberSheet = function (uids) {
       var mk = userMarkers[u]; if (!mk) return '';
       var isMine = u === userId;
       var nm = isMine ? (userName + ' (you)') : (knownUsers[u] || 'Member');
+      // Device label, ALWAYS shown here. This sheet exists precisely because several dots are
+      // standing on one spot — and same-account devices share a display name, so it kept
+      // presenting "Jace / Jace", indistinguishable, which read as the duplicate bug it had
+      // just stopped being. "Jace · phone / Jace · tablet" answers itself. The dev field comes
+      // off the same room record the marker was built from.
+      var _dev = '';
+      try {
+        var _ru2 = window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users;
+        _dev = (_ru2 && _ru2[u] && _ru2[u].dev) || '';
+      } catch (e) {}
+      if (_dev) nm += ' · ' + _dev;
       var statusColor = mk._isLive ? '#00e676' : '#888ea0';
       var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
       return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
