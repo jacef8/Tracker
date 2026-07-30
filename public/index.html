@@ -813,6 +813,13 @@
   .panel-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 14px 16px; border-bottom: 1px solid rgba(240,165,0,0.30); flex-shrink: 0;
+    /* Sticky so the title + close button never scroll away with a long panel. In panels whose
+       CONTENT is a separate scrolling child this is inert (the header isn't inside the
+       scroller); in panels that scroll as one element it pins the bar to the top. Needs its
+       own opaque-ish blurred background, since content slides beneath it. */
+    position: sticky; top: 0; z-index: 6;
+    background: rgba(13,17,23,0.92);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   }
   .panel-title {
     font-size: 15px; font-weight: 700; color: var(--accent);
@@ -2272,7 +2279,12 @@
 <div id="room-info-sheet" style="display:none;position:fixed;inset:0;z-index:500">
   <div style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeRoomInfo()"></div>
   <div style="position:absolute;left:0;right:0;bottom:0;max-height:85vh;overflow-y:auto;background:rgba(22,27,34,0.62);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top-left-radius:18px;border-top-right-radius:18px;border-top:2px solid rgba(240,165,0,0.55);box-shadow:0 -8px 40px rgba(0,0,0,0.6);padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 20px)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <!-- Sticky: the sheet scrolls as one element, so the title and the close button used to
+         scroll away with it — closing a long panel meant scrolling all the way back up. The
+         negative margins pull the bar to the sheet's edges (the container has 16px padding,
+         which sticky would otherwise float inside of), and its own blurred background covers
+         content passing beneath. -->
+    <div style="position:sticky;top:-16px;z-index:6;background:rgba(22,27,34,0.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);margin:-16px -16px 14px;padding:16px 16px 10px;border-top-left-radius:18px;border-top-right-radius:18px;display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:17px;font-weight:800;color:var(--accent)">Room Info</div>
       <button onclick="closeRoomInfo()" style="background:none;border:none;color:var(--muted);cursor:pointer;line-height:1;display:flex"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
@@ -2582,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 503;
+var APP_BUILD = 504;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4892,6 +4904,11 @@ try { _applyVoicePref(); } catch (e) {}
 function _resolveNameForUid(uid) {
   if (!uid) return 'Unknown';
   if (uid === userId) return 'You';
+  // Ownership is ACCOUNT-based since build 494, and an account id is never in the room roster
+  // (rosters key on device ids) — so an owner's own room said "Owner: A former member" the
+  // moment the migration ran. Check the account id and the directory before giving up.
+  try { if (typeof _myAcct === 'function' && uid === _myAcct()) return 'You'; } catch (e) {}
+  try { if (window._dirAll && window._dirAll[uid] && window._dirAll[uid].name) return window._dirAll[uid].name; } catch (e) {}
   try { if (typeof knownUsers !== 'undefined' && knownUsers[uid]) return knownUsers[uid]; } catch (e) {}
   try { if (window._roomMembersRoster && window._roomMembersRoster[uid] && window._roomMembersRoster[uid].name) return window._roomMembersRoster[uid].name; } catch (e) {}
   return 'A former member';
