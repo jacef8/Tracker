@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 506;
+var APP_BUILD = 507;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2956,7 +2956,11 @@ function _applyMarkerMerged(primary, members) {
   _setGroupBadge(el, ordered.length - shown.length);
 }
 function _updateMarkerGrouping() {
-  var uids = Object.keys(userMarkers).filter(function (u) { return userMarkers[u] && userMarkers[u]._ll; });
+  // Hidden members can never be part of a cluster or its +N badge — belt to the immediate
+  // teardown's suspenders, covering any path where a hidden marker still lingers.
+  var uids = Object.keys(userMarkers).filter(function (u) {
+    return userMarkers[u] && userMarkers[u]._ll && !(window._isMemberHidden && window._isMemberHidden(u));
+  });
   var parent = {};
   uids.forEach(function (u) { parent[u] = u; });
   function find(u) { while (parent[u] !== u) { parent[u] = parent[parent[u]]; u = parent[u]; } return u; }
@@ -3039,10 +3043,17 @@ window._showGroupedMemberSheet = function (uids) {
         _dev = (_ru2 && _ru2[u] && _ru2[u].dev) || '';
       } catch (e) {}
       if (_dev) nm += ' · ' + _dev;
+      // Initials from the RAW name, before " (you)" / " · tablet" decorations — initials() of
+      // the decorated string produced avatars like "J(" beside "J", which looked like data
+      // corruption rather than the suffix artifact it was.
+      var _baseNm = isMine ? userName : (knownUsers[u] || 'Member');
+      // Avatar in the member's actual map color instead of one flat accent for everyone —
+      // the whole point of this sheet is telling co-located people apart.
+      var _avCol = mk._fillColor || 'var(--accent)';
       var statusColor = mk._isLive ? '#00e676' : '#888ea0';
       var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
       return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:var(--accent,#58a6ff);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(nm)) + '</div>' +
+        '<div style="width:34px;height:34px;border-radius:50%;background:' + _avCol + ';display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(_baseNm)) + '</div>' +
         '<div style="flex:1;min-width:0">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</div>' +
           '<div style="font-size:11px;color:' + statusColor + ';font-weight:800;letter-spacing:.04em">' + statusLabel + '</div>' +
@@ -10348,7 +10359,16 @@ function listenUsers() {
       // Your own dot uses YOUR chosen color everywhere now, including on your own device —
       // no more hardcoded gold. Border stays status-based (live/resting/stale) for everyone,
       // including yourself, so it's consistent rather than a special case just for "you".
-      const fillColor   = _autoColors[uid] || (isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid)));
+      let fillColor   = _autoColors[uid] || (isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid)));
+      // Everyone in a room gets a DISTINGUISHABLE color. Two devices on one account sync the
+      // same chosen color (data.color rides the shared profile), so a phone + tablet rendered
+      // identically — same name, same color, and told apart by nothing. On a collision the
+      // later marker falls back to its uid-hashed color, which is deterministic per device.
+      try {
+        for (var _ci2 in userMarkers) {
+          if (_ci2 !== uid && userMarkers[_ci2] && userMarkers[_ci2]._fillColor === fillColor) { fillColor = userColor(uid); break; }
+        }
+      } catch (e) {}
       const borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
@@ -11890,6 +11910,21 @@ window._modalToggleHideMap = function () {
   var nm = (document.getElementById('ownmem-name') || {}).textContent || '';
   var nowHidden = window._toggleMemberHidden(_ownMemUid, nm);
   var lbl = document.getElementById('ownmem-hidemap-label'); if (lbl) lbl.textContent = nowHidden ? 'Show their dot on my map again' : 'Hide their dot from my map';
+  // Apply NOW, not on the next snapshot. The removal used to live only in the users render
+  // loop, so after tapping Hide the dot stayed until the next fix arrived — and worse, a
+  // hidden member standing in a MERGED cluster stayed inside the oval and its "+1" count,
+  // because the grouping pass rebuilt from whatever markers existed at the time. Observed:
+  // hide the tablet, and the merged marker still counted three.
+  try {
+    if (nowHidden && userMarkers[_ownMemUid]) {
+      userMarkers[_ownMemUid].remove();
+      delete userMarkers[_ownMemUid];
+      if (window._prevGroupOf) delete window._prevGroupOf[_ownMemUid];
+      try { clearTrailLayer(_ownMemUid); } catch (e) {}
+    }
+    try { _updateMarkerGrouping(); } catch (e) {}
+    try { window._closeMemberSheet(); } catch (e) {}
+  } catch (e) {}
 };
 window._kickMember = function() {
   var uid = _ownMemUid;
