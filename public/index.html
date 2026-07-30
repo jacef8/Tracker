@@ -2616,7 +2616,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 524;
+var APP_BUILD = 525;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8303,7 +8303,9 @@ let _measureSuppressClick = false, _measureTouchStart = null;
 const PIN_THEMES = ['General', 'Hunting', 'Fishing', 'Outdoors', 'Working', 'Family'];
 const PIN_DEFS = {
   // ── General ──
-  'Waypoint':     { color: '#f0a500', emoji: '📍', theme: 'General', label: 'WP' },
+  // 🚩 not 📍 — the pin emoji IS a teardrop, so every generic/imported waypoint looked like
+  // the old teardrop style the map pins deliberately moved away from (build 403).
+  'Waypoint':     { color: '#f0a500', emoji: '🚩', theme: 'General', label: 'WP' },
   'Urgent':       { color: '#ff0000', emoji: '‼️', theme: 'General', label: '!!' },
   'Hazard':       { color: '#e74c3c', emoji: '⚠️', theme: 'General', label: 'HZ' },
   'Boundary':     { color: '#922b21', emoji: '🚧', theme: 'General', label: 'BN' },
@@ -11298,6 +11300,9 @@ function listenPins() {
 
     if (map.isStyleLoaded()) updatePinSource(pins);
     else map.once('load', () => updatePinSource(pins));
+    // Saved-pin markers dedupe against the room pins (same spot = already on the map, skip
+    // the library copy) — re-evaluate whenever the room's pin set changes.
+    try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
   });
 }
 
@@ -15195,7 +15200,13 @@ function _renderSavedOnMap() {
   if (typeof map === 'undefined' || !map) return;
   _clearSavedMapMarkers();
   if (!window._showSavedOnMap) return;
+  // A library pin that's ALSO on the map as a real dropped pin (added from the library, or
+  // saved from the room) is already rendered and labeled by the pins layer — drawing the
+  // library copy on top doubled the marker, and a tap opened BOTH popups stacked.
+  var _onMap = {};
+  try { Object.keys(lastPins || {}).forEach(function (pid) { var rp = lastPins[pid]; if (rp && typeof rp.lat === 'number') _onMap[rp.lat.toFixed(5) + ',' + rp.lng.toFixed(5)] = 1; }); } catch (e) {}
   getSavedPins().filter(_savedMatch).forEach(function(pin) {
+    if (_onMap[(+pin.lat).toFixed(5) + ',' + (+pin.lng).toFixed(5)]) return;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     // Matches the redesigned map pins (build 403) — bare oversized icon, no teardrop/inset-
     // disc container, colored glow (category color) + dark shadow for contrast. This DOM-
