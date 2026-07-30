@@ -124,7 +124,19 @@ app.post('/api/jobs', upload.fields([
       judge: (req.body.judge || '').trim(),
       date: (req.body.date || '').trim(),
     };
-    const updatesText = (req.body.updatesText || '').trim();
+    // Attorney substitution rows apply docket-wide: one entry corrects every
+    // case where the docket lists the substituted attorney.
+    const subFrom = [].concat(req.body.subFrom || []);
+    const subTo = [].concat(req.body.subTo || []);
+    const subs = subFrom
+      .map((from, i) => ({ from: String(from).trim(), to: String(subTo[i] || '').trim() }))
+      .filter(s => s.from && s.to);
+    const subLines = subs.map(s =>
+      `Attorney substitution (apply to the whole docket): ${s.to} appeared today in place of ${s.from}. ` +
+      `Wherever the docket lists ${s.from}, record ${s.to} as the attorney who actually appeared.`);
+
+    const updatesText = [subLines.join('\n'), (req.body.updatesText || '').trim()]
+      .filter(Boolean).join('\n\n');
 
     const id = crypto.randomUUID();
     const job = { id, stage: 'queued', detail: '', error: null, createdAt: Date.now(), updatedAt: Date.now() };

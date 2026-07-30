@@ -3,8 +3,19 @@
 // is deliberately plain — bold labels, ordinary paragraphs — so a paste into
 // the court reporting program carries over cleanly.
 const {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle,
+  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, ShadingType,
 } = require('docx');
+
+// Review-aid colors for the Word document only — the per-case copy text stays
+// plain so nothing carries into the court reporting program. Green: verified
+// by multiple signals. Amber: single-signal match, double-check. Red: needs
+// review before submission.
+const CONF_SHADE = { high: 'E7F4E4', medium: 'FFF3CD', low: 'FDE2E2' };
+
+function entryShade(entry) {
+  if (entry.needs_review) return CONF_SHADE.low;
+  return CONF_SHADE[entry.match_confidence] || null;
+}
 
 function labeled(label, value) {
   return new Paragraph({
@@ -35,10 +46,12 @@ function entryFields(entry, session) {
 function entryParagraphs(entry, session) {
   const paras = [];
 
+  const shade = entryShade(entry);
   paras.push(new Paragraph({
     heading: HeadingLevel.HEADING_2,
     spacing: { before: 300, after: 120 },
     border: { top: { style: BorderStyle.SINGLE, size: 4, color: '999999' } },
+    shading: shade ? { type: ShadingType.CLEAR, fill: shade } : undefined,
     children: [new TextRun({ text: `${entry.docket_number}  —  ${entry.defendant}`, bold: true })],
   }));
 
@@ -110,7 +123,19 @@ async function buildDocx(minutes) {
       text: 'AI-assisted draft prepared from courtroom audio — verify against the record before entry.',
       italics: true, size: 18, color: '666666',
     })],
+    spacing: { after: 120 },
+  }));
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
     spacing: { after: 240 },
+    children: [
+      new TextRun({ text: 'Heading colors (review aid only — not part of the minutes):  ', italics: true, size: 18, color: '666666' }),
+      new TextRun({ text: ' verified by multiple signals ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.high } }),
+      new TextRun({ text: '  ', size: 18 }),
+      new TextRun({ text: ' single-signal match — double-check ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.medium } }),
+      new TextRun({ text: '  ', size: 18 }),
+      new TextRun({ text: ' review before submission ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.low } }),
+    ],
   }));
   if (s.summary) children.push(new Paragraph({ text: s.summary, spacing: { after: 200 } }));
 
