@@ -104,7 +104,18 @@
     var keys = fanOutKeys();
     if (!keys.length) return;
     var c = pos.coords;
-    var spdMph = c.speed != null ? Math.round(c.speed * 2.23694) : 0;
+    // Doppler speed when the fix has one, else distance-over-time from the previous fix —
+    // Android fixes intermittently arrive with speed:null mid-drive, and writing 0 for
+    // those made the map's speed chip blink off and on while actually moving.
+    var spdMph = 0;
+    if (c.speed != null && c.speed >= 0) {
+      spdMph = Math.round(c.speed * 2.23694);
+    } else if (window._prevHlFix) {
+      var _dsec = (Date.now() - window._prevHlFix.ts) / 1000;
+      if (_dsec > 0.4) spdMph = Math.round((metersApart(window._prevHlFix.lat, window._prevHlFix.lng, c.latitude, c.longitude) / _dsec) * 2.23694);
+    }
+    if (spdMph > 200) spdMph = 0; // implausible — drop it
+    window._prevHlFix = { lat: c.latitude, lng: c.longitude, ts: Date.now() };
     var hereMovedM = hereAnchor ? metersApart(hereAnchor.lat, hereAnchor.lng, c.latitude, c.longitude) : Infinity;
     if (spdMph >= 3 || hereMovedM > HERE_MOVE_M || !hereSinceTs) {
       hereAnchor = { lat: c.latitude, lng: c.longitude }; hereSinceTs = Date.now();
@@ -112,7 +123,10 @@
     var payload = {
       lat: c.latitude, lng: c.longitude, name: getName(), dev: getDev(),
       accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
-      spd: spdMph, spdH: 1, rest: 0, hereSince: hereSinceTs, color: getMyColor()
+      // spdH mirrors the app's share-speed setting (same-origin localStorage). It was
+      // hardcoded to 1 (hidden) here, so every background write hid the speed chip while
+      // every foreground write showed it — alternating writers made it blink mid-drive.
+      spd: spdMph, spdH: (function () { try { return localStorage.getItem('gl_share_speed') !== '0' ? 0 : 1; } catch (e) { return 0; } })(), rest: 0, hereSince: hereSinceTs, color: getMyColor()
     };
     // Same battery ride-along as index.html's _fixPayload — a stale dot's last report should
     // say whether the phone was dying, and background fixes are exactly the ones that go stale.
