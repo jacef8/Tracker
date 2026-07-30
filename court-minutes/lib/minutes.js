@@ -30,7 +30,8 @@ const MINUTES_SCHEMA = {
         required: [
           'docket_number', 'defendant', 'charges', 'state_counsel', 'defense_counsel',
           'defendant_presence', 'bond', 'proceeding_type', 'minutes', 'rulings',
-          'next_setting', 'timestamps', 'needs_review', 'review_reason',
+          'next_setting', 'timestamps', 'match_confidence', 'match_evidence',
+          'needs_review', 'review_reason',
         ],
         properties: {
           docket_number: { type: 'string', description: 'Docket/case number exactly as it appears on the docket' },
@@ -52,6 +53,16 @@ const MINUTES_SCHEMA = {
           },
           next_setting: { type: 'string', description: 'Next court date/setting if announced; empty string otherwise' },
           timestamps: { type: 'string', description: 'Approximate audio timestamp range for this case, e.g. "00:14:20-00:22:05"; empty if unknown' },
+          match_confidence: {
+            type: 'string',
+            enum: ['high', 'medium', 'low'],
+            description: 'high = two or more independent signals agree (e.g. case number read AND defendant name heard); medium = one strong signal with consistent context; low = inferred from context alone',
+          },
+          match_evidence: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Each independent signal supporting the match, with a timestamp where possible — e.g. "case number 2026-CF-101 read by the court at 00:14:22", "defendant identified himself as John Doe at 00:14:40", "ASA Jones announced appearance"',
+          },
           needs_review: { type: 'boolean', description: 'True if the match to the docket is uncertain or the audio was unclear' },
           review_reason: { type: 'string', description: 'Why the clerk should double-check this entry; empty string if needs_review is false' },
         },
@@ -74,7 +85,11 @@ const SYSTEM_PROMPT = `You are an assistant to a clerk of court, preparing draft
 
 You are given (1) the day's docket and (2) a timestamped transcript of the courtroom audio, machine-transcribed and therefore imperfect: names, docket numbers, and legal terms may be garbled. Use the docket as the source of truth for spellings of names, docket numbers, and charges; use the transcript for what actually happened.
 
-Correlate transcript passages to docket entries by docket number when called, by defendant name, and by context (attorney names, charges, sequence). Draft minutes in formal clerk-of-court style: past tense, third person, factual, no speculation. Record appearances (State, defense, defendant present/absent/in custody), the nature of the proceeding, pleas, motions and rulings, bond action, sentences pronounced, and the next setting.
+Correlate transcript passages to docket entries using multiple independent signals, never a single one when more are available: the case number as read on the record, the defendant's name as spoken, counsel announcing appearances, the charges discussed, and the case's position in the day's sequence. For every entry, list each supporting signal (with its timestamp) in match_evidence and grade match_confidence: high requires at least two independent signals agreeing (e.g. case number read AND defendant name heard); medium is one strong signal with consistent context; low is inference from context alone. Any entry below high confidence must also set needs_review with the reason. If two docket entries could plausibly match the same passage, pick the better-supported one, flag it, and name the alternative in review_reason — never assign silently.
+
+Expect routine day-of differences between the docket and the courtroom: attorneys substitute for one another constantly. A different attorney appearing than the docket lists is NOT evidence of a wrong-case match and is not by itself a reason to flag the entry — weigh the case number and defendant name most heavily for identity, and record in the minutes the counsel who actually appeared per the recording (noting a substitution when the record makes it clear, e.g. "PD White appearing for PD Brown"). If the clerk provides DAY-OF UPDATES, they supersede the docket wherever the two conflict.
+
+Draft minutes in formal clerk-of-court style: past tense, third person, factual, no speculation. Record appearances (State, defense, defendant present/absent/in custody), the nature of the proceeding, pleas, motions and rulings, bond action, sentences pronounced, and the next setting.
 
 Every entry must address every field the same way so the minutes are uniform and complete: the judge, both attorneys, the defendant's presence, bond, and next setting are stated for every case. When the record does not establish a field, write "Not reflected in the recording" for that field rather than leaving it blank or guessing — a visible gap the clerk can fill beats a silent omission.
 
@@ -87,7 +102,7 @@ function extractText(message) {
     .join('');
 }
 
-async function generateMinutes({ docketText, transcript, meta }) {
+async function generateMinutes({ docketText, transcript, meta, updatesText }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY is not set (needed to generate minutes)');
   }
@@ -101,6 +116,7 @@ async function generateMinutes({ docketText, transcript, meta }) {
   const userPrompt = [
     metaLines.length ? `Session details provided by the clerk:\n${metaLines.join('\n')}` : null,
     `=== TODAY'S DOCKET ===\n${docketText}`,
+    updatesText ? `=== DAY-OF UPDATES from the clerk (these supersede the docket where they conflict) ===\n${updatesText}` : null,
     `=== COURTROOM AUDIO TRANSCRIPT (timestamped, machine-generated) ===\n${transcript}`,
     'Produce the minutes for this court day.',
   ].filter(Boolean).join('\n\n');

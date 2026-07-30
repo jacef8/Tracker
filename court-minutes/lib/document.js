@@ -75,6 +75,17 @@ function entryParagraphs(entry, session) {
     }));
   }
 
+  if (entry.match_confidence) {
+    const evidence = (entry.match_evidence || []).join('; ');
+    paras.push(new Paragraph({
+      children: [new TextRun({
+        text: `Case match: ${entry.match_confidence}${evidence ? ` — ${evidence}` : ''}`,
+        italics: true, size: 18, color: '666666',
+      })],
+      spacing: { after: 60 },
+    }));
+  }
+
   return paras;
 }
 

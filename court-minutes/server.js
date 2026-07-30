@@ -61,7 +61,7 @@ function setStage(job, stage, detail) {
   job.updatedAt = Date.now();
 }
 
-async function runJob(job, audioFiles, docketText, meta) {
+async function runJob(job, audioFiles, docketText, meta, updatesText) {
   try {
     // 1. Transcribe every recording in order (morning/afternoon sessions etc.)
     const parts = [];
@@ -79,7 +79,7 @@ async function runJob(job, audioFiles, docketText, meta) {
 
     // 2. Draft the minutes against the docket
     setStage(job, 'drafting', 'Correlating transcript with the docket and drafting minutes…');
-    const minutes = await generateMinutes({ docketText, transcript: job.transcript, meta });
+    const minutes = await generateMinutes({ docketText, transcript: job.transcript, meta, updatesText });
     job.minutes = minutes;
 
     // 3. Build the Word document
@@ -101,18 +101,21 @@ async function runJob(job, audioFiles, docketText, meta) {
 
 app.post('/api/jobs', upload.fields([
   { name: 'audio', maxCount: 12 },
-  { name: 'docketFile', maxCount: 1 },
+  { name: 'docketFile', maxCount: 3 },
 ]), async (req, res) => {
   try {
     const audioFiles = (req.files && req.files.audio) || [];
     if (!audioFiles.length) return res.status(400).json({ error: 'Upload at least one audio file.' });
 
     let docketText = (req.body.docketText || '').trim();
-    const docketUpload = req.files && req.files.docketFile && req.files.docketFile[0];
-    if (docketUpload) {
+    const docketUploads = (req.files && req.files.docketFile) || [];
+    for (const docketUpload of docketUploads) {
       const fileText = (await extractDocketText(docketUpload)).trim();
       fs.promises.unlink(docketUpload.path).catch(() => {});
-      docketText = [docketText, fileText].filter(Boolean).join('\n\n');
+      if (fileText) {
+        docketText = [docketText, `--- Docket file: ${docketUpload.originalname} ---\n${fileText}`]
+          .filter(Boolean).join('\n\n');
+      }
     }
     if (!docketText) return res.status(400).json({ error: 'Provide the docket (paste it or upload a text/CSV file).' });
 
@@ -121,11 +124,12 @@ app.post('/api/jobs', upload.fields([
       judge: (req.body.judge || '').trim(),
       date: (req.body.date || '').trim(),
     };
+    const updatesText = (req.body.updatesText || '').trim();
 
     const id = crypto.randomUUID();
     const job = { id, stage: 'queued', detail: '', error: null, createdAt: Date.now(), updatedAt: Date.now() };
     jobs.set(id, job);
-    runJob(job, audioFiles, docketText, meta); // fire and forget; browser polls
+    runJob(job, audioFiles, docketText, meta, updatesText); // fire and forget; browser polls
 
     res.json({ id });
   } catch (err) {

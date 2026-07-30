@@ -64,8 +64,12 @@
 
       <label for="docketText">Docket (paste)</label>
       <textarea id="docketText" name="docketText" placeholder="Paste today's docket here — docket numbers, defendants, charges, attorneys…"></textarea>
-      <label for="docketFile">…or upload the docket file (PDF, Word, text, or CSV)</label>
-      <input type="file" id="docketFile" name="docketFile" accept=".txt,.csv,.tsv,.md,.pdf,.docx">
+      <label for="docketFile">…or upload docket file(s) — PDF, Word, text, or CSV; include an amended docket if one was issued</label>
+      <input type="file" id="docketFile" name="docketFile" accept=".txt,.csv,.tsv,.md,.pdf,.docx" multiple>
+
+      <label for="updatesText">Day-of changes (optional)</label>
+      <textarea id="updatesText" name="updatesText" style="min-height:80px" placeholder="Anything that changed after the docket was printed — e.g.&#10;PD White substituting for PD Brown on all cases today&#10;State represented by ASA Green, not ASA Jones&#10;2026-CF-105 continued before court"></textarea>
+      <div class="hint">These override the docket, so substitutions don't get flagged as discrepancies.</div>
 
       <p><button type="submit" id="submitBtn">Build Minutes</button></p>
     </form>
@@ -156,8 +160,12 @@ function renderResult(job) {
     const div = document.createElement('div');
     div.className = 'entry';
     const flag = e.needs_review ? '<div class="flag">&#9888; Review needed: ' + escapeHtml(e.review_reason || '') + '</div>' : '';
+    const conf = e.match_confidence
+      ? '<div class="hint" title="Signals that tie this passage of audio to this docket case">Case match: <b>' + escapeHtml(e.match_confidence) + '</b>' +
+        ((e.match_evidence || []).length ? ' — ' + escapeHtml(e.match_evidence.join('; ')) : '') + '</div>'
+      : '';
     div.innerHTML =
-      '<h3>' + escapeHtml(e.docket_number + '  —  ' + e.defendant) + '</h3>' + flag +
+      '<h3>' + escapeHtml(e.docket_number + '  —  ' + e.defendant) + '</h3>' + flag + conf +
       '<pre>' + escapeHtml(copyMap[e.docket_number] || e.minutes || '') + '</pre>' +
       '<button class="secondary">Copy this entry</button><span class="copied" style="display:none">Copied</span>';
     const btn = div.querySelector('button');
