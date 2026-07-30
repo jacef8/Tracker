@@ -1466,6 +1466,7 @@
   <div style="width:100%;max-width:440px;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px) 16px 16px">
     <div id="place-modal-title" style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:12px">New Place</div>
     <input id="place-name-input" type="text" placeholder="Name (e.g. Home, School)" maxlength="40" style="width:100%;padding:11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:10px" />
+    <div id="place-radius-block">
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Alert radius</div>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <button class="place-radius-btn" data-radius="300" onclick="window._pickPlaceRadius(300)" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">Small (300 ft)</button>
@@ -1476,6 +1477,9 @@
       <input id="place-radius-input" type="number" min="25" max="10560" step="25" value="600" oninput="window._onPlaceRadiusInput(this.value)" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px" />
       <span style="font-size:12px;color:var(--muted);white-space:nowrap;flex-shrink:0">feet radius</span>
     </div>
+    </div>
+    <!-- Shown instead of the radius controls for drawn areas — a polygon has no radius. -->
+    <div id="place-area-note" style="display:none;font-size:12.5px;color:#58a6ff;font-weight:700;margin-bottom:12px"></div>
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input id="place-alert-arrive" type="checkbox" checked style="width:16px;height:16px" />Notify when someone arrives</label>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input id="place-alert-leave" type="checkbox" checked style="width:16px;height:16px" />Notify when someone leaves</label>
@@ -1529,6 +1533,7 @@
   <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Get notified when a Circle member arrives at or leaves a place.</div>
   <div style="padding:10px 12px 0">
     <button onclick="window._startAddPlace()" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">+ Add Place</button>
+    <button onclick="window._startDrawArea()" style="width:100%;padding:11px;margin-top:8px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:800;cursor:pointer">&#9635; Draw Area &mdash; alert on a boundary you draw</button>
   </div>
   <div id="places-list" style="padding:8px 0"></div>
   <div style="padding:10px 12px 4px;font-size:12px;font-weight:700;color:var(--muted);border-top:1px solid var(--border);margin-top:4px">Recent activity</div>
@@ -2616,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 525;
+var APP_BUILD = 526;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5655,6 +5660,42 @@ window.__nativeSync = function () {
     return JSON.stringify(out);
   } catch (e) { return ''; }
 };
+// ── Polygon support for area Places ──
+// A place with `poly` ([[lat,lng],...], 3+ corners) alerts on the true polygon boundary.
+// lat/lng/radius still hold the centroid + bounding-circle radius, so everything that only
+// understands circles (iOS native region registration via __nativeSync, older clients)
+// keeps working: the OS wakes the phone near the bounding circle, and the precise check
+// here decides whether an alert actually fires.
+function _pointInPoly(lat, lng, poly) {
+  var inside = false;
+  for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    var yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+    if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function _distToPolyEdgeM(lat, lng, poly) {
+  // Local equirectangular projection — plenty accurate at geofence scales.
+  var mLat = 111320, mLng = 111320 * Math.cos(lat * Math.PI / 180), best = Infinity;
+  for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    var ax = (poly[j][1] - lng) * mLng, ay = (poly[j][0] - lat) * mLat;
+    var bx = (poly[i][1] - lng) * mLng, by = (poly[i][0] - lat) * mLat;
+    var dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    var t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+    var px = ax + t * dx, py = ay + t * dy;
+    best = Math.min(best, Math.sqrt(px * px + py * py));
+  }
+  return best;
+}
+// Signed meters from a fix to the place boundary: positive inside, negative outside.
+// One number lets circle and polygon places share the exact same hysteresis logic.
+function _placeEdgeM(lat, lng, p) {
+  if (p.poly && p.poly.length >= 3) {
+    var d = _distToPolyEdgeM(lat, lng, p.poly);
+    return _pointInPoly(lat, lng, p.poly) ? d : -d;
+  }
+  return (p.radius || 200) - metersApart(lat, lng, p.lat, p.lng);
+}
 function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
   circleKeys.forEach(function (circleKey) {
     var places = window._placesCache[circleKey]; if (!places) return;
@@ -5665,18 +5706,18 @@ function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
       // and a "position" that uncertain has no business deciding arrive/leave. Leave state
       // exactly as it was and wait for a better fix instead of guessing.
       if (accM && accM > PLACE_MAX_TRUST_ACC_M) return;
-      var dist = metersApart(lat, lng, p.lat, p.lng);
-      var radius = p.radius || 200;
       var stateKey = userId + '_' + placeId;
       var state = window._placeGeoState[stateKey] || { inside: null, ts: 0 }; // null = not yet known
       // Hysteresis margin scales with how bad the fix's accuracy actually is — a noisy fix
       // needs to clearly beat its OWN uncertainty before a transition is trusted, not just
       // the fixed 15m that's fine for a good fix but far too tight for a noisy one.
       var hyst = Math.max(PLACE_HYSTERESIS_M, (accM || 0) * 0.75);
+      // Signed boundary distance (+ inside) — circle or polygon, same hysteresis either way.
+      var edgeM = _placeEdgeM(lat, lng, p);
       var isInside;
-      if (state.inside === true) isInside = dist <= radius + hyst; // stay inside until well clear
-      else if (state.inside === false) isInside = dist <= radius - hyst; // stay outside until well within
-      else isInside = dist <= radius; // first-ever check for this place — no transition to fire, just establish state
+      if (state.inside === true) isInside = edgeM >= -hyst; // stay inside until well clear
+      else if (state.inside === false) isInside = edgeM >= hyst; // stay outside until well within
+      else isInside = edgeM >= 0; // first-ever check for this place — no transition to fire, just establish state
       var firstCheck = state.inside === null;
       if (!firstCheck && isInside !== state.inside) {
         // Even a hysteresis-cleared transition can repeat if the fix is bouncing right at the
@@ -8574,11 +8615,16 @@ function initMap() {
       handleMeasureClick(e.lngLat); return;
     }
 
+    // ── 1a2. Area draw mode — each tap is a polygon corner ─────────
+    if (window._drawMode) { window._drawAreaClick(e.lngLat); return; }
+
     // ── 1b. Place drop mode (geofence center) ──────────────────────
     if (placeMode) {
       pendingPlaceCoords = e.lngLat;
       window._disablePlaceMode();
       _pendingPlaceEditId = null;
+      window._pendingPlacePoly = null;
+      try { document.getElementById('place-radius-block').style.display = ''; document.getElementById('place-area-note').style.display = 'none'; } catch (ex) {}
       document.getElementById('place-modal-title').textContent = 'New Place';
       document.getElementById('place-name-input').value = '';
       window._pickPlaceRadius(600);
@@ -14529,7 +14575,10 @@ window._showPlaceMarkers = function () {
     Object.keys(_placesListCache || {}).forEach(function (pid) {
       var pl = _placesListCache[pid];
       if (!pl || typeof pl.lat !== 'number' || typeof pl.lng !== 'number') return;
-      feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [_circlePolygon(pl.lat, pl.lng, pl.radius || 100)] } });
+      var _ring;
+      if (pl.poly && pl.poly.length >= 3) { _ring = pl.poly.map(function (pt) { return [pt[1], pt[0]]; }); _ring.push(_ring[0]); }
+      else _ring = _circlePolygon(pl.lat, pl.lng, pl.radius || 100);
+      feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [_ring] } });
       var el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none';
       el.innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:#58a6ff;border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.7)"></div>' +
@@ -14631,9 +14680,122 @@ function _renderPlacesList() {
 window._startAddPlace = function () {
   // Follow-me/Follow-group is already stopped by _openPlacesManager the moment this panel was
   // opened — nothing more to stop here.
+  window._pendingPlacePoly = null;
+  try { document.getElementById('place-radius-block').style.display = ''; document.getElementById('place-area-note').style.display = 'none'; } catch (e) {}
   document.getElementById('places-drawer').classList.remove('open');
   window._enablePlaceMode();
   toast('Tap the map to set the Place’s center', 3000);
+};
+// ── Draw Area: polygon Places ──
+// Tap corners on the map, Finish closes the shape and opens the normal place modal (name +
+// alerts; the radius controls hide — a polygon has no radius). Saved with poly + centroid +
+// bounding radius; alerts test the true boundary (see _placeEdgeM).
+window._drawMode = false; window._drawPts = []; window._drawVtx = [];
+window._startDrawArea = function () {
+  document.getElementById('places-drawer').classList.remove('open');
+  window._drawMode = true; window._drawPts = [];
+  try { map.getCanvas().style.cursor = 'crosshair'; } catch (e) {}
+  _ensureDrawBar();
+  document.getElementById('draw-area-bar').style.display = 'flex';
+  _syncDrawBar();
+  toast('Tap the map at each corner of the area, then Finish', 4200);
+};
+function _ensureDrawBar() {
+  if (document.getElementById('draw-area-bar')) return;
+  var bar = document.createElement('div');
+  bar.id = 'draw-area-bar';
+  bar.style.cssText = 'display:none;position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);left:50%;transform:translateX(-50%);z-index:420;gap:8px;background:rgba(13,17,23,.94);border:1px solid var(--accent);border-radius:12px;padding:9px;box-shadow:0 4px 18px rgba(0,0,0,.5)';
+  bar.innerHTML =
+    '<button id="da-finish" style="padding:10px 16px;background:var(--accent);border:none;border-radius:9px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Finish</button>' +
+    '<button id="da-undo" style="padding:10px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Undo</button>' +
+    '<button id="da-cancel" style="padding:10px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Cancel</button>';
+  document.body.appendChild(bar);
+  document.getElementById('da-finish').onclick = function () { window._finishDrawArea(); };
+  document.getElementById('da-undo').onclick = function () { window._drawPts.pop(); _drawAreaRender(); _syncDrawBar(); };
+  document.getElementById('da-cancel').onclick = function () { _exitDrawMode(); if (_placesManagerCircleKey) document.getElementById('places-drawer').classList.add('open'); };
+}
+function _syncDrawBar() {
+  var b = document.getElementById('da-finish');
+  if (!b) return;
+  var n = window._drawPts.length;
+  b.disabled = n < 3; b.style.opacity = n < 3 ? '.45' : '1';
+  b.textContent = n < 3 ? ('Finish (' + n + '/3)') : 'Finish';
+}
+window._drawAreaClick = function (lngLat) {
+  window._drawPts.push({ lat: lngLat.lat, lng: lngLat.lng });
+  _drawAreaRender(); _syncDrawBar();
+};
+function _drawAreaRender() {
+  if (typeof map === 'undefined' || !map) return;
+  var pts = window._drawPts || [];
+  var ring = pts.map(function (p) { return [p.lng, p.lat]; });
+  var data = { type: 'FeatureCollection', features: [] };
+  if (ring.length >= 2) data.features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: ring.concat(ring.length >= 3 ? [ring[0]] : []) } });
+  if (ring.length >= 3) data.features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring.concat([ring[0]])] } });
+  try {
+    if (!map.getSource('gl-draw')) {
+      map.addSource('gl-draw', { type: 'geojson', data: data });
+      map.addLayer({ id: 'gl-draw-fill', type: 'fill', source: 'gl-draw', paint: { 'fill-color': '#f0a500', 'fill-opacity': 0.14 } });
+      map.addLayer({ id: 'gl-draw-line', type: 'line', source: 'gl-draw', paint: { 'line-color': '#f0a500', 'line-width': 2.5, 'line-dasharray': [2, 1.5] } });
+    } else map.getSource('gl-draw').setData(data);
+  } catch (e) {}
+  (window._drawVtx || []).forEach(function (m) { try { m.remove(); } catch (e) {} });
+  window._drawVtx = [];
+  pts.forEach(function (p) {
+    var el = document.createElement('div');
+    el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#f0a500;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6)';
+    window._drawVtx.push(new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([p.lng, p.lat]).addTo(map));
+  });
+}
+function _clearDrawPreview() {
+  (window._drawVtx || []).forEach(function (m) { try { m.remove(); } catch (e) {} });
+  window._drawVtx = [];
+  try { if (map.getSource('gl-draw')) map.getSource('gl-draw').setData({ type: 'FeatureCollection', features: [] }); } catch (e) {}
+}
+function _exitDrawMode() {
+  window._drawMode = false; window._drawPts = [];
+  _clearDrawPreview();
+  try { map.getCanvas().style.cursor = ''; } catch (e) {}
+  var bar = document.getElementById('draw-area-bar'); if (bar) bar.style.display = 'none';
+}
+function _polyAcres(pts) {
+  if (pts.length < 3) return 0;
+  var mLat = 111320, mLng = 111320 * Math.cos(pts[0].lat * Math.PI / 180), a = 0;
+  for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    var xi = pts[i].lng * mLng, yi = pts[i].lat * mLat, xj = pts[j].lng * mLng, yj = pts[j].lat * mLat;
+    a += (xj + xi) * (yj - yi);
+  }
+  return Math.abs(a / 2) / 4046.86;
+}
+window._finishDrawArea = function () {
+  var pts = window._drawPts.slice();
+  if (pts.length < 3) { toast('Tap at least 3 corners first', 2400); return; }
+  var cLat = 0, cLng = 0;
+  pts.forEach(function (p) { cLat += p.lat; cLng += p.lng; });
+  cLat /= pts.length; cLng /= pts.length;
+  var boundM = 0;
+  pts.forEach(function (p) { boundM = Math.max(boundM, metersApart(cLat, cLng, p.lat, p.lng)); });
+  pendingPlaceCoords = { lat: cLat, lng: cLng };
+  window._pendingPlacePoly = pts.map(function (p) { return [p.lat, p.lng]; });
+  window._pendingPlaceBoundM = Math.max(8, Math.round(boundM));
+  // Leave the drawn shape visible under the modal so what's being named is still on screen;
+  // it's cleared on save/cancel.
+  window._drawMode = false;
+  try { map.getCanvas().style.cursor = ''; } catch (e) {}
+  var bar = document.getElementById('draw-area-bar'); if (bar) bar.style.display = 'none';
+  _pendingPlaceEditId = null;
+  document.getElementById('place-modal-title').textContent = 'New Area';
+  document.getElementById('place-name-input').value = '';
+  try {
+    document.getElementById('place-radius-block').style.display = 'none';
+    var note = document.getElementById('place-area-note');
+    note.style.display = '';
+    var ac = _polyAcres(pts);
+    note.textContent = pts.length + ' corners \u00b7 about ' + (ac >= 10 ? Math.round(ac) : ac.toFixed(1)) + ' acres';
+  } catch (e) {}
+  document.getElementById('place-alert-arrive').checked = true;
+  document.getElementById('place-alert-leave').checked = true;
+  document.getElementById('place-modal').style.display = 'flex';
 };
 window._pickPlaceRadius = function (ft) {
   placeRadiusPicked = ft;
@@ -14662,6 +14824,9 @@ window._cancelPlaceModal = function () {
   document.getElementById('place-modal').style.display = 'none';
   pendingPlaceCoords = null;
   _pendingPlaceEditId = null;
+  window._pendingPlacePoly = null;
+  window._drawPts = [];
+  try { _clearDrawPreview(); } catch (e) {}
   if (_placesManagerCircleKey) document.getElementById('places-drawer').classList.add('open');
 };
 // Opens the same modal used for creating a Place, pre-filled from the existing record, so
@@ -14676,6 +14841,15 @@ window._startEditPlace = function (placeId) {
   document.getElementById('place-modal-title').textContent = 'Edit Place';
   document.getElementById('place-name-input').value = p.name || '';
   window._pickPlaceRadius(Math.round((p.radius || 200) * FEET_PER_METER));
+  window._pendingPlacePoly = null;
+  // A drawn area has no radius to edit — the block hides and the note says what it is.
+  try {
+    var _isArea = !!(p.poly && p.poly.length >= 3);
+    document.getElementById('place-radius-block').style.display = _isArea ? 'none' : '';
+    var _an = document.getElementById('place-area-note');
+    _an.style.display = _isArea ? '' : 'none';
+    if (_isArea) _an.textContent = 'Drawn area \u00b7 ' + p.poly.length + ' corners';
+  } catch (e) {}
   document.getElementById('place-alert-arrive').checked = !!(p.alertOn && p.alertOn.arrive);
   document.getElementById('place-alert-leave').checked = !!(p.alertOn && p.alertOn.leave);
   document.getElementById('place-modal').style.display = 'flex';
@@ -14691,16 +14865,21 @@ window._savePlace = function () {
   };
   try {
     if (_pendingPlaceEditId) {
-      window._fb.update(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places/' + _pendingPlaceEditId), {
-        name: name, radius: radiusMeters, alertOn: alertOn, updatedAt: Date.now()
-      });
+      var _updObj = { name: name, alertOn: alertOn, updatedAt: Date.now() };
+      // Drawn areas keep their bounding radius (the radius field was hidden for them —
+      // writing the stale hidden value would corrupt the iOS wake circle).
+      var _edP = _placesListCache[_pendingPlaceEditId] || {};
+      if (!(_edP.poly && _edP.poly.length >= 3)) _updObj.radius = radiusMeters;
+      window._fb.update(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places/' + _pendingPlaceEditId), _updObj);
       try { window._evt('edited Place "' + name + '"'); } catch (e) {}
     } else {
+      if (window._pendingPlacePoly) radiusMeters = window._pendingPlaceBoundM || radiusMeters;
       var payload = {
         name: name, lat: pendingPlaceCoords.lat, lng: pendingPlaceCoords.lng, radius: radiusMeters,
         alertOn: alertOn,
         createdBy: userId || (typeof _myAcct === 'function' && _myAcct()) || '', createdAt: Date.now()
       };
+      if (window._pendingPlacePoly) payload.poly = window._pendingPlacePoly;
       var placeRef = window._fb.push(window._fb.ref(window._fb.db, 'gl/' + _placesManagerCircleKey + '/places'));
       window._fb.set(placeRef, payload);
       try { window._evt('added Place "' + name + '"'); } catch (e) {}
@@ -14709,6 +14888,9 @@ window._savePlace = function () {
   document.getElementById('place-modal').style.display = 'none';
   pendingPlaceCoords = null;
   _pendingPlaceEditId = null;
+  window._pendingPlacePoly = null;
+  window._drawPts = [];
+  try { _clearDrawPreview(); } catch (e) {}
   document.getElementById('places-drawer').classList.add('open');
   toast('Place saved', 2200);
   _renderPlacesList();

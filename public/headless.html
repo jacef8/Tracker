@@ -207,6 +207,35 @@
       }).catch(function () {});
     } catch (e) {}
   }
+  // Polygon support — mirrors index.html's _pointInPoly/_distToPolyEdgeM/_placeEdgeM
+  // (this page can't import from the main app). Positive = inside, negative = outside.
+  function pointInPoly(lat, lng, poly) {
+    var inside = false;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      var yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+      if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function distToPolyEdgeM(lat, lng, poly) {
+    var mLat = 111320, mLng = 111320 * Math.cos(lat * Math.PI / 180), best = Infinity;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      var ax = (poly[j][1] - lng) * mLng, ay = (poly[j][0] - lat) * mLat;
+      var bx = (poly[i][1] - lng) * mLng, by = (poly[i][0] - lat) * mLat;
+      var dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      var t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+      var px = ax + t * dx, py = ay + t * dy;
+      best = Math.min(best, Math.sqrt(px * px + py * py));
+    }
+    return best;
+  }
+  function placeEdgeM(lat, lng, p) {
+    if (p.poly && p.poly.length >= 3) {
+      var d = distToPolyEdgeM(lat, lng, p.poly);
+      return pointInPoly(lat, lng, p.poly) ? d : -d;
+    }
+    return (p.radius || 200) - metersApart(lat, lng, p.lat, p.lng);
+  }
   function checkPlaceGeofences(uid, c) {
     var circleKeys = Object.keys(getCircles());
     if (!circleKeys.length) return;
@@ -218,15 +247,15 @@
           // Mirrors index.html's _checkPlaceGeofences accuracy guard — a fix this noisy can't
           // judge a geofence at all (common for a tablet on weak GPS indoors/poor sky view).
           if (accM > PLACE_MAX_TRUST_ACC_M) return;
-          var dist = metersApart(c.latitude, c.longitude, p.lat, p.lng);
-          var radius = p.radius || 200;
           var stateKey = uid + '_' + placeId;
           var state = placeGeoState[stateKey] || { inside: null, ts: 0 };
           var hyst = Math.max(PLACE_HYSTERESIS_M, accM * 0.75);
+          // Signed boundary distance (+ inside) — circle or drawn polygon, same hysteresis.
+          var edgeM = placeEdgeM(c.latitude, c.longitude, p);
           var isInside;
-          if (state.inside === true) isInside = dist <= radius + hyst;
-          else if (state.inside === false) isInside = dist <= radius - hyst;
-          else isInside = dist <= radius;
+          if (state.inside === true) isInside = edgeM >= -hyst;
+          else if (state.inside === false) isInside = edgeM >= hyst;
+          else isInside = edgeM >= 0;
           var firstCheck = state.inside === null;
           if (!firstCheck && isInside !== state.inside && (Date.now() - (state.ts || 0)) < PLACE_MIN_TRANSITION_MS) return;
           placeGeoState[stateKey] = { inside: isInside, ts: (firstCheck || isInside !== state.inside) ? Date.now() : (state.ts || 0) };
