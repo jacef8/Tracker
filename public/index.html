@@ -2582,7 +2582,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 501;
+var APP_BUILD = 502;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4534,7 +4534,14 @@ window._joinFriendRoom = function(roomKey, roomName) {
 // same person agree with each other and stay in sync across re-renders.
 window._speedShownState = window._speedShownState || {};
 function _shouldShowSpeed(uid, data, eligibleOverride) {
-  var eligible = (eligibleOverride !== undefined ? eligibleOverride : true) && data && data.spd && !data.spdH && !data.hidden && !data.noGps;
+  // Speed is an INSTANTANEOUS quantity — it has no meaning past the fix that measured it.
+  // This gate had no freshness check, so a member whose phone stopped reporting mid-drive
+  // kept "wearing" their final speed indefinitely: the info card showed "RESTING · 64 mph",
+  // which is a flat self-contradiction (RESTING literally means the data is stale). The
+  // marker labels only escaped because their caller passes isLive as the override; the card
+  // passed nothing. Gate it here so NO caller can show a dead speed.
+  var _fresh = !!data && (Date.now() - (data.fixTs || data.ts || 0)) < LIVE_MS;
+  var eligible = _fresh && (eligibleOverride !== undefined ? eligibleOverride : true) && data && data.spd && !data.spdH && !data.hidden && !data.noGps;
   if (!eligible) { window._speedShownState[uid] = false; return false; }
   var was = !!window._speedShownState[uid];
   var show = was ? data.spd > 18 : data.spd > 25;
