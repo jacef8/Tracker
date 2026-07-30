@@ -38,10 +38,23 @@ post_install do |installer|
   assertDeploymentTarget(installer)
   # The other half of the subspec replacement: compile the plugin's Google provider code in.
   # Without this flag the plugin builds its Lite variant and signInWithGoogle() is a no-op.
+  # The Lite pod doesn't declare GoogleSignIn as a dependency, so the flag alone leaves the
+  # handler's `import GoogleSignIn` unresolvable ("unable to resolve module dependency",
+  # first attempt 2026-07-30) — the plugin target also needs GoogleSignIn's build products
+  # on its search paths and a build-order dependency so they exist before it compiles.
   installer.pods_project.targets.each do |t|
     next unless t.name == 'CapacitorFirebaseAuthentication'
+    gs = installer.pods_project.targets.find { |x| x.name == 'GoogleSignIn' }
+    t.add_dependency(gs) if gs
     t.build_configurations.each do |config|
       config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -DRGCFA_INCLUDE_GOOGLE'
+      paths = Array(config.build_settings['FRAMEWORK_SEARCH_PATHS'] || '$(inherited)')
+      paths << '${PODS_CONFIGURATION_BUILD_DIR}/GoogleSignIn'
+      paths << '${PODS_CONFIGURATION_BUILD_DIR}/AppAuth'
+      paths << '${PODS_CONFIGURATION_BUILD_DIR}/GTMAppAuth'
+      paths << '${PODS_CONFIGURATION_BUILD_DIR}/GTMSessionFetcher'
+      paths << '${PODS_CONFIGURATION_BUILD_DIR}/AppCheckCore'
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] = paths.uniq
     end
   end
 end
