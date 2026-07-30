@@ -22,7 +22,10 @@ const FAKE_MINUTES = {
   session: { court: 'Test Circuit Court', judge: 'Hon. J. Smith', date: '2026-07-29', summary: 'One case heard.' },
   entries: [{
     docket_number: '2026-CF-101', defendant: 'John Doe', charges: 'Burglary',
-    state_counsel: 'ASA Jones', defense_counsel: 'PD Brown', proceeding_type: 'Arraignment',
+    state_counsel: 'ASA Jones', defense_counsel: 'PD Brown',
+    defendant_presence: 'Present in custody', bond: 'Continued', proceeding_type: 'Arraignment',
+    match_confidence: 'high',
+    match_evidence: ['case number 2026-CF-101 read by the court at 00:00:12', 'defendant name John Doe stated'],
     minutes: 'Defendant appeared with counsel and entered a plea of not guilty. Bond continued.',
     rulings: ['Not guilty plea entered', 'Bond continued'],
     next_setting: 'August 15, 2026 — pretrial', timestamps: '00:00:12-00:00:45',
@@ -33,6 +36,7 @@ const FAKE_MINUTES = {
 
 let sawWhisperPrompt = false;
 let sawDocketInClaude = false;
+let sawUpdatesInClaude = false;
 
 // One mock server plays both APIs (paths don't collide).
 const mock = http.createServer((req, res) => {
@@ -46,6 +50,8 @@ const mock = http.createServer((req, res) => {
       res.end(JSON.stringify(FAKE_TRANSCRIPTION));
     } else if (req.url.includes('/messages')) {
       sawDocketInClaude = body.includes('2026-CF-101') && body.includes('Court is now in session');
+      sawUpdatesInClaude = body.includes('DAY-OF UPDATES') && body.includes('PD White substituting')
+        && body.includes('ASA Green appeared today in place of ASA Jones');
       // Minimal Anthropic SSE stream: message_start -> text delta -> stop.
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -87,6 +93,11 @@ async function main() {
     const form = new FormData();
     form.append('audio', new Blob([Buffer.from('ID3fakeaudio')]), 'felony-day.mp3');
     form.append('docketText', '2026-CF-101  Doe, John — Burglary — ASA Jones / PD Brown\n2026-CF-102  Roe, Jane — Theft');
+    form.append('updatesText', 'PD White substituting for PD Brown on all cases today');
+    form.append('subFrom', 'ASA Jones');
+    form.append('subTo', 'ASA Green');
+    form.append('subFrom', ''); // an empty row left in the form must be ignored
+    form.append('subTo', '');
     form.append('court', 'Test Circuit Court');
     form.append('judge', 'Hon. J. Smith');
     form.append('date', '2026-07-29');
@@ -110,11 +121,16 @@ async function main() {
     ok('docket vocabulary hint reached the transcription request');
     if (!sawDocketInClaude) fail('docket/transcript not present in drafting request');
     ok('docket + transcript reached the drafting request');
+    if (!sawUpdatesInClaude) fail('day-of updates not present in drafting request');
+    ok('day-of updates reached the drafting request');
 
     const entry = job.minutes.entries[0];
     if (entry.docket_number !== '2026-CF-101') fail('minutes entry mismatch');
-    if (!job.copyText[0].text.includes('For the State: ASA Jones')) fail('copy text malformed');
-    ok('minutes JSON and copy text look right');
+    for (const line of ['Date: 2026-07-29', 'Judge: Hon. J. Smith', 'For the State: ASA Jones',
+                        'Defendant: Present in custody', 'Bond: Continued']) {
+      if (!job.copyText[0].text.includes(line)) fail(`copy text missing field: ${line}`);
+    }
+    ok('minutes JSON and fixed-template copy text look right');
 
     const docx = await fetch(`http://localhost:${PORT}/api/jobs/${id}/minutes.docx`);
     const buf = Buffer.from(await docx.arrayBuffer());

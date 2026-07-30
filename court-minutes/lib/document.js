@@ -3,8 +3,19 @@
 // is deliberately plain — bold labels, ordinary paragraphs — so a paste into
 // the court reporting program carries over cleanly.
 const {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle,
+  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, ShadingType,
 } = require('docx');
+
+// Review-aid colors for the Word document only — the per-case copy text stays
+// plain so nothing carries into the court reporting program. Green: verified
+// by multiple signals. Amber: single-signal match, double-check. Red: needs
+// review before submission.
+const CONF_SHADE = { high: 'E7F4E4', medium: 'FFF3CD', low: 'FDE2E2' };
+
+function entryShade(entry) {
+  if (entry.needs_review) return CONF_SHADE.low;
+  return CONF_SHADE[entry.match_confidence] || null;
+}
 
 function labeled(label, value) {
   return new Paragraph({
@@ -16,20 +27,37 @@ function labeled(label, value) {
   });
 }
 
-function entryParagraphs(entry) {
+// The fixed field block every entry prints, in this order, every time.
+// A field the record didn't establish still appears (the model writes
+// "Not reflected in the recording") so gaps are visible, not silent.
+function entryFields(entry, session) {
+  return [
+    ['Date', session && session.date],
+    ['Judge', session && session.judge],
+    ['Proceeding', entry.proceeding_type],
+    ['Charges', entry.charges],
+    ['For the State', entry.state_counsel],
+    ['For the Defendant', entry.defense_counsel],
+    ['Defendant', entry.defendant_presence],
+    ['Bond', entry.bond],
+  ];
+}
+
+function entryParagraphs(entry, session) {
   const paras = [];
 
+  const shade = entryShade(entry);
   paras.push(new Paragraph({
     heading: HeadingLevel.HEADING_2,
     spacing: { before: 300, after: 120 },
     border: { top: { style: BorderStyle.SINGLE, size: 4, color: '999999' } },
+    shading: shade ? { type: ShadingType.CLEAR, fill: shade } : undefined,
     children: [new TextRun({ text: `${entry.docket_number}  —  ${entry.defendant}`, bold: true })],
   }));
 
-  if (entry.charges) paras.push(labeled('Charges', entry.charges));
-  paras.push(labeled('Proceeding', entry.proceeding_type));
-  paras.push(labeled('For the State', entry.state_counsel));
-  paras.push(labeled('For the Defendant', entry.defense_counsel));
+  for (const [label, value] of entryFields(entry, session)) {
+    paras.push(labeled(label, value));
+  }
 
   for (const line of String(entry.minutes || '').split(/\n+/)) {
     if (line.trim()) paras.push(new Paragraph({ text: line.trim(), spacing: { after: 100 } }));
@@ -60,6 +88,17 @@ function entryParagraphs(entry) {
     }));
   }
 
+  if (entry.match_confidence) {
+    const evidence = (entry.match_evidence || []).join('; ');
+    paras.push(new Paragraph({
+      children: [new TextRun({
+        text: `Case match: ${entry.match_confidence}${evidence ? ` — ${evidence}` : ''}`,
+        italics: true, size: 18, color: '666666',
+      })],
+      spacing: { after: 60 },
+    }));
+  }
+
   return paras;
 }
 
@@ -84,12 +123,24 @@ async function buildDocx(minutes) {
       text: 'AI-assisted draft prepared from courtroom audio — verify against the record before entry.',
       italics: true, size: 18, color: '666666',
     })],
+    spacing: { after: 120 },
+  }));
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
     spacing: { after: 240 },
+    children: [
+      new TextRun({ text: 'Heading colors (review aid only — not part of the minutes):  ', italics: true, size: 18, color: '666666' }),
+      new TextRun({ text: ' verified by multiple signals ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.high } }),
+      new TextRun({ text: '  ', size: 18 }),
+      new TextRun({ text: ' single-signal match — double-check ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.medium } }),
+      new TextRun({ text: '  ', size: 18 }),
+      new TextRun({ text: ' review before submission ', size: 18, shading: { type: ShadingType.CLEAR, fill: CONF_SHADE.low } }),
+    ],
   }));
   if (s.summary) children.push(new Paragraph({ text: s.summary, spacing: { after: 200 } }));
 
   for (const entry of minutes.entries || []) {
-    children.push(...entryParagraphs(entry));
+    children.push(...entryParagraphs(entry, s));
   }
 
   if (Array.isArray(minutes.not_heard) && minutes.not_heard.length) {
@@ -123,13 +174,13 @@ async function buildDocx(minutes) {
 }
 
 // Plain-text rendering of one entry, for the per-case "Copy" button.
-function entryPlainText(entry) {
+// Includes the session's date and judge so each pasted minute stands alone.
+function entryPlainText(entry, session) {
   const lines = [];
   lines.push(`${entry.docket_number}  —  ${entry.defendant}`);
-  if (entry.charges) lines.push(`Charges: ${entry.charges}`);
-  lines.push(`Proceeding: ${entry.proceeding_type || '—'}`);
-  lines.push(`For the State: ${entry.state_counsel || '—'}`);
-  lines.push(`For the Defendant: ${entry.defense_counsel || '—'}`);
+  for (const [label, value] of entryFields(entry, session)) {
+    lines.push(`${label}: ${value || '—'}`);
+  }
   lines.push('');
   lines.push(entry.minutes || '');
   if (Array.isArray(entry.rulings) && entry.rulings.length) {

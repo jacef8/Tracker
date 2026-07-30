@@ -26,7 +26,15 @@
   #status { font-size:1rem; }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; vertical-align:-2px; margin-right:8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .entry { border:1px solid var(--line); border-radius:6px; padding:14px 16px; margin:12px 0; background:#fcfcfa; }
+  .entry { border:1px solid var(--line); border-left:6px solid var(--line); border-radius:6px; padding:14px 16px; margin:12px 0; background:#fcfcfa; }
+  .entry.conf-high { border-left-color:#3e8e50; background:#f7fbf6; }
+  .entry.conf-medium { border-left-color:#d9a410; background:#fffdf3; }
+  .entry.conf-low { border-left-color:var(--warn); background:#fdf6f6; }
+  .legend { font-size:.85rem; color:#5a6472; margin:6px 0 2px; }
+  .legend span { display:inline-block; padding:1px 8px; border-radius:4px; margin-right:8px; }
+  .subRow { display:flex; gap:8px; align-items:center; margin:6px 0; }
+  .subRow input { flex:1; }
+  .subRow .arrow { color:#5a6472; }
   .entry h3 { margin:0 0 8px; font-size:1.05rem; }
   .entry pre { white-space:pre-wrap; font-family:inherit; margin:8px 0; font-size:.95rem; }
   .flag { color:var(--warn); font-weight:bold; font-size:.9rem; }
@@ -64,8 +72,18 @@
 
       <label for="docketText">Docket (paste)</label>
       <textarea id="docketText" name="docketText" placeholder="Paste today's docket here — docket numbers, defendants, charges, attorneys…"></textarea>
-      <label for="docketFile">…or upload the docket file (PDF, Word, text, or CSV)</label>
-      <input type="file" id="docketFile" name="docketFile" accept=".txt,.csv,.tsv,.md,.pdf,.docx">
+      <label for="docketFile">…or upload docket file(s) — PDF, Word, text, or CSV; include an amended docket if one was issued</label>
+      <input type="file" id="docketFile" name="docketFile" accept=".txt,.csv,.tsv,.md,.pdf,.docx" multiple>
+
+      <label>Attorney substitutions today (optional — applies docket-wide)</label>
+      <div class="hint">If a substitute appeared, put the attorney the docket lists on the left and who was actually there on the right. Every case gets the correct name automatically. Start typing to pick from names found in your pasted docket.</div>
+      <div id="subRows"></div>
+      <datalist id="attorneyNames"></datalist>
+      <p><button type="button" class="secondary" id="addSub">+ Add a substitution</button></p>
+
+      <label for="updatesText">Other day-of changes (optional)</label>
+      <textarea id="updatesText" name="updatesText" style="min-height:80px" placeholder="Anything that changed after the docket was printed — e.g.&#10;PD White substituting for PD Brown on all cases today&#10;State represented by ASA Green, not ASA Jones&#10;2026-CF-105 continued before court"></textarea>
+      <div class="hint">These override the docket, so substitutions don't get flagged as discrepancies.</div>
 
       <p><button type="submit" id="submitBtn">Build Minutes</button></p>
     </form>
@@ -95,6 +113,40 @@ const statusEl = document.getElementById('status');
 const resultCard = document.getElementById('resultCard');
 let jobId = null;
 let pollTimer = null;
+
+// Attorney substitution rows: "docket says X" -> "Y actually appeared".
+// The datalist offers name-like strings scraped from the pasted docket so
+// the left side works like a dropdown once the docket is in.
+const subRows = document.getElementById('subRows');
+function addSubRow() {
+  const row = document.createElement('div');
+  row.className = 'subRow';
+  row.innerHTML =
+    '<input type="text" name="subFrom" list="attorneyNames" placeholder="Attorney on the docket (e.g. PD Brown)">' +
+    '<span class="arrow">&rarr;</span>' +
+    '<input type="text" name="subTo" placeholder="Who actually appeared (e.g. PD White)">' +
+    '<button type="button" class="secondary" title="Remove">&times;</button>';
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  subRows.appendChild(row);
+}
+document.getElementById('addSub').addEventListener('click', addSubRow);
+addSubRow();
+
+document.getElementById('docketText').addEventListener('input', (e) => {
+  const names = e.target.value.match(/\b(?:ASA|PD|Atty\.?|Attorney|Mr\.|Ms\.|Hon\.)?\s?[A-Z][a-zA-Z'’-]+(?:,? [A-Z][a-zA-Z'’.-]+){0,2}\b/g) || [];
+  const seen = new Set();
+  const dl = document.getElementById('attorneyNames');
+  dl.innerHTML = '';
+  for (const n of names) {
+    const key = n.trim().toLowerCase();
+    if (key.length > 3 && !seen.has(key)) {
+      seen.add(key);
+      const opt = document.createElement('option');
+      opt.value = n.trim();
+      dl.appendChild(opt);
+    }
+  }
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -151,13 +203,22 @@ function renderResult(job) {
   for (const c of job.copyText || []) copyMap[c.docket_number] = c.text;
 
   const entriesEl = document.getElementById('entries');
-  entriesEl.innerHTML = '';
+  entriesEl.innerHTML =
+    '<div class="legend">Colors are review aids only — copied text stays plain: ' +
+    '<span style="background:#e7f4e4">verified by multiple signals</span>' +
+    '<span style="background:#fff3cd">single-signal match — double-check</span>' +
+    '<span style="background:#fde2e2">review before submission</span></div>';
   for (const e of m.entries || []) {
     const div = document.createElement('div');
-    div.className = 'entry';
+    const conf3 = e.needs_review ? 'low' : (e.match_confidence || '');
+    div.className = 'entry' + (conf3 ? ' conf-' + conf3 : '');
     const flag = e.needs_review ? '<div class="flag">&#9888; Review needed: ' + escapeHtml(e.review_reason || '') + '</div>' : '';
+    const conf = e.match_confidence
+      ? '<div class="hint" title="Signals that tie this passage of audio to this docket case">Case match: <b>' + escapeHtml(e.match_confidence) + '</b>' +
+        ((e.match_evidence || []).length ? ' — ' + escapeHtml(e.match_evidence.join('; ')) : '') + '</div>'
+      : '';
     div.innerHTML =
-      '<h3>' + escapeHtml(e.docket_number + '  —  ' + e.defendant) + '</h3>' + flag +
+      '<h3>' + escapeHtml(e.docket_number + '  —  ' + e.defendant) + '</h3>' + flag + conf +
       '<pre>' + escapeHtml(copyMap[e.docket_number] || e.minutes || '') + '</pre>' +
       '<button class="secondary">Copy this entry</button><span class="copied" style="display:none">Copied</span>';
     const btn = div.querySelector('button');
