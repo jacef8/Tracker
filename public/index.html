@@ -2616,7 +2616,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 519;
+var APP_BUILD = 520;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16628,7 +16628,14 @@ try {
         // used to) tries to redeem the same one-time credential a second time; Firebase (at
         // least for Apple, confirmed via the diagnostic log) rejects that outright as a
         // duplicate. Using the native result directly avoids the redundant exchange entirely.
-        FA.signInWithGoogle().then(function (res) {
+        //
+        // signOut() FIRST: the Google Sign-In SDK caches the last-used account and silently
+        // reuses it, so tapping the button jumped straight into that gmail with no account
+        // chooser — wrong-account sign-ins had no way back. Whoever taps Sign in is not
+        // signed in (the button only shows then), so there's no live session to lose; the
+        // plugin's signOut clears the SDK's cached account and the chooser appears again.
+        Promise.resolve().then(function () { return FA.signOut ? FA.signOut().catch(function () {}) : null; })
+        .then(function () { return FA.signInWithGoogle(); }).then(function (res) {
           _appleLog('google-native-returned', 'user=' + !!(res && res.user) + ' uid=' + (res && res.user && res.user.uid));
           if (!res || !res.user) throw new Error('no user returned');
           afterFirebaseUser(res.user);
@@ -16643,6 +16650,9 @@ try {
       return;
     }
     var prov = new A.GoogleAuthProvider();
+    // Always show the account chooser — without this, Google silently reuses the browser's
+    // signed-in account and someone with two gmails can never pick the other one.
+    try { prov.setCustomParameters({ prompt: 'select_account' }); } catch (e) {}
     // Popup first on every web surface — desktop browser AND installed PWA. The redirect flow
     // through the default firebaseapp.com handler is unreliable now that browsers block
     // third-party cookies (you log in, but come back signed-out). Only fall back to redirect if
