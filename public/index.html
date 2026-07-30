@@ -2594,7 +2594,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 504;
+var APP_BUILD = 505;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10543,6 +10543,12 @@ function listenUsers() {
           '<div class="ustatus" style="color:' + statusColor + '">' +
             (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Parked · last seen ' + formatTime(data.ts) + ' (' + timeLabel + ')' : 'Last seen: ' + timeLabel) +
             (_shouldShowSpeed(uid, data) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
+            // Battery on the row itself (written with every fix since 503; Android/PC only —
+            // iOS never exposes it). Live: current charge. Stale: last KNOWN charge, marked
+            // "was" — a low was-value is the likeliest answer to why the dot went quiet.
+            (typeof data.batt === 'number'
+              ? ' <span style="color:' + (data.batt <= 15 && !data.chg ? '#f85149' : 'var(--muted)') + '">· ' + (isLive ? '' : 'was ') + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? String.fromCodePoint(0x26A1) : '') + '</span>'
+              : '') +
           '</div>' +
         '</div>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
