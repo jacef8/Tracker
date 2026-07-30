@@ -2,6 +2,14 @@ import UIKit
 import Capacitor
 import CoreLocation
 import WebKit
+// Hard link-time reference for the sign-in plugin — see didFinishLaunching. Without any
+// compile-time use, the static CapacitorFirebaseAuthentication framework can end up absent
+// from the shipped binary even though `pod install` succeeds and the CI GoogleSignIn guard
+// passes: Capacitor loads plugins reflectively (NSClassFromString from packageClassList),
+// which gives the linker nothing to keep. Confirmed on a tester's v25 install 2026-07-30:
+// runtime plugin fingerprint listed every plugin EXCEPT FirebaseAuthentication, so both
+// sign-in buttons dead-ended at the "plugin missing" guard with only a transient toast.
+import CapacitorFirebaseAuthentication
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate, WKNavigationDelegate {
@@ -36,6 +44,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var staleFixTimer: Timer?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Forces the linker to keep the sign-in plugin's class (see the import note above).
+        _ = FirebaseAuthenticationPlugin.self
         // Battery for the fix payload. iOS forbids the WEB battery API entirely, but the native
         // one is unrestricted (it's how Life360 reports iPhone battery). Read here, injected
         // into headless.html alongside each fix — see sendPendingFix.
