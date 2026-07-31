@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 535;
+var APP_BUILD = 536;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -2925,8 +2925,9 @@ var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timi
 var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
-window._groupCandidate = window._groupCandidate || {};        // uid -> {sig, since} — proposed grouping being timed
-window._lastStableGroupSig = window._lastStableGroupSig || {}; // uid -> last APPLIED grouping signature
+window._groupCandidate = window._groupCandidate || null;      // {sig, since} — whole-map grouping being timed
+window._lastStableGroupSig = window._lastStableGroupSig || ''; // last APPLIED whole-map grouping signature
+window._lastAppliedGroups = window._lastAppliedGroups || null; // sig -> [uids] as last rendered
 function _setGroupBadge(el, extraCount) {
   var b = el.querySelector('.mk-group-badge');
   if (extraCount > 0) {
@@ -3016,24 +3017,32 @@ function _updateMarkerGrouping() {
   // apart from each other — at 50-70mph that alone can look like 10s of meters of
   // separation for a second or two, which flickers across the join/split thresholds far
   // faster than a real reunion/split would. Until a new grouping proves itself, keep
-  // showing whatever was last stable for that member.
+  // showing whatever was last stable.
+  //
+  // Debounced as ONE whole-map decision, not per member. The per-member version let two
+  // members of the same raw cluster disagree mid-flap — one already applying the merged
+  // signature, another still holding its old solo one — and the map drew a merged oval
+  // AND a leftover solo circle stacked on the same spot. The grouping now flips
+  // atomically or not at all, so that half-merged state can't render.
   var now = Date.now();
-  var effectiveSig = {};
-  uids.forEach(function (u) {
-    var rawSig = rawGroups[find(u)].slice().sort().join(',');
-    var cand = window._groupCandidate[u];
-    if (!cand || cand.sig !== rawSig) { cand = { sig: rawSig, since: now }; window._groupCandidate[u] = cand; }
-    var lastStable = window._lastStableGroupSig[u];
-    if (rawSig === lastStable || (now - cand.since) >= GROUP_DEBOUNCE_MS) {
-      window._lastStableGroupSig[u] = rawSig;
-      effectiveSig[u] = rawSig;
-    } else {
-      effectiveSig[u] = lastStable || rawSig;
-    }
-  });
-
+  var allSig = Object.keys(rawGroups).map(function (r) { return rawGroups[r].slice().sort().join(','); }).sort().join(';');
+  var cand = window._groupCandidate;
+  if (!cand || cand.sig !== allSig) { cand = { sig: allSig, since: now }; window._groupCandidate = cand; }
   var finalGroups = {};
-  uids.forEach(function (u) { (finalGroups[effectiveSig[u]] = finalGroups[effectiveSig[u]] || []).push(u); });
+  if (allSig === window._lastStableGroupSig || (now - cand.since) >= GROUP_DEBOUNCE_MS || !window._lastAppliedGroups) {
+    window._lastStableGroupSig = allSig;
+    Object.keys(rawGroups).forEach(function (r) { finalGroups[rawGroups[r].slice().sort().join(',')] = rawGroups[r]; });
+    window._lastAppliedGroups = finalGroups;
+  } else {
+    // Mid-debounce: re-render the last applied grouping, dropping members whose markers
+    // are gone and rendering any brand-new member solo until the next stable flip.
+    var covered = {};
+    Object.keys(window._lastAppliedGroups).forEach(function (sig) {
+      var ms = window._lastAppliedGroups[sig].filter(function (u) { return uids.indexOf(u) !== -1; });
+      if (ms.length) { finalGroups[sig] = ms; ms.forEach(function (u) { covered[u] = 1; }); }
+    });
+    uids.forEach(function (u) { if (!covered[u]) finalGroups['solo:' + u] = [u]; });
+  }
 
   window._markerGroupMembers = {};
   Object.keys(finalGroups).forEach(function (sig) {
