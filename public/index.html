@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 548;
+var APP_BUILD = 549;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9686,17 +9686,62 @@ function _isNativeApp() {
       if (typeof c.isNativePlatform === 'function' && c.isNativePlatform()) return true;
       if (typeof c.getPlatform === 'function' && c.getPlatform() !== 'web') return true;
       if (c.platform && c.platform !== 'web') return true;
+      if (typeof c.getPlatform === 'function') _rememberNative();   // definitively web — nothing to remember
     }
   } catch (e) {}
+  // STICKY fallback. Both live checks above can read false on a native iPhone: the UA token
+  // is missing on some launches and the Capacitor bridge injects late. Device logs caught the
+  // same iPhone reporting isNative=true then isNative=false minutes apart. A false negative
+  // here is destructive — it let the "poisoned web install" repair below wipe gl_account on a
+  // real native device, logging the user out on EVERY launch ("he has to log in each time").
+  // Once native has been positively confirmed on this install we remember it; a genuine web
+  // browser never sets the flag, so this can't false-positive.
+  try { return localStorage.getItem('gl_is_native') === '1'; } catch (e) {}
   return false;
 }
+function _rememberNative() {
+  try {
+    var c = window.Capacitor;
+    var native = /GroundLinkNative/i.test(navigator.userAgent || '') ||
+      !!(c && ((typeof c.isNativePlatform === 'function' && c.isNativePlatform()) ||
+               (typeof c.getPlatform === 'function' && c.getPlatform() !== 'web')));
+    if (native) localStorage.setItem('gl_is_native', '1');
+  } catch (e) {}
+}
+// The bridge can arrive after first paint, so keep looking for a while and latch the moment
+// it shows up — then refresh the UI, since the Apple button's visibility depends on it.
+try {
+  _rememberNative();
+  var _natTries = 0;
+  var _natPoll = setInterval(function () {
+    _natTries++;
+    var had = false; try { had = localStorage.getItem('gl_is_native') === '1'; } catch (e) {}
+    _rememberNative();
+    var now = false; try { now = localStorage.getItem('gl_is_native') === '1'; } catch (e) {}
+    if ((now && !had) || _natTries > 20) {
+      clearInterval(_natPoll);
+      if (now && !had) { try { window.GLAuth && window.GLAuth.refreshUI && window.GLAuth.refreshUI(); } catch (e) {} }
+    }
+  }, 250);
+} catch (e) {}
 // Sign in with Apple is only configured for the native iOS app (see signInApple in the GLAuth
 // module) — no Services ID/verified-domain setup exists for a web or Android path.
 function _isIOS() {
   try {
     var c = window.Capacitor;
-    return !!(c && typeof c.getPlatform === 'function' && c.getPlatform() === 'ios');
-  } catch (e) { return false; }
+    if (c && typeof c.getPlatform === 'function' && c.getPlatform() === 'ios') return true;
+    // UA fallback. This used to be Capacitor-ONLY, and the bridge is injected late (and
+    // sometimes not at all before this runs) when the app loads the REMOTE site — proven by
+    // gl/_debug/appleSignInLog, where the SAME iPhone logged `platform=ios isNative=true`
+    // on one launch and `hasCapacitor=false isNative=false` on the next. With no fallback,
+    // that intermittently hid the Sign in with Apple button on real iPhones — reported as
+    // "he doesn't have the Apple login option". The UA can't race: it's set before any JS.
+    var ua = navigator.userAgent || '';
+    if (/iPhone|iPod/i.test(ua)) return true;
+    // iPadOS 13+ reports a desktop Safari UA; touch points disambiguate it from a real Mac.
+    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1)) return true;
+  } catch (e) {}
+  return false;
 }
 // Direct, authoritative check via a native JS bridge (MainActivity's GLPermissions interface,
 // Android only) for whether ACCESS_BACKGROUND_LOCATION is actually granted — not just declared
@@ -17973,7 +18018,15 @@ try {
         // falsely marked. This clean-up only exists for already-poisoned web installs; a
         // poisoned native install corrects itself as soon as its owner actually signs in.
         try {
-          if (!_isNativeApp() && LS.get('gl_account') === 'google') {
+          // Extra guard beyond !_isNativeApp(): this wipe is the single most destructive
+          // thing in the auth path, and platform detection was proven unreliable on iOS
+          // (bridge injects late, UA token intermittently absent) — a false "web" reading
+          // signed real iPhone users out on every launch. Never wipe on a device whose UA
+          // says phone/tablet; the legacy poisoning this repairs only ever affected desktop
+          // web installs, so declining to run here costs nothing.
+          var _ua = navigator.userAgent || '';
+          var _mobileUA = /iPhone|iPad|iPod|Android/i.test(_ua);
+          if (!_isNativeApp() && !_mobileUA && LS.get('gl_account') === 'google') {
             LS.set('gl_account', '');
             try { localStorage.removeItem('gl_account_uid'); } catch (e2) {}
             try { refreshUI(); } catch (e2) {}
