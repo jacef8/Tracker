@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 529;
+var APP_BUILD = 530;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8344,9 +8344,11 @@ let _measureSuppressClick = false, _measureTouchStart = null;
 const PIN_THEMES = ['General', 'Hunting', 'Fishing', 'Outdoors', 'Working', 'Family'];
 const PIN_DEFS = {
   // ── General ──
-  // 🚩 not 📍 — the pin emoji IS a teardrop, so every generic/imported waypoint looked like
-  // the old teardrop style the map pins deliberately moved away from (build 403).
-  'Waypoint':     { color: '#f0a500', emoji: '🚩', theme: 'General', label: 'WP' },
+  // '◆' is a SENTINEL, not a text glyph: makePinImage and the saved-pin renderer draw it as
+  // a real vector diamond (gold, white outline) — the classic waypoint marker. The pin emoji
+  // was a teardrop and the flag replacement read as clutter; imported OnX waypoints are most
+  // of what wears this category, so it gets a proper map-marker look instead of any emoji.
+  'Waypoint':     { color: '#f0a500', emoji: '◆', theme: 'General', label: 'WP' },
   'Urgent':       { color: '#ff0000', emoji: '‼️', theme: 'General', label: '!!' },
   'Hazard':       { color: '#e74c3c', emoji: '⚠️', theme: 'General', label: 'HZ' },
   'Boundary':     { color: '#922b21', emoji: '🚧', theme: 'General', label: 'BN' },
@@ -8445,6 +8447,28 @@ function makePinImage(catColor, ringColor, glyph) {
   cv.width = SIZE; cv.height = SIZE;
   var ctx = cv.getContext('2d');
   var cx = SIZE / 2, cy = SIZE / 2;
+  // Diamond sentinel (see PIN_DEFS Waypoint): vector shape, not text — category color fill,
+  // white outline, dark shadow, with the ownership halo matching the glyph pins.
+  if (glyph === '◆') {
+    var R = SIZE * 0.30;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.PI / 4);
+    ctx.shadowColor = ringColor; ctx.shadowBlur = 10;
+    ctx.fillStyle = catColor;
+    ctx.fillRect(-R, -R, R * 2, R * 2);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.PI / 4);
+    ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = catColor;
+    ctx.fillRect(-R, -R, R * 2, R * 2);
+    ctx.lineWidth = 5; ctx.strokeStyle = '#ffffff';
+    ctx.strokeRect(-R, -R, R * 2, R * 2);
+    ctx.restore();
+    return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
+  }
   var isEmoji = glyph && !/^[A-Za-z!]{1,3}$/.test(glyph); // anything that isn't a 2-letter fallback
   ctx.font = isEmoji
     ? Math.round(SIZE * 0.62) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif'
@@ -15395,8 +15419,13 @@ function _renderSavedOnMap() {
     // marker version of saved pins was missed in that redesign since it's a separate code
     // path from makePinImage()'s canvas-rendered room/circle pins.
     var el = document.createElement('div');
-    el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 2px 3px rgba(0,0,0,.85))';
-    el.textContent = def.emoji || '📍';
+    if ((def.emoji || '') === '◆') {
+      // Vector diamond to match makePinImage's sentinel rendering (see PIN_DEFS Waypoint).
+      el.style.cssText = 'width:15px;height:15px;background:' + def.color + ';border:2.5px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.75)';
+    } else {
+      el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 2px 3px rgba(0,0,0,.85))';
+      el.textContent = def.emoji || '📍';
+    }
     el.title = (pin.label || pin.cat || 'Saved pin') + (pin.coll ? ' · ' + pin.coll : '');
     try {
       var m = new mapboxgl.Marker({ element: el, anchor:'center' }).setLngLat([pin.lng, pin.lat]).addTo(map);
