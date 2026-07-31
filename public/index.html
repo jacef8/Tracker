@@ -2686,7 +2686,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 543;
+var APP_BUILD = 544;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3361,6 +3361,11 @@ window._togglePinMute = function (uid, name) {
 function _getMemberHidden() { try { return JSON.parse(localStorage.getItem('gl_member_hidden') || '{}'); } catch (e) { return {}; } }
 function _setMemberHidden(m) { try { localStorage.setItem('gl_member_hidden', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 window._isMemberHidden = function (uid) { return !!_getMemberHidden()[uid]; };
+// "Can this device change room settings?" — owner OR co-admin. Defined at top level, not
+// inside enterMap: the Room Info gates (passcode, visibility) call it, and a definition
+// that only exists after a room has been entered is one reordering away from a ReferenceError.
+// The flags it reads are set by enterMap and default false, so it's safe to call any time.
+window._canManageRoom = function () { return !!(window._isRoomOwner || window._isRoomAdmin); };
 // Room-wide hide, set by the owner/an admin — applies on EVERY member's map, unlike the
 // personal hide above. Checks both id forms for the same reason _isAdminUid does.
 window._isHiddenForAll = function (uid) {
@@ -7667,7 +7672,6 @@ function enterMap(name, group, uid) {
     // visibility) and remove members; transferring ownership, managing admins, and deleting
     // the room stay owner-only.
     window._isRoomAdmin = false; window._roomAdmins = {};
-    window._canManageRoom = function () { return !!(window._isRoomOwner || window._isRoomAdmin); };
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/admins'), function (snap) {
         var a = snap.val() || {};
