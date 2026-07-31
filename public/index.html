@@ -144,6 +144,20 @@
     font-size: 14px; color: var(--text);
   }
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg) url('/icons/splash.png') center/cover fixed no-repeat; background-blend-mode: overlay; }
+  /* TEXT SHARPNESS. The panels were translucent (`background: rgba(22,27,34,.62)`) with a
+     `backdrop-filter: blur()`. Both of those force the browser to composite the panel into
+     its own layer and render text with GRAYSCALE antialiasing instead of subpixel ClearType
+     — which on Windows reads as permanently soft, slightly-fuzzy text no matter the font.
+     Making the text-heavy panels fully opaque restores sharp subpixel rendering; visually
+     they're near-identical, since the blur was mostly hidden behind the map anyway.
+     Reported directly: "something about this font makes it look fuzzy and hard to read". */
+     (Deliberately NOT paired with `-webkit-font-smoothing: antialiased` — that FORCES
+     grayscale AA, which is the very thing being fixed here.) */
+  [style*="backdrop-filter"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background-color: #161b22 !important;
+  }
   /* Map sits transparent over the splash background so glass panels reveal it
      until satellite tiles paint; in production the map fills this layer. */
   #map { background: transparent; }
@@ -2393,9 +2407,16 @@
         <div id="ri-invite-sub" style="font-size:11px;color:var(--muted)">Send a link, or invite a favorite directly</div>
       </div>
     </button>
-    <div id="ri-fav-row" onclick="window._riToggleFav()" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
-      <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
-      <div><div style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen, and your location will keep flowing here even from other rooms</div></div>
+    <!-- State lives in the TITLE and an ON/OFF pill, not just a small ☆/★ glyph. The old row
+         kept the fixed title "Favorite this group" whether it was on or off, so a favorited
+         room still read as un-favorited at a glance — reported as "I favorited it several
+         times and it never sticks". Matches the pill pattern used by the rows below. -->
+    <div id="ri-fav-row" onclick="window._riToggleFav()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span id="ri-fav-star" style="font-size:22px;line-height:1;color:var(--muted)">&#9734;</span>
+        <div><div id="ri-fav-title" style="font-size:14px;font-weight:600;color:var(--text)">Favorite this group</div><div id="ri-fav-sub" style="font-size:11px;color:var(--muted);margin-top:2px">Pin it to your home screen, and your location will keep flowing here even from other rooms</div></div>
+      </div>
+      <span id="ri-fav-pill" style="flex-shrink:0;font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
     <!-- Turn an already-existing room into a Circle (a Circle is otherwise only offered as a
          checkbox when creating a BRAND-NEW group). One-way: once a room is a Circle, other people
@@ -2686,7 +2707,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 544;
+var APP_BUILD = 545;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5335,13 +5356,33 @@ function _renderRiFav() {
   var on = (typeof _isFav === 'function') && groupName && _isFav(groupName);
   var star = document.getElementById('ri-fav-star');
   var sub = document.getElementById('ri-fav-sub');
+  var title = document.getElementById('ri-fav-title');
+  var pill = document.getElementById('ri-fav-pill');
   if (star) { star.innerHTML = on ? '&#9733;' : '&#9734;'; star.style.color = on ? 'var(--accent)' : 'var(--muted)'; }
+  if (title) title.textContent = on ? 'Favorited' : 'Favorite this group';
+  if (pill) {
+    pill.textContent = on ? 'ON' : 'OFF';
+    pill.style.background = on ? 'rgba(240,165,0,.16)' : 'var(--border)';
+    pill.style.color = on ? 'var(--accent)' : 'var(--muted)';
+  }
   if (sub) sub.textContent = on ? 'Saved — shows on your home screen, and your location keeps flowing here no matter what room you\'re in' : 'Pin it to your home screen, and your location will keep flowing here even from other rooms';
 }
 window._riToggleFav = function() {
   if (!groupName) return;
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   try { window._toggleFav(groupName, label); } catch (e) {}
+  // Verify the toggle actually PERSISTED rather than trusting that it did. localStorage
+  // writes are wrapped in empty catches throughout (quota, private-mode, and locked-profile
+  // failures all throw), so a favorite could silently fail to save and the only symptom was
+  // the row reverting later — with nothing anywhere saying why.
+  try {
+    var want = _getFavs().indexOf(groupName) !== -1;
+    var stored = [];
+    try { stored = JSON.parse(localStorage.getItem('gl_favs') || '[]'); } catch (e) {}
+    if ((stored.indexOf(groupName) !== -1) !== want) {
+      toast('Couldn\'t save that favorite on this device — storage refused the write. Try again, or free up space.', 5000);
+    }
+  } catch (e) {}
   _renderRiFav();
 };
 // Is THIS room already a Circle, per the live room-list snapshot (authoritative — someone else
