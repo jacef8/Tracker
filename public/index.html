@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 532;
+var APP_BUILD = 533;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8381,10 +8381,11 @@ const PIN_DEFS = {
   'Boundary':     { color: '#922b21', emoji: '🚧', theme: 'General', label: 'BN' },
   'Vehicle':      { color: '#566573', emoji: '🚙', theme: 'General', label: 'VH' },
   'Parking':      { color: '#607d8b', emoji: '🅿️', theme: 'General', label: 'PK' },
-  // ⛩ not 🚪 — the door emoji rendered ranch gates as a floating house door on the
-  // satellite map (reported on an imported "South Gate"). The torii shape actually reads
-  // as posts-with-crossbar, i.e. a gate.
-  'Gate':         { color: '#795548', emoji: '⛩️', theme: 'General', label: 'GA' },
+  // '≡' is a SENTINEL like the Waypoint diamond: the map renderers draw a real vector
+  // ranch gate (posts + rails + diagonal brace). The door emoji looked like a floating
+  // house door and the torii replacement "looked like a Chinese something" — there is no
+  // good gate emoji, so we draw one. Pickers show the ≡ glyph, which reads as rails.
+  'Gate':         { color: '#795548', emoji: '≡', theme: 'General', label: 'GA' },
   'Photo':        { color: '#90a4ae', emoji: '📸', theme: 'General', label: 'PH' },
   // ── Hunting ──
   'Deer Stand':   { color: '#8B5E3C', emoji: '🪜', theme: 'Hunting', label: 'DS' },
@@ -8477,6 +8478,29 @@ function makePinImage(catColor, ringColor, glyph) {
   cv.width = SIZE; cv.height = SIZE;
   var ctx = cv.getContext('2d');
   var cx = SIZE / 2, cy = SIZE / 2;
+  // Ranch-gate sentinel (see PIN_DEFS Gate): posts, three rails, diagonal brace — drawn,
+  // because no emoji reads as a pasture gate.
+  if (glyph === '≡') {
+    var gL = SIZE * 0.20, gR = SIZE * 0.80, gT = SIZE * 0.30, gB = SIZE * 0.72;
+    var rails = [gT + (gB - gT) * 0.15, gT + (gB - gT) * 0.5, gT + (gB - gT) * 0.85];
+    var passes = [
+      { c: '#ffffff', w: 9 },   // outline pass for contrast on any imagery
+      { c: catColor,  w: 4.5 }
+    ];
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
+    passes.forEach(function (p2) {
+      ctx.strokeStyle = p2.c; ctx.lineWidth = p2.w; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(gL, gT - 4); ctx.lineTo(gL, gB + 4);   // left post
+      ctx.moveTo(gR, gT - 4); ctx.lineTo(gR, gB + 4);   // right post
+      rails.forEach(function (y) { ctx.moveTo(gL, y); ctx.lineTo(gR, y); });
+      ctx.moveTo(gL, gB); ctx.lineTo(gR, gT);           // diagonal brace
+      ctx.stroke();
+    });
+    ctx.restore();
+    return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
+  }
   // Diamond sentinel (see PIN_DEFS Waypoint): vector shape, not text — category color fill,
   // white outline, dark shadow, with the ownership halo matching the glyph pins.
   if (glyph === '◆') {
@@ -15449,7 +15473,12 @@ function _renderSavedOnMap() {
     // marker version of saved pins was missed in that redesign since it's a separate code
     // path from makePinImage()'s canvas-rendered room/circle pins.
     var el = document.createElement('div');
-    if ((def.emoji || '') === '◆') {
+    if ((def.emoji || '') === '≡') {
+      el.innerHTML = '<svg width="26" height="22" viewBox="0 0 36 30" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))">' +
+        '<g stroke="#fff" stroke-width="7" stroke-linecap="round" fill="none"><path d="M5 2 V28 M31 2 V28 M5 7 H31 M5 15 H31 M5 23 H31 M5 26 L31 5"/></g>' +
+        '<g stroke="' + def.color + '" stroke-width="3.5" stroke-linecap="round" fill="none"><path d="M5 2 V28 M31 2 V28 M5 7 H31 M5 15 H31 M5 23 H31 M5 26 L31 5"/></g></svg>';
+      el.style.cssText = 'cursor:pointer;line-height:0';
+    } else if ((def.emoji || '') === '◆') {
       // Vector diamond to match makePinImage's sentinel rendering (see PIN_DEFS Waypoint).
       el.style.cssText = 'width:15px;height:15px;background:' + def.color + ';border:2.5px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.75)';
     } else {
