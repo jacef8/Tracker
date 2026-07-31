@@ -1908,7 +1908,9 @@
     <div style="display:flex;align-items:center;gap:8px">
       <div id="pins-saved-toolbar" style="display:none;align-items:center;gap:8px">
         <button onclick="window._importGpx && window._importGpx()" title="Import OnX / GPX waypoints" style="background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 10px;cursor:pointer;display:flex;align-items:center;gap:5px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>GPX</button>
-        <button id="sv-select-all" onclick="window._svSelectAllShown()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">All</button>
+        <!-- Always visible, not select-mode-only: it was undiscoverable behind "Select", so
+             "select all" read as missing. Tapping it now enters select mode itself. -->
+        <button id="sv-select-all" onclick="window._svSelectAllShown()" style="background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Select all</button>
         <button id="sv-select-toggle" onclick="window._svToggleSelect()" style="background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Select</button>
       </div>
       <div id="pins-room-toolbar" style="position:relative;display:flex;align-items:center">
@@ -2674,7 +2676,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 541;
+var APP_BUILD = 542;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15464,8 +15466,6 @@ window._svToggleSelect = function() {
   window._svSel = {};
   var b = document.getElementById('sv-select-toggle');
   if (b) { b.textContent = window._svSelect ? 'Cancel' : 'Select'; }
-  var sa = document.getElementById('sv-select-all');
-  if (sa) sa.style.display = window._svSelect ? 'inline-flex' : 'none';
   renderSavedPins();
 };
 window._svSelectedPins = function() {
@@ -15473,8 +15473,13 @@ window._svSelectedPins = function() {
   return Object.keys(window._svSel).map(function(i) { return all[+i]; }).filter(Boolean);
 };
 // Select every pin currently shown (respects the active type/collection filter) — handy for
-// grabbing a whole collection to share at once.
+// grabbing a whole collection to share at once. Enters select mode on its own so it works as
+// a first tap, not only as a follow-up to "Select".
 window._svSelectAllShown = function() {
+  if (!window._svSelect) {
+    window._svSelect = true;
+    var b = document.getElementById('sv-select-toggle'); if (b) b.textContent = 'Cancel';
+  }
   window._svSel = {};
   getSavedPins().forEach(function(p, i) { if (_savedMatch(p)) window._svSel[i] = true; });
   renderSavedPins();
@@ -15482,12 +15487,7 @@ window._svSelectAllShown = function() {
 // One tap from a filter chip: enter select mode, grab everything the filter shows, open the
 // destination picker. "Share this folder" without the tap-tap-tap.
 window._svShareShown = function () {
-  if (!window._svSelect) {
-    window._svSelect = true;
-    var b = document.getElementById('sv-select-toggle'); if (b) b.textContent = 'Cancel';
-    var sa = document.getElementById('sv-select-all'); if (sa) sa.style.display = 'inline-flex';
-  }
-  window._svSelectAllShown();
+  window._svSelectAllShown();          // enters select mode itself
   window._svOpenShareTargets();
 };
 // Tag the selected pins with a self-named collection (creates it if new).
@@ -15994,11 +15994,15 @@ function _renderSavedFilterChips(pins) {
     html += '<button class="sv-chip' + (_savedFilter === fv ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + fv.replace(/'/g, "\\'") + '\')">&#128193; ' + escapeHtmlJs(cn) + ' (' + colls[cn] + ')</button>';
   });
-  // One-tap group share: with a folder or type filter active, share EVERYTHING it shows —
-  // no tapping pins one by one. Select-all + share, fused.
-  if (_savedFilter !== 'all') {
-    html += '<button class="sv-chip" style="border-color:var(--accent);color:var(--accent);font-weight:800" onclick="window._svShareShown()">&#10548; Share these</button>';
-  }
+  // One-tap GROUP SHARE, always offered — not just when a filter is active. Shares exactly
+  // what the current chip shows: one folder, one type, or (on "All") the entire library.
+  // That's the difference between "share all my tracks but not my pins" being one tap or
+  // fifty. Select-all + open-destinations, fused.
+  var _shownN = pins.filter(_savedMatch).length;
+  var _shareLbl = _savedFilter === 'all'
+    ? ('Share all ' + _shownN + ' pin' + (_shownN === 1 ? '' : 's'))
+    : ('Share these ' + _shownN);
+  html += '<button class="sv-chip" style="border-color:var(--accent);color:var(--accent);font-weight:800" onclick="window._svShareShown()">&#10548; ' + _shareLbl + '</button>';
   cats.forEach(function(c) {
     html += '<button class="sv-chip' + (_savedFilter === c ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + c.replace(/'/g, "\\'") + '\')">' +
@@ -16183,7 +16187,6 @@ function openSavedPins() {
   // Always open in normal (non-select) mode.
   window._svSelect = false; window._svSel = {};
   var stb = document.getElementById('sv-select-toggle'); if (stb) stb.textContent = 'Select';
-  var sab = document.getElementById('sv-select-all'); if (sab) sab.style.display = 'none';
   document.getElementById('saved-pins-drawer').classList.add('open');
   setLocateMeVisible(false);
   window._pinsTab('saved');
