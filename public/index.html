@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 530;
+var APP_BUILD = 531;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5644,6 +5644,33 @@ function _ensurePlacesSubscribed(circleKey) {
 // OS-level CLCircularRegion monitoring — geofence crossings then wake the app even when the
 // process was dead, with the actual arrive/leave logic staying in headless.html. Returns a
 // compact JSON array; radius field shortened to r to match the Swift parser.
+// ── Device diagnostics beacon ─────────────────────────────────────────────────────────
+// One tiny write per launch to gl/_diag/devices/<uid>: platform, NATIVE binary version,
+// web build, and whether the sign-in plugin is present. Exists because "he still can't
+// sign in" took hours to diagnose — the phone was running a TestFlight build nobody could
+// see from here. The admin panel reads this list, so next time the question "what version
+// is he actually on?" is a lookup, not an interrogation.
+setTimeout(function () {
+  try {
+    var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
+    if (!uid || !window._fb || !window._fb.db) return;
+    var rec = {
+      name: (typeof userName !== 'undefined' && userName) || (function () { try { return (getSavedSession() || {}).name || ''; } catch (e) { return ''; } })(),
+      dev: (function () { try { return localStorage.getItem('gl_device_label') || ''; } catch (e) { return ''; } })(),
+      plat: (window.Capacitor && typeof window.Capacitor.getPlatform === 'function') ? window.Capacitor.getPlatform() : 'web',
+      web: (typeof APP_BUILD !== 'undefined') ? APP_BUILD : 0,
+      ua: (navigator.userAgent || '').slice(0, 90),
+      signinPlugin: !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication),
+      ts: Date.now()
+    };
+    var App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    var write = function () { try { window._fb.set(window._fb.ref(window._fb.db, 'gl/_diag/devices/' + uid), rec); } catch (e) {} };
+    if (App && App.getInfo) {
+      App.getInfo().then(function (i) { rec.native = (i.version || '') + ' (' + (i.build || '') + ')'; write(); }).catch(write);
+    } else write();
+  } catch (e) {}
+}, 9000);
+
 window.__nativeSync = function () {
   try {
     var out = [];
@@ -15431,8 +15458,8 @@ function _renderSavedOnMap() {
       var m = new mapboxgl.Marker({ element: el, anchor:'center' }).setLngLat([pin.lng, pin.lat]).addTo(map);
       if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
         m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
-          '<div style="font-weight:800;font-size:12px;color:#111">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
-          (pin.coll ? '<div style="font-size:11px;color:#555">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
+          '<div style="font-weight:800;font-size:13px;color:#fff">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
+          (pin.coll ? '<div style="font-size:11px;color:#8b949e;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
       }
       window._savedMapMarkers.push(m);
     } catch(e){}

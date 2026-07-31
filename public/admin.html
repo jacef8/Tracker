@@ -312,7 +312,9 @@
   <div id="ov-map" style="height:340px;border-radius:12px;overflow:hidden;background:#0d1117;border:1px solid var(--border)"></div>
   <!-- Private devices (the watch) — they also plot on the map above -->
   <div id="admin-devices" style="margin-top:16px"></div>
-  <div id="ov-list" style="margin-bottom:16px"></div>
+  <div style="margin:12px 0 6px;font-size:14px;font-weight:800">Device versions <button class="btn" onclick="renderDeviceVersions()" style="font-size:10.5px;padding:3px 9px;margin-left:8px">Refresh</button></div>
+    <div id="device-versions" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:14px"><div class="empty">Tap Refresh to load device reports.</div></div>
+    <div id="ov-list" style="margin-bottom:16px"></div>
 </div>
 
 <!-- SYSTEM TAB — ops first (maintenance, danger), then data export -->
@@ -1478,6 +1480,30 @@ function _roomControlHTML(key, group, now) {
 // quick-room clock. Deliberately does NOT write anyone's members entry: Crew membership means
 // continuous background sharing, and that switch is flipped per-person on their own device via
 // the existing join-with-disclosure prompt the circle flag triggers on their next visit.
+// Device-versions table (gl/_diag/devices) — who is on what binary/web build, and whether
+// the sign-in plugin is present in their install. Written by each device on launch.
+window.renderDeviceVersions = function () {
+  var el = document.getElementById('device-versions');
+  if (!el) return;
+  var fb = window._fb; if (!fb) { el.textContent = 'Firebase not ready'; return; }
+  fb.get(fb.ref(fb.db, 'gl/_diag/devices')).then(function (snap) {
+    var d = (snap && snap.val && snap.val()) || {};
+    var rows = Object.keys(d).map(function (uid) { return Object.assign({ uid: uid }, d[uid] || {}); });
+    rows.sort(function (x, y) { return (y.ts || 0) - (x.ts || 0); });
+    if (!rows.length) { el.innerHTML = '<div class="empty">No device reports yet — devices write one on each app launch (build 531+).</div>'; return; }
+    el.innerHTML = rows.map(function (r) {
+      var stale = (Date.now() - (r.ts || 0)) > 24 * 60 * 60 * 1000;
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px">' +
+        '<span style="min-width:130px;font-weight:700">' + (r.name || r.uid.slice(0, 8)) + (r.dev ? ' <span style="color:var(--muted);font-weight:400">· ' + r.dev + '</span>' : '') + '</span>' +
+        '<span style="min-width:64px;color:var(--muted)">' + (r.plat || '?') + '</span>' +
+        '<span style="min-width:86px">' + (r.native ? 'app ' + r.native : '<span style="color:var(--muted)">browser</span>') + '</span>' +
+        '<span style="min-width:70px;color:var(--muted)">web ' + (r.web || '?') + '</span>' +
+        (r.plat && r.plat !== 'web' ? '<span style="min-width:90px;color:' + (r.signinPlugin ? '#3fb950' : '#f85149') + ';font-weight:700">' + (r.signinPlugin ? 'sign-in OK' : 'SIGN-IN MISSING') + '</span>' : '<span style="min-width:90px"></span>') +
+        '<span style="margin-left:auto;color:' + (stale ? 'var(--muted)' : '#3fb950') + '">' + timeAgo(r.ts) + '</span>' +
+      '</div>';
+    }).join('');
+  }).catch(function (e) { el.textContent = 'Failed: ' + (e && e.message); });
+};
 window.adminMakeCrew = function (key, name) {
   if (!confirm('Convert "' + name + '" into a Crew?\n\nThe room becomes private and permanent. Everyone in it gets the join-the-Crew prompt on their next visit — membership stays their own choice on their own device.\n\nThis can\'t be undone from the app.')) return;
   var fb = window._fb; if (!fb) return;
