@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 534;
+var APP_BUILD = 535;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14280,15 +14280,53 @@ window._trackKey = function (tk) {
     return (tk.name || '') + '|' + tk.pts.length + '|' + p0.lat.toFixed(6) + ',' + p0.lng.toFixed(6) + '|' + pn2.lat.toFixed(6) + ',' + pn2.lng.toFixed(6);
   } catch (e) { return String(tk && tk.id); }
 };
+// Deletion TOMBSTONES. The library merges are additive unions (so no device can wipe the
+// library), which means they also can't represent "deleted": remove a pin here and the
+// copy still sitting in the cloud — or in another device's localStorage, pushed on ITS
+// next sync — simply re-adds it, forever. A tombstone records contentKey -> delete time,
+// travels with the profile (pinsDel/tracksDel), and an item loses to a matching tombstone
+// unless it was (re)saved AFTER the delete — every deliberate add stamps a fresh
+// savedAt/ts, so re-importing or re-saving something you once deleted still works.
+window._tombs = function (k) { try { var o = JSON.parse(localStorage.getItem(k) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; } };
+window._addTomb = function (k, key) {
+  if (!key) return;
+  var o = window._tombs(k), now = Date.now();
+  o[key] = now;
+  // 90-day expiry: by then every copy of the deleted item has been filtered out everywhere,
+  // and expiring keeps the synced map from growing without bound.
+  Object.keys(o).forEach(function (kk) { if (now - o[kk] > 90 * 86400000) delete o[kk]; });
+  try { localStorage.setItem(k, JSON.stringify(o)); } catch (e) {}
+};
+// Merge tombstones arriving from the cloud profile into the local set (newest delete wins).
+window._mergeTombs = function (k, cloudVal) {
+  try {
+    var cd = typeof cloudVal === 'string' ? JSON.parse(cloudVal || '{}') : (cloudVal || {});
+    var ld = window._tombs(k), changed = false;
+    Object.keys(cd).forEach(function (kk) { if (!ld[kk] || cd[kk] > ld[kk]) { ld[kk] = cd[kk]; changed = true; } });
+    if (changed) localStorage.setItem(k, JSON.stringify(ld));
+  } catch (e) {}
+};
+window._tombFilter = function (arr, tombKey, keyFn, tsFn) {
+  var t = window._tombs(tombKey);
+  return arr.filter(function (it) {
+    if (!it) return false;
+    var d = t[keyFn(it)];
+    return !d || (tsFn(it) || 0) > d;
+  });
+};
+window._pinTs = function (pn) { return (pn && (pn.savedAt || pn.ts)) || 0; };
+window._trkTs = function (tk) { return (tk && (tk.savedAt || tk.ts)) || 0; };
 // One-time-per-load sweep for duplicates that already exist from earlier imports. Delayed so
 // the account module's _glSync exists by then — the cleaned lists get pushed to the cloud.
 setTimeout(function () {
   try {
     var arr = getSavedPins(), seen = {}, out = [];
     arr.forEach(function (pn) { if (!pn) return; var k = window._pinKey(pn); if (seen[k]) return; seen[k] = 1; out.push(pn); });
-    if (out.length !== arr.length) { setSavedPins(out); try { console.log('[GL] swept ' + (arr.length - out.length) + ' duplicate saved pins'); } catch (e) {} }
+    out = window._tombFilter(out, 'gl_pins_del', window._pinKey, window._pinTs);
+    if (out.length !== arr.length) { setSavedPins(out); try { console.log('[GL] swept ' + (arr.length - out.length) + ' duplicate/deleted saved pins'); } catch (e) {} }
     var tA = getSavedTracks(), tSeen = {}, tOut = [];
     tA.forEach(function (tk) { if (!tk) return; var k = window._trackKey(tk); if (tSeen[k]) return; tSeen[k] = 1; tOut.push(tk); });
+    tOut = window._tombFilter(tOut, 'gl_tracks_del', window._trackKey, window._trkTs);
     if (tOut.length !== tA.length) setSavedTracks(tOut);
     try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
     try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
@@ -15055,13 +15093,16 @@ window._renameTrack = function(id){
   if (!t) return;
   _trkPrompt('Rename track', t.name, function(nm){
     if (!nm) nm=t.name;
-    t.name=nm; setSavedTracks(arr);
+    // The content key includes the name, so the pre-rename identity must be tombstoned or
+    // the cloud's old-named copy re-merges alongside the renamed one as a "new" track.
+    if (nm !== t.name) window._addTomb('gl_tracks_del', window._trackKey(t));
+    t.name=nm; t.savedAt=Date.now(); setSavedTracks(arr);
     var el=document.getElementById('trk-d-title'); if(el) el.textContent=nm; renderTracks();
   });
 };
 window._deleteTrack = function(id){
   _confirm('Delete this track? This cannot be undone.', function(){
-  var arr=getSavedTracks().filter(function(t){ return t.id!==id; }); setSavedTracks(arr);
+  var arr=getSavedTracks().filter(function(t){ if(t.id===id) window._addTomb('gl_tracks_del', window._trackKey(t)); return t.id!==id; }); setSavedTracks(arr);
   if (window._shownTrackId===id) _clearSavedTrack();
   document.getElementById('track-detail-drawer').classList.remove('open');
   renderTracks();
@@ -15363,9 +15404,9 @@ window._soloPinPopup = function(feature, lngLat) {
 window._soloRemovePin = function(pid) {
   var p = lastPins[pid]; if (!p) return;
   var arr = getSavedPins().filter(function(s) {
-    if (s.pid && s.pid === pid) return false;
-    if (s.lat === p.lat && s.lng === p.lng && s.cat === p.cat) return false;
-    return true;
+    var drop = (s.pid && s.pid === pid) || (s.lat === p.lat && s.lng === p.lng && s.cat === p.cat);
+    if (drop) window._addTomb('gl_pins_del', window._pinKey(s));
+    return !drop;
   });
   setSavedPins(arr);
   delete lastPins[pid];
@@ -15395,13 +15436,15 @@ window.savePin = function(pid) {
 window._feedToggleSave = function(pid){
   var saved = getSavedPins();
   var idx=-1; for(var k=0;k<saved.length;k++){ if(saved[k].pid===pid){ idx=k; break; } }
-  if(idx>=0){ saved.splice(idx,1); setSavedPins(saved); try{ toast('Removed from My Pins'); }catch(e){} }
+  if(idx>=0){ window._addTomb('gl_pins_del', window._pinKey(saved[idx])); saved.splice(idx,1); setSavedPins(saved); try{ toast('Removed from My Pins'); }catch(e){} }
   else { var pin=lastPins[pid]; if(!pin){ try{ toast('Pin not found'); }catch(e){} return; } saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name, lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() }); setSavedPins(saved); try{ toast('Saved to My Pins'); }catch(e){} }
   try { renderSavedPins(); } catch(e){}
   if (typeof pinFeedOpen!=='undefined' && pinFeedOpen) renderPinFeed(lastPins);
 };
 window.removeSavedPin = function(idx) {
-  var pins = getSavedPins(); pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
+  var pins = getSavedPins();
+  if (pins[idx]) window._addTomb('gl_pins_del', window._pinKey(pins[idx]));
+  pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
 };
 window.shareSavedPin = function(idx) {
   var pin = getSavedPins()[idx];
@@ -16702,6 +16745,9 @@ try {
       circles:    LS.get('gl_circles') || '{}',
       pins:       LS.get('gl_saved_pins') || '[]',
       tracks:     LS.get('gl_saved_tracks') || '[]',
+      // Deletion tombstones ride along so every device learns what was deleted (see _addTomb).
+      pinsDel:    LS.get('gl_pins_del') || '{}',
+      tracksDel:  LS.get('gl_tracks_del') || '{}',
       mycolor:    LS.get('gl_mycolor') || '',
       updated:    Date.now()
     };
@@ -16765,13 +16811,18 @@ try {
       // colors for the same person, syncing this would make them fight over which one wins,
       // flipping that person's dot color back and forth every time either device re-synced.
       if (p.mycolor) LS.set('gl_mycolor', p.mycolor);
-      // MERGE the cloud pin library into local (union) — never wipe, so an extensive library survives.
+      // MERGE the cloud pin library into local (union) — never wipe, so an extensive library
+      // survives. Tombstones come FIRST: a union can't say "deleted", so without them any
+      // stale copy resurrects a deleted pin on every sync (the delete-it-and-it-comes-back bug).
+      try { if (p.pinsDel && window._mergeTombs) window._mergeTombs('gl_pins_del', p.pinsDel); } catch (e4) {}
+      try { if (p.tracksDel && window._mergeTombs) window._mergeTombs('gl_tracks_del', p.tracksDel); } catch (e5) {}
       if (p.pins) {
         var cloud = typeof p.pins === 'string' ? JSON.parse(p.pins || '[]') : p.pins;
         var localPins = []; try { localPins = JSON.parse(LS.get('gl_saved_pins') || '[]'); } catch (e2) {}
         if (cloud && cloud.length) {
           var seen = {}, merged = [];
           localPins.concat(cloud).forEach(function(pn){ if(!pn) return; var k = window._pinKey ? window._pinKey(pn) : pn.pid; if(!seen[k]){seen[k]=1;merged.push(pn);} });
+          if (window._tombFilter) merged = window._tombFilter(merged, 'gl_pins_del', window._pinKey, window._pinTs);
           LS.set('gl_saved_pins', JSON.stringify(merged));
         }
       }
@@ -16781,6 +16832,7 @@ try {
         if (cloudT && cloudT.length) {
           var seenT = {}, mergedT = [];
           localT.concat(cloudT).forEach(function(tk){ if(!tk) return; var k = window._trackKey ? window._trackKey(tk) : tk.id; if(!seenT[k]){seenT[k]=1;mergedT.push(tk);} });
+          if (window._tombFilter) mergedT = window._tombFilter(mergedT, 'gl_tracks_del', window._trackKey, window._trkTs);
           LS.set('gl_saved_tracks', JSON.stringify(mergedT));
         }
       }
@@ -16803,6 +16855,10 @@ try {
         var p = (snap && snap.exists && snap.exists()) ? snap.val() : null;
         if (!p) return;
         var changed = false;
+        // Tombstones first — a delete made on another device arrives here as pinsDel/tracksDel,
+        // and must be applied so this device drops its own stale copy instead of re-uploading it.
+        try { if (p.pinsDel && window._mergeTombs) window._mergeTombs('gl_pins_del', p.pinsDel); } catch (e) {}
+        try { if (p.tracksDel && window._mergeTombs) window._mergeTombs('gl_tracks_del', p.tracksDel); } catch (e) {}
         try {
           if (p.pins) {
             var cloud = typeof p.pins === 'string' ? JSON.parse(p.pins || '[]') : p.pins;
@@ -16810,7 +16866,8 @@ try {
             if (cloud && cloud.length) {
               var seen = {}, merged = [];
               loc.concat(cloud).forEach(function (pn) { if (!pn) return; var k = window._pinKey ? window._pinKey(pn) : pn.pid; if (!seen[k]) { seen[k] = 1; merged.push(pn); } });
-              if (merged.length !== loc.length) { LS.set('gl_saved_pins', JSON.stringify(merged)); changed = true; }
+              if (window._tombFilter) merged = window._tombFilter(merged, 'gl_pins_del', window._pinKey, window._pinTs);
+              if (JSON.stringify(merged) !== JSON.stringify(loc)) { LS.set('gl_saved_pins', JSON.stringify(merged)); changed = true; }
             }
           }
         } catch (e) {}
@@ -16821,7 +16878,8 @@ try {
             if (cloudT && cloudT.length) {
               var seenT = {}, mergedT = [];
               locT.concat(cloudT).forEach(function (tk) { if (!tk) return; var k = window._trackKey ? window._trackKey(tk) : tk.id; if (!seenT[k]) { seenT[k] = 1; mergedT.push(tk); } });
-              if (mergedT.length !== locT.length) { LS.set('gl_saved_tracks', JSON.stringify(mergedT)); changed = true; }
+              if (window._tombFilter) mergedT = window._tombFilter(mergedT, 'gl_tracks_del', window._trackKey, window._trkTs);
+              if (JSON.stringify(mergedT) !== JSON.stringify(locT)) { LS.set('gl_saved_tracks', JSON.stringify(mergedT)); changed = true; }
             }
           }
         } catch (e) {}
