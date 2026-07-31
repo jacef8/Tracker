@@ -400,7 +400,19 @@
       padding-left: 12px; padding-right: 12px;
     }
     .topbar-row1 { flex: 0 0 auto; border-bottom: none; padding-right: 8px; border-right: 1px solid var(--border); }
-    .topbar-row2 { flex: 1; border-top: none; margin-top: 0; padding-top: 5px; padding-left: 8px; }
+    /* border-top was `none` here, which is why the gold band around the icons rendered with
+       only THREE sides on every desktop window (a wide PC window matches this landscape
+       query) — it read as a clipped/unfinished band rather than a deliberate one. The
+       earlier pass fixed the band being pushed off the top edge; it left the border itself
+       switched off. Restored so the band is a complete rounded rectangle. */
+    .topbar-row2 { flex: 1; margin-top: 0; padding-top: 5px; padding-left: 8px; }
+  }
+  /* On a wide monitor `.icon-btn { flex: 1 }` grew every button to ~190px, so seven icons
+     sprawled across the whole band with big dead gaps between them. Cap the width and let
+     them sit evenly instead — the band stays full-width, the controls stay finger-sized. */
+  @media (min-width: 900px) {
+    .topbar-row2 { justify-content: space-evenly; }
+    .icon-btn { flex: 0 1 auto; min-width: 56px; max-width: 88px; }
   }
   .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .app-name { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.9); }
@@ -2724,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 547;
+var APP_BUILD = 548;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
