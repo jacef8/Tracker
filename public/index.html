@@ -133,7 +133,11 @@
     --accent:  #f0a500;
     --accent2: #e05a2b;
     --text:    #e6edf3;
-    --muted:   #8b949e;
+    /* Secondary text was #a9b4bf — about 5.9:1 on the dark background, which passes WCAG on
+       paper but is genuinely hard to read at the 11px these sub-labels use, especially
+       outdoors. Lifted to ~8.7:1. Deliberately NOT pure white: every sub-label going full
+       bright would flatten the hierarchy and make each row compete with its own title. */
+    --muted:   #a9b4bf;
     --danger:  #f85149;
     --radius:  10px;
     --chat-h:  230px;
@@ -152,10 +156,23 @@
      they're near-identical, since the blur was mostly hidden behind the map anyway.
      Reported directly: "something about this font makes it look fuzzy and hard to read".
      Deliberately NOT paired with `-webkit-font-smoothing: antialiased` — that FORCES
-     grayscale AA, which is the very thing being fixed here. */
-  [style*="backdrop-filter"] {
+     grayscale AA, which is the very thing being fixed here.
+
+     The first version of this rule only matched `[style*="backdrop-filter"]` — INLINE styles
+     — and silently missed the nine class-based panels below (topbar, drawers, chat, join
+     card, pin sheet, popups), so half the app stayed fuzzy. The universal selector is
+     deliberate: there is nowhere in this app where a backdrop blur is worth soft text. */
+  *, *::before, *::after {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+  }
+  /* …and the other half of the problem: a translucent background is enough on its own to
+     drop text out of subpixel rendering. Every panel that carries body text gets an opaque
+     one. (Scrims/backdrops are intentionally NOT listed — those SHOULD stay see-through.) */
+  [style*="backdrop-filter"],
+  .join-card, #topbar, #chat-panel, #user-drawer, .pin-sheet, .panel-header,
+  #saved-pins-drawer, #tracks-drawer, #track-detail-drawer, #places-drawer,
+  .mapboxgl-popup-content {
     background-color: #161b22 !important;
   }
   /* Map sits transparent over the splash background so glass panels reveal it
@@ -1454,7 +1471,7 @@
     <button id="north-up-btn" title="Map orientation" type="button" onclick="window._northBtnTapped()">
       <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
         <polygon points="12,2 15,11 12,9 9,11" fill="#e63946"/>
-        <polygon points="12,22 15,13 12,15 9,13" fill="#8b949e"/>
+        <polygon points="12,22 15,13 12,15 9,13" fill="#a9b4bf"/>
         <circle cx="12" cy="12" r="2" fill="#e6edf3"/>
       </svg>
     </button>
@@ -1527,7 +1544,7 @@
       <div style="display:flex;align-items:center;gap:11px"><span style="width:12px;height:12px;border-radius:50%;background:#3fb950;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:700;color:var(--text)">LIVE</div><div style="font-size:11px;color:var(--muted)">Updating right now</div></div></div>
       <div style="display:flex;align-items:center;gap:11px"><span style="width:12px;height:12px;border-radius:50%;background:#2ec4b6;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:700;color:var(--text)">RESTING</div><div style="font-size:11px;color:var(--muted)">In the room, sitting still — updating slowly to save battery</div></div></div>
       <div style="display:flex;align-items:center;gap:11px"><span style="width:12px;height:12px;border-radius:50%;background:#f0a500;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:700;color:var(--text)">PAUSED</div><div style="font-size:11px;color:var(--muted)">In the room, but no recent fix — likely backgrounded</div></div></div>
-      <div style="display:flex;align-items:center;gap:11px"><span style="width:12px;height:12px;border-radius:50%;background:#888ea0;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:700;color:var(--text)">OFF / NO GPS</div><div style="font-size:11px;color:var(--muted)">Location sharing is off, or no fix is available (e.g. a desktop)</div></div></div>
+      <div style="display:flex;align-items:center;gap:11px"><span style="width:12px;height:12px;border-radius:50%;background:#a9b4bf;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:700;color:var(--text)">OFF / NO GPS</div><div style="font-size:11px;color:var(--muted)">Location sharing is off, or no fix is available (e.g. a desktop)</div></div></div>
     </div>
   </div>
 </div>
@@ -2707,7 +2724,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 546;
+var APP_BUILD = 547;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3036,7 +3053,7 @@ function _applyMarkerSolo(mk) {
   el.style.display = 'flex';
   el.style.width = '44px';
   el.style.borderRadius = '50%';
-  el.style.border = mk._borderShorthand || '3px solid #888ea0';
+  el.style.border = mk._borderShorthand || '3px solid #a9b4bf';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) initEl.textContent = mk._initials || '';
   _setGroupBadge(el, 0);
@@ -3062,7 +3079,7 @@ function _applyMarkerMerged(primary, members) {
   if (initEl) {
     initEl.innerHTML = shown.map(function (u) {
       var m = userMarkers[u];
-      var col = (m && m._fillColor) || '#888ea0';
+      var col = (m && m._fillColor) || '#a9b4bf';
       var txt = (m && m._initials) || '';
       return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + escapeHtmlJs(txt) + '</span>';
     }).join('');
@@ -3174,7 +3191,7 @@ window._showGroupedMemberSheet = function (uids) {
       // Avatar in the member's actual map color instead of one flat accent for everyone —
       // the whole point of this sheet is telling co-located people apart.
       var _avCol = mk._fillColor || 'var(--accent)';
-      var statusColor = mk._isLive ? '#00e676' : '#888ea0';
+      var statusColor = mk._isLive ? '#00e676' : '#a9b4bf';
       var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
       return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
         '<div style="width:34px;height:34px;border-radius:50%;background:' + _avCol + ';display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(_baseNm)) + '</div>' +
@@ -3186,7 +3203,7 @@ window._showGroupedMemberSheet = function (uids) {
     }).join('');
     body.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">' +
-        '<div style="color:#8b949e;font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + uids.length + ' PEOPLE TOGETHER</div>' +
+        '<div style="color:#a9b4bf;font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + uids.length + ' PEOPLE TOGETHER</div>' +
         '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
       '</div>' + rows;
   }
@@ -3891,8 +3908,8 @@ function _renderDevices() {
           var dName = (dd.name || 'Device').replace(/'/g, '');
           var dCoords = (typeof dd.lat === 'number' && typeof dd.lng === 'number') ? dd.lat.toFixed(6) + ', ' + dd.lng.toFixed(6) : '';
           var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
-            '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#6e7681;font-weight:600">· watch</span></div>' +
-            '<div style="font-size:11px;color:#6e7681;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + '</div>' +
+            '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#8d97a1;font-weight:600">· watch</span></div>' +
+            '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + '</div>' +
             (dCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
             '<div style="display:flex;gap:6px">' +
             '<button onclick="window._talkToDevice(\'' + id2 + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
@@ -3945,7 +3962,7 @@ window._renderDeviceList = function _renderDeviceList() {
     // Same LIVE window as a real member (LIVE_MS, above) so a watch doesn't flip to a
     // stale-looking badge on a different cadence than everyone else in the same list.
     var online = live.ts && (Date.now() - live.ts) < LIVE_MS;
-    var bd = !live.ts ? { t: 'NO GPS', bg: 'var(--border)', c: '#888ea0' }
+    var bd = !live.ts ? { t: 'NO GPS', bg: 'var(--border)', c: '#a9b4bf' }
       : online ? { t: 'LIVE', bg: '#13361f', c: '#3fb950' }
       : { t: 'PAUSED', bg: '#3a2a13', c: '#f0a500' };
     var row = document.createElement('div');
@@ -3954,7 +3971,7 @@ window._renderDeviceList = function _renderDeviceList() {
     row.innerHTML =
       '<div class="user-avatar" style="background:#7c3aed;color:#fff;font-weight:800">⌚</div>' +
       '<div style="min-width:0">' +
-        '<div class="uname">' + escapeHtmlJs(nm) + ' <span style="font-size:10px;color:var(--muted,#8b949e);font-weight:600">· watch</span></div>' +
+        '<div class="uname">' + escapeHtmlJs(nm) + ' <span style="font-size:10px;color:var(--muted,#a9b4bf);font-weight:600">· watch</span></div>' +
         '<div class="ustatus" style="color:' + bd.c + '">' + (live.ts ? ((online ? 'Live · ' : 'Last seen: ') + _devAgo(live.ts)) : 'No location yet') + '</div>' +
       '</div>' +
       '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
@@ -4635,7 +4652,7 @@ window._renderMySessions = function () {
     // `talking` is a stored flag, and a device that dies mid-transmission leaves it set — the
     // same stale-quantity trap as the dead 64 mph speed. Freshness outranks it: an offline
     // device is Offline, whatever its last flags claim.
-    var col = (online && d.talking) ? '#ff453a' : online ? '#3fb950' : '#8b949e';
+    var col = (online && d.talking) ? '#ff453a' : online ? '#3fb950' : '#a9b4bf';
     var status = (online && d.talking) ? ('🔊 Talking' + (d.room ? ' · ' + d.room : '')) : online ? (d.room ? 'In ' + d.room : 'Online') : ('Offline · ' + (typeof _devAgo === 'function' ? _devAgo(d.ts) : 'a while ago'));
     // _withDev combines name + device label ("Jace Ford · tablet") — using just d.name here hid
     // the device label almost always (every session has a name, so d.name || d.dev never fell
@@ -6782,7 +6799,7 @@ window._showCircleMemberPopup = function (uid) {
   var _cmCoords = (typeof data.lat === 'number' && typeof data.lng === 'number') ? data.lat.toFixed(6) + ', ' + data.lng.toFixed(6) : '';
   var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:170px">' +
     '<div style="font-weight:800;font-size:14px;color:#0d1117">' + escapeHtmlJs(_withDev(data)) + '</div>' +
-    '<div style="font-size:11px;color:#6e7681;margin:2px 0 4px">' + distLine + (isLive ? 'live now' : 'last seen ' + _devAgo(data.ts)) + '</div>' +
+    '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">' + distLine + (isLive ? 'live now' : 'last seen ' + _devAgo(data.ts)) + '</div>' +
     (_cmCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + _cmCoords + '\')" title="Tap to copy">' + _cmCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
     '<button onclick="window._followUser(\'' + uid + '\',\'' + safeName + '\')" style="width:100%;background:' + (isLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;padding:9px">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>' +
   '</div>';
@@ -7265,7 +7282,7 @@ function renderRoomList(all) {
       : room.restingCount > 0
         ? '<span style="color:#2ec4b6;font-weight:700">' + room.restingCount + ' resting</span>'
         : room.hasUsers > 0
-          ? '<span style="color:#8b949e;font-weight:700">' + room.hasUsers + ' in room</span> &middot; <span style="color:#a7b0bd">idle</span>'
+          ? '<span style="color:#a9b4bf;font-weight:700">' + room.hasUsers + ' in room</span> &middot; <span style="color:#a7b0bd">idle</span>'
           : '<span style="color:#a7b0bd">0 online &middot; last active ' + room.lastStr + '</span>';
     var pinText = room.pins > 0 ? ' &middot; ' + room.pins + ' pin' + (room.pins > 1 ? 's' : '') : '';
     if (room.keptUntil) { try { pinText += ' &middot; <span style="color:#3fb950;font-weight:700">&#9201; until ' + new Date(room.keptUntil).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '</span>'; } catch (e) {} }
@@ -7324,7 +7341,7 @@ function _showRoomPeek(key, name, touchY) {
     var age = now - (u.ts || 0);
     var online = age < 90000;
     var resting = u.rest && !online;
-    var dot = online ? '#3fb950' : resting ? '#2ec4b6' : '#6e7681';
+    var dot = online ? '#3fb950' : resting ? '#2ec4b6' : '#8d97a1';
     var sub = online ? 'online' : resting ? 'resting' : (u.noGps ? 'no GPS' : 'idle');
     var dev = u.dev ? ' &middot; ' + escapeHtmlJs(String(u.dev)) : '';
     return '<div style="display:flex;align-items:center;gap:9px;padding:6px 0;border-top:1px solid var(--border)">' +
@@ -8126,7 +8143,7 @@ window._cancelInviteJoin = function () {
 function _ob(icon, title, desc) {
   return '<div style="display:flex;align-items:flex-start;gap:12px;text-align:left;background:rgba(255,255,255,.04);border:1px solid var(--border,#30363d);border-radius:12px;padding:13px 14px;margin-bottom:9px">' +
     '<span style="flex-shrink:0;display:inline-flex;color:var(--accent,#f0a500);margin-top:1px"><svg class="licon licon-lg"><use href="#' + icon + '"/></svg></span>' +
-    '<div><div style="font-size:15px;font-weight:700;color:var(--text,#e6edf3)">' + title + '</div><div style="font-size:12.5px;color:var(--muted,#8b949e);margin-top:2px">' + desc + '</div></div></div>';
+    '<div><div style="font-size:15px;font-weight:700;color:var(--text,#e6edf3)">' + title + '</div><div style="font-size:12.5px;color:var(--muted,#a9b4bf);margin-top:2px">' + desc + '</div></div></div>';
 }
 window._maybeOnboard = function () {
   try { if (localStorage.getItem('gl_onboarded') === '1') return; } catch (e) { return; }
@@ -8136,7 +8153,7 @@ window._maybeOnboard = function () {
   ov.style.cssText = 'position:fixed;inset:0;z-index:7000;background:linear-gradient(180deg,#0d1117,#161b22);display:flex;align-items:center;justify-content:center;padding:26px;overflow-y:auto';
   ov.innerHTML = '<div style="max-width:380px;width:100%;text-align:center">' +
     '<div style="font-size:30px;font-weight:900;color:var(--accent,#f0a500);margin-bottom:4px">GroundLink</div>' +
-    '<div style="font-size:15px;color:var(--muted,#8b949e);margin-bottom:22px">A live map + walkie-talkie for your group — no account needed.</div>' +
+    '<div style="font-size:15px;color:var(--muted,#a9b4bf);margin-bottom:22px">A live map + walkie-talkie for your group — no account needed.</div>' +
     _ob('ic-users', 'See everyone live', 'Real-time positions on a satellite map.') +
     _ob('ic-mic', 'Talk instantly', 'Push-to-talk voice with your whole group.') +
     _ob('ic-pin', 'Pins, trails &amp; chat', 'Drop & share spots — your breadcrumb trail is recorded automatically.') +
@@ -9096,10 +9113,10 @@ function initMap() {
             '<div style="position:relative;padding-right:20px">' +
             '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
             '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(owner) + '</div>' +
-            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
+            (address ? '<div style="font-size:12px;color:#a9b4bf;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
             (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(acres) + '</div>' : '') +
             (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + escapeHtmlJs(val) + '</div>' : '') +
-            '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
+            '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#a9b4bf;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
         _keepPopupInView(window._activeParcelPopup);
@@ -9132,10 +9149,10 @@ function initMap() {
             '<div style="position:relative;padding-right:20px">' +
             '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#f0a500;margin-bottom:6px">&#127968; Property Info</div>' +
             '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(owner) + '</div>' +
-            (address ? '<div style="font-size:12px;color:#8b949e;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
+            (address ? '<div style="font-size:12px;color:#a9b4bf;margin-bottom:3px">&#128205; ' + escapeHtmlJs(address) + '</div>' : '') +
             (acres   ? '<div style="font-size:12px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(acres) + '</div>' : '') +
             (val     ? '<div style="font-size:14px;font-weight:700;color:#e6edf3;margin-top:4px">&#128181; ' + escapeHtmlJs(val) + '</div>' : '') +
-            '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
+            '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#a9b4bf;font-size:16px;line-height:1">&times;</div>' +
             '</div>'
           ).addTo(map);
         _keepPopupInView(window._activeParcelPopup);
@@ -9170,8 +9187,8 @@ function initMap() {
               '<div style="position:relative;padding-right:20px">' +
               '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:' + gCat.color + ';margin-bottom:6px">&#127794; ' + escapeHtmlJs(gCat.label) + '</div>' +
               '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:4px">' + escapeHtmlJs(gp.n || 'Unnamed area') + '</div>' +
-              (gp.pa ? '<div style="font-size:12px;color:#8b949e">Public access: ' + escapeHtmlJs(gp.pa) + '</div>' : '') +
-              '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#8b949e;font-size:16px;line-height:1">&times;</div>' +
+              (gp.pa ? '<div style="font-size:12px;color:#a9b4bf">Public access: ' + escapeHtmlJs(gp.pa) + '</div>' : '') +
+              '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#a9b4bf;font-size:16px;line-height:1">&times;</div>' +
               '</div>'
             ).addTo(map);
           _keepPopupInView(window._activeParcelPopup);
@@ -11018,7 +11035,7 @@ function listenUsers() {
           if (_ci2 !== uid && userMarkers[_ci2] && userMarkers[_ci2]._fillColor === fillColor) { fillColor = userColor(uid); break; }
         }
       } catch (e) {}
-      const borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#888ea0';
+      const borderColor = isLive ? '#ffffff' : isResting ? '#2ec4b6' : '#a9b4bf';
       const opacity     = (isLive || isMine) ? '1' : isResting ? '0.9' : '0.65';
       const textColor   = '#000000'; // all colors are vivid enough for black text
 
@@ -11128,7 +11145,7 @@ function listenUsers() {
         // gone). SIGNAL LOST states exactly what is known: they were moving, then nothing.
         const wasDriving = !isLive && !isMine && (data.spd || 0) >= 15;
         const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : wasDriving ? 'SIGNAL LOST' : isResting ? 'RESTING' : 'LAST KNOWN';
-        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#888ea0';
+        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#a9b4bf';
         var _safeName = data.name.replace(/'/g, '');
         var _driving = _shouldShowSpeed(uid, data);
         var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
@@ -11197,9 +11214,9 @@ function listenUsers() {
               (window._isAdminUid && window._isAdminUid(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#f0a500;background:rgba(240,165,0,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">ADMIN</span>' : '') +
             '</div>' +
             (_hereLine ? '<div style="font-size:12px;color:#58a6ff;font-weight:700;margin-top:3px">' + _hereLine + '</div>' : '') +
-            (_distLine ? '<div style="font-size:12px;color:#8b949e;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
-            '<div style="font-size:12px;color:#8b949e;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
-            (_coordsStr ? '<div style="font-size:11px;color:#6e7681;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
+            (_distLine ? '<div style="font-size:12px;color:#a9b4bf;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
+            '<div style="font-size:12px;color:#a9b4bf;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
+            (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msTrailDraw + '</div>';
@@ -11209,16 +11226,16 @@ function listenUsers() {
         }
       }
 
-      const statusColor = data.noGps ? '#888ea0' : isMine ? '#f0a500' : isLive ? '#00e676' : '#888ea0';
+      const statusColor = data.noGps ? '#a9b4bf' : isMine ? '#f0a500' : isLive ? '#00e676' : '#a9b4bf';
 
       // Status badge so the group can see at a glance who's actually reporting:
       // LIVE (updating now), PAUSED (in the room but no recent fix — stale/backgrounded),
       // OFF (location sharing turned off), NO GPS (desktop / no fix).
       var bd;
       if (isMine)            bd = { t: 'YOU',    bg: 'rgba(240,165,0,.15)', c: '#f0a500' };
-      else if (_hiddenFromMap) bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#888ea0' };
-      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#888ea0' };
-      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#888ea0' };
+      else if (_hiddenFromMap) bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#a9b4bf' };
+      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#a9b4bf' };
+      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#a9b4bf' };
       else if (isLive)       bd = { t: 'LIVE',    bg: '#13361f',            c: '#3fb950' };
       else if (isResting)    bd = { t: 'RESTING', bg: 'rgba(46,196,182,.16)', c: '#2ec4b6' };
       else                   bd = { t: 'PAUSED',  bg: '#3a2a13',            c: '#f0a500' };
@@ -11268,7 +11285,7 @@ function listenUsers() {
             : '') +
           // Lat/long on the row too, tap-to-copy like the member card. stopPropagation so
           // copying doesn't also fire the row tap (which closes the drawer and flies the map).
-          (_coordsStr ? '<div class="ustatus" style="margin-top:2px;color:#6e7681;font-size:10.5px;cursor:pointer" onclick="event.stopPropagation();window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
+          (_coordsStr ? '<div class="ustatus" style="margin-top:2px;color:#8d97a1;font-size:10.5px;cursor:pointer" onclick="event.stopPropagation();window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
           '</div>' +
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center;flex-shrink:0"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
           (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + ';flex-shrink:0">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
@@ -11403,7 +11420,7 @@ function listenUsers() {
         var _invBox = document.createElement('div');
         _invBox.style.cssText = 'border:1px dashed rgba(139,148,158,.45);border-radius:10px;padding:8px;margin-top:8px;display:flex;flex-direction:column;gap:6px';
         var _hdrI = document.createElement('div');
-        _hdrI.style.cssText = 'font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#8b949e;margin:0 2px 5px';
+        _hdrI.style.cssText = 'font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#a9b4bf;margin:0 2px 5px';
         _hdrI.textContent = 'INVITED — HASN\'T JOINED YET (' + _invIds.length + ')';
         _invBox.appendChild(_hdrI);
         _invIds.sort(function (a, b) { return (_inv[b].ts || 0) - (_inv[a].ts || 0); }).forEach(function (iu) {
@@ -12613,7 +12630,7 @@ function _roomClosedByAdmin() {
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
   o.innerHTML = '<svg class="licon" style="color:var(--accent);width:34px;height:34px;margin-bottom:12px"><use href="#ic-alert"/></svg>' +
     '<div style="font-size:19px;font-weight:800;margin-bottom:8px">Room closed</div>' +
-    '<div style="font-size:14px;color:#8b949e;max-width:300px;line-height:1.5">This room was closed by an admin. Returning to the home screen…</div>';
+    '<div style="font-size:14px;color:#a9b4bf;max-width:300px;line-height:1.5">This room was closed by an admin. Returning to the home screen…</div>';
   document.body.appendChild(o);
   setTimeout(function() { location.reload(); }, 2600);
 }
@@ -12637,7 +12654,7 @@ function _removedByOwner() {
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
   o.innerHTML = '<svg class="licon" style="color:var(--danger);width:34px;height:34px;margin-bottom:12px"><use href="#ic-alert"/></svg>' +
     '<div style="font-size:19px;font-weight:800;margin-bottom:8px">Removed from room</div>' +
-    '<div style="font-size:14px;color:#8b949e;max-width:300px;line-height:1.5">The room owner removed you from this group. Returning to the home screen…</div>';
+    '<div style="font-size:14px;color:#a9b4bf;max-width:300px;line-height:1.5">The room owner removed you from this group. Returning to the home screen…</div>';
   document.body.appendChild(o);
   setTimeout(function() { location.reload(); }, 2800);
 }
@@ -16210,7 +16227,7 @@ function _renderSavedOnMap() {
       if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
         m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
           '<div style="font-weight:800;font-size:13px;color:#fff">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
-          (pin.coll ? '<div style="font-size:11px;color:#8b949e;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
+          (pin.coll ? '<div style="font-size:11px;color:#a9b4bf;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
       }
       window._savedMapMarkers.push(m);
     } catch(e){}
