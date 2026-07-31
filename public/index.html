@@ -1691,6 +1691,14 @@
       <div style="border-top:1px solid var(--border);margin-bottom:8px"></div>
       <div style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase">Owner actions</div>
     </div>
+    <!-- Co-admin grant/revoke. Owner-only control; an admin can change room settings and
+         remove members, but cannot manage other admins, transfer ownership, or delete the
+         room — so handing out admin can never cost the owner the room. -->
+    <button id="ownmem-admin-btn" onclick="window._toggleRoomAdmin()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(167,139,250,.10);border:1px solid rgba(167,139,250,.45);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:#a78bfa"><use href="#ic-users"/></svg><span id="ownmem-admin-label">Make room admin</span></button>
+    <!-- Room-wide map hide (owner/admin). Different from the personal "Hide their dot from
+         my map" above: this one applies to EVERY member's map. They stay in the room and
+         keep reporting — they just stop cluttering the shared view. -->
+    <button id="ownmem-hideall-btn" onclick="window._toggleHiddenForAll()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(88,166,255,.09);border:1px solid rgba(88,166,255,.4);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px">🙈<span id="ownmem-hideall-label" style="margin-left:2px">Hide from everyone's map</span></button>
     <button id="ownmem-makeowner-btn" onclick="window._makeOwner()" style="display:none;width:100%;padding:12px;margin-bottom:9px;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.4);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;align-items:center;gap:9px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-target"/></svg>Make room owner</button>
     <!-- Plain remove vs. remove-and-ban are different intents — clearing out a stale device
          or an accidental joiner isn't punitive, and the only removal on offer used to be the
@@ -2371,6 +2379,8 @@
       </div>
       <div id="ri-owner" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
       <button id="ri-request-owner-btn" onclick="window._requestRoomOwnership()" style="display:none;margin-top:9px;width:100%;padding:9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12.5px;font-weight:700;cursor:pointer">Request ownership</button>
+      <!-- Ask to be an admin. Hidden for the owner and for anyone who already is one. -->
+      <button id="ri-request-admin-btn" onclick="window._requestAdmin()" style="display:none;margin-top:7px;width:100%;padding:9px;background:var(--surface);border:1px solid rgba(167,139,250,.45);border-radius:8px;color:#a78bfa;font-size:12.5px;font-weight:700;cursor:pointer">Request admin</button>
     </div>
     <!-- Invite + Favorite are the two things people actually open this sheet to DO most often —
          kept up top. Circle/secure-devices/expiry/passcode/visibility below are configuration,
@@ -2676,7 +2686,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 542;
+var APP_BUILD = 543;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3042,7 +3052,9 @@ function _updateMarkerGrouping() {
   // Hidden members can never be part of a cluster or its +N badge — belt to the immediate
   // teardown's suspenders, covering any path where a hidden marker still lingers.
   var uids = Object.keys(userMarkers).filter(function (u) {
-    return userMarkers[u] && userMarkers[u]._ll && !(window._isMemberHidden && window._isMemberHidden(u));
+    return userMarkers[u] && userMarkers[u]._ll
+      && !(window._isMemberHidden && window._isMemberHidden(u))
+      && !(window._isHiddenForAll && window._isHiddenForAll(u));
   });
   var parent = {};
   uids.forEach(function (u) { parent[u] = u; });
@@ -3349,6 +3361,17 @@ window._togglePinMute = function (uid, name) {
 function _getMemberHidden() { try { return JSON.parse(localStorage.getItem('gl_member_hidden') || '{}'); } catch (e) { return {}; } }
 function _setMemberHidden(m) { try { localStorage.setItem('gl_member_hidden', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 window._isMemberHidden = function (uid) { return !!_getMemberHidden()[uid]; };
+// Room-wide hide, set by the owner/an admin — applies on EVERY member's map, unlike the
+// personal hide above. Checks both id forms for the same reason _isAdminUid does.
+window._isHiddenForAll = function (uid) {
+  var h = window._roomMapHidden || {};
+  if (h[uid]) return true;
+  try {
+    var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+    if (acct && h[acct]) return true;
+  } catch (e) {}
+  return false;
+};
 window._toggleMemberHidden = function (uid, name) {
   var m = _getMemberHidden(), was = !!m[uid];
   if (was) delete m[uid]; else m[uid] = { name: name || '', ts: Date.now() };
@@ -5123,6 +5146,22 @@ function openRoomInfo() {
       reqBtn.disabled = !!pending;
       reqBtn.style.opacity = pending ? '0.6' : '1';
       reqBtn.style.cursor = pending ? 'default' : 'pointer';
+    }
+  }
+  // "Request admin" — same self-service-is-not-allowed shape as ownership: sending a
+  // request is all a member can do; only the owner can grant it.
+  var reqAdm = document.getElementById('ri-request-admin-btn');
+  if (reqAdm) {
+    var _amAdmin = !!window._isRoomAdmin, _amOwner = !!window._isRoomOwner;
+    if (_amOwner || _amAdmin) {
+      reqAdm.style.display = 'none';
+    } else {
+      reqAdm.style.display = 'block';
+      var pendA = !!(window._adminRequests && window._adminRequests[userId]);
+      reqAdm.textContent = pendA ? 'Admin request pending…' : 'Request admin';
+      reqAdm.disabled = pendA;
+      reqAdm.style.opacity = pendA ? '0.6' : '1';
+      reqAdm.style.cursor = pendA ? 'default' : 'pointer';
     }
   }
   var row = document.getElementById('ri-pin-row');
@@ -7635,6 +7674,47 @@ function enterMap(name, group, uid) {
         window._roomAdmins = a;
         var _acct = ''; try { _acct = _myAcct(); } catch (e) {}
         window._isRoomAdmin = !!(a[userId] || (_acct && a[_acct]));
+        try { renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
+    // Room-wide map hiding: config/mapHidden/<id>. Distinct from each viewer's PERSONAL
+    // hide (gl_member_hidden, localStorage) — this one is set by the owner/an admin and
+    // applies to everyone. Use case: a tablet that should stay in the room and keep
+    // reporting, without putting a permanent dot on the whole family's map.
+    window._roomMapHidden = {};
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/mapHidden'), function (snap) {
+        window._roomMapHidden = snap.val() || {};
+        // Apply immediately rather than waiting for the next presence snapshot — otherwise
+        // the dot lingers for seconds after the toggle, which reads as "it didn't work".
+        try {
+          Object.keys(userMarkers || {}).forEach(function (u) {
+            if (window._isHiddenForAll(u) && userMarkers[u]) {
+              userMarkers[u].remove(); delete userMarkers[u];
+              if (window._prevGroupOf) delete window._prevGroupOf[u];
+            }
+          });
+          _updateMarkerGrouping();
+        } catch (e) {}
+      });
+    } catch (e) {}
+    // Pending invites for THIS room (config/invited/<id>), so the People list can show who
+    // was invited and hasn't turned up yet. Written by the invite senders, cleared when the
+    // person actually appears (see the sweep in the users listener).
+    window._roomInvited = {};
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/invited'), function (snap) {
+        window._roomInvited = snap.val() || {};
+      });
+    } catch (e) {}
+    // Standing requests to be made an admin — mirrors the existing ownerRequest escape hatch.
+    // Lives under config/ deliberately: the DB rules grant writes per-named-child on a room,
+    // and an unlisted sibling (a top-level /adminRequest) falls through to the delete-only
+    // $room rule and is silently denied — the same trap that broke the _diag beacons.
+    window._adminRequests = {};
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/adminRequest'), function (snap) {
+        window._adminRequests = snap.val() || {};
         try { renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
@@ -10840,7 +10920,11 @@ function listenUsers() {
       const isMine   = uid === userId;
       // You've chosen to hide this person's dot from your own map — doesn't touch their
       // sharing or the room roster, purely a local viewing preference (gl_member_hidden).
-      const _hiddenFromMap = !isMine && window._isMemberHidden && window._isMemberHidden(uid);
+      // Hidden by THIS viewer, or hidden room-wide by the owner/an admin. A device still
+      // sees its own dot either way (isMine) — hiding the tablet from the family map
+      // shouldn't blind the tablet.
+      const _hiddenFromMap = !isMine && ((window._isMemberHidden && window._isMemberHidden(uid)) ||
+                                         (window._isHiddenForAll && window._isHiddenForAll(uid)));
       if (_hiddenFromMap && userMarkers[uid]) {
         console.log('[GL-debug] removing marker (hide-from-map toggle is ON for this uid):', uid);
         userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid];
@@ -11065,6 +11149,7 @@ function listenUsers() {
           '<div style="min-width:0;margin-top:2px">' +
             '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(_withDev(data)) +
               (!isMine && window._roomMembersRoster && window._roomMembersRoster[uid] ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+              (window._isAdminUid && window._isAdminUid(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#f0a500;background:rgba(240,165,0,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">ADMIN</span>' : '') +
             '</div>' +
             (_hereLine ? '<div style="font-size:12px;color:#58a6ff;font-weight:700;margin-top:3px">' + _hereLine + '</div>' : '') +
             (_distLine ? '<div style="font-size:12px;color:#8b949e;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
@@ -11251,6 +11336,62 @@ function listenUsers() {
         listEl.appendChild(_visBox);
       }
     }
+
+    // ── INVITED — asked, hasn't turned up yet ──────────────────────────────────────
+    // Anyone with a pending config/invited record who ISN'T already present (users) or on
+    // the roster (members). Two jobs: answer "did that invite ever land?", and self-clean —
+    // an invite whose person has since joined is deleted here rather than lingering forever.
+    try {
+      var _inv = window._roomInvited || {};
+      var _invIds = Object.keys(_inv).filter(function (iu) {
+        var joined = users[iu] || (window._roomMembersRoster && window._roomMembersRoster[iu]);
+        if (joined) {
+          // They made it — retire the record (owner/admin only; members can't write config).
+          if (window._canManageRoom && window._canManageRoom()) {
+            try { fbRemove(fbRef(db, 'gl/' + groupName + '/config/invited/' + iu)); } catch (e) {}
+          }
+          return false;
+        }
+        return true;
+      });
+      if (_invIds.length) {
+        var _invBox = document.createElement('div');
+        _invBox.style.cssText = 'border:1px dashed rgba(139,148,158,.45);border-radius:10px;padding:8px;margin-top:8px;display:flex;flex-direction:column;gap:6px';
+        var _hdrI = document.createElement('div');
+        _hdrI.style.cssText = 'font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#8b949e;margin:0 2px 5px';
+        _hdrI.textContent = 'INVITED — HASN\'T JOINED YET (' + _invIds.length + ')';
+        _invBox.appendChild(_hdrI);
+        _invIds.sort(function (a, b) { return (_inv[b].ts || 0) - (_inv[a].ts || 0); }).forEach(function (iu) {
+          var rec = _inv[iu] || {};
+          var ageMs = Date.now() - (rec.ts || 0);
+          var ageStr = ageMs < 3600000 ? (Math.max(1, Math.round(ageMs / 60000)) + 'm ago')
+            : ageMs < 86400000 ? (Math.round(ageMs / 3600000) + 'h ago')
+            : (Math.round(ageMs / 86400000) + 'd ago');
+          var irow = document.createElement('div');
+          irow.className = 'user-item';
+          irow.style.opacity = '0.75';
+          irow.innerHTML =
+            '<div class="user-avatar" style="background:var(--border);color:var(--muted);font-weight:800">' + escapeHtmlJs(initials(rec.name || 'Invited')) + '</div>' +
+            '<div style="min-width:0;flex:1">' +
+              '<div class="uname">' + escapeHtmlJs(rec.name || 'Invited') + '</div>' +
+              '<div class="ustatus" style="color:var(--muted)">Invited ' + ageStr + (rec.byName ? ' by ' + escapeHtmlJs(rec.byName) : '') + ' — no response yet</div>' +
+            '</div>' +
+            '<div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:8px">' +
+              (window._canManageRoom && window._canManageRoom()
+                ? '<button class="uinv-cancel" title="Cancel this invite" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:700;padding:4px 9px;cursor:pointer">Cancel</button>' : '') +
+              '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">PENDING</span>' +
+            '</div>';
+          var cbtn = irow.querySelector('.uinv-cancel');
+          if (cbtn) cbtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            try { fbRemove(fbRef(db, 'gl/' + groupName + '/config/invited/' + iu)); } catch (e2) {}
+            try { toast('Invite to ' + (rec.name || 'them') + ' cancelled', 2200); } catch (e2) {}
+          });
+          _invBox.appendChild(irow);
+        });
+        listEl.appendChild(_invBox);
+      }
+    } catch (e) {}
 
     // Re-append device rows every time this list rebuilds (it's fully wiped at the top of
     // this function) — otherwise a watch's row would vanish on the next unrelated People-list
@@ -12478,9 +12619,30 @@ window._memberActionsMenu = function(uid, name) {
   var isOwner = !!window._isRoomOwner;
   var divider = document.getElementById('ownmem-owner-divider'); if (divider) divider.style.display = isOwner ? 'block' : 'none';
   var mob = document.getElementById('ownmem-makeowner-btn'); if (mob) mob.style.display = isOwner ? 'flex' : 'none';
+  // Admin grant/revoke — owner only, and never on yourself (the owner already outranks it).
+  var adb = document.getElementById('ownmem-admin-btn');
+  if (adb) {
+    var _showAdmin = isOwner && uid !== userId;
+    adb.style.display = _showAdmin ? 'flex' : 'none';
+    if (_showAdmin) {
+      var _lblA = document.getElementById('ownmem-admin-label');
+      var _pendA = window._adminRequests && window._adminRequests[uid];
+      if (_lblA) _lblA.textContent = window._isAdminUid(uid) ? 'Remove as room admin'
+        : (_pendA ? 'Approve admin request' : 'Make room admin');
+    }
+  }
+  // Room-wide map hide — owner or admin, on anyone including your own other devices.
+  var hab = document.getElementById('ownmem-hideall-btn');
+  if (hab) {
+    hab.style.display = (window._canManageRoom && window._canManageRoom()) ? 'flex' : 'none';
+    var _lblH = document.getElementById('ownmem-hideall-label');
+    if (_lblH) _lblH.textContent = window._isHiddenForAll(uid) ? 'Show on everyone\'s map again' : 'Hide from everyone\'s map';
+  }
   // One "Remove…" entry point — the stepped flow behind it decides which removal kinds
   // apply (the Crew option shows only when this room is a Crew and they're on its roster).
-  var rfb = document.getElementById('ownmem-removeflow-btn'); if (rfb) rfb.style.display = isOwner ? 'flex' : 'none';
+  // Available to co-admins too; the flow itself re-checks. Never offered on yourself.
+  var _canMng = !!(window._canManageRoom && window._canManageRoom());
+  var rfb = document.getElementById('ownmem-removeflow-btn'); if (rfb) rfb.style.display = (_canMng && uid !== userId) ? 'flex' : 'none';
 
   // Visitor-in-a-Crew: on the roster -> owner sees Remove; NOT on the roster -> everyone sees
   // "Invite to join this Crew". Resolved against the server roster rather than any local
@@ -12502,6 +12664,104 @@ window._memberActionsMenu = function(uid, name) {
   }
 
   document.getElementById('owner-member-modal').style.display = 'flex';
+};
+// Is this person a co-admin? Checks BOTH ids: admin grants are stored under the account id
+// when one is resolvable (so the grant survives their reinstall), but the People list only
+// ever knows them by the device uid it sees reporting in this room.
+window._isAdminUid = function (uid) {
+  var a = window._roomAdmins || {};
+  if (a[uid]) return true;
+  try {
+    var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+    if (acct && a[acct]) return true;
+  } catch (e) {}
+  return false;
+};
+// Grant or revoke co-admin. Owner-only (re-checked here, not just in the UI, because it
+// changes who can alter the room). Mirrors _makeOwner's account-id resolution so the grant
+// follows the person rather than the handset.
+window._toggleRoomAdmin = function () {
+  var uid = _ownMemUid;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  var isAdmin = window._isAdminUid(uid);
+  if (isAdmin) {
+    _confirm('Remove ' + nm + ' as a room admin? They stay in the room — they just can\'t change room settings or remove people anymore.', function () {
+      var a = window._roomAdmins || {};
+      // Clear BOTH possible keys: whichever id the grant was written under, plus the other,
+      // so a stale key can't leave them silently still-admin.
+      try { if (a[uid]) fbRemove(fbRef(db, 'gl/' + groupName + '/config/admins/' + uid)); } catch (e) {}
+      try {
+        var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+        if (acct && a[acct]) fbRemove(fbRef(db, 'gl/' + groupName + '/config/admins/' + acct));
+      } catch (e) {}
+      try { window._evt('removed ' + nm + ' as room admin'); } catch (e) {}
+      toast(nm + ' is no longer an admin', 2600);
+    }, { yes: 'Remove admin', danger: true });
+    return;
+  }
+  _confirm('Make ' + nm + ' a room admin?\n\nThey\'ll be able to change the passcode and visibility, remove or block members, and delete any chat message. They CAN\'T transfer ownership, manage other admins, or delete the room — that stays yours.', function () {
+    var _write = function (id) {
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/admins/' + id), { name: nm, ts: Date.now(), by: userId }); } catch (e) {}
+      // Granting answers any standing request — leaving it would keep showing "Approve
+      // admin request" on someone who already is one.
+      try { fbRemove(fbRef(db, 'gl/' + groupName + '/config/adminRequest/' + uid)); } catch (e) {}
+      try { window._evt('made ' + nm + ' a room admin'); } catch (e) {}
+      toast(nm + ' is now a room admin', 2800);
+    };
+    // Prefer the account id (survives a reinstall/new phone); fall back to the device uid
+    // for a guest with no account, exactly as ownership transfer does.
+    try {
+      var f = window._fb;
+      if (f && f.get) {
+        f.get(f.ref(f.db, 'gl/_devOwner/' + uid)).then(function (s) {
+          var acct = s && s.val() && s.val().acct;
+          _write(acct || uid);
+        }).catch(function () { _write(uid); });
+      } else { _write(uid); }
+    } catch (e) { _write(uid); }
+  }, { yes: 'Make admin' });
+};
+// Room-wide map hide/show. Owner or admin; re-checked here because it changes what every
+// other member sees. Clearing an admin request is folded in — approving admin and hiding a
+// device are the two things the owner does from this menu that outlive the modal.
+window._toggleHiddenForAll = function () {
+  var uid = _ownMemUid;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
+  document.getElementById('owner-member-modal').style.display = 'none';
+  if (!uid || !(window._isRoomOwner || window._isRoomAdmin) || !db || !groupName) return;
+  if (window._isHiddenForAll(uid)) {
+    var h = window._roomMapHidden || {};
+    try { if (h[uid]) fbRemove(fbRef(db, 'gl/' + groupName + '/config/mapHidden/' + uid)); } catch (e) {}
+    try {
+      var acct0 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+      if (acct0 && h[acct0]) fbRemove(fbRef(db, 'gl/' + groupName + '/config/mapHidden/' + acct0));
+    } catch (e) {}
+    try { window._evt('unhid ' + nm + ' on the room map'); } catch (e) {}
+    toast(nm + ' shows on everyone\'s map again', 2600);
+    return;
+  }
+  _confirm('Hide ' + nm + ' from everyone\'s map in this room?\n\nThey stay in the room and keep sharing — they just won\'t show as a dot for anyone here. Their own device still sees itself, and you can undo this any time.', function () {
+    // Device uid, not the account id: hiding is per-DEVICE on purpose (hide the tablet,
+    // keep the phone). Account-keying would hide every device that person owns.
+    try { fbSet(fbRef(db, 'gl/' + groupName + '/config/mapHidden/' + uid), { name: nm, ts: Date.now(), by: userId }); } catch (e) {}
+    try { window._evt('hid ' + nm + ' from the room map'); } catch (e) {}
+    toast(nm + ' hidden from everyone\'s map', 2800);
+  }, { yes: 'Hide for everyone' });
+};
+// Ask the owner for admin. Mirrors the existing "Request ownership" escape hatch: the
+// request is a standing record the owner approves from the member's menu — never a
+// self-service grant.
+window._requestAdmin = function () {
+  if (!db || !groupName || !userId) return;
+  if (window._isRoomOwner || window._isRoomAdmin) return;
+  _confirm('Ask the room owner to make you an admin?\n\nAdmins can change the passcode and visibility, remove members, and moderate chat. The owner has to approve it.', function () {
+    try { fbSet(fbRef(db, 'gl/' + groupName + '/config/adminRequest/' + userId), { name: userName || 'Member', ts: Date.now() }); } catch (e) {}
+    try { window._evt('requested room admin'); } catch (e) {}
+    toast('Request sent — the owner will see it on your name in People', 3200);
+    try { renderRoomInfoOwner(); } catch (e) {}
+  }, { yes: 'Send request' });
 };
 window._modalToggleMute = function () {
   if (!_ownMemUid) return;
@@ -12551,7 +12811,7 @@ window._openRemoveFlow = function () {
   var uid = _ownMemUid;
   var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
   document.getElementById('owner-member-modal').style.display = 'none';
-  if (!uid || !window._isRoomOwner || !db || !groupName) return;
+  if (!uid || !(window._isRoomOwner || window._isRoomAdmin) || !db || !groupName) return;
   window._rfKind = null;
   var n = document.getElementById('rf-name'); if (n) n.textContent = nm;
   // The Crew option only makes sense when this room IS a Crew and they're actually on its
@@ -12591,7 +12851,7 @@ window._rfConfirm = function () {
   var uid = _ownMemUid, kind = window._rfKind;
   var nm = (document.getElementById('rf-name') || {}).textContent || 'this member';
   window._closeRemoveFlow();
-  if (!uid || !kind || !window._isRoomOwner || !db || !groupName) return;
+  if (!uid || !kind || !(window._isRoomOwner || window._isRoomAdmin) || !db || !groupName) return;
   try {
     if (kind === 'block') fbSet(fbRef(db, 'gl/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
     if (kind === 'crew') {
@@ -12924,6 +13184,10 @@ window._sendRoomInvite = function(uid) {
   // written, so a real failure looked identical to success. Toast only follows an actual write now.
   try {
     var r = fbPush(fbRef(db, 'gl/_invites/' + uid)); fbSet(r, rec);
+    // Room-side record of the pending invite, so People can show who's been asked and
+    // hasn't turned up. Cleared automatically once they appear in the room (see the sweep
+    // in the users listener) — the invite inbox itself is per-recipient and unreadable here.
+    try { fbSet(fbRef(db, 'gl/' + groupName + '/config/invited/' + uid), { name: nm, ts: Date.now(), by: userId, byName: userName || '' }); } catch (e) {}
     // Also deliver to every device signed into the same Google account as the target, not just
     // the one specific device uid picked from the friends/presence list — otherwise inviting
     // "Dad" only ever reaches whichever one of his devices happened to populate that list, and
@@ -13003,6 +13267,8 @@ window._sendCircleInvite = function(uid) {
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
   try {
     var r = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(r, rec);
+    // Pending-invite record on the target Crew (see _sendRoomInvite's note).
+    try { fb.set(fb.ref(fb.db, 'gl/' + t.key + '/config/invited/' + uid), { name: nm, ts: Date.now(), by: userId, byName: userName || '', crew: true }); } catch (e) {}
     // Same account-wide fan-out as _sendRoomInvite — see its comment.
     try {
       var _acct2 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
