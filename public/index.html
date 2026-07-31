@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 536;
+var APP_BUILD = 537;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10444,6 +10444,20 @@ function _listenRoomMembersRoster() {
   try {
     window._roomMembersUnsub = fbOnValue(fbRef(db, `gl/${groupName}/members`), function (snap) {
       window._roomMembersRoster = snap.val() || {};
+      // Self-heal: this account is in the Crew (circles) but THIS device's uid is missing
+      // from the permanent roster. Two ways that happens: the roster is only ever written
+      // by the invite-accept and visitor auto-join paths, so a room's CREATOR was never
+      // added at all (the auto-join bails early for circle members); and sign-in re-keys
+      // a device's uid, orphaning the entry made under the old one. Either way the owner
+      // rendered under "VISITORS — NOT IN THIS CREW". Honors the owner's Remove marker,
+      // same as _promptJoinCrew.
+      try {
+        if (userId && !window._roomMembersRoster[userId] && _isCircleMember(groupName)) {
+          var _rm = (window._roomCfg && window._roomCfg.removed)
+                 || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.removed) || {};
+          if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+        }
+      } catch (e) {}
     });
   } catch (e) {}
 }
@@ -10958,7 +10972,9 @@ function listenUsers() {
         }
       });
       if (!isMine) {   // you're already on the map — don't list yourself
-        if (_crewRoom) (window._roomMembersRoster[uid] ? _rowsCrew : _rowsVis).push(row);
+        // Your own row is always Crew in a room you belong to — never "a visitor" — even in
+        // the window before the roster self-heal write (above) round-trips.
+        if (_crewRoom) ((window._roomMembersRoster[uid] || uid === userId) ? _rowsCrew : _rowsVis).push(row);
         else listEl.appendChild(row);
       }
     });
