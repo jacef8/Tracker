@@ -2598,7 +2598,10 @@ loadAdmin();
 // ══ OVERVIEW TAB — all members across all groups on one map ══════════
 var _ovMap = null, _ovMarkers = [], _ovPinMarkers = [], _ovFitted = false;
 var _ovShowUsers = true, _ovShowPins = true;
-var OV_LIVE_MS = 2 * 60 * 1000; // active within 2 min = "live"
+// 5 min, matching the Map tab's "Live now" KPI — the marker colors used a 2-minute window
+// while the KPI used 5, so a screen could honestly say "4 Live now" above a map of entirely
+// gray dots (a RESTING phone heartbeats every ~3 min and straddled the two windows).
+var OV_LIVE_MS = 5 * 60 * 1000;
 
 function ovToggleLayer(which) {
   if (which === 'users') _ovShowUsers = !_ovShowUsers;
@@ -2689,6 +2692,7 @@ function renderOverview() {
         lat: (!_noPos && typeof u.lat === 'number') ? u.lat : null,
         lng: (!_noPos && typeof u.lng === 'number') ? u.lng : null,
         accuracy: u.accuracy || 0,
+        batt: (typeof u.batt === 'number') ? u.batt : null, chg: u.chg || 0, spd: u.spd || 0,
         ts: u.ts || 0
       });
     });
@@ -2764,6 +2768,9 @@ function renderOverview() {
   // Map markers
   var map = initOvMap();
   var plot = function() {
+    // Live snapshots re-render this every few seconds; rebuilding the markers mid-look
+    // destroyed any open popup after a split second. While one is open, leave the map alone.
+    try { if (document.querySelector('.mapboxgl-popup')) return; } catch (e) {}
     _ovMarkers.forEach(function(mk) { mk.remove(); });    _ovMarkers = [];
     _ovPinMarkers.forEach(function(mk) { mk.remove(); }); _ovPinMarkers = [];
     var bounds = new mapboxgl.LngLatBounds();
@@ -2784,9 +2791,12 @@ function renderOverview() {
           el.style.cssText = 'width:28px;height:28px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#000;background:' + (live ? '#2ecc71' : '#9aa4b2');
           el.textContent = _ini;
         }
-        var popup = new mapboxgl.Popup({ offset: 14, closeButton: false })
+        var popup = new mapboxgl.Popup({ offset: 14, closeButton: true })
           .setHTML('<div style="font-weight:700;color:#111">' + ovEsc(m.name) + '</div>' +
-                   '<div style="font-size:11px;color:#555">' + ovEsc(m.group) + ' &middot; ' + timeAgo(m.ts) + '</div>');
+                   '<div style="font-size:11px;color:#555">' + ovEsc(m.group) + ' &middot; ' + (live ? 'LIVE' : 'last seen') + ' ' + timeAgo(m.ts) + '</div>' +
+                   (typeof m.batt === 'number' ? '<div style="font-size:11px;color:#555">battery ' + m.batt + '%' + (m.chg ? ' charging' : '') + '</div>' : '') +
+                   (m.spd ? '<div style="font-size:11px;color:#555">' + m.spd + ' mph</div>' : '') +
+                   '<div style="font-size:10px;color:#888">' + (+m.lat).toFixed(5) + ', ' + (+m.lng).toFixed(5) + '</div>');
         var mk = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([m.lng, m.lat]).setPopup(popup).addTo(_ovMap);
         _ovMarkers.push(mk);
