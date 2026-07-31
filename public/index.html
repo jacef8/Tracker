@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 551;
+var APP_BUILD = 552;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17174,11 +17174,34 @@ function _groupFollowTick(force) {
   // Your own live position — keyed by userId so it can't be counted twice. It previously
   // pushed unconditionally, on top of your own marker, so a lone user produced TWO nearly
   // identical points: bounds collapsed to a dot and the camera zoomed to maxZoom on them.
-  if (window._lastGPS) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
+  // Your own position — but ONLY a real, recent, reasonably accurate one. A desktop with no
+  // GPS still gets a coarse IP/wifi fix from the browser, often tens of miles off, and that
+  // invisible point was silently stretching the bounds: the group merged into one dot in a
+  // corner of the screen with empty map everywhere else, because the camera was dutifully
+  // fitting the group AND a phantom point nobody could see. Reported as "the new group zoom
+  // is not centered on the group".
+  try {
+    var _myFresh = window._lastGPS && (Date.now() - (window._lastFixTs || 0)) < GROUP_FIT_ACTIVE_MS;
+    var _myAcc = window._lastAccM || 0;
+    if (_myFresh && _myAcc < 5000) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
+  } catch (e) {}
   // Nobody active? Then frame whoever we do have rather than showing an empty map.
   if (!pts.length && ptsStale.length) pts = ptsStale;
   window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
+  // Everyone standing together (the merged-dot case) makes a degenerate bounding box, which
+  // cameraForBounds handles poorly — it can land the cluster off-centre. Treat "all within
+  // ~40m" as a single point and just centre on it, which is what the user means by
+  // "centred on the group" anyway.
+  try {
+    if (pts.length > 1) {
+      var _spread = 0;
+      for (var _q = 1; _q < pts.length; _q++) {
+        _spread = Math.max(_spread, metersApart(pts[0][1], pts[0][0], pts[_q][1], pts[_q][0]));
+      }
+      if (_spread < 40) pts = [pts[0]];
+    }
+  } catch (e) {}
   if (pts.length === 1) {
     // Record here too — this branch used to return before the debug string was built, so a
     // group of one logged nothing at all and looked identical to the tick never running.
