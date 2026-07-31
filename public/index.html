@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 533;
+var APP_BUILD = 534;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8068,7 +8068,10 @@ function _watchMinNative() {
           var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
           var need = parseInt(ios ? cfg.ios : cfg.android, 10);
           if (!isFinite(need) || mine >= need) { _hideNativeUpdateBar(); return; }
-          _showNativeUpdateBar(cfg.msg || 'A new version of the GroundLink app is available.', cfg.url || '', mine, need);
+          // Per-platform link when provided (urlIos/urlAndroid) — TestFlight and Play are
+          // different destinations; a single url sent iPhones to the Play Store.
+          var _updUrl = (ios ? cfg.urlIos : cfg.urlAndroid) || cfg.url || '';
+          _showNativeUpdateBar(cfg.msg || 'A new version of the GroundLink app is available.', _updUrl, mine, need);
         } catch (e) {}
       });
     } catch (e) {}

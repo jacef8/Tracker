@@ -330,21 +330,10 @@
     <button class="btn btn-warn" id="force-restart-btn" onclick="forceRestartAll(this)">&#9211; Force all users to RESTART the app</button>
     <div id="force-restart-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
 
-    <!-- Native builds can't be pushed the way web builds can — they need a store / TestFlight /
-         App Distribution install. Setting a minimum here shows a persistent bar to anyone whose
-         installed app is older, which is otherwise invisible to them and to you. -->
-    <div style="font-size:11px;color:var(--muted);margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border)">Minimum <b>native app</b> build. Anyone running an older install sees a persistent "update available" bar with your link. Leave a field blank to not enforce it on that platform. This is the native build number (Android versionCode / iOS build), <b>not</b> the web build.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <input id="minnat-android" type="number" placeholder="Android build" style="flex:1;min-width:120px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px" />
-      <input id="minnat-ios" type="number" placeholder="iOS build" style="flex:1;min-width:120px;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px" />
-    </div>
-    <input id="minnat-msg" placeholder="Message (optional)" style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px;margin-bottom:8px" />
-    <input id="minnat-url" placeholder="Update link (Play Store / TestFlight / App Distribution)" style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 10px;margin-bottom:8px" />
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-warn" onclick="saveMinNative(this)">&#11014; Require this native build</button>
-      <button class="btn" onclick="clearMinNative(this)">Clear requirement</button>
-    </div>
-    <div id="minnat-status" style="font-size:11.5px;margin-top:8px;min-height:15px;font-weight:600"></div>
+    <!-- The manual min-native-build entry form lived here; removed at the owner's request
+         (2026-07-30) — the enforcement itself stays, managed at /_minNative in the database.
+         This line just shows what's currently required so the state isn't invisible. -->
+    <div id="minnat-current" style="font-size:11.5px;color:var(--muted);margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border)">Minimum native build: loading…</div>
   </div>
 
   <!-- Danger zone -->
@@ -1039,6 +1028,24 @@ window._forceArmed = false;
 // a store install — and nothing previously told a user their app was old. Written to root
 // /_minNative (not under gl/, where the Phase 1 rules deny client writes and the admin page is
 // itself a client).
+// Read-only display of /_minNative (the entry form was removed at the owner's request).
+(function _showMinNative() {
+  var t = setInterval(function () {
+    var fb = window._fb;
+    if (!fb || !fb.onValue) return;
+    clearInterval(t);
+    try {
+      fb.onValue(fb.ref(fb.db, '_minNative'), function (snap) {
+        var el = document.getElementById('minnat-current');
+        if (!el) return;
+        var c = (snap && snap.val && snap.val()) || null;
+        el.textContent = c
+          ? ('Minimum native build enforced: Android ' + (c.android || '—') + ' · iOS ' + (c.ios || '—') + (c.msg ? ' · "' + c.msg + '"' : ''))
+          : 'No minimum native build currently enforced.';
+      });
+    } catch (e) {}
+  }, 500);
+})();
 window.saveMinNative = function(btn) {
   var status = document.getElementById('minnat-status');
   function say(m, c) { if (status) { status.textContent = m; status.style.color = c || 'var(--muted)'; } }
