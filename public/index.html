@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 550;
+var APP_BUILD = 551;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4867,6 +4867,23 @@ function _shouldShowSpeed(uid, data, eligibleOverride) {
   // marker labels only escaped because their caller passes isLive as the override; the card
   // passed nothing. Gate it here so NO caller can show a dead speed.
   var _fresh = !!data && (Date.now() - (data.fixTs || data.ts || 0)) < LIVE_MS;
+  // ...and the position must actually be CHANGING. `data.ts` is bumped by the heartbeat even
+  // when no new GPS fix arrived, and older clients (iOS builds before fixTs existed) have
+  // nothing else to key off — so a phone that stopped reporting mid-drive stayed "fresh"
+  // forever and wore "62 mph" while its dot sat motionless in a field. Movement is the one
+  // signal that can't be faked by a heartbeat: at 60 mph a device covers a mile and a half
+  // in 90s, so a genuinely moving dot has always moved; a parked one never does.
+  if (_fresh && data && typeof data.lat === 'number') {
+    try {
+      window._posSeen = window._posSeen || {};
+      var _ps = window._posSeen[uid];
+      if (!_ps || metersApart(_ps.lat, _ps.lng, data.lat, data.lng) > 12) {
+        window._posSeen[uid] = { lat: data.lat, lng: data.lng, movedAt: Date.now() };
+      } else if (Date.now() - _ps.movedAt > 90000) {
+        _fresh = false;                       // hasn't budged in 90s — not moving, whatever spd claims
+      }
+    } catch (e) {}
+  }
   var eligible = _fresh && (eligibleOverride !== undefined ? eligibleOverride : true) && data && data.spd && !data.spdH && !data.hidden && !data.noGps;
   if (!eligible) { window._speedShownState[uid] = false; return false; }
   var was = !!window._speedShownState[uid];
@@ -17112,14 +17129,19 @@ function _followPadding() {
 function _camPadding() { return 0; }
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
-  var pts = [];
+  // ACTIVE members drive the fit; stale ones are collected separately as a fallback only.
+  // Framing everybody meant one member who stopped reporting 14 hours ago and 200 miles away
+  // stretched the bounds until the people actually moving right now were specks — "zoom to
+  // group" has to mean the group that's currently out there.
+  var GROUP_FIT_ACTIVE_MS = 15 * 60 * 1000;
+  var pts = [], ptsStale = [];
   var _seen = {};
-  var _add = function (uid, lng, lat) {
+  var _add = function (uid, lng, lat, active) {
     if (uid && _seen[uid]) return;                       // no duplicates — see below
     if (!isFinite(lng) || !isFinite(lat)) return;
     if (!lng && !lat) return;                            // 0,0 = no position (no-GPS members)
     if (uid) _seen[uid] = 1;
-    pts.push([lng, lat]);
+    (active === false ? ptsStale : pts).push([lng, lat]);
   };
   // Build from the ROOM DATA, not from whichever markers happen to exist yet.
   //
@@ -17134,14 +17156,14 @@ function _groupFollowTick(force) {
       if (window._groupFollowExcluded(uid)) return;
       var u = _ru[uid] || {};
       if (!u.name || u.claiming || u.hidden || u.noGps) return;   // same test the renderer uses
-      _add(uid, u.lng, u.lat);
+      _add(uid, u.lng, u.lat, (Date.now() - (u.fixTs || u.ts || 0)) < GROUP_FIT_ACTIVE_MS);
     });
   } catch (e) {}
   // Markers still count, for anything on the map that isn't a room member (and as a fallback
   // if the snapshot hasn't arrived). _seen keeps these from double-adding a member.
   Object.keys(userMarkers).forEach(function(uid) {
     if (window._groupFollowExcluded(uid)) return;
-    try { var ll = userMarkers[uid].getLngLat(); _add(uid, ll.lng, ll.lat); } catch (e) {}
+    try { var ll = userMarkers[uid].getLngLat(); _add(uid, ll.lng, ll.lat, userMarkers[uid]._isLive !== false); } catch (e) {}
   });
   // Devices (the watch) are a SEPARATE marker set from people — include them too, so "Follow
   // group" actually keeps the whole group (people + visible devices) in view, not just people.
@@ -17153,6 +17175,8 @@ function _groupFollowTick(force) {
   // pushed unconditionally, on top of your own marker, so a lone user produced TWO nearly
   // identical points: bounds collapsed to a dot and the camera zoomed to maxZoom on them.
   if (window._lastGPS) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
+  // Nobody active? Then frame whoever we do have rather than showing an empty map.
+  if (!pts.length && ptsStale.length) pts = ptsStale;
   window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
   if (pts.length === 1) {
