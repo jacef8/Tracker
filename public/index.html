@@ -1964,7 +1964,10 @@
     <button id="trk-tab-history" onclick="window._showHistoryTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:transparent;color:var(--muted);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid transparent">Trail</button>
   </div>
   <div id="trk-tracks-pane">
-    <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</div>
+    <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span>Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</span>
+      <button onclick="window._shareTracksOpen()" style="flex-shrink:0;background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Share all</button>
+    </div>
     <div id="tracks-list" style="overflow-y:auto;flex:1"></div>
   </div>
   <!-- Just a launcher into the same unified Trail sheet the member card's "Recent trail"
@@ -2671,7 +2674,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 540;
+var APP_BUILD = 541;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5124,8 +5127,8 @@ function openRoomInfo() {
   if (row) {
     var head = '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Passcode</div>';
     var editBtn = function(txt) {
-      // Only the room owner can set or change the passcode.
-      if (!window._isRoomOwner) return '';
+      // The room owner or a co-admin can set or change the passcode.
+      if (!(window._canManageRoom && window._canManageRoom())) return '';
       return '<button onclick="_editPasscode()" style="margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer">' + txt + '</button>';
     };
     if (!window._roomHasPin) {
@@ -5151,10 +5154,10 @@ function openRoomInfo() {
       }
     }
   }
-  // Visibility control — owner only.
+  // Visibility control — owner or co-admin.
   var visRow = document.getElementById('ri-vis-row');
   if (visRow) {
-    if (window._isRoomOwner) {
+    if (window._canManageRoom && window._canManageRoom()) {
       visRow.style.display = 'block';
       var vis = window._roomVisibility || 'public';
       var vbtn = function(val, label) {
@@ -5485,7 +5488,7 @@ function renderRoomInfoOwner() {
   if (sheet && sheet.style.display === 'block') openRoomInfo();
 }
 window._setRoomVisibility = function(v) {
-  if (!window._isRoomOwner || !db || !groupName) return;
+  if (!(window._isRoomOwner || window._isRoomAdmin) || !db || !groupName) return;
   try { fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), v); } catch (e) {}
   window._roomVisibility = v;
   try { window._evt('set room visibility to ' + v); } catch (e) {}
@@ -6301,6 +6304,30 @@ function _trackJoinedRoom(key, name, expiresTs) {
     _setJoinedRooms(m);
   } catch (e) {}
 }
+// Startup roster heal for EVERY Crew this device belongs to — not just the open room. The
+// in-room listener's self-heal (see _listenRoomMembersRoster) only fires for a room you
+// actually open, so a phone that hadn't visited a Crew since its uid re-keyed stayed off
+// that Crew's roster indefinitely and rendered as a "visitor" to everyone else. Honors the
+// owner's removed marker, same as every other join path.
+setTimeout(function () {
+  try {
+    if (typeof db === 'undefined' || !db || !window._fb || !window._fb.get) return;
+    var uid = (typeof userId !== 'undefined' && userId) || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
+    if (!uid) return;
+    var nm = (typeof userName !== 'undefined' && userName)
+      || (function () { try { return (getSavedSession() || {}).name || ''; } catch (e) { return ''; } })() || 'Member';
+    var circles = _getCircles();
+    Object.keys(circles || {}).forEach(function (key) {
+      window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + uid)).then(function (s) {
+        if (s && s.val()) return;
+        return window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/config/removed/' + uid)).then(function (r) {
+          if (r && r.val()) return;
+          fbSet(fbRef(db, 'gl/' + key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: uid });
+        });
+      }).catch(function () {});
+    });
+  } catch (e) {}
+}, 9000);
 // Explicit personal opt-out — stop THIS device's location from continuing to reach a room,
 // without affecting the room itself (which stays alive for everyone else until its own
 // deadline). This is what the "Leave this room" action calls; EXIT no longer does this.
@@ -7594,6 +7621,21 @@ function enterMap(name, group, uid) {
     // Track who owns this room. If no owner has ever been recorded (older
     // rooms created before this feature), the first person to open it claims it.
     window._isRoomOwner = false;
+    // Co-admins: config/admins/<id> (account id when resolvable, else device uid), granted
+    // by the owner from a member's menu. An admin can change room settings (passcode,
+    // visibility) and remove members; transferring ownership, managing admins, and deleting
+    // the room stay owner-only.
+    window._isRoomAdmin = false; window._roomAdmins = {};
+    window._canManageRoom = function () { return !!(window._isRoomOwner || window._isRoomAdmin); };
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/config/admins'), function (snap) {
+        var a = snap.val() || {};
+        window._roomAdmins = a;
+        var _acct = ''; try { _acct = _myAcct(); } catch (e) {}
+        window._isRoomAdmin = !!(a[userId] || (_acct && a[_acct]));
+        try { renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/owner'), function(snap) {
         // Never re-claim/recreate a room that's being closed or deleted — otherwise an
@@ -8523,6 +8565,63 @@ const PIN_DEFS = {
   // ── Custom (user names it) ──
   'Custom':       { color: '#00bcd4', emoji: '⭐', theme: 'General', label: 'CT' },
 };
+// ── VECTOR PIN ICONS ─────────────────────────────────────────────────────────
+// One glyph per category, as an SVG path in a 24×24 box — the SINGLE source for every
+// icon in the app: the map pins (drawn onto canvas via Path2D), the Pins drawer rows,
+// the category picker, and the saved-pin markers. Replaces the emoji set wholesale:
+// emoji rendered tiny, platform-inconsistent, and unreadable on colored chips ("PLEASE
+// FIX ALL OF THE ICONS"). `d` strokes white; optional `f` fills white on top. Categories
+// without an entry (the animals, where a 24px silhouette is worse than text) fall back
+// to their bold two-letter label — deliberate, OnX-style, and highly readable.
+const PIN_ICONS = {
+  'Waypoint':      { d: 'M12 4l8 8-8 8-8-8z' },
+  'Urgent':        { d: 'M12 4v10 M12 18.5v.6' },
+  'Hazard':        { d: 'M12 4 21 19H3z M12 10v4 M12 16.4v.6' },
+  'Boundary':      { d: 'M4 9h16 M4 15h16 M9 9v6 M15 9v6' },
+  'Vehicle':       { d: 'M4 15v-3l2-4h9l3 4h2v3h-2 M9 15h6 M4 15h1', f: 'M7 13.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z M17 13.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z' },
+  'Parking':       { d: 'M9 19V5h5a4 4 0 0 1 0 8H9' },
+  'Gate':          { d: 'M5 4v16 M19 4v16 M5 8h14 M5 12h14 M5 16h14 M5 18 19 6' },
+  'Photo':         { d: 'M4 8h4l2-2h4l2 2h4v10H4z M12 15.5a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6z' },
+  'Deer Stand':    { d: 'M8 3v18 M16 3v18 M8 7.5h8 M8 12h8 M8 16.5h8' },
+  'Ground Blind':  { d: 'M12 4 3 19h18z M12 19v-5' },
+  'Trail Camera':  { d: 'M5 6h14v12H5z M12 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2z M9 6V4h6v2' },
+  'Game Trail':    { f: 'M8 7a1.7 1.7 0 1 0 0 3.4A1.7 1.7 0 0 0 8 7z M12 5.6a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 0 0 0-3.4z M16 7a1.7 1.7 0 1 0 0 3.4A1.7 1.7 0 0 0 16 7z M12 11c-2.6 0-4.6 2-4.6 4.1 0 1.6 1.2 2.9 2.6 2.9.8 0 1.4-.3 2-.3s1.2.3 2 .3c1.4 0 2.6-1.3 2.6-2.9 0-2.1-2-4.1-4.6-4.1z' },
+  'Feeder':        { d: 'M12 3l6 4v4H6V7z M12 11v4 M8 11l-2.5 9 M16 11l2.5 9 M10.5 17h3' },
+  'Food Plot':     { d: 'M12 21v-8 M12 13C12 9 9 7 5 7c0 4 3 6 7 6z M12 13c0-4 3-6 7-6 0 4-3 6-7 6z' },
+  'Scrape':        { d: 'M4 6c5-2.5 11-2.5 16 0 M12 8.5V14 M12 17.5v.6' },
+  'Rub':           { d: 'M9 3c-1 6-1 12 0 18 M15 3c1 6 1 12 0 18 M8.5 9.5l7 4' },
+  'Bedding':       { d: 'M17.5 15A6.8 6.8 0 1 1 9 5.5 7.8 7.8 0 0 0 17.5 15z' },
+  'Harvest':       { d: 'M13 3h8v8L10.5 21.5 2.5 13.5z M16.5 7.5v.1' },
+  'Blood Trail':   { f: 'M12 3.5c3 4.2 6 7.2 6 11a6 6 0 1 1-12 0c0-3.8 3-6.8 6-11z' },
+  'Shooting Lane': { d: 'M12 18.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13z M12 2.5V7 M12 17v4.5 M2.5 12H7 M17 12h4.5' },
+  'Fishing Spot':  { d: 'M15 3v9.5a4.5 4.5 0 0 1-9 0V11 M15 3l2 2 M15 3l-2 2' },
+  'Boat Ramp':     { d: 'M4 14l3-7h7l5 7z M2.5 18c4 2 15 2 19 0' },
+  'Dock':          { d: 'M3 11h13v3H3z M6 14v6 M13 14v6 M17 17c2-.5 3.5 0 4.5 1' },
+  'Brush Pile':    { d: 'M5 17h14 M7 13h10 M9 9h6' },
+  'Structure':     { d: 'M7 19.5l-3.5-6 5-6.5h7l4.5 5.5-3.5 7z' },
+  'Catch':         { d: 'M3 12c4-5 10-5 13.5 0-3.5 5-9.5 5-13.5 0z M16.5 12l4.5-3.5v7z M7 11v.1' },
+  'Honey Hole':    { d: 'M3 10c3-2 6-2 9 0s6 2 9 0 M3 15.5c3-2 6-2 9 0s6 2 9 0' },
+  'Camp':          { d: 'M12 4 3 20h6.5l2.5-5 2.5 5H21z' },
+  'Trailhead':     { d: 'M12 3v18 M12 6h6.5l2 2-2 2H12 M12 12H6l-2 2 2 2h6' },
+  'Water':         { d: 'M3 10c3-2 6-2 9 0s6 2 9 0 M3 15.5c3-2 6-2 9 0s6 2 9 0' },
+  'Overlook':      { d: 'M3 18l5.5-8.5 3.5 5 2.5-3.5L21 18z M17 6.8a2 2 0 1 0 0 .1' },
+  'Cave':          { d: 'M4 20v-7a8 8 0 0 1 16 0v7 M9.5 20v-4a2.5 2.5 0 0 1 5 0v4' },
+  'Firewood':      { d: 'M5 17h14 M7 13h10 M9 9h6' },
+  'Mushrooms':     { d: 'M12 4c-5 0-8 3.2-8 6.5h16C20 7.2 17 4 12 4z M9.8 10.5V17a2.2 2.2 0 0 0 4.4 0v-6.5' },
+  'Property Corner': { d: 'M5 19V5h14 M5 12h7V5' },
+  'Equipment':     { d: 'M4 11h7l2.5 4 M6 11V7h4v4', f: 'M8 12.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8z M17.5 14.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z' },
+  'Well':          { d: 'M6 9h9a4 4 0 0 1 4 4v1.5h-3.5V13 M10 9V5.5h4.5 M10 5.5H6.5 M15.5 18.5v.6' },
+  'Repair':        { d: 'M14.5 7a4 4 0 0 1 4.8-3.9l-2.9 2.9 1.6 1.6 2.9-2.9A4 4 0 0 1 16 9.5L8.5 17l-2-2z' },
+  'Trap':          { d: 'M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M12 6V4 M12 20v-2 M6 12H4 M20 12h-2 M7.8 7.8 6.4 6.4 M17.6 17.6l-1.4-1.4 M7.8 16.2l-1.4 1.4 M17.6 6.4l-1.4 1.4' },
+  'No Trespassing': { d: 'M12 19.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15z M6.8 6.8l10.4 10.4' },
+  'Home':          { d: 'M4 11l8-7 8 7 M6.5 9.5V20h11V9.5' },
+  'Meeting Point': { d: 'M4 4l6 6 M4 4h4.5 M4 4v4.5 M20 20l-6-6 M20 20h-4.5 M20 20v-4.5' },
+  'Pet':           { f: 'M8 7a1.7 1.7 0 1 0 0 3.4A1.7 1.7 0 0 0 8 7z M12 5.6a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 0 0 0-3.4z M16 7a1.7 1.7 0 1 0 0 3.4A1.7 1.7 0 0 0 16 7z M12 11c-2.6 0-4.6 2-4.6 4.1 0 1.6 1.2 2.9 2.6 2.9.8 0 1.4-.3 2-.3s1.2.3 2 .3c1.4 0 2.6-1.3 2.6-2.9 0-2.1-2-4.1-4.6-4.1z' },
+  'Picnic':        { d: 'M5 10h14l-1.8 9H6.8z M8.5 10a3.5 3.5 0 0 1 7 0 M9.5 13l.8 3.5 M14.5 13l-.8 3.5' },
+  'First Aid':     { f: 'M10 4h4v6h6v4h-6v6h-4v-6H4v-4h6z' },
+  'Rally Point':   { d: 'M6 21V4 M6 5c4-2 8 2 12 0v8c-4 2-8-2-12 0' },
+  'Custom':        { d: 'M12 3.5l2.4 5 5.6.7-4.1 3.8 1.1 5.5-5-2.8-5 2.8 1.1-5.5L4 9.2l5.6-.7z' },
+};
 
 // Build the pin-drop category picker grouped into themed sections from PIN_DEFS.
 function buildPinCats() {
@@ -8540,7 +8639,7 @@ function buildPinCats() {
     names.forEach(function(name) {
       var d = PIN_DEFS[name];
       html += '<button type="button" class="cat-btn' + (name === selectedCat ? ' active' : '') + '" data-cat="' + name + '" style="border-color:' + d.color + '40">' +
-              '<span class="pin-preview" style="background:' + d.color + ';font-size:14px;line-height:1">' + (d.emoji || d.label) + '</span>' + name + '</button>';
+              '<span class="pin-preview" style="background:transparent;line-height:0">' + window._pinIconHTML(name, 24) + '</span>' + name + '</button>';
     });
     html += '</div>';
   });
@@ -8556,7 +8655,7 @@ function buildPinCats() {
 // dark drop-shadow for legibility. (A soft colored "ownership halo" lived here between
 // builds 403 and 539 — removed per direct feedback: it read as a blurry glow, not a cue.
 // ringColor is still accepted so no caller had to change.)
-function makePinImage(catColor, ringColor, glyph) {
+function makePinImage(catColor, ringColor, glyph, cat) {
   var SIZE = 72;
   var cv = document.createElement('canvas');
   cv.width = SIZE; cv.height = SIZE;
@@ -8602,24 +8701,60 @@ function makePinImage(catColor, ringColor, glyph) {
     ctx.restore();
     return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
   }
-  var isEmoji = glyph && !/^[A-Za-z!]{1,3}$/.test(glyph); // anything that isn't a 2-letter fallback
-  ctx.font = isEmoji
-    ? Math.round(SIZE * 0.62) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif'
-    : 'bold ' + Math.round(SIZE * 0.44) + 'px system-ui,sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  var fill = isEmoji ? '#000' : catColor;
-
-  // Crisp glyph with only a small dark shadow for contrast on any background. The colored
-  // ownership glow that used to sit behind it was removed per direct feedback — it read as
-  // a blurry halo, not a cue.
-  ctx.shadowColor = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur = 2;
-  ctx.shadowOffsetY = 1;
-  ctx.fillStyle = fill;
-  ctx.fillText(glyph || '', cx, cy);
+  // Badge pin: rounded square in the category color with the category's VECTOR glyph in
+  // white — same PIN_ICONS geometry the drawer and picker render as SVG, drawn here via
+  // Path2D. No emoji anywhere: emoji were tiny, platform-inconsistent, and unreadable.
+  // Categories without a drawn glyph get their bold two-letter label instead.
+  var ic = (typeof PIN_ICONS !== 'undefined' && cat) ? PIN_ICONS[cat] : null;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1.5;
+  ctx.fillStyle = catColor;
+  var B = 7, W = SIZE - 14, RD = 15;
+  ctx.beginPath();
+  ctx.moveTo(B + RD, B);
+  ctx.arcTo(B + W, B, B + W, B + W, RD);
+  ctx.arcTo(B + W, B + W, B, B + W, RD);
+  ctx.arcTo(B, B + W, B, B, RD);
+  ctx.arcTo(B, B, B + W, B, RD);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,.9)';
+  ctx.stroke();
+  if (ic && (ic.d || ic.f)) {
+    ctx.save();
+    ctx.translate(B, B); ctx.scale(W / 24, W / 24);
+    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff';
+    try {
+      if (ic.d) ctx.stroke(new Path2D(ic.d));
+      if (ic.f) ctx.fill(new Path2D(ic.f));
+    } catch (e) {}
+    ctx.restore();
+  } else {
+    ctx.font = 'bold ' + Math.round(SIZE * 0.34) + 'px system-ui,sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText((glyph && /^[A-Za-z!?]{1,3}$/.test(glyph) ? glyph : '') || '?', cx, cy + 1);
+  }
 
   return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
 }
+// Shared DOM renderer for the SAME icon set — drawer rows, category picker, filter chips,
+// saved-pin markers. Keep map + UI in lockstep: one geometry, two surfaces.
+window._pinIconHTML = function (cat, size) {
+  size = size || 26;
+  var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[cat]) || { color: '#00bcd4', label: 'CT' };
+  var ic = (typeof PIN_ICONS !== 'undefined') ? PIN_ICONS[cat] : null;
+  var inner;
+  if (ic && (ic.d || ic.f)) {
+    inner = (ic.d ? '<path d="' + ic.d + '" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
+            (ic.f ? '<path d="' + ic.f + '" fill="#fff"/>' : '');
+  } else {
+    inner = '<text x="12" y="13" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="9.5" font-weight="800" font-family="system-ui,sans-serif">' + (def.label || '?') + '</text>';
+  }
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" style="flex-shrink:0;display:block"><rect x="1" y="1" width="22" height="22" rx="6.5" fill="' + def.color + '" stroke="rgba(255,255,255,.35)" stroke-width="1"/>' + inner + '</svg>';
+};
 
 // The map opens framed on the whole of Liberty County.
 //
@@ -8668,8 +8803,8 @@ function initMap() {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
       if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label), { pixelRatio: 2 });
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
       }
     }
     // Add pin source and layer
@@ -8677,12 +8812,18 @@ function initMap() {
       map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({
         id: 'pins-layer', type: 'symbol', source: 'pins',
+        // Pins gated to zoom >= 11 and scaled down from the old flat 1.0 — at county zoom
+        // dozens of full-size icons buried the imagery ("they clutter the map"). Zoomed out
+        // past the gate they simply vanish; inside it they grow with zoom so close-up work
+        // keeps readable icons.
+        minzoom: 11,
         layout: {
-          'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
+          'icon-image': ['get', 'imageId'],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
           'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 1.3], 'text-optional': true,
+          'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 1.2], 'text-optional': true,
         },
         paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
       });
@@ -9020,7 +9161,7 @@ function updatePinSource(pins) {
     var id = f.properties.imageId;
     if (!map.hasImage(id)) {
       var def = PIN_DEFS['Custom'];
-      map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', def.emoji || 'CT'), { pixelRatio: 2 });
+      map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', def.label || 'CT', 'Custom'), { pixelRatio: 2 });
     }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
@@ -11989,7 +12130,7 @@ function listenChat() {
     container.innerHTML = '';
     sorted.forEach(m => {
       const isMine = m.uid === userId;
-      const canDel = isMine || window._isRoomOwner;
+      const canDel = isMine || window._isRoomOwner || window._isRoomAdmin;
       const div = document.createElement('div');
       div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
       div.innerHTML = (isMine ? '' : '<div class="sender">' + escapeHtmlJs(m.name) + '</div>') + escapeHtmlJs(m.text) +
@@ -12049,10 +12190,10 @@ window._deleteMsg = function(key) {
     fbOnValue(fbRef(db, 'gl/' + groupName + '/chat/' + key), function(snap) {
       var m = snap.val();
       if (!m) return;
-      if (m.uid === userId || window._isRoomOwner) {
+      if (m.uid === userId || window._isRoomOwner || window._isRoomAdmin) {
         fbRemove(fbRef(db, 'gl/' + groupName + '/chat/' + key));
       } else {
-        toast('Only the sender or room owner can delete this', 2500);
+        toast('Only the sender, room owner, or an admin can delete this', 2500);
       }
     }, { onlyOnce: true });
   } catch (e) {}
@@ -13000,6 +13141,19 @@ function _renderInviteInbox() {
       '</div>';
     return;
   }
+  if (inv.type === 'tracks') {
+    // Someone shared their track/area library with you → copy into yours (deduped).
+    var nT = (inv.tracks && inv.tracks.length) || 0;
+    box.innerHTML =
+      '<div style="background:rgba(0,176,255,.08);border:1px solid rgba(0,176,255,.4);border-radius:10px;padding:11px 13px;margin-bottom:4px">' +
+        '<div style="font-size:13px;color:var(--text);line-height:1.4"><svg class="licon licon-sm" style="color:#00b0ff;margin-right:4px;vertical-align:middle"><use href="#ic-compass"/></svg><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> shared <strong style="color:#00b0ff">' + nT + ' track' + (nT !== 1 ? 's' : '') + '/area' + (nT !== 1 ? 's' : '') + '</strong> with you</div>' +
+        '<div style="display:flex;gap:8px;margin-top:9px">' +
+          '<button onclick="window._acceptTrackShare(\'' + _escHtml(inv._key) + '\')" style="flex:1;padding:9px;background:#00b0ff;border:none;border-radius:8px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Save to my tracks</button>' +
+          '<button onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
+        '</div>' + more +
+      '</div>';
+    return;
+  }
   if (inv.circle) {
     // Accepting doesn't navigate anywhere — the whole point of a Circle is you don't have to
     // "join" it for location to flow both ways. See window._acceptCircleInvite.
@@ -13433,20 +13587,26 @@ function setBaseLayer(btn) {
     for (var cat in PIN_DEFS) {
       var def = PIN_DEFS[cat];
       if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label), { pixelRatio: 2 });
+        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
+        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
       }
     }
     if (!map.getSource('pins')) {
       map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({
         id: 'pins-layer', type: 'symbol', source: 'pins',
+        // Pins gated to zoom >= 11 and scaled down from the old flat 1.0 — at county zoom
+        // dozens of full-size icons buried the imagery ("they clutter the map"). Zoomed out
+        // past the gate they simply vanish; inside it they grow with zoom so close-up work
+        // keeps readable icons.
+        minzoom: 11,
         layout: {
-          'icon-image': ['get', 'imageId'], 'icon-size': 1.0,
+          'icon-image': ['get', 'imageId'],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
           'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 1.3], 'text-optional': true,
+          'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 1.2], 'text-optional': true,
         },
         paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
       });
@@ -15319,6 +15479,17 @@ window._svSelectAllShown = function() {
   getSavedPins().forEach(function(p, i) { if (_savedMatch(p)) window._svSel[i] = true; });
   renderSavedPins();
 };
+// One tap from a filter chip: enter select mode, grab everything the filter shows, open the
+// destination picker. "Share this folder" without the tap-tap-tap.
+window._svShareShown = function () {
+  if (!window._svSelect) {
+    window._svSelect = true;
+    var b = document.getElementById('sv-select-toggle'); if (b) b.textContent = 'Cancel';
+    var sa = document.getElementById('sv-select-all'); if (sa) sa.style.display = 'inline-flex';
+  }
+  window._svSelectAllShown();
+  window._svOpenShareTargets();
+};
 // Tag the selected pins with a self-named collection (creates it if new).
 window._svAddToCollection = function() {
   var sel = Object.keys(window._svSel);
@@ -15404,6 +15575,75 @@ window._svSendPins = function() {
   var m = document.getElementById('_sv-share-modal'); if (m) m.remove();
   window._svToggleSelect();
   toast('Shared ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to ' + dest + ' destination' + (dest > 1 ? 's' : ''), 3000);
+};
+// ── Track library sharing — "share all of my tracks but not my pins". Person-to-person
+// only (a room has no saved-track surface to land on): each recipient gets an invite;
+// accepting copies the tracks into THEIR library, deduped by content identity.
+window._shareTracksOpen = function () {
+  var tks = getSavedTracks();
+  if (!tks.length) { toast('No tracks in your library yet'); return; }
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var rows = '';
+  Object.keys(friends).forEach(function (uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend')); });
+  if (!rows) { toast('Star people inside a room first — that\'s who you can share to', 3200); return; }
+  var ov = document.createElement('div');
+  ov.id = '_trk-share-modal';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML =
+    '<div style="width:100%;max-width:480px;background:#0d1117;border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:78vh;display:flex;flex-direction:column">' +
+      '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
+        '<span style="font-weight:800;font-size:15px;color:var(--accent)">Share all ' + tks.length + ' track' + (tks.length > 1 ? 's' : '') + '/areas to…</span>' +
+        '<button onclick="var m=document.getElementById(\'_trk-share-modal\');if(m)m.remove();" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
+      '</div>' +
+      '<div style="overflow-y:auto;padding:6px 14px;flex:1">' + rows + '</div>' +
+      '<div style="padding:12px 16px;border-top:1px solid var(--border)">' +
+        '<button onclick="window._trkSendTracks()" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#000;font-weight:800;font-size:14px;cursor:pointer">Send</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+};
+window._trkSendTracks = function () {
+  var tks = getSavedTracks();
+  var targets = Array.prototype.slice.call(document.querySelectorAll('#_trk-share-modal ._sv-target:checked')).map(function (c) { return c.value; });
+  if (!tks.length || !targets.length) { toast('Pick at least one person'); return; }
+  var fb = window._fb, dest = 0;
+  var rec = { type: 'tracks', fromName: userName || 'A friend', ts: Date.now(),
+    tracks: tks.map(function (t) { return { name: t.name || 'Track', ts: t.ts || Date.now(), pts: t.pts || [], stats: t.stats || null }; }) };
+  targets.forEach(function (t) {
+    if (t.indexOf('person:') !== 0) return;
+    var uid = t.slice(7);
+    try {
+      var ir = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(ir, rec);
+      try {
+        var _acct4 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+        if (_acct4 && _acct4 !== uid) { var ir2 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct4)); fb.set(ir2, rec); }
+      } catch (e) {}
+      dest++;
+    } catch (e) {}
+  });
+  var m = document.getElementById('_trk-share-modal'); if (m) m.remove();
+  toast('Shared ' + tks.length + ' track' + (tks.length > 1 ? 's' : '') + ' to ' + dest + ' ' + (dest === 1 ? 'person' : 'people'), 3000);
+};
+// Accept a track-library share: content-identity dedupe (same rule as GPX re-import), fresh
+// savedAt so tombstones from an OLD deletion don't eat a deliberately re-shared track.
+window._acceptTrackShare = function (key) {
+  var inv = (window._pendingInvites || []).filter(function (i) { return i._key === key; })[0];
+  if (!inv || !inv.tracks) return;
+  var arr = getSavedTracks(), have = {};
+  arr.forEach(function (t) { if (t) have[window._trackKey(t)] = 1; });
+  var added = 0;
+  inv.tracks.forEach(function (t) {
+    if (!t || !t.pts || t.pts.length < 2) return;
+    var k = window._trackKey(t); if (have[k]) return; have[k] = 1;
+    arr.unshift({ id: 'shared_' + Date.now().toString(36) + '_' + added, name: t.name || 'Track', ts: t.ts || Date.now(), savedAt: Date.now(), pts: t.pts, stats: t.stats || (typeof _trackStats === 'function' ? _trackStats(t.pts) : null) });
+    added++;
+  });
+  if (added) setSavedTracks(arr);
+  var src = inv._src || (function () { try { return localStorage.getItem('gl_uid'); } catch (e) { return null; } })();
+  try { if (window._fb && src) window._fb.remove(window._fb.ref(window._fb.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
+  try { if (typeof renderTracks === 'function') renderTracks(); } catch (e) {}
+  toast(added ? ('Saved ' + added + ' track' + (added > 1 ? 's' : '') + ' to your library') : 'Nothing new — those tracks are already in your library', 3000);
 };
 // Save a batch of pins someone shared to you (from the invite inbox) into your library.
 window._acceptPinShare = function(key) {
@@ -15510,7 +15750,7 @@ window._soloPinPopup = function(feature, lngLat) {
     .setLngLat(lngLat || [p.lng, p.lat])
     .setHTML(
       '<div style="padding:2px">' +
-      '<div style="font-size:12px;font-weight:700;color:' + def.color + ';margin-bottom:3px">' + (def.emoji || '') + ' ' + escapeHtmlJs(p.cat) + '</div>' +
+      '<div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:' + def.color + ';margin-bottom:3px">' + window._pinIconHTML((p.cat in PIN_DEFS) ? p.cat : 'Custom', 17) + ' ' + escapeHtmlJs(p.cat) + '</div>' +
       (p.label ? '<div style="font-size:13px;color:#e6edf3;margin-bottom:3px">' + escapeHtmlJs(p.label) + '</div>' : '') +
       (dist ? '<div style="font-size:11px;color:#c2ccd6;margin-bottom:8px">&#128205; ' + dist + '</div>' : '<div style="margin-bottom:8px"></div>') +
       '<div style="display:flex;gap:6px">' +
@@ -15640,18 +15880,19 @@ function _renderSavedOnMap() {
     // path from makePinImage()'s canvas-rendered room/circle pins.
     var el = document.createElement('div');
     if ((def.emoji || '') === '≡') {
-      el.innerHTML = '<svg width="26" height="22" viewBox="0 0 36 30" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))">' +
+      el.innerHTML = '<svg width="20" height="17" viewBox="0 0 36 30" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))">' +
         '<g stroke="#fff" stroke-width="7" stroke-linecap="round" fill="none"><path d="M5 2 V28 M31 2 V28 M5 7 H31 M5 15 H31 M5 23 H31 M5 26 L31 5"/></g>' +
         '<g stroke="' + def.color + '" stroke-width="3.5" stroke-linecap="round" fill="none"><path d="M5 2 V28 M31 2 V28 M5 7 H31 M5 15 H31 M5 23 H31 M5 26 L31 5"/></g></svg>';
       el.style.cssText = 'cursor:pointer;line-height:0';
     } else if ((def.emoji || '') === '◆') {
       // Vector diamond to match makePinImage's sentinel rendering (see PIN_DEFS Waypoint).
-      el.style.cssText = 'width:15px;height:15px;background:' + def.color + ';border:2.5px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.5)';
+      el.style.cssText = 'width:11px;height:11px;background:' + def.color + ';border:2px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.5)';
     } else {
-      // No colored glow — just one small dark shadow for contrast (matches makePinImage).
-      el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))';
-      el.textContent = def.emoji || '📍';
+      // Same vector badge the drawer and map layer use — no emoji on the map, anywhere.
+      el.style.cssText = 'line-height:0;cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))';
+      el.innerHTML = window._pinIconHTML((pin.cat in PIN_DEFS) ? pin.cat : 'Custom', 20);
     }
+    el.className = 'gl-saved-pin-el';
     el.title = (pin.label || pin.cat || 'Saved pin') + (pin.coll ? ' · ' + pin.coll : '');
     try {
       var m = new mapboxgl.Marker({ element: el, anchor:'center' }).setLngLat([pin.lng, pin.lat]).addTo(map);
@@ -15663,6 +15904,46 @@ function _renderSavedOnMap() {
       window._savedMapMarkers.push(m);
     } catch(e){}
   });
+  _syncSavedPinZoom();
+  // One-time hookup: saved DOM markers obey the same zoom gate as the room-pin symbol layer
+  // (minzoom 11), and the small zoom readout updates live. Registered here because this is
+  // the first code that's guaranteed to run only once a map exists.
+  if (!window._zoomUiInit) {
+    window._zoomUiInit = true;
+    try {
+      map.on('zoom', function () { _syncSavedPinZoom(); _updateZoomInd(); });
+      _updateZoomInd();
+    } catch (e) {}
+  }
+}
+// Hide the personal saved-pin DOM markers below the shared pin-layer zoom gate — at county
+// zoom they were the bulk of the clutter (a whole GPX library dotting the entire map).
+var SAVED_PIN_MINZOOM = 11;
+function _syncSavedPinZoom() {
+  try {
+    var show = map.getZoom() >= SAVED_PIN_MINZOOM;
+    (window._savedMapMarkers || []).forEach(function (m) {
+      var el = m && m.getElement && m.getElement();
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  } catch (e) {}
+}
+// Small, out-of-the-way, semi-transparent zoom readout (bottom-left, above the Mapbox mark).
+// Percent of the usable zoom range so "100%" means fully zoomed in, not a raw tile level.
+function _updateZoomInd() {
+  try {
+    var el = document.getElementById('zoom-ind');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'zoom-ind';
+      el.style.cssText = 'position:absolute;left:10px;bottom:34px;z-index:5;background:rgba(0,0,0,.35);color:rgba(255,255,255,.75);font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:8px;pointer-events:none;user-select:none';
+      var host = document.getElementById('map');
+      if (host) host.appendChild(el); else return;
+    }
+    var z = map.getZoom(), MIN = 4, MAX = 20;
+    var pct = Math.round(Math.min(100, Math.max(0, (z - MIN) / (MAX - MIN) * 100)));
+    el.textContent = pct + '%';
+  } catch (e) {}
 }
 window._toggleSavedOnMap = function() {
   window._showSavedOnMap = !window._showSavedOnMap;
@@ -15713,6 +15994,11 @@ function _renderSavedFilterChips(pins) {
     html += '<button class="sv-chip' + (_savedFilter === fv ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + fv.replace(/'/g, "\\'") + '\')">&#128193; ' + escapeHtmlJs(cn) + ' (' + colls[cn] + ')</button>';
   });
+  // One-tap group share: with a folder or type filter active, share EVERYTHING it shows —
+  // no tapping pins one by one. Select-all + share, fused.
+  if (_savedFilter !== 'all') {
+    html += '<button class="sv-chip" style="border-color:var(--accent);color:var(--accent);font-weight:800" onclick="window._svShareShown()">&#10548; Share these</button>';
+  }
   cats.forEach(function(c) {
     html += '<button class="sv-chip' + (_savedFilter === c ? ' active' : '') +
             '" onclick="window.setSavedFilter(\'' + c.replace(/'/g, "\\'") + '\')">' +
@@ -15799,7 +16085,7 @@ function renderSavedPins() {
     if (isSel) { card.style.borderColor = 'var(--accent)'; card.style.background = 'rgba(240,165,0,.10)'; }
     card.innerHTML =
       (selMode ? '<div style="flex-shrink:0;width:22px;height:22px;border-radius:50%;border:2px solid ' + (isSel ? 'var(--accent)' : 'var(--border)') + ';background:' + (isSel ? 'var(--accent)' : 'transparent') + ';display:flex;align-items:center;justify-content:center;color:#000;font-weight:800;font-size:13px">' + (isSel ? '&#10003;' : '') + '</div>' : '') +
-      '<div class="sv-dot" style="background:' + def.color + '">' + (def.emoji || def.label) + '</div>' +
+      '<div class="sv-dot" style="background:transparent">' + window._pinIconHTML((pin.cat in PIN_DEFS) ? pin.cat : 'Custom', 34) + '</div>' +
       '<div class="sv-body">' +
         '<div class="sv-cat" style="color:' + def.color + '">' + escapeHtmlJs(pin.cat) + '</div>' +
         (pin.label ? '<div class="sv-label">' + escapeHtmlJs(pin.label) + '</div>' : '') +
@@ -16921,7 +17207,20 @@ try {
       if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
       if (p.pinMuted) LS.set('gl_pin_muted', typeof p.pinMuted === 'string' ? p.pinMuted : JSON.stringify(p.pinMuted));
       if (p.memberHidden) LS.set('gl_member_hidden', typeof p.memberHidden === 'string' ? p.memberHidden : JSON.stringify(p.memberHidden));
-      if (p.favs)    LS.set('gl_favs', typeof p.favs === 'string' ? p.favs : JSON.stringify(p.favs));
+      // UNION, not replace. This used to overwrite local favorites with the cloud copy at
+      // sign-in — and a device whose favoriting had never reached the cloud (the pre-540
+      // sign-in bug guaranteed exactly that) then watched its favorite vanish on every
+      // sign-in: "I have favorited a room several times and every time it shows as not
+      // saved." Matches the live _watchProfile merge below.
+      try {
+        if (p.favs) {
+          var _cfv = typeof p.favs === 'string' ? JSON.parse(p.favs || '[]') : p.favs;
+          var _lfv = []; try { _lfv = JSON.parse(LS.get('gl_favs') || '[]'); } catch (e9) {}
+          var _sfv = {}, _mfv = [];
+          _lfv.concat(_cfv || []).forEach(function (k) { if (k && !_sfv[k]) { _sfv[k] = 1; _mfv.push(k); } });
+          LS.set('gl_favs', JSON.stringify(_mfv));
+        }
+      } catch (e8) {}
       // Circle membership has to round-trip through the account profile just like friends/favs —
       // otherwise a circle joined on one device (or before a reinstall) never reaches this device's
       // local gl_circles cache, and this device silently never fans out GPS to it or subscribes to
