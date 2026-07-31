@@ -105,10 +105,21 @@
         }
       } catch (e) {}
     }
-    onAuthStateChanged(auth, (u) => { if (u) _reconcileAuthIdentity(u); });
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
-    }
+    // Anonymous baseline ONLY when persistence restores nothing. `auth.currentUser` is null
+    // synchronously here even when a Google session IS persisted — restoration is async — so
+    // the old `if (!auth.currentUser) signInAnonymously()` replaced the saved Google session
+    // with a fresh anonymous one on EVERY page load. Downstream, the anonymous emission
+    // tripped the poisoned-install repair, which wiped gl_account: on web, being signed in
+    // could not survive a single reload. Waiting for the FIRST auth emission fixes it: a
+    // restored session arrives as that emission; only a genuine null falls back to anonymous.
+    let _authResolved = false;
+    onAuthStateChanged(auth, (u) => {
+      if (u) _reconcileAuthIdentity(u);
+      if (!_authResolved) {
+        _authResolved = true;
+        if (!u) signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
+      }
+    });
     window.dispatchEvent(new Event('gl-auth-ready'));
   } catch (e) { console.warn('auth init', e); }
 </script>
@@ -2550,6 +2561,13 @@
     <div id="custom-cat-row" style="display:none;margin-top:6px">
       <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
     </div>
+    <!-- Room drops only (hidden on My Map, where private is the only mode, and when editing
+         an existing room pin). Checked -> the pin goes to YOUR saved library and renders only
+         on your own map, exactly like a My Map drop — the room never sees it. -->
+    <label id="pin-private-row" style="display:none;align-items:center;gap:9px;margin-top:8px;padding:9px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12.5px;color:var(--text)">
+      <input type="checkbox" id="pin-private-chk" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0" />
+      <span><b>Private pin</b> — saves to My Pins, only you see it. Unchecked, the whole room sees it.</span>
+    </label>
     <div class="pin-actions">
       <button class="btn-cancel" id="pin-cancel">Cancel</button>
       <button class="btn-drop" id="pin-confirm">Drop Pin</button>
@@ -2653,7 +2671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 539;
+var APP_BUILD = 540;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8534,10 +8552,10 @@ function buildPinCats() {
 // Redesigned per direct feedback: the old teardrop-with-tiny-inset-glyph made the actual
 // icon only ~14 screen px across (SIZE=72 canvas px / pixelRatio 2 / the ~0.20 fraction of
 // that the old inset disc occupied) — far too small to read regardless of which icon/emoji
-// was used. Now: no container shape at all, just the icon itself drawn LARGE, with a soft
-// colored glow (still conveys "mine" vs "theirs" — gold vs white, same as the old ring color —
-// just as a halo instead of a solid background) plus a small dark drop-shadow so it stays
-// legible against any map background/color.
+// was used. Now: no container shape at all, just the icon itself drawn LARGE with a small
+// dark drop-shadow for legibility. (A soft colored "ownership halo" lived here between
+// builds 403 and 539 — removed per direct feedback: it read as a blurry glow, not a cue.
+// ringColor is still accepted so no caller had to change.)
 function makePinImage(catColor, ringColor, glyph) {
   var SIZE = 72;
   var cv = document.createElement('canvas');
@@ -8568,20 +8586,15 @@ function makePinImage(catColor, ringColor, glyph) {
     return { width: SIZE, height: SIZE, data: new Uint8Array(ctx.getImageData(0, 0, SIZE, SIZE).data.buffer) };
   }
   // Diamond sentinel (see PIN_DEFS Waypoint): vector shape, not text — category color fill,
-  // white outline, dark shadow, with the ownership halo matching the glyph pins.
+  // white outline, small dark contrast shadow. The colored ownership halo was removed per
+  // direct feedback ("don't like the shadow/glow effect") — ownership still reads from the
+  // popup and the pin feed, and the map stays clean.
   if (glyph === '◆') {
     var R = SIZE * 0.30;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(Math.PI / 4);
-    ctx.shadowColor = ringColor; ctx.shadowBlur = 10;
-    ctx.fillStyle = catColor;
-    ctx.fillRect(-R, -R, R * 2, R * 2);
-    ctx.restore();
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(Math.PI / 4);
-    ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+    ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 2; ctx.shadowOffsetY = 1;
     ctx.fillStyle = catColor;
     ctx.fillRect(-R, -R, R * 2, R * 2);
     ctx.lineWidth = 5; ctx.strokeStyle = '#ffffff';
@@ -8596,18 +8609,11 @@ function makePinImage(catColor, ringColor, glyph) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   var fill = isEmoji ? '#000' : catColor;
 
-  // Pass 1: colored glow behind the glyph (ownership cue).
-  ctx.save();
-  ctx.shadowColor = ringColor;
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = fill;
-  ctx.fillText(glyph || '', cx, cy);
-  ctx.fillText(glyph || '', cx, cy); // second pass deepens the glow
-  ctx.restore();
-
-  // Pass 2: crisp glyph on top with a subtle dark shadow for contrast on any background.
-  ctx.shadowColor = 'rgba(0,0,0,0.7)';
-  ctx.shadowBlur = 3;
+  // Crisp glyph with only a small dark shadow for contrast on any background. The colored
+  // ownership glow that used to sit behind it was removed per direct feedback — it read as
+  // a blurry halo, not a cue.
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 2;
   ctx.shadowOffsetY = 1;
   ctx.fillStyle = fill;
   ctx.fillText(glyph || '', cx, cy);
@@ -8787,6 +8793,7 @@ function initMap() {
       _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
       document.getElementById('pin-modal').classList.add('placing');
+      try { _syncPinPrivateRow(); } catch (_e) {}
       // Do NOT auto-focus the description — it's optional and auto-focusing pops
       // up the keyboard on every pin drop. User can tap the field to type.
       disablePinMode();
@@ -8931,6 +8938,7 @@ function initMap() {
       _showPendingMarker(pendingCoords);
       document.getElementById('pin-modal').classList.add('show');
       document.getElementById('pin-modal').classList.add('placing');
+      try { _syncPinPrivateRow(); } catch (_e) {}
       // Do NOT auto-focus the description — auto-focus pops the keyboard on every
       // long-press pin drop. Optional field; user can tap it to type.
       disablePinMode();
@@ -11593,13 +11601,24 @@ window.editPin = function(pid) {
   if (title) title.textContent = 'Edit Pin';
   document.getElementById('pin-confirm').textContent = 'Save Changes';
   document.getElementById('pin-modal').classList.add('show');
+  try { _syncPinPrivateRow(); } catch (_e) {}
 };
 
+// The "Private pin" row only applies to a FRESH drop inside a room — on My Map every pin is
+// already private (row would be noise), and an existing room pin can't be retroactively
+// made private from the edit sheet (the room copy would still exist).
+function _syncPinPrivateRow() {
+  var row = document.getElementById('pin-private-row'); if (!row) return;
+  var show = !window._soloMode && !_editingPid && typeof groupName !== 'undefined' && !!groupName;
+  row.style.display = show ? 'flex' : 'none';
+  if (!show) { var c = document.getElementById('pin-private-chk'); if (c) c.checked = false; }
+}
 // Reset + close the pin sheet (shared by drop, edit, cancel, backdrop-tap).
 function _closePinModal() {
   document.getElementById('pin-modal').classList.remove('show');
   document.getElementById('pin-modal').classList.remove('placing');
   _clearPendingMarker();
+  try { var _pc = document.getElementById('pin-private-chk'); if (_pc) _pc.checked = false; } catch (e) {}
   document.getElementById('pin-label-input').value = '';
   var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
   var cr = document.getElementById('custom-cat-row'); if (cr) cr.style.display = 'none';
@@ -12123,8 +12142,11 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
 
   if (window._pendingMarker) { try { pendingCoords = window._pendingMarker.getLngLat(); } catch(_e){} }
   if (!pendingCoords) return;
-  if (window._soloMode) {
-    // Personal map: save the new pin to your library instead of pushing it to a room.
+  // Private path: My Map drops always; room drops when the "Private pin" box is checked.
+  // Either way the pin goes to YOUR saved library and never touches the room's pins node.
+  var _wantPrivate = false;
+  try { _wantPrivate = !!(document.getElementById('pin-private-chk') || {}).checked; } catch (_e) {}
+  if (window._soloMode || _wantPrivate) {
     try {
       var _arr = getSavedPins();
       var _pid = 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
@@ -12133,7 +12155,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       lastPins[_pid] = { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, name: userName || 'Me', droppedBy: userId, ts: Date.now() };
       updatePinSource(lastPins);
       try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {}
-      toast('Saved to your map');
+      toast(window._soloMode ? 'Saved to your map' : 'Saved privately to My Pins — the room can\'t see it');
     } catch (e) {}
     _closePinModal();
     return;
@@ -15624,9 +15646,10 @@ function _renderSavedOnMap() {
       el.style.cssText = 'cursor:pointer;line-height:0';
     } else if ((def.emoji || '') === '◆') {
       // Vector diamond to match makePinImage's sentinel rendering (see PIN_DEFS Waypoint).
-      el.style.cssText = 'width:15px;height:15px;background:' + def.color + ';border:2.5px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.75)';
+      el.style.cssText = 'width:15px;height:15px;background:' + def.color + ';border:2.5px solid #fff;transform:rotate(45deg);border-radius:2px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.5)';
     } else {
-      el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 0 4px ' + def.color + ') drop-shadow(0 2px 3px rgba(0,0,0,.85))';
+      // No colored glow — just one small dark shadow for contrast (matches makePinImage).
+      el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))';
       el.textContent = def.emoji || '📍';
     }
     el.title = (pin.label || pin.cat || 'Saved pin') + (pin.coll ? ' · ' + pin.coll : '');
