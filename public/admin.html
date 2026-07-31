@@ -262,6 +262,22 @@
   <div class="group-subtabs">
     <button id="tsub-status-btn" class="gsub-btn active" onclick="setTroubleshootSub('status')">Device Status</button>
     <button id="tsub-log-btn" class="gsub-btn" onclick="setTroubleshootSub('log')">Event Log</button>
+    <button id="tsub-health-btn" class="gsub-btn" onclick="setTroubleshootSub('health')">Health</button>
+  </div>
+  <!-- HEALTH SWEEP — the "after every update" consistency check, on demand. Scans for the
+       drift classes that have actually bitten this app (phantom duplicate identities, corrupt
+       flat session fields, stale expiry stamps on persistent rooms, dead sessions, empty and
+       test profiles, orphaned history, circles pointing at deleted rooms) and fixes them in
+       one tap. Scan never writes; Clean applies exactly the listed fixes. -->
+  <div id="ts-health" style="display:none">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px">
+      <span style="font-size:12px;color:var(--muted);line-height:1.5">Consistency sweep of the whole database. Run it after an update — anything that drifted shows up here with a one-tap fix.</span>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-warn" onclick="healthScan()" style="font-size:11px;padding:5px 12px">Scan</button>
+        <button class="btn btn-danger" id="health-clean-btn" onclick="healthClean()" style="display:none;font-size:11px;padding:5px 12px">Clean all</button>
+      </div>
+    </div>
+    <div id="health-list"><div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Tap Scan to check the database.</div></div>
   </div>
   <div id="ts-status">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px">
@@ -399,10 +415,121 @@ function setGroupSub(which) {
 function setTroubleshootSub(which) {
   document.getElementById('tsub-status-btn').classList.toggle('active', which === 'status');
   document.getElementById('tsub-log-btn').classList.toggle('active', which === 'log');
+  document.getElementById('tsub-health-btn').classList.toggle('active', which === 'health');
   document.getElementById('ts-status').style.display = which === 'status' ? '' : 'none';
   document.getElementById('ts-log').style.display    = which === 'log'    ? '' : 'none';
+  document.getElementById('ts-health').style.display = which === 'health' ? '' : 'none';
   if (which === 'log') renderDebugLog();
   if (which === 'status') renderDeviceDebug();
+}
+
+// ── HEALTH SWEEP ──────────────────────────────────────────────────────────
+// Scan is read-only: it reads one gl snapshot and builds a list of findings, each carrying
+// the exact write that fixes it. Clean applies those writes and nothing else — what you saw
+// listed is exactly what changes. Checks are the drift classes that have actually happened
+// here, not hypotheticals. (glh history is deliberately not scanned — it's the heaviest node
+// in the database and its worst failure mode is a few orphaned KB.)
+var _healthPlan = [];
+function healthScan() {
+  var fb = window._fb; if (!fb || !fb.get) return;
+  var el = document.getElementById('health-list');
+  el.innerHTML = '<div class="loading">Scanning…</div>';
+  fb.get(fb.ref(fb.db, 'gl')).then(function (snap) {
+    var gl = snap.val() || {};
+    var now = Date.now(), plan = [];
+    var rooms = Object.keys(gl).filter(function (k) { return k.charAt(0) !== '_'; });
+    rooms.forEach(function (rk) {
+      var g = gl[rk] || {}, cfg = g.config || {}, users = g.users || {};
+      // 1. Persistent room still carrying a pre-conversion expiry stamp. Harmless to the
+      // room (deletion is gated on !persistent) but it confuses every list that renders it.
+      if (cfg.persistent && cfg.expires && cfg.expires < now)
+        plan.push({ label: 'Room "' + rk + '": stale expiry stamp on a persistent room', fixes: [{ t: 'rm', p: 'gl/' + rk + '/config/expires' }] });
+      // 2. Phantom duplicate identity: same name+device under two uids, one stale >2h while
+      // a fresher one exists — the classic sign-in re-key leftover.
+      var byIdent = {};
+      Object.keys(users).forEach(function (uid) {
+        var u = users[uid] || {}; var k = (u.name || '') + '|' + (u.dev || '');
+        (byIdent[k] = byIdent[k] || []).push({ uid: uid, ts: u.ts || 0 });
+      });
+      Object.keys(byIdent).forEach(function (ik) {
+        var list = byIdent[ik]; if (list.length < 2) return;
+        list.sort(function (a, b) { return b.ts - a.ts; });
+        list.slice(1).forEach(function (old) {
+          if (now - old.ts > 2 * 3600000)
+            plan.push({ label: 'Room "' + rk + '": phantom duplicate "' + ik.replace('|', ' · ') + '" (' + old.uid.slice(0, 8) + '…, ' + Math.round((now - old.ts) / 3600000) + 'h stale)', fixes: [{ t: 'rm', p: 'gl/' + rk + '/users/' + old.uid }, { t: 'rm', p: 'gl/' + rk + '/diag/' + old.uid }] });
+        });
+      });
+    });
+    var profiles = gl._users || {};
+    Object.keys(profiles).forEach(function (acct) {
+      var p = profiles[acct] || {};
+      // 3. My own test artifacts.
+      if (/^(PinTest|DebugTester|ClaudeTester)$/.test(p.name || '')) {
+        plan.push({ label: 'Test profile "' + p.name + '" (' + acct.slice(0, 8) + '…)', fixes: [{ t: 'rm', p: 'gl/_users/' + acct }] });
+        return;
+      }
+      // 4. Empty anonymous husk — nothing a person would miss. Friends must be empty too:
+      // a nameless profile that DID add friends is still someone's device state.
+      if (!p.name && !p.pins && !p.circles && !p.sessions && (!p.friends || p.friends === '{}')) {
+        plan.push({ label: 'Empty profile husk (' + acct.slice(0, 8) + '…)', fixes: [{ t: 'rm', p: 'gl/_users/' + acct }] });
+        return;
+      }
+      // 5. Sessions: flat scalar fields (residue of the old blank-id write bug) and entries
+      // dead longer than two weeks.
+      var ses = p.sessions;
+      if (ses && typeof ses === 'object') {
+        Object.keys(ses).forEach(function (sid) {
+          var s = ses[sid];
+          if (!s || typeof s !== 'object')
+            plan.push({ label: 'Profile ' + (p.name || acct.slice(0, 8)) + ': corrupt flat session field "' + sid + '"', fixes: [{ t: 'rm', p: 'gl/_users/' + acct + '/sessions/' + sid }] });
+          else if (s.ts && now - s.ts > 14 * 86400000)
+            plan.push({ label: 'Profile ' + (p.name || acct.slice(0, 8)) + ': dead session ' + (s.dev || sid.slice(0, 8)) + ' (' + Math.round((now - s.ts) / 86400000) + 'd)', fixes: [{ t: 'rm', p: 'gl/_users/' + acct + '/sessions/' + sid }] });
+        });
+      }
+      // 6. Circles pointing at rooms that no longer exist.
+      try {
+        var cir = typeof p.circles === 'string' ? JSON.parse(p.circles || '{}') : (p.circles || {});
+        var dead = Object.keys(cir).filter(function (ck) { return rooms.indexOf(ck) === -1; });
+        if (dead.length) {
+          var kept = {}; Object.keys(cir).forEach(function (ck) { if (dead.indexOf(ck) === -1) kept[ck] = cir[ck]; });
+          plan.push({ label: 'Profile ' + (p.name || acct.slice(0, 8)) + ': circles list dead room' + (dead.length > 1 ? 's' : '') + ' ' + dead.join(', '), fixes: [{ t: 'set', p: 'gl/_users/' + acct + '/circles', v: JSON.stringify(kept) }] });
+        }
+      } catch (e) {}
+    });
+    // 7. Global session registry entries dead >14d.
+    var sess = gl._sessions || {};
+    Object.keys(sess).forEach(function (sid) {
+      var s = sess[sid] || {};
+      var last = s.l || s.j || s.ts || 0;
+      if (last && now - last > 14 * 86400000)
+        plan.push({ label: 'Dead session registry entry ' + (s.n || sid.slice(0, 12)) + ' (' + Math.round((now - last) / 86400000) + 'd)', fixes: [{ t: 'rm', p: 'gl/_sessions/' + sid }] });
+    });
+    _healthPlan = plan;
+    var cb = document.getElementById('health-clean-btn');
+    if (!plan.length) {
+      el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:20px 0;text-align:center">✓ No drift found — database is consistent.</div>';
+      if (cb) cb.style.display = 'none';
+      return;
+    }
+    el.innerHTML = plan.map(function (f) {
+      return '<div style="padding:8px 10px;border:1px solid var(--border);border-radius:9px;margin-bottom:6px;font-size:12px">' + f.label.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
+    }).join('');
+    if (cb) { cb.style.display = ''; cb.textContent = 'Clean all (' + plan.length + ')'; }
+  }).catch(function (e) { el.innerHTML = '<div style="color:var(--danger);font-size:12px">Scan failed: ' + e + '</div>'; });
+}
+function healthClean() {
+  var fb = window._fb; if (!fb || !_healthPlan.length) return;
+  if (!confirm('Apply ' + _healthPlan.length + ' fix' + (_healthPlan.length === 1 ? '' : 'es') + ' listed below? Each one deletes or rewrites exactly the node shown.')) return;
+  var writes = [];
+  _healthPlan.forEach(function (f) { f.fixes.forEach(function (fx) {
+    writes.push(fx.t === 'rm' ? fb.remove(fb.ref(fb.db, fx.p)) : fb.set(fb.ref(fb.db, fx.p), fx.v));
+  }); });
+  Promise.allSettled(writes).then(function (rs) {
+    var fail = rs.filter(function (r) { return r.status === 'rejected'; }).length;
+    try { addActivity('Health sweep: applied ' + (rs.length - fail) + ' fixes' + (fail ? ' (' + fail + ' failed)' : ''), 'info', ''); } catch (e) {}
+    _healthPlan = [];
+    healthScan();
+  });
 }
 
 function switchTab(name) {
