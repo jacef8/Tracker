@@ -2621,7 +2621,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 537;
+var APP_BUILD = 538;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4701,6 +4701,24 @@ function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
   // label: barely touched under an hour, clearly washed out past six.
   var g = ageMin < 60 ? 0.35 : ageMin < 360 ? 0.65 : 0.85;
   el.style.filter = 'grayscale(' + g + ')';
+}
+// Small device badge on the map dot itself for anything that ISN'T a phone. Same person on
+// two devices renders two identical initials circles ("J" and "J") — the tablet charging at
+// home is indistinguishable from the phone at work until you open the sheet. Phones stay
+// clean (the overwhelmingly common case); everything else declares itself on the dot.
+function _updateMarkerDev(el, dev) {
+  var b = el && el.querySelector ? el.querySelector('.mk-dev-badge') : null;
+  var d = String(dev || '').toLowerCase();
+  var label = d === 'tablet' ? 'T' : (d === 'pc' || d === 'desktop' || d === 'computer') ? 'PC' : (d === 'watch') ? '⌚' : '';
+  if (!label) { if (b) b.style.display = 'none'; return; }
+  if (!b) {
+    b = document.createElement('div');
+    b.className = 'mk-dev-badge';
+    b.style.cssText = 'position:absolute;bottom:-5px;right:-5px;min-width:17px;height:17px;padding:0 3px;border-radius:9px;background:#0b0f14;color:#e6edf3;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,.55);box-shadow:0 1px 4px rgba(0,0,0,.5);pointer-events:none;letter-spacing:.02em';
+    el.appendChild(b);
+  }
+  b.textContent = label;
+  b.style.display = 'flex';
 }
 function _updateMarkerSpeed(el, data, isLive, uid) {
   var s = el && el.querySelector ? el.querySelector('.mk-speed') : null;
@@ -10735,6 +10753,7 @@ function listenUsers() {
         el.appendChild(_ageEl);
         _updateMarkerSpeed(el, data, isLive || isMine, uid);
         _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
+        _updateMarkerDev(el, data.dev);
 
         userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
@@ -10772,6 +10791,7 @@ function listenUsers() {
           el.style.color        = textColor;
           _updateMarkerSpeed(el, data, isLive || isMine, uid);
           _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
+          _updateMarkerDev(el, data.dev);
         }
       }
 
