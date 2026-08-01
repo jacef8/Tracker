@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 556;
+var APP_BUILD = 557;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8147,7 +8147,21 @@ function enterMap(name, group, uid) {
       window._connWatchUnsub = fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
         if (s.val() !== true) return;
         try {
-          if (_isNativeApp()) fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
+          // DELETING the presence row is the destructive branch, and it was being chosen
+          // whenever _isNativeApp() read false — which on iOS is a RACE, not a fact: the
+          // Capacitor bridge injects late and the UA token is intermittently absent (proven
+          // in gl/_debug, same root cause as the sign-in and Apple-button bugs). When that
+          // race lost, a native iPhone armed the WEB behaviour, so the moment iOS suspended
+          // the WebView on backgrounding, Firebase DELETED that person from the room. They
+          // didn't go stale — they vanished. Observed live: Tyler backgrounded with a
+          // 0-second-old fix and NO presence row at all.
+          //
+          // So: only remove on a device we are CONFIDENT is a desktop browser. Any phone or
+          // tablet keeps its slot and is merely flagged disconnected; the viewing side
+          // already ages stale rows out, which is a far better failure than disappearing.
+          var _ua = navigator.userAgent || '';
+          var _phone = /iPhone|iPad|iPod|Android|Mobile/i.test(_ua);
+          if (_isNativeApp() || _phone) fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
           else fb.onDisconnect(_meRef).remove();
         } catch (_) {}
         // Re-assert presence on (re)connect so a resolved blip doesn't leave conn:false behind.
