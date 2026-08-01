@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 557;
+var APP_BUILD = 558;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10099,6 +10099,66 @@ async function stopNativeBackgroundTracking() {
   window._bgGeoStarted = false; window._bgWatcherId = null;
 }
 
+// ── BACKGROUND HEALTH WATCHDOG ────────────────────────────────────────────────────────
+// We can't read most OS settings from here (battery optimisation, Background App Refresh,
+// Low Power Mode and Samsung's "sleeping apps" are all invisible to the web layer, and even
+// natively they'd need a new store build). But we don't have to: the SYMPTOM is measurable.
+// If the app sits backgrounded for a meaningful stretch with background sharing switched on
+// and NOT ONE position write happens in that whole window, the phone is putting GroundLink
+// to sleep — whatever the setting is called on that device. That's the thing worth telling
+// people about, and it works on every platform and every already-installed build.
+//
+// Two consecutive bad windows before we say anything: one can be a genuine dead zone, a
+// reboot, or airplane mode. Two is a pattern.
+var BGH_MIN_WINDOW_MS = 10 * 60 * 1000;   // ignore short backgrounding — iOS batches normally
+var BGH_STRIKES_TO_WARN = 2;
+window._bgHealth = { hiddenAt: 0, writeAtHide: 0 };
+function _bghStrikes() { try { return parseInt(localStorage.getItem('gl_bgh_strikes') || '0', 10) || 0; } catch (e) { return 0; } }
+function _bghSetStrikes(n) { try { localStorage.setItem('gl_bgh_strikes', String(n)); } catch (e) {} }
+try {
+  document.addEventListener('visibilitychange', function () {
+    try {
+      if (document.hidden) {
+        window._bgHealth.hiddenAt = Date.now();
+        window._bgHealth.writeAtHide = window._lastWriteTs || 0;
+        return;
+      }
+      var h = window._bgHealth;
+      if (!h.hiddenAt) return;
+      var span = Date.now() - h.hiddenAt;
+      h.hiddenAt = 0;
+      // Only judge when background sharing was actually supposed to be running.
+      if (!_isNativeApp() || !_bgLocationOn() || !window._bgGeoStarted) return;
+      if (span < BGH_MIN_WINDOW_MS) return;
+      var wrote = (window._lastWriteTs || 0) > h.writeAtHide;
+      if (wrote) { _bghSetStrikes(0); return; }
+      var n = _bghStrikes() + 1;
+      _bghSetStrikes(n);
+      try { window._evt('background tracking produced no writes over ' + Math.round(span / 60000) + 'm (strike ' + n + ')'); } catch (e) {}
+      if (n >= BGH_STRIKES_TO_WARN) _showBgHealthBanner(Math.round(span / 60000));
+    } catch (e) {}
+  });
+} catch (e) {}
+function _showBgHealthBanner(mins) {
+  try {
+    if (document.getElementById('bgh-banner')) return;
+    var ios = _isIOS();
+    var steps = ios
+      ? 'On your iPhone: Settings → GroundLink → Location = <b>Always</b> and <b>Precise Location ON</b>, plus <b>Background App Refresh ON</b>. Also turn <b>Low Power Mode OFF</b> — it stops background updates completely.'
+      : 'On your phone: Settings → Apps → GroundLink → <b>Battery → Unrestricted</b>. On Samsung also check Settings → Battery → <b>Background usage limits</b> and make sure GroundLink is NOT in "Sleeping apps".';
+    var d = document.createElement('div');
+    d.id = 'bgh-banner';
+    d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(var(--safe-top) + 8px);z-index:1200;background:#3a2a13;border:1px solid var(--accent);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.55);font-size:12.5px;line-height:1.5;color:var(--text)';
+    d.innerHTML =
+      '<div style="font-weight:800;color:var(--accent);margin-bottom:4px">Your phone is pausing GroundLink</div>' +
+      '<div>You were away for ' + mins + ' minutes and your location never updated, so your family saw you frozen in place. ' + steps + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px">' +
+        '<button onclick="try{window._bgOpenAppSettings&&window._bgOpenAppSettings()}catch(e){};var b=document.getElementById(\'bgh-banner\');if(b)b.remove()" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:13px;font-weight:800;cursor:pointer">Open settings</button>' +
+        '<button onclick="try{localStorage.setItem(\'gl_bgh_strikes\',\'0\')}catch(e){};var b=document.getElementById(\'bgh-banner\');if(b)b.remove()" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
+      '</div>';
+    document.body.appendChild(d);
+  } catch (e) {}
+}
 // ── Battery saver (motion-based, with a safety heartbeat) ───────────
 // When you've been still for a while (e.g. a long sit in the stand), we widen the
 // GPS distance filter so the radio samples far less often, and we stop writing on
