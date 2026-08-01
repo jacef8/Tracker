@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 561;
+var APP_BUILD = 562;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3714,7 +3714,13 @@ function _friendStatus(fid) {
     for (var g in snap) {
       if (!g || g.charAt(0) === '_') continue;
       var u = snap[g] && snap[g].users && snap[g].users[fid];
-      if (u && u.conn !== false) return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
+      // Freshness, not socket state. This read `u.conn !== false`, so a friend whose phone had
+      // simply been backgrounded — the normal state on iOS — showed as offline here even while
+      // their position kept updating. Same mistake as the room filter and the ghost sweeper:
+      // a closed socket describes the app, not the person.
+      if (u && (Date.now() - (u.fixTs || u.ts || 0)) < 15 * 60 * 1000) {
+        return { online: true, active: true, inMyRoom: (typeof groupName !== 'undefined') && g === groupName, roomKey: g, name: u.name };
+      }
     }
   }
   // Last resort, specifically for favoriting one of YOUR OWN other devices: gl/_presence is a
@@ -3756,7 +3762,7 @@ function _friendStatus(fid) {
       for (var uid3 in us3) {
         if (uid3 === fid) continue;
         var uu3 = us3[uid3];
-        if (uu3 && uu3.conn !== false && ((uu3.name || '') + '').trim().toLowerCase() === fname) {
+        if (uu3 && (Date.now() - (uu3.fixTs || uu3.ts || 0)) < 15*60*1000 && ((uu3.name || '') + '').trim().toLowerCase() === fname) {
           if (!nameMatches[uid3]) nameMatches[uid3] = { room: g3, name: uu3.name };
         }
       }
@@ -3872,7 +3878,7 @@ window._acctPeopleSearch = function (q) {
           for (var uid4 in us4) {
             if (uid4 === uid) continue;
             var uu4 = us4[uid4];
-            if (uu4 && uu4.conn !== false && ((uu4.name || '') + '').trim().toLowerCase() === fname2) {
+            if (uu4 && (Date.now() - (uu4.fixTs || uu4.ts || 0)) < 15*60*1000 && ((uu4.name || '') + '').trim().toLowerCase() === fname2) {
               if (!nm2[uid4]) nm2[uid4] = { room: g4, name: uu4.name };
             }
           }
@@ -8198,13 +8204,18 @@ function enterMap(name, group, uid) {
           // didn't go stale — they vanished. Observed live: Tyler backgrounded with a
           // 0-second-old fix and NO presence row at all.
           //
-          // So: only remove on a device we are CONFIDENT is a desktop browser. Any phone or
-          // tablet keeps its slot and is merely flagged disconnected; the viewing side
-          // already ages stale rows out, which is a far better failure than disappearing.
-          var _ua = navigator.userAgent || '';
-          var _phone = /iPhone|iPad|iPod|Android|Mobile/i.test(_ua);
-          if (_isNativeApp() || _phone) fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
-          else fb.onDisconnect(_meRef).remove();
+          // NOTHING is deleted on disconnect any more, on any platform. The previous version
+          // kept a "confident desktop" carve-out that still called .remove() — and that test
+          // was `/iPhone|iPad|iPod|Android|Mobile/`, which MISSES THE IPAD: iPadOS 13+ reports
+          // a Macintosh user agent, so every iPad fell through to the delete branch and kept
+          // vanishing exactly as the iPhones did.
+          //
+          // Rather than patch the sniff again, drop the branch. Presence is data with an age
+          // (see _processUsersSnap): a closed desktop tab simply stops updating and ages out
+          // like anything else, which is the same outcome deletion gave us without a
+          // platform guess standing between a person and their dot. conn:false stays as an
+          // informational flag — useful to display, never a reason to hide or erase.
+          fb.onDisconnect(_meRef).update({ conn: false, discTs: fb.serverTimestamp() });
         } catch (_) {}
         // Re-assert presence on (re)connect so a resolved blip doesn't leave conn:false behind.
         try { fb.update(_meRef, { conn: true, discTs: 0 }); } catch (_) {}
@@ -18634,7 +18645,7 @@ window._openVoicePicker = function () {
   if (document.body.classList.contains('voice-off')) return;
   if (!userId || !groupName) { toast('Join a group first.'); return; }
   var users = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
-  var ids = Object.keys(users).filter(function (u) { return u !== userId && users[u] && users[u].name && users[u].conn !== false; });
+  var ids = Object.keys(users).filter(function (u) { return u !== userId && users[u] && users[u].name && (Date.now() - (users[u].fixTs || users[u].ts || 0)) < 15*60*1000; });
   if (!ids.length) { toast('No one else in the room to call'); return; }
   var el = document.getElementById('voice-pick-list');
   el.innerHTML = ids.map(function (u) {
