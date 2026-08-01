@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 567;
+var APP_BUILD = 568;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11900,13 +11900,31 @@ function listenUsers() {
       // Someone else's PRIVATE device: no dot and no row. Half-hiding it (dot gone, row still
       // listing name/battery/coordinates) would leak the very thing the setting exists to hide.
       if (window._isPrivateOther && window._isPrivateOther(uid, data)) return;
-      if (!isMine) {   // you're already on the map — don't list yourself
-        // Your own row is always Crew in a room you BELONG to (circles) — never "a visitor" —
-        // even in the window before the roster self-heal write (above) round-trips. A genuine
-        // visitor's own row stays in Visitors, where the Join button below sits with it.
-        if (_crewRoom) ((window._rosterHas(uid) || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
-        else _rowsPlain.push(row);   // buffered so the person-collapse below applies here too
+      // Your own device used to be left out entirely ("you're already on the map"), which
+      // reads as a bug the moment you own two devices: sitting on the tablet you saw a T pin
+      // on the map, a "Tablet (you)" entry in the merged-pin card, and NO Tablet row in
+      // People — with no way to tap through to your own trail. List yourself too, tagged YOU.
+      // The row template already drops the talk / friend / ⋮ buttons when isMine.
+      if (isMine) {
+        // Never fold your own row into your other device's. The collapse pass groups by
+        // person, and your phone and your tablet are the same person — two rows is exactly
+        // the point here, so give this one a person key nothing else can match.
+        try { row.dataset.person = 'self:' + uid; } catch (e) {}
+        try {
+          var _un = row.querySelector('.uname');
+          if (_un) {
+            var _yc = document.createElement('span');
+            _yc.style.cssText = 'margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.04em;color:#0d1117;background:var(--accent);padding:1px 6px;border-radius:8px;white-space:nowrap;vertical-align:1px';
+            _yc.textContent = 'YOU';
+            _un.appendChild(_yc);
+          }
+        } catch (e) {}
       }
+      // Your own row is always Crew in a room you BELONG to (circles) — never "a visitor" —
+      // even in the window before the roster self-heal write (above) round-trips. A genuine
+      // visitor's own row stays in Visitors, where the Join button below sits with it.
+      if (_crewRoom) ((window._rosterHas(uid) || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
+      else _rowsPlain.push(row);   // buffered so the person-collapse below applies here too
     });
 
     // Crew members without a live/recent presence entry still belong in the list — otherwise
