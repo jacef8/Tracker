@@ -2536,6 +2536,14 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my location</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Turn off to stay in the room &amp; chat, but hide your spot on the map</div></div></div>
       <span id="set-location-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <!-- Private device: keeps sharing (so it still shows on YOUR map and in your own device
+         list) but nobody else sees it, in any room. Sits right under "Share my location"
+         because the two are easily confused: that one stops sharing entirely, this one only
+         stops OTHERS seeing it. -->
+    <div onclick="window._toggleDevicePrivate && window._toggleDevicePrivate()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px">🙈<div><div style="font-size:14px;font-weight:600;color:var(--text)">Hide this device from others</div><div style="font-size:11px;color:var(--muted);margin-top:2px">For a tablet or spare phone. It keeps sharing so YOU can still find it, but it won't show on anyone else's map — in any group.</div></div></div>
+      <span id="set-private-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div onclick="_setToggleSpeed()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-compass"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my speed</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Let the group see your speed while driving (over 25 mph)</div></div></div>
       <span id="set-speed-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2736,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 558;
+var APP_BUILD = 559;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3525,6 +3533,35 @@ window._isMemberHidden = function (uid) { return !!_getMemberHidden()[uid]; };
 // that only exists after a room has been entered is one reordering away from a ReferenceError.
 // The flags it reads are set by enterMap and default false, so it's safe to call any time.
 window._canManageRoom = function () { return !!(window._isRoomOwner || window._isRoomAdmin); };
+// "Private device" — THIS device keeps sharing normally (so it still shows on your own map and
+// in your own device list) but is invisible to everyone else, in every room. Set per-device,
+// which is the whole point: it's a property of the tablet/watch/spare phone, not of a room.
+function _devicePrivate() { try { return localStorage.getItem('gl_device_private') === '1'; } catch (e) { return false; } }
+window._devicePrivate = _devicePrivate;
+window._toggleDevicePrivate = function () {
+  var on = !_devicePrivate();
+  try { localStorage.setItem('gl_device_private', on ? '1' : '0'); } catch (e) {}
+  // Push the flag immediately rather than waiting for the next GPS fix — a device parked on a
+  // charger may not produce one for a long time, and "I turned it on and nothing happened" is
+  // exactly how a privacy control loses trust.
+  try {
+    if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/priv'), on ? 1 : 0);
+  } catch (e) {}
+  try { _syncSettings(); } catch (e) {}
+  try { toast(on ? 'This device is now hidden from everyone else' : 'This device is visible to your groups again', 3000); } catch (e) {}
+  try { window._evt(on ? 'made this device private' : 'made this device visible'); } catch (e) {}
+  return on;
+};
+// Is this someone ELSE's private device? Your own always stays visible to you — the point is
+// to hide it from the family, not from yourself.
+window._isPrivateOther = function (uid, data) {
+  try {
+    if (!data || !data.priv) return false;
+    if (uid === userId) return false;
+    if (window._isMyOwnUid && window._isMyOwnUid(uid)) return false;
+    return true;
+  } catch (e) { return false; }
+};
 // Is this uid one of MY identities — this device, my account, an older re-keyed id of mine,
 // or another device signed into the same account? Used to suppress "ghost me" rows.
 // ── IDENTITY RESOLUTION ────────────────────────────────────────────────────────────────
@@ -5859,6 +5896,7 @@ function _syncSettings() {
     ['join', 'chat', 'pin', 'voice'].forEach(function (t) { _setPill('ntype-' + t + '-pill', _notifPref(t)); });
   } catch (e) {}
   _setPill('set-history-pill', (typeof historyOn !== 'undefined') && !!historyOn);
+  _setPill('set-private-pill', _devicePrivate());
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
@@ -10554,7 +10592,13 @@ function startLocationSharing() {
       fixTs: now,
       trail: true, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       hereSince: window._hereSinceTs,
-      color: window._myColor || ''
+      color: window._myColor || '',
+      // PRIVATE DEVICE: keep reporting normally, but nobody except this account sees the dot.
+      // Distinct from `hidden` (location sharing OFF, which stops reporting entirely and is
+      // therefore useless for "I still want to find my own tablet") and from the room-wide
+      // mapHidden (owner-only, one room at a time). This travels with the device, so it applies
+      // in EVERY room automatically. See _devicePrivate.
+      priv: _devicePrivate() ? 1 : 0
     };
     // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
     // encoding of "this platform doesn't say" (iOS).
@@ -11317,7 +11361,8 @@ function listenUsers() {
       // Hidden by THIS viewer, or hidden room-wide by the owner/an admin. A device still
       // sees its own dot either way (isMine) — hiding the tablet from the family map
       // shouldn't blind the tablet.
-      const _hiddenFromMap = !isMine && ((window._isMemberHidden && window._isMemberHidden(uid)) ||
+      const _hiddenFromMap = !isMine && ((window._isPrivateOther && window._isPrivateOther(uid, data)) ||
+                                         (window._isMemberHidden && window._isMemberHidden(uid)) ||
                                          (window._isHiddenForAll && window._isHiddenForAll(uid)));
       if (_hiddenFromMap && userMarkers[uid]) {
         console.log('[GL-debug] removing marker (hide-from-map toggle is ON for this uid):', uid);
@@ -11672,6 +11717,9 @@ function listenUsers() {
           setTimeout(function() { window._followUser(uid, data.name); }, 1100);
         }
       });
+      // Someone else's PRIVATE device: no dot and no row. Half-hiding it (dot gone, row still
+      // listing name/battery/coordinates) would leak the very thing the setting exists to hide.
+      if (window._isPrivateOther && window._isPrivateOther(uid, data)) return;
       if (!isMine) {   // you're already on the map — don't list yourself
         // Your own row is always Crew in a room you BELONG to (circles) — never "a visitor" —
         // even in the window before the roster self-heal write (above) round-trips. A genuine
@@ -17438,6 +17486,7 @@ function _groupFollowTick(force) {
       if (window._groupFollowExcluded(uid)) return;
       var u = _ru[uid] || {};
       if (!u.name || u.claiming || u.hidden || u.noGps) return;   // same test the renderer uses
+      if (window._isPrivateOther && window._isPrivateOther(uid, u)) return;   // someone else's private device
       // ...and skip anyone whose DOT ISN'T ON THIS MAP: hidden by this viewer, or hidden
       // room-wide by the owner/an admin. The camera was still framing them, so a hidden
       // device (e.g. a tablet parked 2 miles away) silently pushed the people you CAN see
