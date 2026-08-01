@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 555;
+var APP_BUILD = 556;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14338,10 +14338,18 @@ function _buildRadarFrames() {
   for (var i = 0; i < _radarFrames.length; i++) {
     var sid = 'radar-' + i, lid = 'radar-layer-' + i;
     var url = _RADAR_BASE + _radarFrames[i].stamp + '/{z}/{x}/{y}.png';
-    // maxzoom 9: tiles requested up to z9, stretched (overzoomed) beyond — keeps load light on IEM's free server
-    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, maxzoom:9, attribution:'NWS / Iowa Environmental Mesonet' });
+    // maxzoom was 9, which is why the radar looked so blocky: tiles stopped being fetched at
+    // z9 and were then STRETCHED for everything closer, so at neighbourhood zoom (z14-16) a
+    // single tile was being blown up 30-60x. IEM serves this layer well past z9; 12 is the
+    // sharpness/bandwidth balance — 8x the detail of z9 at close zoom, and the tiles are
+    // small PNGs. Beyond z12 it still overzooms, but from a much finer base.
+    map.addSource(sid, { type:'raster', tiles:[url], tileSize:256, maxzoom:12, attribution:'NWS / Iowa Environmental Mesonet' });
     map.addLayer({ id:lid, type:'raster', source:sid,
-      paint:{ 'raster-opacity':0, 'raster-opacity-transition':{duration:0}, 'raster-fade-duration':0 } }, beforeId);
+      // Short crossfade instead of a hard cut. Frames were swapped with a 0ms opacity change,
+      // which reads as a strobe/stutter rather than weather moving; 180ms is long enough to
+      // smooth the step and short enough not to show two frames as a double image.
+      paint:{ 'raster-opacity':0, 'raster-opacity-transition':{duration:180}, 'raster-fade-duration':0,
+              'raster-resampling':'linear' } }, beforeId);
   }
   if (_radarIdx >= _radarFrames.length) _radarIdx = _radarFrames.length - 1;
   _showRadarFrame(_radarIdx);
