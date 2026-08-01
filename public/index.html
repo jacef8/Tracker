@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 554;
+var APP_BUILD = 555;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3131,6 +3131,9 @@ function _layoutMarkerChips() {
 // a deliberate user action, and making dots take 5s to separate after pinching reads as the
 // map being broken.
 function _updateMarkerGrouping(immediate) {
+  // While a cluster is fanned out its markers are deliberately at false positions; regrouping
+  // would immediately re-merge them and undo the fan.
+  if (window._spider) return;
   // Hidden members can never be part of a cluster or its +N badge — belt to the immediate
   // teardown's suspenders, covering any path where a hidden marker still lingers.
   var uids = Object.keys(userMarkers).filter(function (u) {
@@ -3225,6 +3228,63 @@ function _updateMarkerGrouping(immediate) {
   // members), so this runs last.
   _layoutMarkerChips();
 }
+// ── SPIDERFY: fan a merged cluster out so every member is individually visible/tappable ──
+// The merged oval answers "who's together" but hides "which one is which" — you can't tap
+// an individual, and at low zoom a cluster can hide half the group. Tapping a cluster now
+// fans its members onto a ring with leader lines back to the true position (the Life360
+// callout pattern). The real markers are moved, not copied, so taps, colours, chips and the
+// member sheet all keep working untouched; collapsing restores their true coordinates.
+window._spider = null;
+function _spiderRadius(n) { return Math.min(120, 46 + n * 13); }
+window._collapseSpider = function () {
+  var s = window._spider; if (!s) return;
+  window._spider = null;
+  try { if (map.getLayer('gl-spider-lines')) map.removeLayer('gl-spider-lines'); } catch (e) {}
+  try { if (map.getSource('gl-spider')) map.removeSource('gl-spider'); } catch (e) {}
+  s.members.forEach(function (u) {
+    var mk = userMarkers[u]; if (!mk) return;
+    try {
+      if (mk._trueLL) { mk.setLngLat(mk._trueLL); mk._ll = mk._trueLL; mk._trueLL = null; }
+      var el = mk._el || mk.getElement(); if (el) el.style.display = '';
+    } catch (e) {}
+  });
+  try { _updateMarkerGrouping(true); } catch (e) {}
+};
+window._spiderfy = function (primary, members) {
+  if (!members || members.length < 2) return false;
+  window._collapseSpider();
+  var anchorMk = userMarkers[primary]; if (!anchorMk || !anchorMk._ll) return false;
+  var anchor = anchorMk._ll.slice();
+  var n = members.length, R = _spiderRadius(n);
+  var feats = [];
+  members.forEach(function (u, i) {
+    var mk = userMarkers[u]; if (!mk) return;
+    var el = mk._el || mk.getElement(); if (!el) return;
+    if (!mk._trueLL) mk._trueLL = (mk._ll || anchor).slice();
+    // Even ring, starting at 12 o'clock so the layout is predictable rather than arbitrary.
+    var ang = (Math.PI * 2 * i / n) - Math.PI / 2;
+    var p = map.project(anchor);
+    var out = map.unproject([p.x + Math.cos(ang) * R, p.y + Math.sin(ang) * R]);
+    try {
+      _applyMarkerSolo(mk);                       // undo the merged-oval styling
+      mk.setLngLat([out.lng, out.lat]);
+      el.style.display = 'flex';
+      el.style.zIndex = '5';
+    } catch (e) {}
+    feats.push({ type: 'Feature', geometry: { type: 'LineString',
+      coordinates: [[mk._trueLL[0], mk._trueLL[1]], [out.lng, out.lat]] } });
+  });
+  try {
+    map.addSource('gl-spider', { type: 'geojson', data: { type: 'FeatureCollection', features: feats } });
+    map.addLayer({ id: 'gl-spider-lines', type: 'line', source: 'gl-spider',
+      paint: { 'line-color': '#ffffff', 'line-width': 1.6, 'line-opacity': 0.75, 'line-dasharray': [2, 1.5] } },
+      // Under the markers (they're DOM), but above the map fill.
+      map.getLayer('pins-layer') ? 'pins-layer' : undefined);
+  } catch (e) {}
+  window._spider = { primary: primary, members: members.slice(), anchor: anchor };
+  try { toast('Tap the map to close', 1800); } catch (e) {}
+  return true;
+};
 window._showGroupedMemberSheet = function (uids) {
   window._openMemberUid = null;
   var sheet = document.getElementById('member-sheet');
@@ -3491,6 +3551,27 @@ window._personId = function (uid) {
     if (me && (uid === me || (window._mySessions && window._mySessions[uid]))) return me;
   } catch (e) {}
   return uid;
+};
+// The id THIS device should write into a Crew roster. Membership belongs to the PERSON, not
+// the handset: keying it by device is why adding a phone to a Crew left the same person's
+// tablet outside it, and why every re-key minted a fresh "member" who was really the same
+// human. Presence (gl/<room>/users) deliberately stays DEVICE-keyed — you want to see the
+// phone and the tablet as separate dots — but roster membership is per-person.
+window._myRosterId = function () {
+  try { var a = (typeof _myAcct === 'function') ? _myAcct() : ''; if (a) return a; } catch (e) {}
+  return userId;
+};
+// Roster membership test that understands identities: matches the raw id, or any id that
+// resolves to the same person.
+window._rosterHas = function (uid) {
+  var r = window._roomMembersRoster; if (!r || !uid) return false;
+  if (r[uid]) return true;
+  try {
+    var pid = window._personId(uid);
+    if (pid !== uid && r[pid]) return true;
+    return Object.keys(r).some(function (k) { return window._personId(k) === pid; });
+  } catch (e) {}
+  return false;
 };
 window._isMyOwnUid = function (uid) {
   if (!uid) return false;
@@ -5282,7 +5363,7 @@ function _resolveNameForUid(uid) {
   try { if (typeof _myAcct === 'function' && uid === _myAcct()) return 'You'; } catch (e) {}
   try { if (window._dirAll && window._dirAll[uid] && window._dirAll[uid].name) return window._dirAll[uid].name; } catch (e) {}
   try { if (typeof knownUsers !== 'undefined' && knownUsers[uid]) return knownUsers[uid]; } catch (e) {}
-  try { if (window._roomMembersRoster && window._roomMembersRoster[uid] && window._roomMembersRoster[uid].name) return window._roomMembersRoster[uid].name; } catch (e) {}
+  try { if (window._rosterHas(uid) && window._roomMembersRoster[uid].name) return window._roomMembersRoster[uid].name; } catch (e) {}
   return 'A former member';
 }
 // ── Room info (tap the room name) ─────────────────────────────────
@@ -5629,7 +5710,7 @@ window._joinCrewNow = function (_k, _lbl) {
   if (!_k || !db) return;
   _lbl = _lbl || (typeof _prettyGroup === 'function' ? _prettyGroup(_k) : _k);
   _confirm('Join "' + _lbl + '" as a Crew member?\n\nYou\'ll always show up here for each other — no matter what other room you\'re in, or if the app\'s in the background. Right now you only appear while you\'re actually in this room.', function () {
-    try { fbSet(fbRef(db, 'gl/' + _k + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+    try { fbSet(fbRef(db, 'gl/' + _k + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
     // Deliberate rejoin — clear both "don't auto-add" markers, or the next snapshot would
     // find them and this join would look like it silently failed. This manual path is the
     // ONLY thing that clears them; that's what keeps Leave and owner-removal permanent.
@@ -5680,7 +5761,7 @@ window._riToggleCircle = function () {
       // per the no-owner-gate design, and this lock is an inherent safety consequence of that
       // action, not a separate visibility decision someone else should be able to block.
       fbSet(fbRef(db, 'gl/' + groupName + '/config/visibility'), 'private');
-      fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+      fbSet(fbRef(db, 'gl/' + groupName + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId });
       var circles = _getCircles(); circles[groupName] = label; _setCircles(circles);
       try { _registerFavSub(groupName, label, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
       window._roomVisibility = 'private';
@@ -6539,12 +6620,26 @@ setTimeout(function () {
     var nm = (typeof userName !== 'undefined' && userName)
       || (function () { try { return (getSavedSession() || {}).name || ''; } catch (e) { return ''; } })() || 'Member';
     var circles = _getCircles();
+    var rid = window._myRosterId();
     Object.keys(circles || {}).forEach(function (key) {
-      window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + uid)).then(function (s) {
-        if (s && s.val()) return;
-        return window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/config/removed/' + uid)).then(function (r) {
+      window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + rid)).then(function (s) {
+        // MIGRATION: this account is on the roster under a DEVICE id from before membership
+        // was person-keyed. Write the account entry, then retire the device one — otherwise
+        // every handset this person has ever signed in on lingers as its own "member"
+        // forever, which is what produced duplicate and ghost members.
+        var migrate = function () {
+          if (rid === uid) return;
+          try {
+            window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + uid)).then(function (old) {
+              if (old && old.val()) fbRemove(fbRef(db, 'gl/' + key + '/members/' + uid));
+            }).catch(function () {});
+          } catch (e) {}
+        };
+        if (s && s.val()) { migrate(); return; }
+        return window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/config/removed/' + rid)).then(function (r) {
           if (r && r.val()) return;
-          fbSet(fbRef(db, 'gl/' + key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: uid });
+          fbSet(fbRef(db, 'gl/' + key + '/members/' + rid), { name: nm, addedAt: Date.now(), addedBy: rid });
+          migrate();
         });
       }).catch(function () {});
     });
@@ -6601,7 +6696,7 @@ window._promptJoinCrew = function (key, label) {
   } catch (e) {}
   try { localStorage.setItem(autoKey, String(Date.now())); } catch (e) {}
   try {
-    fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+    fbSet(fbRef(db, 'gl/' + key + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId });
     var _c = _getCircles(); _c[key] = label || key; _setCircles(_c);
     try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
     try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
@@ -6664,7 +6759,7 @@ window._declineCrewDisclaimer = function () {
   try { document.getElementById('crew-disclaimer-modal').style.display = 'none'; } catch (e) {}
   window._crewDisclaimerFor = null;
   if (!key) return;
-  try { if (db && userId) fbRemove(fbRef(db, 'gl/' + key + '/members/' + userId)); } catch (e) {}
+  try { if (db && userId) fbRemove(fbRef(db, 'gl/' + key + '/members/' + window._myRosterId())); } catch (e) {}
   try { var c = _getCircles(); delete c[key]; _setCircles(c); } catch (e) {}
   try { if (typeof _isFav !== 'function' || !_isFav(key)) _unregisterFavSub(key); } catch (e) {}
   try { window._renderCircleSwitcher && window._renderCircleSwitcher(); } catch (e) {}
@@ -6686,7 +6781,7 @@ window._promptJoinCrewManual = function (key, label) {
     _confirm(
       'This is a Crew — accept to always show up here for each other, no matter what other room you\'re in or if the app\'s in the background, even after you leave this room.',
       function () {
-        try { fbSet(fbRef(db, 'gl/' + key + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
+        try { fbSet(fbRef(db, 'gl/' + key + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
         var circles = _getCircles(); circles[key] = label || key; _setCircles(circles);
         try { if (window._gpsWatchId == null) beginLocation(); } catch (e) {}
         try { window._renderCircleSwitcher(); } catch (e) {}
@@ -6709,7 +6804,7 @@ window._promptJoinCrewManual = function (key, label) {
   // continuous background location sharing has to be their own call on their own device.
   if (!userId) { _ask(false); return; }
   try {
-    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + userId))
+    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + key + '/members/' + window._myRosterId()))
       .then(function (s) { _ask(!!(s && s.exists())); })
       .catch(function () { _ask(false); });
   } catch (e) { _ask(false); }
@@ -6854,7 +6949,7 @@ window._switchToRoom = function (key, name) {
 window._leaveCircle = function (key, name) {
   _confirm('Leave "' + name + '"? You\'ll stop showing up for each other until someone invites you back.', function () {
     var fb = window._fb;
-    try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gl/' + key + '/members/' + userId)); } catch (e) {}
+    try { if (fb && userId) fb.remove(fb.ref(fb.db, 'gl/' + key + '/members/' + window._myRosterId())); } catch (e) {}
     // Make leaving stick. Joining a Crew is automatic on entering its room, so without this
     // marker the next config/circle snapshot would put you straight back in — Leave would be a
     // button that undid itself. Set here as well as at auto-join, to cover someone who joined
@@ -7826,7 +7921,7 @@ function enterMap(name, group, uid) {
       try {
         fbSet(fbRef(db, 'gl/' + groupName + '/config/persistent'), true);
         fbSet(fbRef(db, 'gl/' + groupName + '/config/circle'), true);
-        fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+        fbSet(fbRef(db, 'gl/' + groupName + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId });
         var _circles = _getCircles(); _circles[groupName] = group; _setCircles(_circles);
       } catch (_) {}
       window._pendingCircle = null;
@@ -10965,7 +11060,7 @@ function _listenRoomMembersRoster() {
         if (userId && !window._roomMembersRoster[userId] && _isCircleMember(groupName)) {
           var _rm = (window._roomCfg && window._roomCfg.removed)
                  || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.removed) || {};
-          if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + userId), { name: userName, addedAt: Date.now(), addedBy: userId });
+          if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId });
         }
       } catch (e) {}
     });
@@ -11264,7 +11359,14 @@ function listenUsers() {
         el.addEventListener('click', function() {
           if (window._pauseFollow) window._pauseFollow(9000);
           var _grpMembers = window._markerGroupMembers && window._markerGroupMembers[uid];
-          if (_grpMembers && _grpMembers.length > 1) { window._showGroupedMemberSheet(_grpMembers); return; }
+          if (_grpMembers && _grpMembers.length > 1) {
+            // Fan the cluster out so each person is separately visible and tappable, and
+            // ALSO open the list — the fan answers "which dot is who", the sheet answers
+            // "what are they doing". Falls back to the sheet alone if fanning can't run.
+            try { window._spiderfy(uid, _grpMembers); } catch (e) {}
+            window._showGroupedMemberSheet(_grpMembers);
+            return;
+          }
           if (isMine) { window._followUser(userId, 'you'); return; }
           window._showMemberSheet(uid);
         });
@@ -11373,7 +11475,7 @@ function listenUsers() {
           // info column ran out of lines the bottom-left quarter of the card was dead space.
           '<div style="min-width:0;margin-top:2px">' +
             '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(_withDev(data)) +
-              (!isMine && window._roomMembersRoster && window._roomMembersRoster[uid] ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+              (!isMine && window._rosterHas(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
               (window._isAdminUid && window._isAdminUid(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#f0a500;background:rgba(240,165,0,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">ADMIN</span>' : '') +
             '</div>' +
             (_hereLine ? '<div style="font-size:12px;color:#58a6ff;font-weight:700;margin-top:3px">' + _hereLine + '</div>' : '') +
@@ -11427,7 +11529,7 @@ function listenUsers() {
             // anyone with the room link can show up live without ever being added to the
             // permanent roster (window._roomMembersRoster, Crew rooms only). Nothing shown for
             // regular rooms, where there's no membership concept to display.
-            (!isMine && window._roomMembersRoster && window._roomMembersRoster[uid] ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap">MEMBER</span>' : '') +
+            (!isMine && window._rosterHas(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap">MEMBER</span>' : '') +
           '</div>' +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;flex-shrink:0;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>' +
@@ -11500,7 +11602,7 @@ function listenUsers() {
         // Your own row is always Crew in a room you BELONG to (circles) — never "a visitor" —
         // even in the window before the roster self-heal write (above) round-trips. A genuine
         // visitor's own row stays in Visitors, where the Join button below sits with it.
-        if (_crewRoom) ((window._roomMembersRoster[uid] || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
+        if (_crewRoom) ((window._rosterHas(uid) || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
         else _rowsPlain.push(row);   // buffered so the person-collapse below applies here too
       }
     });
@@ -13100,7 +13202,7 @@ window._openRemoveFlow = function () {
   // The Crew option only makes sense when this room IS a Crew and they're actually on its
   // roster — resolved against the live server roster, not local guesses.
   var co = document.getElementById('rf-opt-crew');
-  if (co) co.style.display = (typeof _isCircleMember === 'function' && _isCircleMember(groupName) && window._roomMembersRoster && window._roomMembersRoster[uid]) ? 'block' : 'none';
+  if (co) co.style.display = (typeof _isCircleMember === 'function' && _isCircleMember(groupName) && window._rosterHas(uid)) ? 'block' : 'none';
   document.getElementById('rf-step1').style.display = 'block';
   document.getElementById('rf-step2').style.display = 'none';
   document.getElementById('remove-flow-modal').style.display = 'flex';
@@ -13138,7 +13240,17 @@ window._rfConfirm = function () {
   try {
     if (kind === 'block') fbSet(fbRef(db, 'gl/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
     if (kind === 'crew') {
+      // Clear BOTH id forms. Membership may be recorded under their account (new) or a
+      // device id (pre-migration), and removing only the one the list happened to show
+      // would leave them a member under the other.
       fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + uid));
+      try {
+        var _pidX = window._personId(uid);
+        if (_pidX && _pidX !== uid) {
+          fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + _pidX));
+          fbSet(fbRef(db, 'gl/' + groupName + '/config/removed/' + _pidX), Date.now());
+        }
+      } catch (e) {}
       // Make the removal stick. Joining is automatic on entering the room, and the "only once"
       // guard that protects Leave lives in the OTHER person's localStorage — which this device
       // cannot write. Without a server-side marker their app would simply re-add them on its
@@ -16464,6 +16576,17 @@ function _renderSavedOnMap() {
       // Screen-space marker collision depends on zoom, so regroup as it changes (immediate —
       // no GPS debounce; see _updateMarkerGrouping).
       map.on('zoomend', function () { try { _updateMarkerGrouping(true); } catch (e) {} });
+      // A fanned-out cluster is a transient state: any zoom, or a tap on empty map, ends it.
+      map.on('zoomstart', function () { try { window._collapseSpider(); } catch (e) {} });
+      map.on('click', function (ev) {
+        if (!window._spider) return;
+        try {
+          // Ignore taps that landed on a marker (those bubble from the DOM elements).
+          if (ev && ev.originalEvent && ev.originalEvent.target &&
+              ev.originalEvent.target.closest && ev.originalEvent.target.closest('.mapboxgl-marker')) return;
+        } catch (e) {}
+        window._collapseSpider();
+      });
       _updateZoomInd();
     } catch (e) {}
   }
