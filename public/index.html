@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 560;
+var APP_BUILD = 561;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11281,6 +11281,46 @@ function listenUsers() {
             : (now - (d.ts || 0)) < (((d.lat || d.lng) || d.rest) ? BS_REST_MAX_MS : STALE_MS))
       )
     );
+    // ── DROP RE-KEY GHOSTS ────────────────────────────────────────────────────────────
+    // Signing in re-keys a device, so the SAME physical phone can hold two presence rows under
+    // two ids — one live, one frozen at the moment of the switch. On the map that draws the
+    // person twice (seen with Noah after he moved to his new Google account, and with Renner).
+    // The People list already collapses these by person; markers were still per-device.
+    //
+    // Rule: two rows are the same handset when they resolve to the same PERSON, or failing
+    // that carry the same name AND the same device label — the fallback matters because a
+    // re-key across two different accounts gives the two ids different owners, so identity
+    // resolution alone can't join them. Only the freshest survives, and only when the other is
+    // clearly stale (10min+ older), so a genuine second device is never hidden: a phone and a
+    // tablet have different labels, and two live phones stay within the window of each other.
+    (function () {
+      try {
+        var STALE_TWIN_MS = 10 * 60 * 1000;
+        var best = {};
+        Object.entries(users).forEach(function (e) {
+          var uid = e[0], d = e[1];
+          var pid = (window._personId ? window._personId(uid) : uid);
+          var key = (pid && pid !== uid) ? ('p:' + pid + '|' + (d.dev || '')) : ('n:' + (d.name || '') + '|' + (d.dev || ''));
+          var ts = d.fixTs || d.ts || 0;
+          if (!best[key] || ts > best[key].ts) best[key] = { uid: uid, ts: ts };
+        });
+        Object.entries(users).forEach(function (e) {
+          var uid = e[0], d = e[1];
+          var pid = (window._personId ? window._personId(uid) : uid);
+          var key = (pid && pid !== uid) ? ('p:' + pid + '|' + (d.dev || '')) : ('n:' + (d.name || '') + '|' + (d.dev || ''));
+          var win = best[key];
+          if (!win || win.uid === uid) return;
+          if (win.ts - (d.fixTs || d.ts || 0) < STALE_TWIN_MS) return;   // both current — real devices
+          delete users[uid];
+          try {
+            if (userMarkers[uid]) {
+              userMarkers[uid].remove(); delete userMarkers[uid];
+              if (window._prevGroupOf) delete window._prevGroupOf[uid];
+            }
+          } catch (e2) {}
+        });
+      } catch (e) {}
+    })();
     var _autoColors = _assignDistinctAutoColors(users, userId, window._myColor);
 
     // Auto-remove ghosts. A truly disconnected client (conn:false) clears within the grace;
