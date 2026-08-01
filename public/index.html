@@ -2544,6 +2544,14 @@
       <div style="display:flex;align-items:center;gap:10px">🙈<div><div style="font-size:14px;font-weight:600;color:var(--text)">Hide this device from others</div><div style="font-size:11px;color:var(--muted);margin-top:2px">For a tablet or spare phone. It keeps sharing so YOU can still find it, but it won't show on anyone else's map — in any group.</div></div></div>
       <span id="set-private-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
+    <!-- Name THIS DEVICE, as opposed to naming yourself. Without this the only way to tell a
+         phone from a tablet in the list was to rename yourself on one of them — and since the
+         permanent roster is keyed per PERSON, not per device, doing that renamed you for the
+         whole Crew. (Observed 2026-08-01: Our Crew's roster listed the owner as "Tablet".) -->
+    <div onclick="window._editDeviceName && window._editDeviceName()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px">🏷️<div><div style="font-size:14px;font-weight:600;color:var(--text)">Name this device</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Shown after your name as &ldquo;You &middot; tablet&rdquo;, so your phone and tablet are tellable apart. This names the DEVICE — your own name stays the same everywhere.</div></div></div>
+      <span id="set-devname-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis">phone</span>
+    </div>
     <div onclick="_setToggleSpeed()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-compass"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Share my speed</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Let the group see your speed while driving (over 25 mph)</div></div></div>
       <span id="set-speed-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -2744,7 +2752,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 571;
+var APP_BUILD = 572;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4727,6 +4735,55 @@ window._confirm = function (msg, onYes, opts) {
   var n = ov.querySelector('#glc-no'); if (n) n.addEventListener('click', close);
   if (hasMid) { var md = ov.querySelector('#glc-mid'); if (md) md.addEventListener('click', function () { close(); try { opts.onMid(); } catch (e) {} }); }
 };
+// Rename THIS DEVICE (gl_devlabel), which is what renders after your name as "Jace · tablet".
+// Deliberately distinct from renaming yourself: the permanent roster is keyed per PERSON, so
+// changing your display name on a second device rewrites your name for the entire Crew — how
+// Our Crew's roster ended up listing its owner as "Tablet" on 2026-08-01. Presence is
+// device-keyed, so this label rides along per device exactly as it should.
+window._editDeviceName = function () {
+  var cur = (typeof _deviceLabel === 'function' ? _deviceLabel() : '') || 'phone';
+  var ov = document.getElementById('gl-devname-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'gl-devname-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:6200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:22px';
+  function close() { try { ov.remove(); } catch (e) {} }
+  ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+  ov.innerHTML = '<div style="width:100%;max-width:340px;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:18px">' +
+    '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px">Name this device</div>' +
+    '<div style="font-size:13px;color:var(--muted);line-height:1.45;margin-bottom:12px">Appears after your name — &ldquo;' + _escHtml(userName || 'You') + ' &middot; <span id="dn-preview">' + _escHtml(cur) + '</span>&rdquo;. Your own name is unchanged.</div>' +
+    '<input id="dn-input" maxlength="18" autocomplete="off" style="width:100%;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:15px;outline:none;-webkit-appearance:none;margin-bottom:10px" />' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">' +
+      ['phone', 'tablet', 'watch', 'PC'].map(function (p) {
+        return '<button class="dn-preset" data-v="' + p + '" style="padding:6px 11px;background:var(--bg);border:1px solid var(--border);border-radius:20px;color:var(--text);font-size:12px;font-weight:700;cursor:pointer">' + p + '</button>';
+      }).join('') +
+    '</div>' +
+    '<div style="display:flex;gap:8px"><button id="dn-no" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer">Cancel</button>' +
+    '<button id="dn-yes" style="flex:1;padding:11px;background:#2e6be6;border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">Save</button></div></div>';
+  document.body.appendChild(ov);
+  var inp = ov.querySelector('#dn-input'); if (inp) { inp.value = cur; setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 40); }
+  var pv = ov.querySelector('#dn-preview');
+  if (inp && pv) inp.addEventListener('input', function () { pv.textContent = (this.value || '').trim() || 'phone'; });
+  Array.prototype.forEach.call(ov.querySelectorAll('.dn-preset'), function (b) {
+    b.addEventListener('click', function () { if (inp) { inp.value = b.getAttribute('data-v'); if (pv) pv.textContent = inp.value; inp.focus(); } });
+  });
+  function save() {
+    var v = ((inp && inp.value) || '').trim().replace(/\s+/g, ' ').slice(0, 18);
+    if (!v) { close(); return; }
+    try { localStorage.setItem('gl_devlabel', v); } catch (e) {}
+    close();
+    // Write the label straight to this device's presence record rather than waiting on the
+    // next GPS fix — same reasoning as the private-device toggle: a tablet parked on a charger
+    // may not produce a fix for a long time, and a rename that appears to do nothing reads as
+    // broken. The next fix carries it anyway via _fixPayload's dev field.
+    try {
+      if (db && groupName && userId) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/dev'), v);
+    } catch (e) {}
+    try { if (typeof _syncSettings === 'function') _syncSettings(); } catch (e) {}
+    try { toast('This device is now "' + v + '"', 2600); } catch (e) {}
+  }
+  var y = ov.querySelector('#dn-yes'); if (y) y.addEventListener('click', save);
+  var n = ov.querySelector('#dn-no'); if (n) n.addEventListener('click', close);
+  if (inp) inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); });
+};
 function _renderMyPeople() { _renderFriends(); }   // back-compat alias for existing callers
 window._removeFriend = function (fid) {
   var m = _getFriends(); var nm = m[fid];
@@ -5094,7 +5151,13 @@ function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
 // default, so badging them would put a mark on nearly every dot on the map.
 function _devLetter(dev) {
   var d = String(dev || '').toLowerCase();
-  return d === 'tablet' ? 'T' : (d === 'pc' || d === 'desktop' || d === 'computer') ? 'PC' : (d === 'watch') ? '⌚' : '';
+  // Substring, not equality: the label is user-editable ("Name this device"), so "Shop tablet"
+  // or "Kitchen iPad" has to badge the same as the bare "tablet" default. Phones stay unbadged
+  // — they're the norm, and marking them would put a chip on nearly every dot on the map.
+  if (/tablet|ipad/.test(d)) return 'T';
+  if (/watch/.test(d)) return '⌚';
+  if (/\bpc\b|desktop|computer|laptop|mac/.test(d)) return 'PC';
+  return '';
 }
 // Progressively more specific labels for one name. Jace/Jared/Justin all start at "J", and
 // "Jace Ford"/"Justin Ford" both start at "JF", so we need rungs to climb: add the last-name
@@ -5970,6 +6033,10 @@ function _syncSettings() {
   } catch (e) {}
   _setPill('set-history-pill', (typeof historyOn !== 'undefined') && !!historyOn);
   _setPill('set-private-pill', _devicePrivate());
+  try {
+    var _dnp = document.getElementById('set-devname-pill');
+    if (_dnp) { _dnp.textContent = _deviceLabel() || 'phone'; _dnp.title = 'This device is shown as "' + (_deviceLabel() || 'phone') + '"'; }
+  } catch (e) {}
   _setPill('set-speed-pill', _shareSpeed());
   _setPill('set-announce-pill', _announceJoinOn());
   _setPill('set-battsaver-pill', window._batterySaver !== false);
