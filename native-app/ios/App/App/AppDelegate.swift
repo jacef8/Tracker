@@ -184,6 +184,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 UserDefaults.standard.set(json, forKey: "gl_native_places")
                 self.syncMonitoredRegions()
             }
+            // Identity + fan-out targets, so background fixes can be written natively without
+            // booting a WebView at all (see writeFixNatively).
+            wv.evaluateJavaScript("window.__nativeWriteConfig ? window.__nativeWriteConfig() : ''") { result, _ in
+                guard let json = result as? String, !json.isEmpty else { return }
+                UserDefaults.standard.set(json, forKey: "gl_native_write_cfg")
+            }
         }
     }
 
@@ -240,12 +246,121 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // go silently missing again — exactly what was reported on-device. Now the WebView is created
     // ONCE and reused for the lifetime of the process; every fix after the first is just a
     // evaluateJavaScript call against an already-warm page, no reload, no re-init.
+    // MARK: - Native direct write (no WebView)
+
+    // A background fix used to require: boot a hidden WKWebView, load headless.html over the
+    // network, import an ES module, initialise the Firebase SDK, then run JS. Every one of those
+    // steps can fail or simply run out of time inside the background execution budget iOS hands
+    // out — and when it does, the fix is silently lost. That chain is the last place the WebView
+    // sits between a location and the database.
+    //
+    // This writes the fix with a single URLSession request to Firebase's REST API instead. No
+    // page, no runtime, no SDK. It runs FIRST on every background fix; the WebView path stays as
+    // the fallback for the cases native can't cover yet (no cached config — e.g. a relaunch
+    // before the web app has ever run on this install).
+    private var cachedAuthToken: String?
+    private var cachedAuthExpiry: Date = .distantPast
+
+    private func nativeWriteConfig() -> [String: Any]? {
+        guard let s = UserDefaults.standard.string(forKey: "gl_native_write_cfg"),
+              let d = s.data(using: .utf8),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let rooms = o["rooms"] as? [String], !rooms.isEmpty
+        else { return nil }
+        return o
+    }
+
+    // Firebase rules require auth != null — nothing stronger — so an anonymous token is enough.
+    // Minted natively and cached; refreshed a few minutes before the hour-long expiry so a fix
+    // never fails on a token that went stale mid-flight.
+    private func withAuthToken(apiKey: String, _ done: @escaping (String?) -> Void) {
+        if let t = cachedAuthToken, cachedAuthExpiry > Date().addingTimeInterval(300) { done(t); return }
+        guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=\(apiKey)") else { done(nil); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = "{\"returnSecureToken\":true}".data(using: .utf8)
+        req.timeoutInterval = 15
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data,
+                  let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tok = o["idToken"] as? String else { done(nil); return }
+            self?.cachedAuthToken = tok
+            self?.cachedAuthExpiry = Date().addingTimeInterval(3600)
+            done(tok)
+        }.resume()
+    }
+
+    // Returns true if it handled the write, false to fall through to the WebView path.
+    private func writeFixNatively(_ loc: CLLocation) -> Bool {
+        guard let cfg = nativeWriteConfig(),
+              let dbUrl = cfg["dbUrl"] as? String,
+              let apiKey = cfg["apiKey"] as? String,
+              let uid = cfg["uid"] as? String,
+              let name = cfg["name"] as? String,
+              let rooms = cfg["rooms"] as? [String]
+        else { return false }
+
+        let ts = Int(Date().timeIntervalSince1970 * 1000)
+        var body: [String: Any] = [
+            "lat": loc.coordinate.latitude,
+            "lng": loc.coordinate.longitude,
+            "accuracy": Int((loc.horizontalAccuracy * 3.28084).rounded()),
+            "name": name,
+            "dev": (cfg["dev"] as? String) ?? "phone",
+            "ts": ts,
+            // fixTs marks a position confirmed by a REAL fix — the web layer uses it to tell
+            // "app alive" from "position current". This is always a genuine CLLocation.
+            "fixTs": ts,
+            "trail": true,
+            "priv": (cfg["priv"] as? Int) ?? 0,
+            "spdH": (cfg["spdH"] as? Int) ?? 0
+        ]
+        if loc.speed >= 0 { body["spd"] = Int((loc.speed * 2.23694).rounded()) }
+        let lvl = UIDevice.current.batteryLevel
+        if lvl >= 0 {
+            body["batt"] = Int((lvl * 100).rounded())
+            let st = UIDevice.current.batteryState
+            body["chg"] = (st == .charging || st == .full) ? 1 : 0
+        }
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return false }
+
+        withAuthToken(apiKey: apiKey) { [weak self] token in
+            guard let token = token else {
+                // Couldn't authenticate — let the WebView path try instead of dropping the fix.
+                DispatchQueue.main.async { self?.reportFixViaWebView(loc) }
+                return
+            }
+            let group = DispatchGroup()
+            for room in rooms {
+                // PATCH, not PUT: merge into the existing row so fields this native path doesn't
+                // know about (colour, hereSince, conn) survive. A PUT would wipe them.
+                guard let u = URL(string: "\(dbUrl)/gl/\(room)/users/\(uid).json?auth=\(token)") else { continue }
+                var r = URLRequest(url: u)
+                r.httpMethod = "PATCH"
+                r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                r.httpBody = payload
+                r.timeoutInterval = 20
+                group.enter()
+                URLSession.shared.dataTask(with: r) { _, _, _ in group.leave() }.resume()
+            }
+            group.notify(queue: .main) { self?.endBackgroundTaskIfNeeded() }
+        }
+        return true
+    }
+
     private func reportFixInBackground(_ loc: CLLocation) {
-        pendingFix = loc
         lastReportedAt = Date()
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
             self?.endBackgroundTaskIfNeeded()
         }
+        // Native REST first — no page load, no SDK, nothing to time out.
+        if writeFixNatively(loc) { return }
+        reportFixViaWebView(loc)
+    }
+
+    private func reportFixViaWebView(_ loc: CLLocation) {
+        pendingFix = loc
         if let wv = headlessWebView, headlessPageReady {
             sendPendingFix(to: wv)
             return

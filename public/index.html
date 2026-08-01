@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 562;
+var APP_BUILD = 563;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6102,6 +6102,41 @@ setTimeout(function () {
   } catch (e) {}
 }, 9000);
 
+// Everything the NATIVE side needs to write a position by itself — no WebView, no page load,
+// no Firebase SDK. iOS already sources fixes natively (CLLocationManager in AppDelegate), but
+// delivering them still meant booting a hidden WKWebView and letting JS do the write: a page
+// load, an ES module import and an SDK init, all inside a background execution budget iOS can
+// revoke at any moment. Anything that fails in that chain is a lost fix.
+//
+// With this, native can PATCH the REST endpoint directly. The API key is the public web key
+// (already in this page's Firebase config and visible to anyone) — native uses it to mint its
+// own anonymous auth token, which is all the DB rules require (auth != null).
+//
+// Returns the fan-out target list, not just the current room: the whole point is that writes
+// keep flowing to Favourites/Crews when no room is even open.
+window.__nativeWriteConfig = function () {
+  try {
+    var rooms = {};
+    try { (_getFavs() || []).forEach(function (k) { if (k) rooms[k] = 1; }); } catch (e) {}
+    try { var c = _getCircles() || {}; Object.keys(c).forEach(function (k) { rooms[k] = 1; }); } catch (e) {}
+    try { var j = _getJoinedRooms() || {}; Object.keys(j).forEach(function (k) { rooms[k] = 1; }); } catch (e) {}
+    try { if (typeof groupName !== 'undefined' && groupName) rooms[groupName] = 1; } catch (e) {}
+    var uid = '', nm = '';
+    try { uid = (typeof userId !== 'undefined' && userId) || localStorage.getItem('gl_uid') || ''; } catch (e) {}
+    try { nm = (typeof userName !== 'undefined' && userName) || localStorage.getItem('gl_name') || ''; } catch (e) {}
+    if (!uid || !nm) return '';                       // nothing safe to write yet
+    return JSON.stringify({
+      dbUrl: 'https://tracker-58b87-default-rtdb.firebaseio.com',
+      apiKey: 'AIzaSyCD_6FEd8wJQszvE1DVAZtko1smZVlhCpk',
+      uid: uid,
+      name: nm,
+      dev: (typeof _deviceLabel === 'function') ? _deviceLabel() : 'phone',
+      priv: (typeof _devicePrivate === 'function' && _devicePrivate()) ? 1 : 0,
+      spdH: (typeof _shareSpeed === 'function' && !_shareSpeed()) ? 1 : 0,
+      rooms: Object.keys(rooms)
+    });
+  } catch (e) { return ''; }
+};
 window.__nativeSync = function () {
   try {
     var out = [];
