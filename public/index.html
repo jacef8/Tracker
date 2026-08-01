@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 566;
+var APP_BUILD = 567;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11884,7 +11884,13 @@ function listenUsers() {
           toast((isMine ? 'You have' : data.name + ' has') + ' no GPS location' + (isMine ? ' on this device' : ' (PC/desktop)'));
           return;
         }
-        if (isMine) {
+        // Tapping a row used to just fly the camera there and follow, which left you looking
+        // at a dot with no way into the detail. Open the same info card tapping the dot gives
+        // you — name, accuracy, coordinates, Trail — since that's what people are after when
+        // they tap a person. _showMemberSheet does its own fly-to and follow.
+        if (userMarkers[uid]) {
+          window._showMemberSheet(uid);
+        } else if (isMine) {
           window._followUser(userId, 'you');
         } else {
           map.flyTo({ center: [data.lng, data.lat], zoom: 17, duration: 1000 });
