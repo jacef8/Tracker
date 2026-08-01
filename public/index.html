@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 570;
+var APP_BUILD = 571;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10323,6 +10323,12 @@ var BS_IDLE_ENTER_MS = 15 * 60 * 1000;  // still this long → enter low-power
 var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
 var BS_MOVE_M        = 30;              // moved more than this → you're moving again
 var HERE_MOVE_M       = 40;             // "here since" anchor: moved more than this → new stop
+// Moving/stationary hysteresis for the "Moving" vs "Here 12m" line. A single threshold made
+// a walker flicker between the two on every fix, because walking speed IS the threshold.
+var MOVE_ON_MPH       = 3;              // cross UP through this → Moving
+var MOVE_OFF_MPH      = 1.5;            // ...and keep saying Moving until they fall under this
+var MOVE_STICKY_MS    = 75 * 1000;      // ...or go this long without a >=MOVE_ON_MPH reading
+window._moveSeen      = window._moveSeen || {};   // uid -> last time they were clearly moving
 var BS_DF_IDLE       = 75;              // native GPS distance filter while idle (m)
 var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
 // The vendored plugin used to hardcode its LocationRequest interval to 1000ms regardless of
@@ -11738,7 +11744,14 @@ function listenUsers() {
           // definition NOT still at this spot — say what happened instead.
           _hereLine = 'Was moving when signal was lost';
         } else if (!data.noGps && !data.hidden && data.hereSince) {
-          if (isLive && (data.spd || 0) >= 3) {
+          // Walking pace sits right on top of a 3 mph line, and GPS speed jitters either side
+          // of it fix to fix — so a hard `spd >= 3` test made a person on foot read
+          // "Moving / Just arrived / Moving / Just arrived". Same hysteresis idea the speed
+          // label already uses (enter at 25, leave at 18): cross UP at 3, but keep saying
+          // Moving until they drop under 1.5 or stop producing a >=3 reading for a while.
+          if (isLive && (data.spd || 0) >= MOVE_ON_MPH) { window._moveSeen[uid] = now; }
+          var _mvRecent = (now - (window._moveSeen[uid] || 0)) < MOVE_STICKY_MS;
+          if (isLive && ((data.spd || 0) >= MOVE_ON_MPH || (_mvRecent && (data.spd || 0) >= MOVE_OFF_MPH))) {
             _hereLine = 'Moving';
           } else {
             var _hereMin = Math.floor((now - data.hereSince) / 60000);
@@ -11773,6 +11786,21 @@ function listenUsers() {
           ? '<button id="ms-trail-toggle" onclick="window._toggleMemberTrail(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (_msTrailOn ? 'rgba(63,185,80,0.16)' : 'transparent') + ';border:1px solid ' + (_msTrailOn ? '#3fb950' : 'var(--border)') + ';border-radius:9px;font-size:13px;font-weight:800;color:' + (_msTrailOn ? '#3fb950' : 'var(--text)') + ';cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg><span>' + (_msTrailOn ? 'Hide trail' : 'Show trail') + '</span></button>'
           : '';
         var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
+        // The map label only appears above 25 mph, and the header badge only while _driving,
+        // so "how fast are they actually going" was unanswerable for a walk, a bike, or a slow
+        // crawl through a campground. This card is opt-in — you tapped this person — so give
+        // the real number whenever it's live and they haven't switched speed sharing off.
+        // A parked phone still reports its last speed forever, so reuse the same movement
+        // check the speed label uses and call a motionless device 0 rather than 62.
+        var _msSpeed = '';
+        try {
+          var _spdLive = (now - (data.fixTs || data.ts || 0)) < LIVE_MS;
+          if (_spdLive && !data.noGps && !data.hidden && typeof data.spd === 'number' && (isMine || !data.spdH)) {
+            var _psS = (window._posSeen || {})[uid];
+            var _spdN = (_psS && (Date.now() - _psS.movedAt > 90000)) ? 0 : data.spd;
+            _msSpeed = '<div style="font-size:12px;color:#a9b4bf;margin-top:3px">Speed <span style="color:#e6edf3;font-weight:700">' + _spdN + ' mph</span></div>';
+          }
+        } catch (e) {}
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
@@ -11791,6 +11819,7 @@ function listenUsers() {
             '</div>' +
             (_hereLine ? '<div style="font-size:12px;color:#58a6ff;font-weight:700;margin-top:3px">' + _hereLine + '</div>' : '') +
             (_distLine ? '<div style="font-size:12px;color:#a9b4bf;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
+            _msSpeed +
             '<div style="font-size:12px;color:#a9b4bf;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
             (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
