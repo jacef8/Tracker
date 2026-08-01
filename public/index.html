@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 563;
+var APP_BUILD = 564;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3080,6 +3080,7 @@ function _applyMarkerSolo(mk) {
   el.style.border = mk._borderShorthand || '3px solid #a9b4bf';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) initEl.textContent = mk._initials || '';
+  _updateMarkerDev(el, el.dataset ? el.dataset.dev : '');   // merging hid it; bring it back
   _setGroupBadge(el, 0);
 }
 // Riding together / standing right next to each other: morph the primary marker into an
@@ -3101,13 +3102,28 @@ function _applyMarkerMerged(primary, members) {
   el.style.background = 'transparent';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
-    initEl.innerHTML = shown.map(function (u) {
+    // Your phone and your tablet share a name, so they share initials — a merged oval of
+    // "J | J" is unreadable. When the halves collide, tag each with its device letter.
+    var labels = shown.map(function (u) {
+      var m = userMarkers[u];
+      return { ini: (m && m._initials) || '', dev: (m && m._el && m._el.dataset) ? m._el.dataset.dev : '' };
+    });
+    var collide = labels.length === 2 && labels[0].ini === labels[1].ini;
+    initEl.innerHTML = shown.map(function (u, i) {
       var m = userMarkers[u];
       var col = (m && m._fillColor) || '#a9b4bf';
-      var txt = (m && m._initials) || '';
-      return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + escapeHtmlJs(txt) + '</span>';
+      var txt = escapeHtmlJs(labels[i].ini);
+      if (collide) {
+        var dl = _devLetter(labels[i].dev) || 'P';   // the un-badged half is the phone
+        txt += '<span style="font-size:.6em;font-weight:800;opacity:.92;margin-left:1px">' + escapeHtmlJs(dl) + '</span>';
+      }
+      return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
     }).join('');
   }
+  // The corner badge belongs to the primary marker alone; on a merged oval it would label
+  // the whole cluster with one member's device. The inline letters cover this instead.
+  var db = el.querySelector('.mk-dev-badge');
+  if (db) db.style.display = 'none';
   _setGroupBadge(el, ordered.length - shown.length);
 }
 // Chips (speed / "3h 8m") all sit at the same offset under their dot, so two nearby markers
@@ -5069,10 +5085,17 @@ function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
 // two devices renders two identical initials circles ("J" and "J") — the tablet charging at
 // home is indistinguishable from the phone at work until you open the sheet. Phones stay
 // clean (the overwhelmingly common case); everything else declares itself on the dot.
+// One letter that tells a tablet/PC/watch apart from a phone. Phones get '' — they are the
+// default, so badging them would put a mark on nearly every dot on the map.
+function _devLetter(dev) {
+  var d = String(dev || '').toLowerCase();
+  return d === 'tablet' ? 'T' : (d === 'pc' || d === 'desktop' || d === 'computer') ? 'PC' : (d === 'watch') ? '⌚' : '';
+}
 function _updateMarkerDev(el, dev) {
   var b = el && el.querySelector ? el.querySelector('.mk-dev-badge') : null;
   var d = String(dev || '').toLowerCase();
-  var label = d === 'tablet' ? 'T' : (d === 'pc' || d === 'desktop' || d === 'computer') ? 'PC' : (d === 'watch') ? '⌚' : '';
+  if (el && el.dataset) el.dataset.dev = d;   // merged ovals read this back to disambiguate
+  var label = _devLetter(d);
   if (!label) { if (b) b.style.display = 'none'; return; }
   if (!b) {
     b = document.createElement('div');
