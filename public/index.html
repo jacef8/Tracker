@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 568;
+var APP_BUILD = 569;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11946,11 +11946,19 @@ function listenUsers() {
         try { if (window._isMyOwnUid && window._isMyOwnUid(uid) && users[userId]) return; } catch (e) {}
         // Same for everyone else: if this roster id resolves to a PERSON who is already
         // present under a different device id, it's a stale identity of theirs, not a second
-        // human. (Only when the person resolves to a real account — an unresolved id is its
-        // own person, so nobody without an account can be wrongly hidden.)
+        // human.
+        //
+        // This used to be gated on `_personId(uid) !== uid` — "only when the person resolves
+        // to a real account." That gate is exactly backwards after the Phase 2 re-key: roster
+        // ids ARE account ids now, and an account id has no gl/_devOwner entry of its own, so
+        // _personId hands it straight back and the gate never opened. Result, confirmed in
+        // family_men on 2026-08-01: Renner's roster id q75HJ… is the account behind his live
+        // phone ivmMu…, yet he rendered twice — once live, once "Offline — not sharing right
+        // now". Same for Noah and for Jace. The `some()` below is the real test and stands on
+        // its own: it asks whether any LIVE device resolves up to this roster id.
         try {
           var _pidR = window._personId ? window._personId(uid) : uid;
-          if (_pidR !== uid && Object.keys(users).some(function (k) { return window._personId(k) === _pidR; })) return;
+          if (Object.keys(users).some(function (k) { return window._personId(k) === _pidR; })) return;
         } catch (e) {}
         var m = window._roomMembersRoster[uid] || {};
         var orow = document.createElement('div');
