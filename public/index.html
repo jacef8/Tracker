@@ -2736,7 +2736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 553;
+var APP_BUILD = 554;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3467,6 +3467,31 @@ window._isMemberHidden = function (uid) { return !!_getMemberHidden()[uid]; };
 window._canManageRoom = function () { return !!(window._isRoomOwner || window._isRoomAdmin); };
 // Is this uid one of MY identities — this device, my account, an older re-keyed id of mine,
 // or another device signed into the same account? Used to suppress "ghost me" rows.
+// ── IDENTITY RESOLUTION ────────────────────────────────────────────────────────────────
+// Everything in this app is keyed by DEVICE id (gl_uid). One person with a phone, a tablet
+// and a PC is therefore three unrelated identities in every room, roster and list — which is
+// why "Family Men" showed three separate "Jace" rows, why a re-keyed device leaves a ghost
+// behind, and why per-person state (favourites, membership) kept fragmenting.
+//
+// Fixing the STORAGE key is a migration with real lockout risk (the DB rules comment spells
+// this out). This does the safe half: a resolution layer that maps any device id to the
+// canonical PERSON it belongs to, so the UI can present people instead of handsets. Storage
+// is untouched, so nothing can be orphaned by it; if no account is known the device id is
+// its own person, exactly as before.
+//
+// gl/_devOwner (device -> account, written by pushProfile) is the authoritative index and is
+// already cached client-side as _devOwnerAll.
+window._personId = function (uid) {
+  if (!uid) return uid;
+  try {
+    var d = window._devOwnerAll && window._devOwnerAll[uid];
+    if (d && d.acct) return d.acct;
+    // My own devices resolve to my account even before _devOwner has streamed in.
+    var me = (typeof _myAcct === 'function') ? _myAcct() : '';
+    if (me && (uid === me || (window._mySessions && window._mySessions[uid]))) return me;
+  } catch (e) {}
+  return uid;
+};
 window._isMyOwnUid = function (uid) {
   if (!uid) return false;
   try {
@@ -11105,7 +11130,7 @@ function listenUsers() {
     // between "always shows up here" and "gone when they close the app", and that split
     // should be visible at a glance. Non-Crew rooms keep the flat list (no roster concept).
     var _crewRoom = !!window._roomMembersRoster;
-    var _rowsCrew = [], _rowsVis = [];
+    var _rowsCrew = [], _rowsVis = [], _rowsPlain = [];
     var _frMap = _getFriends();
     Object.entries(users).sort(function(a, b) {
       var fa = !!_frMap[a[0]], fb2 = !!_frMap[b[0]];
@@ -11380,6 +11405,14 @@ function listenUsers() {
 
       const row = document.createElement('div');
       row.className = 'user-item';
+      // Identity tags — used by the person-collapse pass after the list is assembled, so one
+      // human with three devices shows as one row instead of three lookalike "Jace" entries.
+      try {
+        row.dataset.uid = uid;
+        row.dataset.person = window._personId ? window._personId(uid) : uid;
+        row.dataset.fresh = String(data.fixTs || data.ts || 0);
+        row.dataset.dev = (data.dev || '');
+      } catch (e) {}
       row.style.opacity = opacity;
       // Two stacked full-width lines instead of one flex line. The old single-line layout
       // gave the button cluster ~180px, which squeezed the text into a ~150px column —
@@ -11468,7 +11501,7 @@ function listenUsers() {
         // even in the window before the roster self-heal write (above) round-trips. A genuine
         // visitor's own row stays in Visitors, where the Join button below sits with it.
         if (_crewRoom) ((window._roomMembersRoster[uid] || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
-        else listEl.appendChild(row);
+        else _rowsPlain.push(row);   // buffered so the person-collapse below applies here too
       }
     });
 
@@ -11489,6 +11522,14 @@ function listenUsers() {
         // using the app on that very device. Only hides the ghost when you ARE present
         // under some id, so a genuinely-offline account still lists normally.
         try { if (window._isMyOwnUid && window._isMyOwnUid(uid) && users[userId]) return; } catch (e) {}
+        // Same for everyone else: if this roster id resolves to a PERSON who is already
+        // present under a different device id, it's a stale identity of theirs, not a second
+        // human. (Only when the person resolves to a real account — an unresolved id is its
+        // own person, so nobody without an account can be wrongly hidden.)
+        try {
+          var _pidR = window._personId ? window._personId(uid) : uid;
+          if (_pidR !== uid && Object.keys(users).some(function (k) { return window._personId(k) === _pidR; })) return;
+        } catch (e) {}
         var m = window._roomMembersRoster[uid] || {};
         var orow = document.createElement('div');
         orow.className = 'user-item';
@@ -11510,6 +11551,42 @@ function listenUsers() {
         _rowsCrew.push(orow);   // offline roster members belong in the Crew section
       });
     }
+
+    // ── COLLAPSE BY PERSON ────────────────────────────────────────────────────────────
+    // One human, one row. Keeps the freshest device's row and annotates it with how many
+    // other devices that person has, instead of listing "Jace · phone", "Jace · tablet" and
+    // "Jace · PC" as three unrelated people. Rows with no resolvable account collapse to
+    // themselves, so anyone who isn't signed in is completely unaffected.
+    var _collapse = function (rows) {
+      var byPerson = {}, order = [];
+      rows.forEach(function (r) {
+        var pid = (r.dataset && r.dataset.person) || Math.random().toString(36);
+        if (!byPerson[pid]) { byPerson[pid] = [r]; order.push(pid); }
+        else byPerson[pid].push(r);
+      });
+      return order.map(function (pid) {
+        var group = byPerson[pid];
+        if (group.length === 1) return group[0];
+        // Freshest device wins the visible row — that's the one whose position is current.
+        group.sort(function (a, b) { return (+b.dataset.fresh || 0) - (+a.dataset.fresh || 0); });
+        var keep = group[0];
+        var others = group.slice(1).map(function (r) { return r.dataset.dev || 'device'; }).filter(Boolean);
+        try {
+          var nameEl = keep.querySelector('.uname');
+          if (nameEl && others.length) {
+            var chip = document.createElement('span');
+            chip.style.cssText = 'margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.03em;color:#a9b4bf;background:var(--border);padding:1px 6px;border-radius:8px;white-space:nowrap;vertical-align:1px';
+            chip.textContent = '+' + others.length + ' ' + (others.length === 1 ? 'device' : 'devices');
+            chip.title = 'Also on: ' + others.join(', ');
+            nameEl.appendChild(chip);
+          }
+        } catch (e) {}
+        return keep;
+      });
+    };
+    try { _rowsCrew = _collapse(_rowsCrew); _rowsVis = _collapse(_rowsVis); _rowsPlain = _collapse(_rowsPlain); } catch (e) {}
+    // Plain (non-Crew) rooms have no sections — emit the collapsed rows straight away.
+    if (!_crewRoom) _rowsPlain.forEach(function (r) { listEl.appendChild(r); });
 
     // Assemble the sectioned list. Crew rows under a purple header; visitor rows inside an
     // amber-banded box so "has the link but isn't on the roster" is unmissable.
