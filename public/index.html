@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 569;
+var APP_BUILD = 570;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11292,11 +11292,29 @@ function _listenRoomMembersRoster() {
       // a device's uid, orphaning the entry made under the old one. Either way the owner
       // rendered under "VISITORS — NOT IN THIS CREW". Honors the owner's Remove marker,
       // same as _promptJoinCrew.
+      //
+      // The presence check below looks for _myRosterId(), NOT userId. It used to test
+      // `!_roomMembersRoster[userId]`, which after the Phase 2 re-key is a different key from
+      // the one it writes to: signed in, the roster is keyed by ACCOUNT, so the device-uid
+      // lookup always missed and this rewrote the entry on every roster update. Visible in the
+      // data on 2026-08-01 — active members' addedAt tracked "minutes ago" while inactive ones
+      // kept genuine join dates from days back, so addedAt had quietly stopped meaning "joined".
+      //
+      // Still rewrite when the NAME has drifted, so changing your display name reaches the
+      // roster instead of leaving the old name on you for everyone who sees you offline.
+      // addedAt/addedBy carry over in that case — a rename isn't a re-join.
       try {
-        if (userId && !window._roomMembersRoster[userId] && _isCircleMember(groupName)) {
+        var _rid   = window._myRosterId();
+        var _mine  = window._roomMembersRoster[_rid] || window._roomMembersRoster[userId];
+        var _needs = !_mine || ((_mine.name || '') !== (userName || ''));
+        if (userId && _needs && _isCircleMember(groupName)) {
           var _rm = (window._roomCfg && window._roomCfg.removed)
                  || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.removed) || {};
-          if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId });
+          if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + _rid), {
+            name: userName,
+            addedAt: (_mine && _mine.addedAt) || Date.now(),
+            addedBy: (_mine && _mine.addedBy) || userId
+          });
         }
       } catch (e) {}
     });
