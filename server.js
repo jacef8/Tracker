@@ -200,6 +200,58 @@ app.post('/nudge', rateLimit(10, 60000), async function(req, res) {
   res.json({ ok: sent, reason: sent ? undefined : 'send-failed' });
 });
 
+// Tell someone they've been invited. In-app invites are written straight to Firebase, which
+// is silent by design — if the recipient doesn't have the app open (or is inside a room, or
+// never returns to the home screen where the invite card lives) they learn about it never.
+// Reported 2026-08-01: invites landing correctly and going unseen for days.
+//
+// Best-effort by design: the invite itself is already committed to the DB before this is
+// called, so a push failure costs a notification, not the invite.
+app.post('/invitePush', rateLimit(20, 60000), async function(req, res) {
+  const b = req.body || {};
+  const fromName = String(b.fromName || 'Someone').slice(0, 60);
+  const room = String(b.room || '').slice(0, 60);
+  const crew = !!b.crew;
+  // Both the device uid and the account uid — the caller fans out to both inboxes, and we
+  // don't know which of the two (if either) actually carries a push subscription.
+  const uids = Array.isArray(b.uids) ? b.uids.slice(0, 4).map(u => String(u || '')).filter(Boolean) : [];
+  if (!uids.length) return res.json({ ok: false, reason: 'no-uid' });
+
+  const title = crew ? 'Invitation to join a Crew' : 'GroundLink invitation';
+  const body = room
+    ? fromName + ' invited you to ' + (crew ? 'the Crew "' + room + '"' : '"' + room + '"') + ' — open GroundLink to join.'
+    : fromName + ' invited you to GroundLink — open the app to join.';
+
+  let sent = false;
+  const seen = new Set();
+  for (const uid of uids) {
+    if (seen.has(uid)) continue;
+    seen.add(uid);
+    let rec = null;
+    try { rec = await findSubsForUid(uid); } catch (e) {}
+    if (!rec) continue;
+    if (fcmAdmin && rec.fcm) {
+      try {
+        await fcmAdmin.messaging().send({
+          token: rec.fcm,
+          notification: { title: title, body: body },
+          android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+          apns: { payload: { aps: { sound: 'default' } } }
+        });
+        sent = true;
+        continue;   // this identity is covered; don't double-notify the same handset via webpush
+      } catch (e) {}
+    }
+    if (pushReady && rec.sub) {
+      try {
+        await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify({ title: title, body: body, url: '/' }), { TTL: 86400, urgency: 'high' });
+        sent = true;
+      } catch (e) {}
+    }
+  }
+  res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
+});
+
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', rateLimit(30, 60000), async function(req, res) {

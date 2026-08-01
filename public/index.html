@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 565;
+var APP_BUILD = 566;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13852,6 +13852,21 @@ function _renderInvitePeople(q) {
   }).join('');
 }
 
+// Writing gl/_invites is silent — Firebase doesn't ring anyone's phone. Ask the server to
+// send an actual notification so an invite reaches someone who doesn't have the app open.
+// Fire-and-forget: the invite is already committed by the time this runs, so a failure here
+// costs a notification, never the invite itself.
+function _pushInvite(uids, roomLabel, isCrew) {
+  try {
+    var list = (uids || []).filter(Boolean);
+    if (!list.length) return;
+    fetch('/invitePush', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uids: list, fromName: userName || 'Someone', room: roomLabel || '', crew: !!isCrew })
+    }).catch(function () {});
+  } catch (e) {}
+}
 window._sendRoomInvite = function(uid) {
   // These early-outs used to be silent no-ops — the button would visibly do nothing with zero
   // explanation, which is exactly what "the invite button doesn't work sometimes" looks like
@@ -13887,6 +13902,7 @@ window._sendRoomInvite = function(uid) {
     try {
       var _acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (_acct && _acct !== uid) { var r2 = fbPush(fbRef(db, 'gl/_invites/' + _acct)); fbSet(r2, rec); }
+      _pushInvite([uid, _acct], label, false);
     } catch (e) {}
     // An in-app invite is addressed to a DEVICE id. If that id is stale — the person reinstalled,
     // switched phones, or it came from an old presence record — the invite lands in an inbox
@@ -13964,10 +13980,20 @@ window._sendCircleInvite = function(uid) {
     try {
       var _acct2 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (_acct2 && _acct2 !== uid) { var r3 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct2)); fb.set(r3, rec); }
+      _pushInvite([uid, _acct2], t.name, true);
     } catch (e) {}
     try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
     try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
-    toast('Invited ' + nm + ' to ' + t.name, 2200);
+    // Same undeliverable-device check _sendRoomInvite has done for a while. Crew invites never
+    // had it, so inviting a stale device id reported a confident "Invited ___" every time.
+    var _reach2 = false;
+    try {
+      _reach2 = !!(window._devOwnerAll && window._devOwnerAll[uid])
+             || !!(pres && pres[uid])
+             || !!((window._mySessions || {})[uid]);
+    } catch (e) { _reach2 = true; }   // unsure → don't cry wolf
+    if (_reach2) toast('Invited ' + nm + ' to ' + t.name, 2200);
+    else toast('Sent, but ' + nm + ' may not receive it — that’s an old device for them. Use “Share link / text” instead.', 6000);
   } catch (e) {
     toast('Couldn’t send the invite — check your connection and try again', 3000);
   }
@@ -14076,6 +14102,58 @@ function _watchInvites() {
 }
 window._watchInvites = _watchInvites;
 
+// In-room surface for a pending invite. The home-screen card can't be seen from inside a
+// room, which is where everyone actually is, so this mirrors the top invite there. Dismissing
+// only silences THIS invite for this session — the record stays in the inbox, so it's still
+// waiting on the home screen. Nothing here deletes anything.
+window._inviteBannerSnoozed = window._inviteBannerSnoozed || {};
+window._snoozeInviteBanner = function (key) {
+  try { window._inviteBannerSnoozed[key] = 1; } catch (e) {}
+  var b = document.getElementById('inv-banner'); if (b) b.remove();
+};
+function _syncInviteBanner(list) {
+  var cur = document.getElementById('inv-banner');
+  var inv = null;
+  for (var i = 0; i < (list || []).length; i++) {
+    if (!window._inviteBannerSnoozed[list[i]._key]) { inv = list[i]; break; }
+  }
+  if (!inv) { if (cur) cur.remove(); return; }
+  // Already showing this exact invite — leave it alone so it doesn't flicker on every re-render.
+  if (cur && cur.getAttribute('data-key') === inv._key) return;
+  if (cur) cur.remove();
+
+  var who = _escHtml(inv.fromName || 'Someone');
+  var where = _escHtml(inv.room || 'a room');
+  var k = _escHtml(inv._key);
+  var isPins = inv.type === 'pins';
+  var isCrew = !!inv.circle;
+  var accent = isCrew ? '#a78bfa' : (isPins ? 'var(--accent)' : '#00e676');
+  var msg, acceptFn, acceptTxt;
+  if (isPins) {
+    var n = (inv.pins && inv.pins.length) || 0;
+    msg = '<strong>' + who + '</strong> shared <strong>' + n + ' pin' + (n !== 1 ? 's' : '') + '</strong> with you';
+    acceptFn = 'window._acceptPinShare'; acceptTxt = 'Save to my pins';
+  } else if (isCrew) {
+    msg = '<strong>' + who + '</strong> invited you to the Crew <strong>' + where + '</strong>';
+    acceptFn = 'window._acceptCircleInvite'; acceptTxt = 'Accept';
+  } else {
+    msg = '<strong>' + who + '</strong> invited you to <strong>' + where + '</strong>';
+    acceptFn = 'window._acceptInvite'; acceptTxt = 'Join';
+  }
+  var more = list.length > 1 ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">+' + (list.length - 1) + ' more waiting on your home screen</div>' : '';
+
+  var d = document.createElement('div');
+  d.id = 'inv-banner';
+  d.setAttribute('data-key', inv._key);
+  d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(var(--safe-top) + 8px);z-index:1190;background:#161b22;border:1px solid ' + accent + ';border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.55);font-size:13px;line-height:1.45;color:var(--text)';
+  d.innerHTML =
+    '<div>' + msg + '</div>' + more +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button onclick="' + acceptFn + '(\'' + k + '\')" style="flex:1;padding:9px;background:' + accent + ';border:none;border-radius:9px;color:#0d1117;font-size:13px;font-weight:800;cursor:pointer">' + acceptTxt + '</button>' +
+      '<button onclick="window._snoozeInviteBanner(\'' + k + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer">Later</button>' +
+    '</div>';
+  document.body.appendChild(d);
+}
 function _renderInviteInbox() {
   var box = document.getElementById('invite-inbox');
   if (!box) return;
@@ -14083,6 +14161,11 @@ function _renderInviteInbox() {
   // Only show on the home/join screen (not while inside a room).
   var joinVisible = false;
   try { var js = document.getElementById('join-screen'); joinVisible = js && js.style.display !== 'none'; } catch (e) {}
+  // ...but people live INSIDE a room, and the app reopens straight back into one, so an invite
+  // that only ever paints on the home screen is invisible in practice. Reported 2026-08-01:
+  // invites written fine, sender toasted "Invited ___", recipient never saw a thing. Hand the
+  // in-room case to a banner so it can't be missed.
+  try { _syncInviteBanner(joinVisible ? [] : list); } catch (e) {}
   if (!list.length || !joinVisible) { box.style.display = 'none'; box.innerHTML = ''; return; }
   var inv = list[0];
   var more = list.length > 1 ? '<div style="font-size:11px;color:var(--muted);margin-top:7px">+' + (list.length - 1) + ' more in your inbox</div>' : '';
