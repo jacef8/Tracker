@@ -2744,7 +2744,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 564;
+var APP_BUILD = 565;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3079,7 +3079,7 @@ function _applyMarkerSolo(mk) {
   el.style.borderRadius = '50%';
   el.style.border = mk._borderShorthand || '3px solid #a9b4bf';
   var initEl = el.querySelector('.mk-initials');
-  if (initEl) initEl.textContent = mk._initials || '';
+  if (initEl) { initEl.textContent = mk._initials || ''; initEl.style.fontSize = ''; }
   _updateMarkerDev(el, el.dataset ? el.dataset.dev : '');   // merging hid it; bring it back
   _setGroupBadge(el, 0);
 }
@@ -3102,20 +3102,25 @@ function _applyMarkerMerged(primary, members) {
   el.style.background = 'transparent';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
-    // Your phone and your tablet share a name, so they share initials — a merged oval of
-    // "J | J" is unreadable. When the halves collide, tag each with its device letter.
-    var labels = shown.map(function (u) {
+    // "J | J" is unreadable, and it happens constantly — Jace/Jared/Justin all reduce to "J",
+    // and one person's phone and tablet reduce to the same thing no matter how far you go.
+    // Ask for the shortest labels that actually tell these two apart.
+    var labels = _distinctLabels(shown.map(function (u) {
       var m = userMarkers[u];
-      return { ini: (m && m._initials) || '', dev: (m && m._el && m._el.dataset) ? m._el.dataset.dev : '' };
-    });
-    var collide = labels.length === 2 && labels[0].ini === labels[1].ini;
+      return {
+        name: (m && m._name) || '',
+        dev: (m && m._el && m._el.dataset) ? m._el.dataset.dev : ''
+      };
+    }));
+    var widest = labels.reduce(function (w, l) { return Math.max(w, l.txt.length + (l.sub ? 1 : 0)); }, 1);
+    if (widest >= 3) el.style.width = '84px';        // 3-char labels need the extra room
+    initEl.style.fontSize = widest >= 3 ? '12px' : '';
     initEl.innerHTML = shown.map(function (u, i) {
       var m = userMarkers[u];
       var col = (m && m._fillColor) || '#a9b4bf';
-      var txt = escapeHtmlJs(labels[i].ini);
-      if (collide) {
-        var dl = _devLetter(labels[i].dev) || 'P';   // the un-badged half is the phone
-        txt += '<span style="font-size:.6em;font-weight:800;opacity:.92;margin-left:1px">' + escapeHtmlJs(dl) + '</span>';
+      var txt = escapeHtmlJs(labels[i].txt);
+      if (labels[i].sub) {
+        txt += '<span style="font-size:.6em;font-weight:800;opacity:.92;margin-left:1px">' + escapeHtmlJs(labels[i].sub) + '</span>';
       }
       return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
     }).join('');
@@ -5090,6 +5095,45 @@ function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
 function _devLetter(dev) {
   var d = String(dev || '').toLowerCase();
   return d === 'tablet' ? 'T' : (d === 'pc' || d === 'desktop' || d === 'computer') ? 'PC' : (d === 'watch') ? '⌚' : '';
+}
+// Progressively more specific labels for one name. Jace/Jared/Justin all start at "J", and
+// "Jace Ford"/"Justin Ford" both start at "JF", so we need rungs to climb: add the last-name
+// initial, then grow the first name a letter at a time. Capped at 3 characters — the merged
+// oval only gives each half ~30px, and anything longer stops being readable at a glance.
+function _labelLadder(name) {
+  var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  var first = parts[0] || '?';
+  var lastI = parts.length > 1 ? parts[parts.length - 1][0].toUpperCase() : '';
+  // "Ja" reads better than "JA" for a prefix of one word; run-together initials stay caps.
+  var cap = function (n) {
+    return first.substring(0, 1).toUpperCase() + first.substring(1, n).toLowerCase();
+  };
+  var out = [];
+  var push = function (s) { if (s && out.indexOf(s) === -1) out.push(s); };
+  push(first.substring(0, 1).toUpperCase() + lastI);   // J   / JF
+  push(cap(2));                                        // Ja
+  push(cap(2) + lastI);                                // JaF
+  push(cap(3));                                        // Jac
+  return out;
+}
+// Given the members sharing one oval, hand back the shortest label per member that tells
+// them all apart. Identical names — the same person on a phone and a tablet — can never be
+// separated by name, so those fall through to a device letter.
+function _distinctLabels(entries) {
+  var ladders = entries.map(function (e) { return _labelLadder(e.name); });
+  var depth = ladders.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+  for (var k = 0; k < depth; k++) {
+    var labs = ladders.map(function (l) { return l[Math.min(k, l.length - 1)]; });
+    var seen = {}, ok = true;
+    for (var i = 0; i < labs.length; i++) {
+      if (seen[labs[i]]) { ok = false; break; }
+      seen[labs[i]] = 1;
+    }
+    if (ok) return labs.map(function (t) { return { txt: t, sub: '' }; });
+  }
+  return entries.map(function (e, i) {
+    return { txt: ladders[i][0], sub: _devLetter(e.dev) || 'P' };   // un-badged half is the phone
+  });
 }
 function _updateMarkerDev(el, dev) {
   var b = el && el.querySelector ? el.querySelector('.mk-dev-badge') : null;
@@ -11601,6 +11645,7 @@ function listenUsers() {
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = initials(data.name);
+        userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         // Tap marker → open the bottom info card (a full-width bar that never covers the
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
         el.addEventListener('click', function() {
@@ -11629,6 +11674,7 @@ function listenUsers() {
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = initials(data.name);
+        userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         if (el) {
           el.style.background   = fillColor;
           el.style.borderColor  = borderColor;
