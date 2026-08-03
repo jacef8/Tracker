@@ -2761,7 +2761,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 575;
+var APP_BUILD = 576;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12929,10 +12929,51 @@ function clearTrailLayer(uid) {
   const lid = `trail-${uid}`;
   if (map.getLayer(lid))        map.removeLayer(lid);
   if (map.getLayer(lid+'-dots'))map.removeLayer(lid+'-dots');
+  if (map.getLayer(lid+'-stops'))map.removeLayer(lid+'-stops');  // red squares where they sat
   if (map.getLayer(lid+'-case'))map.removeLayer(lid+'-case');   // dark casing under the line
   if (map.getSource(lid))       map.removeSource(lid);
+  if (map.getSource(lid+'-stops')) map.removeSource(lid+'-stops');
   delete trailSources[uid];
   delete trailBaseCoords[uid];
+}
+
+// Where along a trail did someone actually STOP? A breadcrumb line alone can't say: a person
+// parked for an hour and a person driving straight through draw the same stretch of line,
+// just with the dots bunched up. Walk the points and collapse any run that stays inside
+// STOP_RADIUS_M for at least STOP_MIN_MS into a single marker at its centroid.
+var STOP_RADIUS_M = 35;                  // GPS wander while genuinely still
+var STOP_MIN_MS   = 4 * 60 * 1000;       // shorter than this is a traffic light, not a stop
+function _trailStops(pts) {
+  var stops = [], i = 0;
+  while (i < pts.length) {
+    var j = i + 1;
+    while (j < pts.length && metersApart(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng) <= STOP_RADIUS_M) j++;
+    var dur = pts[j - 1].ts - pts[i].ts;
+    if ((j - i) >= 2 && dur >= STOP_MIN_MS) {
+      var la = 0, ln = 0;
+      for (var k = i; k < j; k++) { la += pts[k].lat; ln += pts[k].lng; }
+      stops.push({ lat: la / (j - i), lng: ln / (j - i), durMs: dur });
+      i = j;                             // consumed this whole dwell
+    } else {
+      i++;
+    }
+  }
+  return stops;
+}
+// A square, so a stop never reads as just another round breadcrumb dot. Mapbox has no square
+// symbol built in, so paint one into a canvas once and register it as a map image.
+function _ensureStopIcon() {
+  try {
+    if (!map || typeof map.hasImage !== 'function' || map.hasImage('gl-stop-sq')) return;
+    var s = 16, c = document.createElement('canvas');
+    c.width = c.height = s;
+    var x = c.getContext('2d');
+    x.fillStyle = 'rgba(11,15,20,0.9)';  // dark casing, same idea as the line's halo
+    x.fillRect(0, 0, s, s);
+    x.fillStyle = '#f85149';
+    x.fillRect(2, 2, s - 4, s - 4);
+    map.addImage('gl-stop-sq', { width: s, height: s, data: new Uint8Array(x.getImageData(0, 0, s, s).data) });
+  } catch (e) {}
 }
 
 // Move just the last vertex of a drawn trail, without rebuilding it from the snapshot.
@@ -13001,8 +13042,12 @@ function _renderTrailLines() {
       const isLive     = (now - latestTs) < LIVE_MS;
       const isMineUid  = uid === userId;
 
-      // Color: gold for mine, green if live, gray if stale
-      const color      = isMineUid ? '#f0a500' : isLive ? '#00e676' : '#778090';
+      // Green means MOVING. The line is one half of a two-part reading now — green line for
+      // travel, red square for a stop — so mine is no longer singled out in gold; a second
+      // colour competing with the stop markers made the pair harder to read, and the trail is
+      // already opt-in per person so there's no doubt whose it is. Stale stays grey, because
+      // painting a trail that stopped updating in "live" green would be a lie.
+      const color      = (isLive || isMineUid) ? '#00e676' : '#778090';
       // Legibility over SATELLITE imagery, which is the default layer: a thin, semi-transparent
       // dashed line disappears into busy green/brown ground cover — reported on-device as the
       // trail being hard to see. Wider, nearly opaque, and backed by a dark casing (the
@@ -13032,7 +13077,21 @@ function _renderTrailLines() {
         : coords;
       const geojson = { type: 'Feature', geometry: { type: 'LineString', coordinates: drawCoords } };
 
+      // Stops are computed from the RECORDED points, not drawCoords — the animated tip vertex
+      // is a rendering nicety and would otherwise look like a fresh dwell at the marker.
+      const stopsGeo = {
+        type: 'FeatureCollection',
+        features: _trailStops(allPts).map(function (s) {
+          return {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+            properties: { mins: Math.round(s.durMs / 60000) }
+          };
+        })
+      };
+
       if (!map.isStyleLoaded()) return;
+      _ensureStopIcon();
 
       if (map.getSource(lid)) {
         map.getSource(lid).setData(geojson);
@@ -13050,6 +13109,7 @@ function _renderTrailLines() {
           map.setPaintProperty(lid+'-dots', 'circle-color', color);
           map.setPaintProperty(lid+'-dots', 'circle-opacity', dotOpacity);
         }
+        if (map.getSource(lid+'-stops')) map.getSource(lid+'-stops').setData(stopsGeo);
       } else {
         map.addSource(lid, { type: 'geojson', data: geojson });
 
@@ -13072,8 +13132,10 @@ function _renderTrailLines() {
           paint: {
             'line-color': color,
             'line-width': lineWidth,
-            'line-opacity': lineOpacity,
-            'line-dasharray': [2, 1.6]
+            'line-opacity': lineOpacity
+            // Solid, not dashed. The dash used to be what separated a live breadcrumb from a
+            // recorded Track; the red stop squares now carry that distinction, and a solid
+            // line reads far better over satellite imagery than broken segments did.
           }
         }, 'pins-layer');
 
@@ -13088,6 +13150,20 @@ function _renderTrailLines() {
             // the line casing above.
             'circle-stroke-width': 1.2,
             'circle-stroke-color': 'rgba(11,15,20,0.85)'
+          }
+        }, 'pins-layer');
+
+        // Stops last, so the squares sit above the line and its breadcrumb dots.
+        map.addSource(lid+'-stops', { type: 'geojson', data: stopsGeo });
+        map.addLayer({
+          id: lid+'-stops', type: 'symbol', source: lid+'-stops',
+          layout: {
+            'icon-image': 'gl-stop-sq',
+            'icon-size': 1,
+            // A stop sits on top of its own breadcrumb dots by definition, so let it overlap —
+            // otherwise Mapbox's collision detection drops the very markers we added.
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
           }
         }, 'pins-layer');
 
