@@ -1574,7 +1574,7 @@
 <div id="quick-trail-sheet" style="display:none;position:fixed;inset:0;z-index:410;background:rgba(0,0,0,.55);align-items:flex-end;justify-content:center">
   <div style="width:100%;max-width:440px;background:var(--card,#161b22);border:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;padding:16px calc(env(safe-area-inset-bottom,0px) + 16px) 16px 16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div id="qt-title" style="font-size:15px;font-weight:800;color:var(--text)">Trail</div>
+      <div id="qt-title" style="font-size:15px;font-weight:800;color:var(--text)">History</div>
       <button onclick="document.getElementById('quick-trail-sheet').style.display='none'" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;padding:2px 4px">✕</button>
     </div>
     <!-- One view, one date. The old "Recent" / "Pick a day" pair exposed an internal storage
@@ -2761,7 +2761,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 574;
+var APP_BUILD = 575;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11853,7 +11853,7 @@ function listenUsers() {
         var _msNav = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
-        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-history"/></svg>Past days</button>';
+        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-history"/></svg>History</button>';
         // Per-person breadcrumb toggle. Only for OTHER people — your own line is the toolbar
         // footprints button, and having two controls for the same thing is how the old
         // global flag became confusing in the first place.
@@ -16029,13 +16029,28 @@ window._showStatusLegend = function () {
 // HIST_MAX_AGE_DAYS); past dates are history alone, which only a Crew has, since that's the
 // only context whose data outlives the room itself.
 window._trailCtx = null;
+// Every id this person's location history could be filed under. Presence and history are
+// DEVICE-keyed; the permanent roster is PERSON-keyed. Whichever one a row came from, look
+// under all of them — the person's own account id, and every device that resolves to it.
+window._historyUidsFor = function (uid) {
+  var out = [uid];
+  var pid = (typeof window._personId === 'function') ? window._personId(uid) : uid;
+  if (pid && out.indexOf(pid) === -1) out.push(pid);
+  try {
+    var all = window._devOwnerAll || {};
+    Object.keys(all).forEach(function (d) {
+      if (all[d] && all[d].acct === pid && out.indexOf(d) === -1) out.push(d);
+    });
+  } catch (e) {}
+  return out;
+};
 window._openHistoryForMember = function (uid, name, circleKey) {
   try { window._closeMemberSheet(); } catch (e) {}
   var room = circleKey || groupName;
   if (!room) { toast('Join a room first', 2200); return; }
   var isCrew = !!(circleKey || (typeof _isCircleMember === 'function' && groupName && _isCircleMember(groupName)));
   window._trailCtx = { uid: uid, name: name || 'Member', room: room, isCrew: isCrew };
-  document.getElementById('qt-title').textContent = (name || 'Their') + ' past days';
+  document.getElementById('qt-title').textContent = (name || 'Their') + ' history';
   var dateInput = document.getElementById('qt-date-input');
   if (dateInput) {
     // Past days only exist for a Crew (that's where location history is kept), so outside one
@@ -16059,8 +16074,13 @@ window._openHistoryForMember = function (uid, name, circleKey) {
     try {
       dateInput.min = new Date(Date.now() - HIST_MAX_AGE_DAYS * 86400000).toLocaleDateString('en-CA');
       if (isCrew && window._fb && window._fb.get) {
-        window._fb.get(window._fb.ref(window._fb.db, 'glh/' + room + '/' + uid)).then(function (s) {
-          var days = Object.keys(s.val() || {}).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort();
+        // Same person-vs-device id split as the loader below — check every id they could be
+        // filed under, or the picker floors at today for anyone who is signed in.
+        Promise.all(window._historyUidsFor(uid).map(function (u) {
+          return window._fb.get(window._fb.ref(window._fb.db, 'glh/' + room + '/' + u))
+            .then(function (s) { return Object.keys(s.val() || {}); }).catch(function () { return []; });
+        })).then(function (lists) {
+          var days = [].concat.apply([], lists).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort();
           if (days.length) dateInput.min = days[0];
         }).catch(function () {});
       }
@@ -16100,12 +16120,32 @@ window._loadTrailRange = function () {
     }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lng) && p.t; });
   };
 
-  var histP = F.get(F.ref(F.db, 'glh/' + ctx.room + '/' + ctx.uid + '/' + dateStr))
-    .then(function (s) { return toPts(s.val()); }).catch(function () { return []; });
+  // History is written under the DEVICE id, but a permanent-roster row is keyed by PERSON —
+  // so opening "Past days" on anyone who is offline (their row comes from the roster, not
+  // from a live marker) looked up an id nothing was ever written under and reported "nothing
+  // recorded". Confirmed 2026-08-03: Laura's roster key o9dfr… vs her history key 5mRi…,
+  // with 237 points sitting there for that day. It looked fine for anyone whose device id
+  // and person id happen to be the same — i.e. anyone not signed in — which is why it seemed
+  // to work for some people and not others.
+  var _uids = (typeof window._historyUidsFor === 'function') ? window._historyUidsFor(ctx.uid) : [ctx.uid];
+  // Take the single device with the most points that day rather than merging them all: a
+  // phone in someone's pocket and a tablet parked at home would otherwise stitch into one
+  // line zig-zagging between the two places all day.
+  var _best = function (arrs) {
+    var b = [];
+    for (var i = 0; i < arrs.length; i++) if (arrs[i].length > b.length) b = arrs[i];
+    return b;
+  };
+  var histP = Promise.all(_uids.map(function (u) {
+    return F.get(F.ref(F.db, 'glh/' + ctx.room + '/' + u + '/' + dateStr))
+      .then(function (s) { return toPts(s.val()); }).catch(function () { return []; });
+  })).then(_best);
   // The live trail is a rolling window with no date bucket, so it only belongs to today.
   var trailP = isToday
-    ? F.get(F.ref(F.db, 'gl/' + ctx.room + '/trails/' + ctx.uid))
-        .then(function (s) { return toPts(s.val()); }).catch(function () { return []; })
+    ? Promise.all(_uids.map(function (u) {
+        return F.get(F.ref(F.db, 'gl/' + ctx.room + '/trails/' + u))
+          .then(function (s) { return toPts(s.val()); }).catch(function () { return []; });
+      })).then(_best)
     : Promise.resolve([]);
 
   Promise.all([histP, trailP]).then(function (res) {
