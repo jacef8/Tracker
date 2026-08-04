@@ -2761,7 +2761,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 578;
+var APP_BUILD = 579;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9463,13 +9463,30 @@ function initMap() {
   // Initial map load — set up pins, images, _mapReady
   map.on('load', function() {
     try { map.setPadding(_followPadding()); } catch (e) {}
-    // Add pin images
+    // Add pin images.
+    //
+    // Every add is isolated. These calls used to sit bare in this handler, so a single
+    // category whose icon failed to build threw straight out of map.on('load') — taking the
+    // pins SOURCE, the pins LAYER and `_mapReady = true` below with it. updatePinSource then
+    // queued every pin forever and not one ever drew, while the Pins drawer kept listing them
+    // happily because it reads the raw snapshot instead of the map. Reported 2026-08-04 as
+    // "pins aren't showing up on other devices, but I can pick them from the waypoint list".
     for (var cat in PIN_DEFS) {
-      var def = PIN_DEFS[cat];
-      if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
-      }
+      var def = PIN_DEFS[cat] || {};
+      // Checked INDEPENDENTLY. The old code gated BOTH adds on pin-mine-<cat> alone, so any
+      // state where 'mine' existed but 'other' didn't (a partial run, an interrupted style
+      // reload) left everyone else's pins permanently invisible while your own drew fine —
+      // which is the asymmetry that makes this look like a sync bug rather than a draw bug.
+      try {
+        if (!map.hasImage('pin-mine-' + cat)) {
+          map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
+        }
+      } catch (e) { console.warn('pin image failed (mine)', cat, e); }
+      try {
+        if (!map.hasImage('pin-other-' + cat)) {
+          map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
+        }
+      } catch (e) { console.warn('pin image failed (other)', cat, e); }
     }
     // Add pin source and layer
     if (!map.getSource('pins')) {
@@ -9492,7 +9509,8 @@ function initMap() {
         paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 }
       });
     }
-    // Signal ready and flush queued pins
+    // Signal ready and flush queued pins. Deliberately AFTER the source/layer above but
+    // reachable even if an icon failed — the whole point of the isolation up there.
     window._mapReady = true;
     // Restore personal saved-pin markers if the user left "Show on map" on.
     try { if (window._showSavedOnMap && typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch(e){}
@@ -9820,13 +9838,26 @@ function updatePinSource(pins) {
       }
     };
   });
-  // Ensure all needed images exist (handles custom cats added after init)
+  // Ensure all needed images exist (handles custom cats added after init, and is the last
+  // line of defence if an image failed to build at load or after a style change — a symbol
+  // whose icon-image doesn't exist draws NOTHING, silently).
   features.forEach(function(f) {
     var id = f.properties.imageId;
-    if (!map.hasImage(id)) {
+    if (map.hasImage(id)) return;
+    // Rebuild from the pin's OWN category first. This used to jump straight to 'Custom', so a
+    // recoverable miss turned a Hazard or Urgent pin into a generic "CT" marker — losing the
+    // colour and glyph that make a pin readable at a glance.
+    try {
+      var own = PIN_DEFS[f.properties.cat];
+      if (own) {
+        map.addImage(id, makePinImage(own.color, f.properties.isMine ? '#f0a500' : '#ffffff', own.emoji || own.label, f.properties.cat), { pixelRatio: 2 });
+        if (map.hasImage(id)) return;
+      }
+    } catch (e) {}
+    try {
       var def = PIN_DEFS['Custom'];
       map.addImage(id, makePinImage(def.color, f.properties.isMine ? '#f0a500' : '#ffffff', def.label || 'CT', 'Custom'), { pixelRatio: 2 });
-    }
+    } catch (e) { console.warn('pin image fallback failed', id, e); }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
 }
@@ -14965,12 +14996,23 @@ function setBaseLayer(btn) {
     map.setStyle(style);
   }
   map.once('style.load', function() {
+    // Changing style DESTROYS every registered image, so they all have to be rebuilt here.
+    // Same isolation and same independent per-variant check as the initial load — see the
+    // long note there. This path is the likelier trigger of the two: one throw here skipped
+    // the pins source, the layer, and the updatePinSource re-apply below, so flipping between
+    // satellite and streets could silently stop other people's pins drawing until a reload.
     for (var cat in PIN_DEFS) {
-      var def = PIN_DEFS[cat];
-      if (!map.hasImage('pin-mine-' + cat)) {
-        map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
-        map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
-      }
+      var def = PIN_DEFS[cat] || {};
+      try {
+        if (!map.hasImage('pin-mine-' + cat)) {
+          map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 });
+        }
+      } catch (e) { console.warn('pin image failed (mine)', cat, e); }
+      try {
+        if (!map.hasImage('pin-other-' + cat)) {
+          map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 });
+        }
+      } catch (e) { console.warn('pin image failed (other)', cat, e); }
     }
     if (!map.getSource('pins')) {
       map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
