@@ -1,6 +1,7 @@
 package com.groundlink.app;
 
 import android.Manifest;
+import android.app.ActivityManager;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -307,6 +309,67 @@ public class MainActivity extends BridgeActivity {
                 @JavascriptInterface
                 public void setLocationNotificationVisible(boolean visible) {
                     try { HeadlessTrackerService.setIconVisible(MainActivity.this, visible); } catch (Exception e) {}
+                }
+                // Read-only snapshot of the OS settings that decide whether background location
+                // actually survives. We cannot CHANGE any of these — only report them — but
+                // "why does X keep going offline" is unanswerable without them: every one of
+                // these can silently kill background reporting while the app looks fine in the
+                // foreground. Every field is independently try/caught so one unavailable API
+                // can't blank the whole report.
+                @JavascriptInterface
+                public String settingsJson() {
+                    java.util.ArrayList<String> p = new java.util.ArrayList<String>();
+                    try {
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null) {
+                            p.add("\"saver\":" + pm.isPowerSaveMode());
+                            // "Unrestricted" in the battery settings. Restricted/Optimised means
+                            // Doze can freeze the process during long stationary stretches.
+                            p.add("\"unrestricted\":" + (Build.VERSION.SDK_INT < 23
+                                || pm.isIgnoringBatteryOptimizations(getPackageName())));
+                        }
+                    } catch (Exception e) {}
+                    try {
+                        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                        if (am != null && Build.VERSION.SDK_INT >= 28) {
+                            p.add("\"bgRestricted\":" + am.isBackgroundRestricted());
+                        }
+                    } catch (Exception e) {}
+                    try {
+                        p.add("\"locFine\":" + (ContextCompat.checkSelfPermission(MainActivity.this,
+                            Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED));
+                        p.add("\"locAlways\":" + (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                            || ContextCompat.checkSelfPermission(MainActivity.this,
+                               Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED));
+                    } catch (Exception e) {}
+                    try {
+                        android.location.LocationManager lm =
+                            (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
+                        if (lm != null) p.add("\"gpsOn\":" + lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER));
+                    } catch (Exception e) {}
+                    try {
+                        // The OS's own opinion of how aggressively to throttle us. ACTIVE(10)/
+                        // WORKING_SET(20) are healthy; FREQUENT(30), RARE(40) and RESTRICTED(45)
+                        // progressively starve background work — this is the field that explains
+                        // a phone whose settings all look correct but still goes quiet.
+                        if (Build.VERSION.SDK_INT >= 28) {
+                            android.app.usage.UsageStatsManager us =
+                                (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+                            if (us != null) p.add("\"bucket\":" + us.getAppStandbyBucket());
+                        }
+                    } catch (Exception e) {}
+                    try {
+                        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (nm != null) p.add("\"notif\":" + nm.areNotificationsEnabled());
+                    } catch (Exception e) {}
+                    try {
+                        p.add("\"mfr\":\"" + Build.MANUFACTURER.replace("\"", "") + "\"");
+                        p.add("\"model\":\"" + Build.MODEL.replace("\"", "") + "\"");
+                        p.add("\"sdk\":" + Build.VERSION.SDK_INT);
+                    } catch (Exception e) {}
+                    StringBuilder sb = new StringBuilder("{");
+                    for (int i = 0; i < p.size(); i++) { if (i > 0) sb.append(","); sb.append(p.get(i)); }
+                    return sb.append("}").toString();
                 }
                 // NOTE: a direct deep-link straight to the Location permission's own picker
                 // (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed — confirmed

@@ -190,7 +190,46 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 guard let json = result as? String, !json.isEmpty else { return }
                 UserDefaults.standard.set(json, forKey: "gl_native_write_cfg")
             }
+            // Push the OS settings that decide whether background location survives. These are
+            // read-only — we can't change any of them — but "why does this phone keep going
+            // offline" can't be answered without them: Low Power Mode, While-Using instead of
+            // Always, reduced accuracy and Background App Refresh each silently stop background
+            // reporting while the app looks perfectly healthy in the foreground.
+            let js = "window.__nativeSettings && window.__nativeSettings(\(self.settingsJSON()))"
+            wv.evaluateJavaScript(js, completionHandler: nil)
         }
+    }
+
+    /// Read-only snapshot of the iOS settings that govern background location.
+    private func settingsJSON() -> String {
+        var parts: [String] = []
+        parts.append("\"lowPower\":\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
+
+        let mgr = CLLocationManager()
+        let auth: CLAuthorizationStatus
+        if #available(iOS 14.0, *) { auth = mgr.authorizationStatus } else { auth = CLLocationManager.authorizationStatus() }
+        // "Always" is the only setting that keeps fixes coming once the app is backgrounded;
+        // "While Using" looks identical in the foreground and is the usual culprit.
+        parts.append("\"locAlways\":\(auth == .authorizedAlways)")
+        parts.append("\"locWhenInUse\":\(auth == .authorizedWhenInUse)")
+        parts.append("\"locDenied\":\(auth == .denied || auth == .restricted)")
+        if #available(iOS 14.0, *) {
+            // Precise Location off gives ~1-3 km fixes — the dot still moves, just uselessly.
+            parts.append("\"precise\":\(mgr.accuracyAuthorization == .fullAccuracy)")
+        }
+        parts.append("\"locServices\":\(CLLocationManager.locationServicesEnabled())")
+
+        let refresh = UIApplication.shared.backgroundRefreshStatus
+        parts.append("\"bgRefresh\":\(refresh == .available)")
+        parts.append("\"bgRefreshDenied\":\(refresh == .denied)")
+
+        let dev = UIDevice.current
+        dev.isBatteryMonitoringEnabled = true
+        if dev.batteryLevel >= 0 { parts.append("\"batt\":\(Int(dev.batteryLevel * 100))") }
+        parts.append("\"charging\":\(dev.batteryState == .charging || dev.batteryState == .full)")
+        parts.append("\"iosVer\":\"\(UIDevice.current.systemVersion)\"")
+
+        return "{" + parts.joined(separator: ",") + "}"
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {

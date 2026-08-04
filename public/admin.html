@@ -1614,6 +1614,53 @@ function _roomControlHTML(key, group, now) {
 // quick-room clock. Deliberately does NOT write anyone's members entry: Crew membership means
 // continuous background sharing, and that switch is flipped per-person on their own device via
 // the existing join-with-disclosure prompt the circle flag triggers on their next visit.
+// The OS settings that decide whether background location survives, reported by each device
+// on launch. Read-only — nothing here can be changed from this panel, or from the app at all.
+// Only the native builds can see them; a browser/PWA install has no access to battery-saver or
+// background state, so say so rather than rendering blanks that read as "all fine".
+//
+// ANY red chip is a sufficient explanation on its own for "this person keeps going offline".
+function _settingsRow(r) {
+  var s = r.settings;
+  if (!s) return '';
+  var chips = [];
+  var chip = function (label, ok, warn) {
+    var col = ok ? '#3fb950' : (warn ? '#f0a500' : '#f85149');
+    var bg  = ok ? 'rgba(63,185,80,.12)' : (warn ? 'rgba(240,165,0,.12)' : 'rgba(248,81,73,.12)');
+    chips.push('<span style="font-size:11px;font-weight:700;color:' + col + ';background:' + bg +
+               ';border:1px solid ' + col + '55;border-radius:20px;padding:2px 8px">' + label + '</span>');
+  };
+  if (s.plat === 'ios') {
+    if (s.locAlways) chip('Location: Always', true);
+    else if (s.locWhenInUse) chip('Location: While Using', false);
+    else if (s.locDenied) chip('Location: DENIED', false);
+    if (s.precise === false) chip('Precise OFF', false);
+    if (s.bgRefresh === false) chip('Bg Refresh OFF', false);
+    if (s.lowPower) chip('Low Power Mode', false);
+    if (s.locServices === false) chip('Location Services OFF', false);
+    if (s.iosVer) chips.push('<span style="font-size:11px;color:var(--muted)">iOS ' + s.iosVer + '</span>');
+  } else if (s.plat === 'android') {
+    if (s.locAlways) chip('Location: Always', true); else chip('Location: not Always', false);
+    if (s.locFine === false) chip('Coarse location only', false);
+    if (s.unrestricted) chip('Battery: Unrestricted', true); else chip('Battery: RESTRICTED', false);
+    if (s.saver) chip('Battery Saver ON', false);
+    if (s.bgRestricted) chip('Background RESTRICTED', false);
+    if (s.gpsOn === false) chip('GPS OFF', false);
+    // Android's own throttling verdict. 10/20 healthy, 30 mild, 40+ actively starved — this is
+    // the field that explains a phone whose every visible setting looks correct.
+    if (typeof s.bucket === 'number') {
+      var bn = { 5: 'EXEMPTED', 10: 'ACTIVE', 20: 'WORKING_SET', 30: 'FREQUENT', 40: 'RARE', 45: 'RESTRICTED' }[s.bucket] || ('bucket ' + s.bucket);
+      chip('Standby: ' + bn, s.bucket <= 20, s.bucket === 30);
+    }
+    if (s.mfr) chips.push('<span style="font-size:11px;color:var(--muted)">' + s.mfr + ' ' + (s.model || '') + (s.sdk ? ' · SDK ' + s.sdk : '') + '</span>');
+  } else {
+    chips.push('<span style="font-size:11px;color:var(--muted)">Browser install — OS settings not readable' +
+               (s.webGeo ? ' · geolocation ' + s.webGeo : '') + '</span>');
+  }
+  if (!chips.length) return '';
+  return '<div style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 10px 12px;border-bottom:1px solid var(--border)">' + chips.join('') + '</div>';
+}
+
 // Device-versions table (gl/_diag/devices) — who is on what binary/web build, and whether
 // the sign-in plugin is present in their install. Written by each device on launch.
 window.renderDeviceVersions = function () {
@@ -1634,7 +1681,7 @@ window.renderDeviceVersions = function () {
         '<span style="min-width:70px;color:var(--muted)">web ' + (r.web || '?') + '</span>' +
         (r.plat && r.plat !== 'web' ? '<span style="min-width:90px;color:' + (r.signinPlugin ? '#3fb950' : '#f85149') + ';font-weight:700">' + (r.signinPlugin ? 'sign-in OK' : 'SIGN-IN MISSING') + '</span>' : '<span style="min-width:90px"></span>') +
         '<span style="margin-left:auto;color:' + (stale ? 'var(--muted)' : '#3fb950') + '">' + timeAgo(r.ts) + '</span>' +
-      '</div>';
+      '</div>' + _settingsRow(r);
     }).join('');
   }).catch(function (e) { el.textContent = 'Failed: ' + (e && e.message); });
 };

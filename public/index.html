@@ -2761,7 +2761,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 577;
+var APP_BUILD = 578;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6238,12 +6238,74 @@ setTimeout(function () {
       ts: Date.now()
     };
     var App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-    var write = function () { try { window._fb.set(window._fb.ref(window._fb.db, 'gl/_diag/devices/' + uid), rec); } catch (e) {} };
+    var write = function () {
+      try { rec.settings = window._collectSettings(); } catch (e) {}
+      try { window._fb.set(window._fb.ref(window._fb.db, 'gl/_diag/devices/' + uid), rec); } catch (e) {}
+    };
+    window._writeDeviceBeacon = write;   // re-run when the OS settings arrive from native
     if (App && App.getInfo) {
       App.getInfo().then(function (i) { rec.native = (i.version || '') + ' (' + (i.build || '') + ')'; write(); }).catch(write);
     } else write();
   } catch (e) {}
 }, 9000);
+
+// ── OS settings that decide whether background location survives ────────────────
+// We can only READ these — no app can change another app's OS settings — but without them
+// "why does this phone keep going offline?" is pure guesswork. Every one of these silently
+// stops background reporting while the app looks completely healthy in the foreground, which
+// is exactly why people insist their settings are already correct.
+//
+// iOS pushes its own snapshot in (AppDelegate can't be called FROM JavaScript, only the other
+// way round); Android exposes a synchronous getter we pull. Web/PWA has no access to any of
+// it — the browser deliberately doesn't expose battery-saver or background state — so those
+// devices report only what the standard APIs allow, and the admin panel says "not available"
+// rather than implying everything is fine.
+window._nativeSettingsCache = null;
+window.__nativeSettings = function (o) {          // called BY iOS
+  try {
+    window._nativeSettingsCache = (typeof o === 'string') ? JSON.parse(o) : o;
+    if (window._writeDeviceBeacon) window._writeDeviceBeacon();
+  } catch (e) {}
+};
+window._collectSettings = function () {
+  var s = {};
+  try {
+    var plat = (window.Capacitor && typeof window.Capacitor.getPlatform === 'function')
+      ? window.Capacitor.getPlatform() : 'web';
+    s.plat = plat;
+    if (plat === 'android') {
+      // Synchronous @JavascriptInterface — see MainActivity's GLPermissions.settingsJson().
+      try {
+        if (window.GLPermissions && window.GLPermissions.settingsJson) {
+          var j = window.GLPermissions.settingsJson();
+          if (j) { var o = JSON.parse(j); for (var k in o) s[k] = o[k]; }
+        }
+      } catch (e) {}
+    } else if (plat === 'ios') {
+      var c = window._nativeSettingsCache;
+      if (c) { for (var k2 in c) s[k2] = c[k2]; }
+    }
+    // Available everywhere, native or not. Note this canNOT distinguish "Always" from "While
+    // Using" — the Permissions API only reports granted/denied — which is precisely why the
+    // native fields above are worth the plumbing.
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: 'geolocation' }).then(function (p) {
+          try {
+            s.webGeo = p.state;
+            if (window._fb && window._fb.db) {
+              var uid = localStorage.getItem('gl_uid');
+              if (uid) window._fb.set(window._fb.ref(window._fb.db, 'gl/_diag/devices/' + uid + '/settings/webGeo'), p.state);
+            }
+          } catch (e) {}
+        }).catch(function () {});
+      }
+    } catch (e) {}
+    if (window._batt) { s.batt = window._batt.pct; s.charging = !!window._batt.chg; }
+    s.ts = Date.now();
+  } catch (e) {}
+  return s;
+};
 
 // Everything the NATIVE side needs to write a position by itself — no WebView, no page load,
 // no Firebase SDK. iOS already sources fixes natively (CLLocationManager in AppDelegate), but
