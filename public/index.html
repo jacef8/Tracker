@@ -2778,7 +2778,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 583;
+var APP_BUILD = 584;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6999,7 +6999,52 @@ function _untrackJoinedRoom(key) {
 // Everything here must go through window._fb rather than the bare db/fbRef/fbSet globals:
 // those are only assigned once enterMap() runs, and the whole point of this section is that
 // the map hasn't been opened. Same constraint _sendCircleInvite works under.
-window._renderTalkSection = function () {
+// Unheard transmissions for a room we are not currently in. The "heard" watermark is already
+// stored per room (gl_vlog_seen_<key>), so this only needs the clip list.
+function _talkUnreadFor(roomKey, clips) {
+  var seen = 0;
+  try { seen = parseInt(localStorage.getItem('gl_vlog_seen_' + roomKey) || '0', 10) || 0; } catch (e) {}
+  var n = 0;
+  Object.keys(clips || {}).forEach(function (id) {
+    var c = clips[id];
+    if (c && c.ts > seen && c.uid !== userId) n++;   // my own transmissions aren't "unheard"
+  });
+  return n;
+}
+// Pull the live roster + unheard count for every Crew, then repaint. One pass per Crew, run
+// only while the Talk section is actually on screen.
+window._talkLoadDetail = async function () {
+  var fb = window._fb; if (!fb || !fb.db || !fb.get) return;
+  var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
+  var keys = Object.keys(circles);
+  if (!keys.length) return;
+  window._talkDetail = window._talkDetail || {};
+  await Promise.all(keys.map(async function (k) {
+    try {
+      var res = await Promise.all([
+        fb.get(fb.ref(fb.db, 'gl/' + k + '/users')).then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+        fb.get(fb.ref(fb.db, 'gl/' + k + '/voicelog')).then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
+      ]);
+      var users = res[0], clips = res[1];
+      var now = Date.now();
+      var people = Object.keys(users).map(function (uid) {
+        var u = users[uid] || {};
+        return { uid: uid, name: u.name || 'Member', dev: u.dev || '', ts: u.fixTs || u.ts || 0, hidden: !!u.hidden, noGps: !!u.noGps, priv: u.priv };
+      }).filter(function (p) {
+        if (p.uid === userId) return false;                       // no talking to yourself
+        if (window._isPrivateOther && window._isPrivateOther(p.uid, { priv: p.priv })) return false;
+        return true;
+      });
+      // Reachable = reported within LIVE_MS. Anyone staler almost certainly has the app closed,
+      // and the direct-voice ping is an in-app listener — it would never arrive.
+      people.forEach(function (p) { p.live = (now - p.ts) < (typeof LIVE_MS !== 'undefined' ? LIVE_MS : 240000); });
+      people.sort(function (a, b) { return (b.live - a.live) || (b.ts - a.ts); });
+      window._talkDetail[k] = { people: people, unread: _talkUnreadFor(k, clips) };
+    } catch (e) {}
+  }));
+  try { window._renderTalkSection(true); } catch (e) {}
+};
+window._renderTalkSection = function (skipLoad) {
   var sec = document.getElementById('talk-section');
   var list = document.getElementById('talk-list');
   if (!sec || !list) return;
@@ -7009,20 +7054,66 @@ window._renderTalkSection = function () {
   // No Crews means nobody to talk to — hide rather than show an empty box.
   if (!keys.length) { sec.style.display = 'none'; list.innerHTML = ''; return; }
   sec.style.display = '';
+  if (!skipLoad) { try { window._talkLoadDetail(); } catch (e) {} }
+  var detail = window._talkDetail || {};
   list.innerHTML = keys.map(function (k) {
     var label = circles[k] || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
-    // NOTE: no unheard-messages count here yet. The voice log is tracked per CURRENT room
-    // (listenVoiceLog subscribes to gl/<groupName>/voicelog), so there's no cross-Crew unread
-    // index to read from the home screen. Adding one is the natural next step — deliberately
-    // left out rather than shipping a badge that would always read zero.
-    return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) + '</div>' +
-        '<div style="font-size:11px;color:var(--muted);margin-top:1px">Hold to talk to everyone in this Crew</div>' +
-      '</div>' +
-      '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk</button>' +
+    var d = detail[k] || {};
+    var people = d.people || [];
+    var liveN = people.filter(function (p) { return p.live; }).length;
+    var sub = (d.people === undefined) ? 'Checking who&rsquo;s on&hellip;'
+            : liveN ? (liveN + ' reachable now') : 'Nobody reachable right now';
+    // Only LIVE people get a direct Talk button. The direct-voice ping is an in-app listener
+    // (gl/<room>/voice/<uid>) — sending it to a closed app connects nothing, so offering the
+    // button there would just reproduce the "waiting for others…" dead end. Their dot can look
+    // fine meanwhile, because location comes from the native background service.
+    var rows = people.filter(function (p) { return p.live; }).slice(0, 8).map(function (p) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px 7px 14px;border-top:1px solid var(--border)">' +
+        '<span style="width:7px;height:7px;border-radius:50%;background:#3fb950;flex-shrink:0"></span>' +
+        '<span style="flex:1;min-width:0;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(p.name) + (p.dev ? ' <span style="color:var(--muted);font-size:11px">&middot; ' + _escHtml(p.dev) + '</span>' : '') + '</span>' +
+        '<button onclick="window._talkToPerson(\'' + _escHtml(k) + '\',\'' + _escHtml(p.uid) + '\',\'' + _escHtml(p.name) + '\')" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer"><svg class="licon licon-sm" style="width:13px;height:13px"><use href="#ic-mic"/></svg>Talk</button>' +
+      '</div>';
+    }).join('');
+    return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
+      '<div style="display:flex;align-items:center;gap:9px;padding:10px 12px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
+            (d.unread ? ' <span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + sub + '</div>' +
+        '</div>' +
+        '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk all</button>' +
+      '</div>' + rows +
     '</div>';
   }).join('');
+};
+// Direct one-to-one channel from Home, for a room we are NOT currently in. Mirrors
+// _openVoiceTo, but every write goes through window._fb — the bare db/fbRef/fbSet globals
+// aren't assigned until enterMap() runs, and the point of this screen is that it hasn't.
+window._talkToPerson = async function (roomKey, uid, name) {
+  var cfg = window.VOICE_CONFIG || {};
+  var fb = window._fb;
+  if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
+  if (!fb || !fb.db || !roomKey || !uid || !userId) { toast('Couldn\'t start voice — try again in a moment.'); return; }
+  // Must match _gvRoomId's format EXACTLY, but built from the passed roomKey rather than the
+  // global groupName. _gvRoomId interpolates groupName, which is EMPTY on the home screen, so
+  // calling it here would mint "gv__a~b" while the recipient — who is in the room — derives
+  // "gv_<room>_a~b". The ping and the join would land in two different rooms and neither side
+  // would ever hear the other.
+  var roomId = 'gv_' + roomKey + '_' + [userId, uid].sort().join('~');
+  try {
+    fb.set(fb.ref(fb.db, 'gl/' + roomKey + '/voice/' + uid), {
+      from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
+    });
+    window._gvPingedUid = uid;
+  } catch (e) {}
+  try { _pushToUid(uid, (userName || 'Someone') + ' wants to talk', 'Open GroundLink to join the channel', 'voice'); } catch (e) {}
+  try {
+    var mod = await window._voiceMod();
+    mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
+      partnerName: name, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+    try { window._evt('🎙 started voice with ' + name + ' from home'); } catch (e) {}
+  } catch (e) { toast('Voice failed to load: ' + (e && e.message)); }
 };
 // Open the whole-Crew channel for a room we are NOT currently in.
 window._talkToCrew = async function (roomKey, label) {
