@@ -252,6 +252,57 @@ app.post('/invitePush', rateLimit(20, 60000), async function(req, res) {
   res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
 });
 
+// Push to SPECIFIC people rather than fanning out to a whole group. /push broadcasts to
+// everyone in the room, which is wrong for a one-to-one call: starting a private channel with
+// one person shouldn't buzz the entire crew.
+//
+// Voice needed this because the invite itself is a Firebase listener scoped to
+// gl/<room>/voice/<uid> — it only fires while the recipient's app is OPEN and in that room.
+// Their dot stays live from the native background service either way, so a closed app looked
+// identical to an ignored call: the caller sat on "waiting for others…" forever with no way to
+// reach them. Reported 2026-08-05.
+app.post('/pushTo', rateLimit(30, 60000), async function(req, res) {
+  const b = req.body || {};
+  const uids = Array.isArray(b.uids) ? b.uids.slice(0, 8).map(u => String(u || '')).filter(Boolean) : [];
+  const title = String(b.title || 'GroundLink').slice(0, 80);
+  const body = String(b.body || '').slice(0, 200);
+  const type = String(b.type || 'info');
+  if (!uids.length) return res.json({ ok: false, reason: 'no-uid' });
+
+  let sent = false;
+  const seen = new Set();
+  for (const uid of uids) {
+    if (seen.has(uid)) continue;
+    seen.add(uid);
+    let rec = null;
+    try { rec = await findSubsForUid(uid); } catch (e) {}
+    if (!rec) continue;
+    // Same per-type preference check /push applies, so muting "Someone talking (voice)"
+    // silences a direct call too. SOS always goes through.
+    if (type !== 'sos' && rec.prefs && (rec.prefs[type] === 0 || rec.prefs[type] === false)) continue;
+    if (fcmAdmin && rec.fcm) {
+      try {
+        await fcmAdmin.messaging().send({
+          token: rec.fcm,
+          notification: { title: title, body: body },
+          data: { type: type, url: '/' },
+          android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+          apns: { payload: { aps: { sound: 'default' } } }
+        });
+        sent = true;
+        continue;
+      } catch (e) {}
+    }
+    if (pushReady && rec.sub) {
+      try {
+        await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify({ title: title, body: body, url: '/' }), { TTL: 3600, urgency: 'high' });
+        sent = true;
+      } catch (e) {}
+    }
+  }
+  res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
+});
+
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', rateLimit(30, 60000), async function(req, res) {

@@ -2767,7 +2767,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 581;
+var APP_BUILD = 582;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19340,6 +19340,25 @@ async function _openVoiceToSelected(uids, names) {
 }
 
 // ── Initiator: tap 🎙 → ping the target + open voice (mic ready) ───
+// Notify SPECIFIC people. pushNotify() fans out to the whole room, which is wrong for a
+// one-to-one call — starting a private channel with one person shouldn't buzz the whole crew.
+// Fire-and-forget; the voice room is already open by the time this runs.
+function _pushToUid(uid, title, body, type) {
+  try {
+    if (!uid) return;
+    var ids = [uid];
+    // Their other devices too: they may have the phone in a pocket and a tablet in the truck,
+    // and _devOwner is the existing device -> account index.
+    try {
+      var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+      if (acct && ids.indexOf(acct) === -1) ids.push(acct);
+    } catch (e) {}
+    fetch('/pushTo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uids: ids, title: title, body: body, type: type || 'info' })
+    }).catch(function () {});
+  } catch (e) {}
+}
 window._openVoiceTo = async function (uid, name) {
   if (document.body.classList.contains('voice-off')) return; // voice disabled here
   var cfg = window.VOICE_CONFIG || {};
@@ -19353,6 +19372,15 @@ window._openVoiceTo = async function (uid, name) {
       from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
     });
     window._gvPingedUid = uid; // remember so we can clear the ping when we leave
+  } catch (e) {}
+  // The Firebase ping above only reaches them while their app is OPEN and sitting in this
+  // room — it's an onValue listener on gl/<room>/voice/<uid>, nothing more. Their dot keeps
+  // moving from the native background service regardless, so a closed app is indistinguishable
+  // from someone ignoring you: the bar just says "waiting for others…" forever. Send a real
+  // notification too, targeted at that ONE person (not the group), so they can tap in.
+  try {
+    _pushToUid(uid, (userName || 'Someone') + ' wants to talk',
+               'Open GroundLink to join the channel', 'voice');
   } catch (e) {}
   if (window._evt) window._evt('🎙 started voice with ' + name);
   try {
@@ -19376,6 +19404,15 @@ window._openVoiceToGroup = async function () {
     fbSet(fbRef(db, 'gl/' + groupName + '/voiceAll'), {
       from: userId, fromName: userName || 'Member', room: roomId, ts: Date.now()
     });
+  } catch (e) {}
+  // Same closed-app problem as a direct call, but a group call SHOULD reach everyone, so the
+  // normal room fan-out is the right tool here. Type 'voice' so anyone who muted
+  // "Someone talking" in Settings stays muted.
+  try {
+    if (typeof pushNotify === 'function') {
+      pushNotify('voice', (userName || 'Someone') + ' opened the channel',
+                 'Open GroundLink to join', { toFavs: true }, groupName);
+    }
   } catch (e) {}
   if (window._evt) window._evt('🎙 started GROUP voice');
   try {
