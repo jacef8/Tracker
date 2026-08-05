@@ -2831,7 +2831,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 589;
+var APP_BUILD = 590;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7084,6 +7084,25 @@ window._homeGo = function (area) {
       p.style.boxShadow = 'none';
       p.style.borderRadius = '12px';
       p.classList.add('open');
+      // A "sheet" is a full-screen backdrop plus an absolutely-positioned card. Both children
+      // are position:absolute, so once the wrapper is static it collapses to zero height and
+      // renders nothing — measured on #settings-sheet: wrapper h=0 with a 695px backdrop and a
+      // 591px panel inside it. Drop the backdrop (there's nothing to dim inline) and let the
+      // panel flow normally.
+      Array.prototype.forEach.call(p.children, function (c, i) {
+        try {
+          if (getComputedStyle(c).position !== 'absolute') return;
+          if (!c._homeCss && c._homeCss !== '') c._homeCss = c.getAttribute('style') || '';
+          if (i === 0 && !c.id) { c.style.display = 'none'; return; }   // backdrop
+          c.style.position = 'static';
+          c.style.inset = 'auto';
+          c.style.width = '100%';
+          c.style.maxWidth = '100%';
+          c.style.maxHeight = 'none';
+          c.style.transform = 'none';
+          c.style.boxShadow = 'none';
+        } catch (e2) {}
+      });
     } catch (e) {}
   };
   var _unmount = function (panelId) {
@@ -7092,6 +7111,10 @@ window._homeGo = function (area) {
       if (!p || !p._homeOrigin) return;
       p.classList.remove('open');
       p.setAttribute('style', p._homeCss || '');
+      // Put the children back exactly as they were, or the map's own drawer opens broken.
+      Array.prototype.forEach.call(p.children, function (c) {
+        try { if (c._homeCss !== undefined) { c.setAttribute('style', c._homeCss); c._homeCss = undefined; } } catch (e2) {}
+      });
       p._homeOrigin.appendChild(p);
       p._homeOrigin = null;
     } catch (e) {}
