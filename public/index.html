@@ -2817,7 +2817,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 591;
+var APP_BUILD = 592;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7053,8 +7053,22 @@ window._homeGo = function (area) {
   // clipped, offset mess with content spilling outside the card. A drawer is the right shape
   // for this content. The actual bug was never the drawer, it was that the drawer sits at
   // z-index ~302 while the home screen is 900, so it opened invisibly underneath.
+  // Raising z-index alone was NOT enough: these drawers are positioned against the map's
+  // layout, which doesn't exist on the home screen, so the panel also computed to top=734 in a
+  // 695px viewport — fully below the fold. Pin it to the viewport for the home case.
   var _lift = function (id) {
-    try { var e = document.getElementById(id); if (e) e.style.setProperty('z-index', '950', 'important'); } catch (e2) {}
+    try {
+      var e = document.getElementById(id); if (!e) return;
+      if (e._homeLift === undefined) e._homeLift = e.getAttribute('style') || '';
+      e.style.setProperty('z-index', '950', 'important');
+      e.style.setProperty('top', '0', 'important');
+      e.style.setProperty('bottom', '0', 'important');
+      e.style.setProperty('height', 'auto', 'important');
+    } catch (e2) {}
+  };
+  // Undo it when the drawer closes, so the map keeps its own geometry.
+  window._homeDropLift = function (id) {
+    try { var e = document.getElementById(id); if (e && e._homeLift !== undefined) { e.setAttribute('style', e._homeLift); e._homeLift = undefined; } } catch (e2) {}
   };
   if (area === 'settings') { try { _lift('settings-sheet'); openSettings(); } catch (e) {} return; }
   if (area === 'pins') {
