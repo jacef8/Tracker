@@ -2761,7 +2761,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 579;
+var APP_BUILD = 580;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6426,17 +6426,50 @@ function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
       if (firstCheck || isInside === state.inside) return; // no transition
       var kind = isInside ? 'arrive' : 'leave';
       if (p.alertOn && p.alertOn[kind] === false) return; // this transition type isn't wanted
+      // CROSS-DEVICE dedupe. _placeGeoState above is per-device, in-memory — so a phone and a
+      // tablet sitting in the same place each evaluate this fence independently and each fire
+      // its own "Jace arrived at Home", doubling the alert for every extra device the person
+      // owns. Reported 2026-08-04 as ~4 notifications for one arrival.
+      //
+      // Claim the event in Firebase under a deterministic PERSON+place+kind key first, and only
+      // notify if nobody claimed it in the last PLACE_MIN_TRANSITION_MS. Not a transaction, so
+      // two devices firing in the same instant can still both get through — but the real case
+      // (a parked tablet and a phone arriving seconds or minutes apart) collapses to one.
+      //
+      // Lives under config/ deliberately. The $room rule is ".write": "auth != null &&
+      // !newData.exists()" — DELETE-ONLY — so any child not explicitly listed in the rules can
+      // be removed but never written. A new top-level gl/<room>/placeGuard node would have been
+      // silently denied, exactly the trap that broke the _diag beacons. config/ already grants
+      // ".write": "auth != null" to everything beneath it, which is why adminRequest lives
+      // there too.
+      var _pid = (typeof window._personId === 'function') ? window._personId(userId) : userId;
+      var _guard = 'gl/' + circleKey + '/config/placeGuard/' + _pid + '_' + placeId + '_' + kind;
+      var _fire = function () {
+        try {
+          var evRef = fbPush(fbRef(db, 'gl/' + circleKey + '/placeEvents'));
+          fbSet(evRef, { uid: userId, name: userName || 'Someone', placeId: placeId, placeName: p.name || 'a place', kind: kind, ts: Date.now() });
+        } catch (e) {}
+        try {
+          var body = (userName || 'Someone') + (kind === 'arrive' ? ' arrived at ' : ' left ') + (p.name || 'a place');
+          // toFavs is required here — circle members' push subscriptions live ONLY in favSubs
+          // (see _registerFavSub), never pushSubs (which is for people actively in the room right
+          // now). Without this, the /push endpoint would find zero recipients for a Circle.
+          if (typeof pushNotify === 'function') pushNotify('place_' + kind, p.name || 'Place alert', body, { toFavs: true }, circleKey);
+        } catch (e) {}
+      };
       try {
-        var evRef = fbPush(fbRef(db, 'gl/' + circleKey + '/placeEvents'));
-        fbSet(evRef, { uid: userId, name: userName || 'Someone', placeId: placeId, placeName: p.name || 'a place', kind: kind, ts: Date.now() });
-      } catch (e) {}
-      try {
-        var body = (userName || 'Someone') + (kind === 'arrive' ? ' arrived at ' : ' left ') + (p.name || 'a place');
-        // toFavs is required here — circle members' push subscriptions live ONLY in favSubs
-        // (see _registerFavSub), never pushSubs (which is for people actively in the room right
-        // now). Without this, the /push endpoint would find zero recipients for a Circle.
-        if (typeof pushNotify === 'function') pushNotify('place_' + kind, p.name || 'Place alert', body, { toFavs: true }, circleKey);
-      } catch (e) {}
+        var F = window._fb;
+        if (F && F.get && F.ref && F.db) {
+          F.get(F.ref(F.db, _guard)).then(function (s) {
+            var prev = (s && s.val && s.val()) || 0;
+            if (Date.now() - prev < PLACE_MIN_TRANSITION_MS) return;   // another device already told everyone
+            try { fbSet(fbRef(db, _guard), Date.now()); } catch (e) {}
+            _fire();
+          }).catch(function () { _fire(); });   // can't check → better a duplicate than a missed alert
+        } else {
+          _fire();
+        }
+      } catch (e) { _fire(); }
     });
   });
 }
