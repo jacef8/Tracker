@@ -1237,20 +1237,6 @@
           <div id="people-list" style="display:flex;flex-direction:column;gap:7px"></div>
         </div>
 
-        <!-- Pins and Settings are MOUNT POINTS, not copies. The real panels (#saved-pins-drawer,
-             #settings-sheet) get moved in here while you're on Home and moved back to <body>
-             when you leave, so there is exactly one of each and they can never drift apart.
-             Rebuilding them inline would have meant maintaining two of everything. -->
-        <div id="pins-section" class="join-section" style="display:none">
-          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-pin"/></svg>Pins</div>
-          <div id="pins-mount"></div>
-        </div>
-
-        <div id="settings-section" class="join-section" style="display:none">
-          <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-gear"/></svg>Settings</div>
-          <div id="settings-mount"></div>
-        </div>
-
         <div id="room-list-section" class="join-section">
           <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-search"/></svg>Join a group</div>
           <div class="input-icon-wrap">
@@ -2831,7 +2817,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 590;
+var APP_BUILD = 591;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7061,76 +7047,21 @@ window._homeGo = function (area) {
   // underneath. Measured on-device: drawer z=302, join-screen z=900, drawer rect starting
   // 40px below the bottom of the viewport. Lift it over the home screen for as long as it's
   // open. Harmless once closed: these drawers park themselves off-screen via transform.
-  // Pins and Settings reuse the REAL panels rather than inline copies — there's exactly one of
-  // each, so they can't drift. Both were built as map overlays (position:fixed, translated
-  // off-screen, z-index ~300), which is why opening them from Home produced "a completely
-  // different window" appearing over nothing. Mount them into a home section and neutralise
-  // the overlay styling; restore it on the way out so the map still gets its drawer.
-  var _mount = function (panelId, mountId) {
-    try {
-      var p = document.getElementById(panelId), m = document.getElementById(mountId);
-      if (!p || !m || p.parentElement === m) return;
-      if (!p._homeOrigin) { p._homeOrigin = p.parentElement; p._homeCss = p.getAttribute('style') || ''; }
-      m.appendChild(p);
-      p.style.position = 'static';
-      p.style.transform = 'none';
-      p.style.zIndex = 'auto';
-      p.style.display = 'block';
-      p.style.width = '100%';
-      p.style.maxWidth = '100%';
-      p.style.height = 'auto';
-      p.style.maxHeight = 'none';
-      p.style.inset = 'auto';
-      p.style.boxShadow = 'none';
-      p.style.borderRadius = '12px';
-      p.classList.add('open');
-      // A "sheet" is a full-screen backdrop plus an absolutely-positioned card. Both children
-      // are position:absolute, so once the wrapper is static it collapses to zero height and
-      // renders nothing — measured on #settings-sheet: wrapper h=0 with a 695px backdrop and a
-      // 591px panel inside it. Drop the backdrop (there's nothing to dim inline) and let the
-      // panel flow normally.
-      Array.prototype.forEach.call(p.children, function (c, i) {
-        try {
-          if (getComputedStyle(c).position !== 'absolute') return;
-          if (!c._homeCss && c._homeCss !== '') c._homeCss = c.getAttribute('style') || '';
-          if (i === 0 && !c.id) { c.style.display = 'none'; return; }   // backdrop
-          c.style.position = 'static';
-          c.style.inset = 'auto';
-          c.style.width = '100%';
-          c.style.maxWidth = '100%';
-          c.style.maxHeight = 'none';
-          c.style.transform = 'none';
-          c.style.boxShadow = 'none';
-        } catch (e2) {}
-      });
-    } catch (e) {}
+  // Pins and Settings open their REAL drawers. An earlier build tried to mount them inline
+  // into a home section; that was a mistake — these panels are built as full-screen overlays
+  // (sticky headers, internal scrollers, fixed widths), and forcing them static produced a
+  // clipped, offset mess with content spilling outside the card. A drawer is the right shape
+  // for this content. The actual bug was never the drawer, it was that the drawer sits at
+  // z-index ~302 while the home screen is 900, so it opened invisibly underneath.
+  var _lift = function (id) {
+    try { var e = document.getElementById(id); if (e) e.style.setProperty('z-index', '950', 'important'); } catch (e2) {}
   };
-  var _unmount = function (panelId) {
-    try {
-      var p = document.getElementById(panelId);
-      if (!p || !p._homeOrigin) return;
-      p.classList.remove('open');
-      p.setAttribute('style', p._homeCss || '');
-      // Put the children back exactly as they were, or the map's own drawer opens broken.
-      Array.prototype.forEach.call(p.children, function (c) {
-        try { if (c._homeCss !== undefined) { c.setAttribute('style', c._homeCss); c._homeCss = undefined; } } catch (e2) {}
-      });
-      p._homeOrigin.appendChild(p);
-      p._homeOrigin = null;
-    } catch (e) {}
-  };
-  // Anything not being shown goes home to <body>, so the map's own open/close still works.
-  if (area !== 'pins') _unmount('saved-pins-drawer');
-  if (area !== 'settings') _unmount('settings-sheet');
+  if (area === 'settings') { try { _lift('settings-sheet'); openSettings(); } catch (e) {} return; }
   if (area === 'pins') {
-    _mount('saved-pins-drawer', 'pins-mount');
-    // "My Saved" — the personal cross-room library. "This Room" would be empty by definition
-    // with no room open.
-    try { if (window._pinsTab) window._pinsTab('saved'); } catch (e) {}
-  }
-  if (area === 'settings') {
-    _mount('settings-sheet', 'settings-mount');
-    try { if (typeof _syncSettings === 'function') _syncSettings(); } catch (e) {}
+    // "My Saved" — the personal cross-room library. "This Room" is empty by definition here.
+    try { if (typeof openSavedPins === 'function') { _lift('saved-pins-drawer'); openSavedPins(); return; } } catch (e) {}
+    toast('Saved pins open from inside a room for now');
+    return;
   }
   if (area === 'map') {
     // Straight back to where you were. With no last room there's nothing to open, so fall
@@ -7147,8 +7078,6 @@ window._homeGo = function (area) {
   }
   if (area === 'people') { area = 'talk'; window._homeArea = 'talk'; }   // merged into Talk
   show('talk-section',      area === 'talk');
-  show('pins-section',      area === 'pins');
-  show('settings-section',  area === 'settings');
   show('room-list-section', area === 'rooms');
   show('home-or',           area === 'rooms');
   show('new-group-section', area === 'rooms');
