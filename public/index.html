@@ -2814,7 +2814,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 586;
+var APP_BUILD = 587;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7039,13 +7039,21 @@ window._homeArea = 'talk';
 window._homeGo = function (area) {
   window._homeArea = area;
   var show = function (id, on) { var e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
+  // These drawers were built as MAP overlays and sit at z-index ~300, while the home screen
+  // is z-index 900 — so opening one from Home worked perfectly and was completely invisible
+  // underneath. Measured on-device: drawer z=302, join-screen z=900, drawer rect starting
+  // 40px below the bottom of the viewport. Lift it over the home screen for as long as it's
+  // open. Harmless once closed: these drawers park themselves off-screen via transform.
+  var _lift = function (id) {
+    try { var e = document.getElementById(id); if (e) e.style.zIndex = '950'; } catch (e2) {}
+  };
   // Drawers own their own open/close — bounce to them and leave the home layout alone.
-  if (area === 'settings') { try { openSettings(); } catch (e) {} return; }
+  if (area === 'settings') { try { _lift('settings-sheet'); openSettings(); } catch (e) {} return; }
   if (area === 'pins') {
     // openSavedPins() opens the unified drawer on the "My Saved" tab — the personal,
     // cross-room library, which is the only half that means anything with no room open.
     // (openPinFeed's "This Room" tab would be empty here by definition.)
-    try { if (typeof openSavedPins === 'function') { openSavedPins(); return; } } catch (e) {}
+    try { if (typeof openSavedPins === 'function') { _lift('saved-pins-drawer'); openSavedPins(); return; } } catch (e) {}
     toast('Saved pins open from inside a room for now');
     return;
   }
