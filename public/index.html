@@ -1208,15 +1208,15 @@
              toolbar keeps Chat, Measure and SOS because those are used in the moment, on the
              map, not navigated to. -->
         <div id="home-hub" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
-          <!-- Five, not six. "Talk" and "People" were both a list of your favourites — one with
-               Talk buttons, one without — so they were the same screen twice. The people list
-               IS the talk list; keeping the verb ("Talk") over the noun keeps the primary
-               action visible, since talking is what this screen exists for. -->
-          <button type="button" onclick="window._homeGo('map')"      class="hub-btn"><svg class="licon"><use href="#ic-map"/></svg><span>Map</span></button>
-          <button type="button" onclick="window._homeGo('talk')"     class="hub-btn"><svg class="licon"><use href="#ic-mic"/></svg><span>Talk</span><span id="hub-talk-badge" class="hub-badge" style="display:none"></span></button>
-          <button type="button" onclick="window._homeGo('pins')"     class="hub-btn"><svg class="licon"><use href="#ic-pin"/></svg><span>Pins</span></button>
-          <button type="button" onclick="window._homeGo('rooms')"    class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span></button>
-          <button type="button" onclick="window._homeGo('settings')" class="hub-btn"><svg class="licon"><use href="#ic-gear"/></svg><span>Settings</span></button>
+          <!-- Three, and only three. Pins and Settings were tried here and pulled back out:
+               both are MAP panels (full-screen overlays positioned against the map's layout),
+               and every attempt to surface them on Home failed differently - invisible under
+               the home screen, mangled when forced inline, then floating over the content like
+               a stuck modal. Settings already has its gear at the top of this screen and Pins
+               belongs to the map. A button that half-works is worse than no button. -->
+          <button type="button" onclick="window._homeGo('map')"   class="hub-btn"><svg class="licon"><use href="#ic-map"/></svg><span>Map</span></button>
+          <button type="button" onclick="window._homeGo('talk')"  class="hub-btn"><svg class="licon"><use href="#ic-mic"/></svg><span>Talk</span><span id="hub-talk-badge" class="hub-badge" style="display:none"></span></button>
+          <button type="button" onclick="window._homeGo('rooms')" class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span></button>
         </div>
 
         <!-- ══ TALK — voice without going through the map ══════════════════════
@@ -2817,7 +2817,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 592;
+var APP_BUILD = 593;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7047,36 +7047,6 @@ window._homeGo = function (area) {
   // underneath. Measured on-device: drawer z=302, join-screen z=900, drawer rect starting
   // 40px below the bottom of the viewport. Lift it over the home screen for as long as it's
   // open. Harmless once closed: these drawers park themselves off-screen via transform.
-  // Pins and Settings open their REAL drawers. An earlier build tried to mount them inline
-  // into a home section; that was a mistake — these panels are built as full-screen overlays
-  // (sticky headers, internal scrollers, fixed widths), and forcing them static produced a
-  // clipped, offset mess with content spilling outside the card. A drawer is the right shape
-  // for this content. The actual bug was never the drawer, it was that the drawer sits at
-  // z-index ~302 while the home screen is 900, so it opened invisibly underneath.
-  // Raising z-index alone was NOT enough: these drawers are positioned against the map's
-  // layout, which doesn't exist on the home screen, so the panel also computed to top=734 in a
-  // 695px viewport — fully below the fold. Pin it to the viewport for the home case.
-  var _lift = function (id) {
-    try {
-      var e = document.getElementById(id); if (!e) return;
-      if (e._homeLift === undefined) e._homeLift = e.getAttribute('style') || '';
-      e.style.setProperty('z-index', '950', 'important');
-      e.style.setProperty('top', '0', 'important');
-      e.style.setProperty('bottom', '0', 'important');
-      e.style.setProperty('height', 'auto', 'important');
-    } catch (e2) {}
-  };
-  // Undo it when the drawer closes, so the map keeps its own geometry.
-  window._homeDropLift = function (id) {
-    try { var e = document.getElementById(id); if (e && e._homeLift !== undefined) { e.setAttribute('style', e._homeLift); e._homeLift = undefined; } } catch (e2) {}
-  };
-  if (area === 'settings') { try { _lift('settings-sheet'); openSettings(); } catch (e) {} return; }
-  if (area === 'pins') {
-    // "My Saved" — the personal cross-room library. "This Room" is empty by definition here.
-    try { if (typeof openSavedPins === 'function') { _lift('saved-pins-drawer'); openSavedPins(); return; } } catch (e) {}
-    toast('Saved pins open from inside a room for now');
-    return;
-  }
   if (area === 'map') {
     // Straight back to where you were. With no last room there's nothing to open, so fall
     // through to Rooms rather than dead-ending on a button that appears to do nothing.
@@ -7090,7 +7060,8 @@ window._homeGo = function (area) {
     window._homeArea = 'map';
     try { toast('Pick a room below and it opens on the map', 3000); } catch (e) {}
   }
-  if (area === 'people') { area = 'talk'; window._homeArea = 'talk'; }   // merged into Talk
+  // Anything that isn't a real home area lands on Talk rather than a blank screen.
+  if (area !== 'talk' && area !== 'rooms' && area !== 'map') { area = 'talk'; window._homeArea = 'talk'; }
   show('talk-section',      area === 'talk');
   show('room-list-section', area === 'rooms');
   show('home-or',           area === 'rooms');
