@@ -1192,7 +1192,7 @@
              list: tap to drop down your circles and jump straight into one, invite, or leave.
              Replaces the old full "My Circles" section AND the separate Account-page Circles
              management block — this is now the one place both live. Hidden with zero circles. -->
-        <div id="circle-switcher" style="display:none;margin-bottom:2px">
+        <div id="circle-switcher" style="display:none !important;margin-bottom:2px">
           <button id="circle-switcher-btn" type="button" onclick="window._toggleCircleSwitcher()" style="width:100%;display:flex;align-items:center;gap:8px;background:rgba(167,139,250,.10);border:1px solid rgba(167,139,250,.35);border-radius:12px;padding:10px 12px;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:left">
             <svg class="licon licon-sm" style="color:#a78bfa;flex-shrink:0"><use href="#ic-users"/></svg>
             <span id="circle-switcher-label" style="flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">My Crews</span>
@@ -1208,15 +1208,17 @@
              toolbar keeps Chat, Measure and SOS because those are used in the moment, on the
              map, not navigated to. -->
         <div id="home-hub" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
-          <!-- Three, and only three. Pins and Settings were tried here and pulled back out:
-               both are MAP panels (full-screen overlays positioned against the map's layout),
-               and every attempt to surface them on Home failed differently - invisible under
-               the home screen, mangled when forced inline, then floating over the content like
-               a stuck modal. Settings already has its gear at the top of this screen and Pins
-               belongs to the map. A button that half-works is worse than no button. -->
-          <button type="button" onclick="window._homeGo('talk')"  class="hub-btn"><svg class="licon"><use href="#ic-mic"/></svg><span>Talk</span><span id="hub-talk-badge" class="hub-badge" style="display:none"></span></button>
-          <button type="button" onclick="window._homeGo('map')"   class="hub-btn"><svg class="licon"><use href="#ic-map"/></svg><span>Map</span></button>
-          <button type="button" onclick="window._homeGo('rooms')" class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span></button>
+          <!-- Rooms sits centre of the top row and is where Home opens. Talk and My Map
+               flank it; People and Crews come out of the account screen onto their own
+               buttons, since a favourites list and a Crew list are destinations, not settings.
+               My Map is the roomless map of your saved pins — it always works, with or
+               without a room, which is why it can share a row with Rooms without duplicating
+               it the way the old "Map" button did. -->
+          <button type="button" onclick="window._homeGo('talk')"   class="hub-btn"><svg class="licon"><use href="#ic-mic"/></svg><span>Talk</span><span id="hub-talk-badge" class="hub-badge" style="display:none"></span></button>
+          <button type="button" onclick="window._homeGo('rooms')"  class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span></button>
+          <button type="button" onclick="window._homeGo('mymap')"  class="hub-btn"><svg class="licon"><use href="#ic-map"/></svg><span>My Map</span></button>
+          <button type="button" onclick="window._homeGo('people')" class="hub-btn"><svg class="licon"><use href="#ic-users"/></svg><span>People</span></button>
+          <button type="button" onclick="window._homeGo('crews')"  class="hub-btn"><svg class="licon" style="color:#a78bfa"><use href="#ic-users"/></svg><span>Crews</span></button>
         </div>
 
         <!-- ══ TALK — voice without going through the map ══════════════════════
@@ -1235,6 +1237,11 @@
         <div id="people-section" class="join-section" style="display:none">
           <div class="join-section-title"><svg class="licon licon-sm"><use href="#ic-users"/></svg>People</div>
           <div id="people-list" style="display:flex;flex-direction:column;gap:7px"></div>
+        </div>
+
+        <div id="crews-section" class="join-section" style="display:none">
+          <div class="join-section-title"><svg class="licon licon-sm" style="color:#a78bfa"><use href="#ic-users"/></svg>My Crews</div>
+          <div id="crews-list" style="display:flex;flex-direction:column;gap:7px"></div>
         </div>
 
         <div id="room-list-section" class="join-section">
@@ -1315,10 +1322,7 @@
         <!-- ══ ACCOUNT EXTRAS (stats · color · your groups · quick settings) ════ -->
         <div id="acct-extras" style="display:flex;flex-direction:column;gap:10px;margin-top:2px">
 
-          <!-- My Map: solo map of your saved pins, no room needed -->
-          <button onclick="window._enterSoloMap()" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:var(--radius);color:#000;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">
-            <svg class="licon licon-sm"><use href="#ic-pin"/></svg> Open My Map
-          </button>
+          <!-- My Map moved to the home hub (its own button) — one entry point, not two. -->
 
           <!-- Your stats -->
           <div style="display:flex;gap:8px">
@@ -2817,7 +2821,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 598;
+var APP_BUILD = 599;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7038,7 +7042,7 @@ function _untrackJoinedRoom(key) {
 // for everyone mid-test), this just decides which of them is on screen at a time.
 //
 // 'pins' and 'settings' hand off to drawers that already exist; the rest are home sections.
-window._homeArea = 'map';
+window._homeArea = 'rooms';
 window._homeGo = function (area, auto) {
   window._homeArea = area;
   var show = function (id, on) { var e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
@@ -7047,36 +7051,18 @@ window._homeGo = function (area, auto) {
   // underneath. Measured on-device: drawer z=302, join-screen z=900, drawer rect starting
   // 40px below the bottom of the viewport. Lift it over the home screen for as long as it's
   // open. Harmless once closed: these drawers park themselves off-screen via transform.
-  if (area === 'map' && auto && window._didAutoMap) {
-    // Already auto-opened once this page load. Returning Home (e.g. via EXIT) must NOT drive
-    // straight back into the room or leaving becomes impossible. Land on TALK, not Rooms —
-    // Map's fallback used to be the room list, which made Map and Rooms show the identical
-    // screen and left one of the three buttons doing nothing of its own.
-    area = 'talk';
-    window._homeArea = 'talk';
+  if (area === 'mymap') {
+    // Always opens: a solo map of your saved pins, no room required. Nothing to fall back to
+    // and nothing to duplicate — the old Map button collapsed into the room list whenever
+    // there was no saved session, which is what made it and Rooms the same button.
+    try { if (typeof _enterSoloMap === 'function') { _enterSoloMap(); return; } } catch (e) {}
+    try { if (window._openMyMap) { window._openMyMap(); return; } } catch (e) {}
+    toast('Couldn’t open your map — try again in a moment', 2600);
+    window._homeArea = 'rooms'; area = 'rooms';
   }
-  if (area === 'map') {
-    if (auto) window._didAutoMap = true;
-    // Straight back to where you were. With no last room there's nothing to open, so fall
-    // through to Rooms rather than dead-ending on a button that appears to do nothing.
-    var last = '';
-    try { last = (typeof getSavedSession === 'function' && (getSavedSession() || {}).group) || ''; } catch (e) {}
-    if (last) { try { var i = document.getElementById('inp-group'); if (i) { i.value = last; handleJoin(); return; } } catch (e) {} }
-    // No last room — open MY MAP, the solo map of your saved pins that needs no room at all.
-    // Falling back to the room list is what made Map and Rooms the same button: with no saved
-    // session (which EXIT clears) Map showed the room list every single time. Map should
-    // always open a map; that is the entire point of it.
-    try {
-      if (typeof _enterSoloMap === 'function') { _enterSoloMap(); return; }
-      if (window._openMyMap) { window._openMyMap(); return; }
-    } catch (e) {}
-    area = 'rooms';
-    window._homeArea = 'map';
-    try { toast('Pick a room below and it opens on the map', 3000); } catch (e) {}
-  }
-  // Anything that isn't a real home area lands on Talk rather than a blank screen.
-  if (area !== 'talk' && area !== 'rooms' && area !== 'map') { area = 'talk'; window._homeArea = 'talk'; }
   show('talk-section',      area === 'talk');
+  show('people-section',    area === 'people');
+  show('crews-section',     area === 'crews');
   show('room-list-section', area === 'rooms');
   show('home-or',           area === 'rooms');
   show('new-group-section', area === 'rooms');
@@ -7092,6 +7078,8 @@ window._homeGo = function (area, auto) {
     });
   } catch (e) {}
   if (area === 'talk') { try { window._renderTalkSection(); } catch (e) {} }
+  if (area === 'people') { try { window._renderPeopleSection(); } catch (e) {} }
+  if (area === 'crews') { try { window._talkLoadDetail(); window._renderCrewsSection(); } catch (e) {} }
 
 };
 // Total unheard transmissions across every Crew — put on the Talk button so a waiting message
@@ -7164,6 +7152,7 @@ window._talkLoadDetail = async function () {
   }));
   try { window._renderTalkSection(true); } catch (e) {}
   try { window._renderPeopleSection(); } catch (e) {}
+  try { window._renderCrewsSection(); } catch (e) {}
   try { window._updateHubTalkBadge(); } catch (e) {}
 };
 // ── Foreground heartbeat ────────────────────────────────────────────────────────
@@ -7243,6 +7232,36 @@ window._notifyToTalk = function (uid, name) {
     _pushToUid(uid, (userName || 'Someone') + ' wants to talk', 'Open GroundLink to join the channel', 'voice');
     toast('Asked ' + (name || 'them') + ' to open GroundLink', 2600);
   } catch (e) {}
+};
+// My Crews, promoted out of the account screen onto its own button. Each row opens that
+// Crew's map; the Talk-all shortcut is here too so a Crew is one tap from either.
+window._renderCrewsSection = function () {
+  var list = document.getElementById('crews-list'); if (!list) return;
+  var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
+  var keys = Object.keys(circles);
+  if (!keys.length) {
+    list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>';
+    return;
+  }
+  var detail = window._talkDetail || {};
+  list.innerHTML = keys.map(function (k) {
+    var label = circles[k] || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
+    var d = detail[k] || {};
+    var on = (d.people || []).filter(function (p) { return p.live; }).length;
+    return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<div onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex:1;min-width:0;cursor:pointer">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
+          (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' with the app open' : 'Nobody has the app open')) + '</div>' +
+      '</div>' +
+      '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" title="Talk to everyone" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-size:12px;font-weight:800;padding:7px 11px;cursor:pointer"><svg class="licon licon-sm" style="width:13px;height:13px"><use href="#ic-mic"/></svg>Talk</button>' +
+      '<button onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer">Open</button>' +
+    '</div>';
+  }).join('');
+};
+window._openCrew = function (key) {
+  try { var i = document.getElementById('inp-group'); if (i) { i.value = key; handleJoin(); } } catch (e) {}
 };
 // People = favourites. Nothing to do with Crews.
 window._renderPeopleSection = function () {
@@ -9176,7 +9195,7 @@ function showJoinScreen() {
   try { if (window._renderTalkSection) window._renderTalkSection(); } catch (e) {}
   // Re-apply the hub so returning Home lands on one area rather than the whole stack. Talk is
   // the default because it's the thing you most often open the app in a hurry to do.
-  try { if (window._homeGo) window._homeGo(window._homeArea || 'map', true); } catch (e) {}
+  try { if (window._homeGo) window._homeGo(window._homeArea || 'rooms', true); } catch (e) {}
 
   // iOS install hint
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
