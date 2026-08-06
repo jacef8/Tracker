@@ -2817,7 +2817,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 595;
+var APP_BUILD = 596;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7139,7 +7139,11 @@ window._talkLoadDetail = async function () {
         var u = users[uid] || {};
         return { uid: uid, name: u.name || 'Member', dev: u.dev || '', ts: u.fixTs || u.ts || 0, hidden: !!u.hidden, noGps: !!u.noGps, priv: u.priv };
       }).filter(function (p) {
-        if (p.uid === userId) return false;                       // no talking to yourself
+        // Every device of MINE, not just this one. A plain uid===userId check left my own PC,
+        // tablet and any older id of mine sitting in my own Talk list. _isMyOwnUid resolves a
+        // device id to its account, which is exactly this question.
+        if (p.uid === userId) return false;
+        try { if (window._isMyOwnUid && window._isMyOwnUid(p.uid)) return false; } catch (e) {}
         if (window._isPrivateOther && window._isPrivateOther(p.uid, { priv: p.priv })) return false;
         return true;
       });
@@ -7220,7 +7224,11 @@ window._renderTalkSection = function (skipLoad) {
   var loaded = Object.keys(detail).length > 0;
 
   // 1) FAVOURITES first — the whole point of "talk to a certain person".
-  var favIds = Object.keys(favs).map(function (uid) {
+  var favIds = Object.keys(favs).filter(function (uid) {
+    if (uid === userId) return false;
+    try { if (window._isMyOwnUid && window._isMyOwnUid(uid)) return false; } catch (e) {}
+    return true;
+  }).map(function (uid) {
     var p = idx[uid] || {};
     return { uid: uid, name: p.name || favs[uid] || 'Member', dev: p.dev || '', ts: p.ts || 0, live: !!p.live, room: p.room || '' };
   }).sort(function (a, b) { return (b.live - a.live) || (b.ts - a.ts); });
