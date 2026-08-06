@@ -2821,7 +2821,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 599;
+var APP_BUILD = 600;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7051,6 +7051,21 @@ window._homeGo = function (area, auto) {
   // underneath. Measured on-device: drawer z=302, join-screen z=900, drawer rect starting
   // 40px below the bottom of the viewport. Lift it over the home screen for as long as it's
   // open. Harmless once closed: these drawers park themselves off-screen via transform.
+  // On LAUNCH, drop straight back into the room you were last in rather than showing a list
+  // you have to pick from every time. Only on the automatic restore, and only once per page
+  // load: EXIT lands you back here, and re-entering the room from that would make leaving
+  // impossible. After that first pass, Rooms behaves as the list it is.
+  if (area === 'rooms' && auto && !window._didAutoRoom) {
+    window._didAutoRoom = true;
+    var _last = '';
+    try { _last = (typeof getSavedSession === 'function' && (getSavedSession() || {}).group) || ''; } catch (e) {}
+    if (_last) {
+      try {
+        var _i = document.getElementById('inp-group');
+        if (_i) { _i.value = _last; handleJoin(); return; }
+      } catch (e) {}
+    }
+  }
   if (area === 'mymap') {
     // Always opens: a solo map of your saved pins, no room required. Nothing to fall back to
     // and nothing to duplicate — the old Map button collapsed into the room list whenever
