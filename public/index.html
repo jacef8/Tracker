@@ -2817,7 +2817,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 596;
+var APP_BUILD = 597;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7062,9 +7062,14 @@ window._homeGo = function (area, auto) {
     var last = '';
     try { last = (typeof getSavedSession === 'function' && (getSavedSession() || {}).group) || ''; } catch (e) {}
     if (last) { try { var i = document.getElementById('inp-group'); if (i) { i.value = last; handleJoin(); return; } } catch (e) {} }
-    // No last room, so there's no map to open. Show the room list — but keep MAP lit and say
-    // why. Silently lighting up "Rooms" meant the button you pressed wasn't the one that
-    // highlighted, which reads as the app ignoring you and picking something else.
+    // No last room — open MY MAP, the solo map of your saved pins that needs no room at all.
+    // Falling back to the room list is what made Map and Rooms the same button: with no saved
+    // session (which EXIT clears) Map showed the room list every single time. Map should
+    // always open a map; that is the entire point of it.
+    try {
+      if (typeof _enterSoloMap === 'function') { _enterSoloMap(); return; }
+      if (window._openMyMap) { window._openMyMap(); return; }
+    } catch (e) {}
     area = 'rooms';
     window._homeArea = 'map';
     try { toast('Pick a room below and it opens on the map', 3000); } catch (e) {}
