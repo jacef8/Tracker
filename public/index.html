@@ -2824,7 +2824,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 602;
+var APP_BUILD = 603;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7246,9 +7246,20 @@ function _talkRow(p, star) {
 // Ping someone whose app is shut. No voice room is opened — there is nobody to connect to
 // yet — this just asks them to come back, and the voice log carries whatever you say after.
 window._notifyToTalk = function (uid, name) {
+  var who = name || 'them';
   try {
-    _pushToUid(uid, (userName || 'Someone') + ' wants to talk', 'Open GroundLink to join the channel', 'voice');
-    toast('Asked ' + (name || 'them') + ' to open GroundLink', 2600);
+    toast('Notifying ' + who + '…', 1400);
+    var pr = _pushToUid(uid, (userName || 'Someone') + ' wants to talk', 'Open GroundLink to join the channel', 'voice');
+    if (pr && pr.then) {
+      pr.then(function (r) {
+        if (r && r.ok) { toast('✓ Notified ' + who + ' — waiting for them to open it', 3400); }
+        else if (r && r.reason === 'no-subscription') {
+          // Their device never registered for notifications, so nothing can reach them until
+          // they open the app themselves. Say so rather than implying a message was delivered.
+          toast(who + ' has notifications turned off — they won’t get this. Text them instead.', 5200);
+        } else { toast('Couldn’t notify ' + who + ' — try again in a moment', 3600); }
+      });
+    }
   } catch (e) {}
 };
 // My Crews, promoted out of the account screen onto its own button. Each row opens that
@@ -7278,8 +7289,16 @@ window._renderCrewsSection = function () {
     '</div>';
   }).join('');
 };
-window._openCrew = function (key) {
-  try { var i = document.getElementById('inp-group'); if (i) { i.value = key; handleJoin(); } } catch (e) {}
+window._openCrew = function (key, showLog) {
+  try {
+    var i = document.getElementById('inp-group');
+    if (i) { i.value = key; handleJoin(); }
+  } catch (e) {}
+  // Opening a Crew because it has unheard transmissions should land ON them. The room needs a
+  // moment to mount and listenVoiceLog has to subscribe before there's anything to show.
+  if (showLog) {
+    setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1600);
+  }
 };
 // People = favorites. Nothing to do with Crews.
 window._renderPeopleSection = function () {
@@ -7357,11 +7376,11 @@ window._renderTalkSection = function (skipLoad) {
       var label = circles[k] || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
       var d = detail[k] || {};
       return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
-        '<div style="flex:1;min-width:0">' +
+        '<div onclick="window._openCrew(\'' + _escHtml(k) + '\',' + (d.unread ? 'true' : 'false') + ')" style="flex:1;min-width:0;cursor:pointer">' +
           '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
             (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
           '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:1px">Everyone in this Crew at once</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.unread ? 'Tap to hear what you missed' : 'Everyone in this Crew at once') + '</div>' +
         '</div>' +
         '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk all</button>' +
       '</div>';
@@ -19795,11 +19814,12 @@ function _pushToUid(uid, title, body, type) {
       var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (acct && ids.indexOf(acct) === -1) ids.push(acct);
     } catch (e) {}
-    fetch('/pushTo', {
+    return fetch('/pushTo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uids: ids, title: title, body: body, type: type || 'info' })
-    }).catch(function () {});
+    }).then(function (r) { return r.json(); }).catch(function () { return null; });
   } catch (e) {}
+  return Promise.resolve(null);
 }
 window._openVoiceTo = async function (uid, name) {
   if (document.body.classList.contains('voice-off')) return; // voice disabled here
