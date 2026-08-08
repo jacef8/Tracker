@@ -2824,7 +2824,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 606;
+var APP_BUILD = 607;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7227,7 +7227,11 @@ try {
 //
 // Capped deliberately: clips are stored as data URLs in the database, so an uncapped
 // all-Crews history would pull megabytes onto a phone every time Home opened.
-var TX_WINDOW_MS = 24 * 60 * 60 * 1000;
+// 7 days, not 24 hours. Measured on the live database: 3 clips existed across all Crews and
+// every one was older than a day, so a 24h window rendered an empty string and the whole
+// section looked like it had never shipped. Voice here is intermittent by nature — a week is
+// the honest window for "what have I missed".
+var TX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 var TX_PER_CREW  = 8;
 window._talkClips = window._talkClips || {};
 function _txAgo(ts) {
@@ -7266,7 +7270,15 @@ window._playClip = function (key) {
 };
 function _txHtml() {
   var list = _txAll();
-  if (!list.length) return '';
+  // Always render the heading, even with nothing in it. Returning '' made an empty list
+  // indistinguishable from a broken feature — you cannot tell "no messages" from "not there".
+  if (!list.length) {
+    var loaded = Object.keys(window._talkDetail || {}).length > 0;
+    return '<div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin:2px 0 1px">TRANSMISSIONS</div>' +
+      '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      (loaded ? 'Nothing in the last 7 days. Hold Talk on anyone below and it&rsquo;s saved here for them even if their app is shut.'
+              : 'Checking for messages&hellip;') + '</div>';
+  }
   var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
   return '<div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin:2px 0 1px">TRANSMISSIONS</div>' +
     list.map(function (c) {
