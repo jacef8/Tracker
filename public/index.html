@@ -2824,7 +2824,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 604;
+var APP_BUILD = 605;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17718,7 +17718,13 @@ window._exitSoloMap = function() {
   document.getElementById('topbar').style.display = 'none';
   var lm = document.getElementById('locate-me'); if (lm) lm.style.display = 'none';
   var js = document.getElementById('join-screen'); if (js) js.style.display = '';
-  try { window._goPanel(1); } catch (e) {}
+  // Panel 0 (Quick join / the hub), not panel 1 (Account). My Map used to be launched FROM
+  // the account page, so returning there was right — it's a hub button now, and exiting into
+  // Account strands you somewhere you never asked to be.
+  try { window._goPanel(0); } catch (e) {}
+  try { if (window._joinPagerReset) window._joinPagerReset(); } catch (e) {}
+  // Land on the hub area you were last in rather than whatever was showing before My Map.
+  try { if (window._homeGo) window._homeGo(window._homeArea || 'talk'); } catch (e) {}
   try { if (window._sizePagerSoon) window._sizePagerSoon(); } catch (e) {}
 };
 window._soloPinPopup = function(feature, lngLat) {
