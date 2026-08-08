@@ -2824,7 +2824,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 605;
+var APP_BUILD = 606;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7165,7 +7165,20 @@ window._talkLoadDetail = async function () {
       // wrong signal for "can they answer a voice ping right now".
       people.forEach(function (p) { p.live = !!p.fgTs && (now - p.fgTs) < FG_FRESH_MS; });
       people.sort(function (a, b) { return (b.live - a.live) || (b.ts - a.ts); });
-      window._talkDetail[k] = { people: people, unread: _talkUnreadFor(k, clips) };
+      // The loader already pulls each Crew's voicelog to count unheard messages — keep the
+      // clips themselves so Talk can list them without a second round trip.
+      var seenTs = 0;
+      try { seenTs = parseInt(localStorage.getItem('gl_vlog_seen_' + k) || '0', 10) || 0; } catch (e) {}
+      var cutoff = Date.now() - TX_WINDOW_MS;
+      var recent = Object.keys(clips).map(function (id) {
+        var c = clips[id] || {};
+        return { id: id, room: k, uid: c.uid, name: c.name || 'Member', ts: c.ts || 0,
+                 dur: c.dur || 0, audio: c.audio || '', unheard: (c.ts > seenTs && c.uid !== userId) };
+      }).filter(function (c) { return c.audio && c.ts > cutoff; })
+        .sort(function (a, b) { return b.ts - a.ts; })
+        .slice(0, TX_PER_CREW);
+      recent.forEach(function (c) { window._talkClips[c.room + '|' + c.id] = c; });
+      window._talkDetail[k] = { people: people, unread: _talkUnreadFor(k, clips), clips: recent };
     } catch (e) {}
   }));
   try { window._renderTalkSection(true); } catch (e) {}
@@ -7205,6 +7218,69 @@ try {
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') window._fgBeat(); });
   setTimeout(function () { window._fgBeat(); }, 4000);
 } catch (e) {}
+// ── Transmissions ───────────────────────────────────────────────────────────────
+// Every push-to-talk is recorded to its Crew's voicelog whether anyone was listening or not.
+// With almost nobody keeping the app open, that recording IS the channel — live voice is the
+// exception. It was also the least visible part of the feature: reachable only by entering a
+// specific Crew and opening the voice bar's log. This puts the last day's transmissions from
+// EVERY Crew in one list on the Talk screen.
+//
+// Capped deliberately: clips are stored as data URLs in the database, so an uncapped
+// all-Crews history would pull megabytes onto a phone every time Home opened.
+var TX_WINDOW_MS = 24 * 60 * 60 * 1000;
+var TX_PER_CREW  = 8;
+window._talkClips = window._talkClips || {};
+function _txAgo(ts) {
+  var m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  var h = Math.floor(m / 60);
+  return h < 24 ? (h + 'h ago') : (Math.floor(h / 24) + 'd ago');
+}
+// Newest first, with anything unheard pulled to the top — the point of the screen is what you
+// missed, not a strict chronology.
+function _txAll() {
+  var out = [], d = window._talkDetail || {};
+  Object.keys(d).forEach(function (k) { (d[k].clips || []).forEach(function (c) { out.push(c); }); });
+  out.sort(function (a, b) { return (b.unheard - a.unheard) || (b.ts - a.ts); });
+  return out.slice(0, 25);
+}
+window._playClip = function (key) {
+  var c = window._talkClips[key]; if (!c || !c.audio) return;
+  try {
+    if (window._txAudio) { try { window._txAudio.pause(); } catch (e) {} }
+    var a = new Audio(c.audio);
+    window._txAudio = a;
+    a.play().catch(function () { toast('Couldn’t play that clip', 2400); });
+    // Playing it counts as hearing it. The watermark is per room and shared with the in-room
+    // voice log, so marking it here clears the badge everywhere.
+    try {
+      var cur = parseInt(localStorage.getItem('gl_vlog_seen_' + c.room) || '0', 10) || 0;
+      if (c.ts > cur) localStorage.setItem('gl_vlog_seen_' + c.room, String(c.ts));
+    } catch (e) {}
+    c.unheard = false;
+    var dd = (window._talkDetail || {})[c.room];
+    if (dd && dd.unread) dd.unread = Math.max(0, dd.unread - 1);
+    try { window._renderTalkSection(true); window._updateHubTalkBadge(); } catch (e) {}
+  } catch (e) {}
+};
+function _txHtml() {
+  var list = _txAll();
+  if (!list.length) return '';
+  var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
+  return '<div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin:2px 0 1px">TRANSMISSIONS</div>' +
+    list.map(function (c) {
+      var crew = circles[c.room] || c.room;
+      return '<div onclick="window._playClip(\'' + _escHtml(c.room + '|' + c.id) + '\')" style="display:flex;align-items:center;gap:9px;background:' + (c.unheard ? 'rgba(240,165,0,.10)' : 'var(--bg)') + ';border:1px solid ' + (c.unheard ? 'var(--accent)' : 'var(--border)') + ';border-radius:10px;padding:9px 12px;cursor:pointer">' +
+        '<svg class="licon licon-sm" style="color:var(--accent);flex-shrink:0"><use href="#ic-play"/></svg>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(c.name) +
+            (c.unheard ? ' <span style="font-size:9px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 6px;border-radius:8px;vertical-align:1px">NEW</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + _escHtml(crew) + ' &middot; ' + _txAgo(c.ts) + (c.dur ? ' &middot; ' + c.dur + 's' : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+}
 // Flatten every Crew's live roster into one person index: uid -> where we can reach them.
 // Talk is person-first now, not Crew-first — "I want to talk to Laura" is the actual thought,
 // and making you find her Crew before her name is backwards.
@@ -7376,6 +7452,7 @@ window._renderTalkSection = function (skipLoad) {
     .sort(function (a, b) { return b.ts - a.ts; });
 
   var html = '';
+  try { html += _txHtml(); } catch (e) {}
   if (favIds.length) {
     html += '<div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin:2px 0 1px">FAVORITES</div>' +
             favIds.map(function (p) { return _talkRow(p, true); }).join('');
