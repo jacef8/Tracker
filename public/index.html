@@ -2824,7 +2824,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 607;
+var APP_BUILD = 608;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17879,6 +17879,28 @@ window._feedToggleSave = function(pid){
   try { renderSavedPins(); } catch(e){}
   if (typeof pinFeedOpen!=='undefined' && pinFeedOpen) renderPinFeed(lastPins);
 };
+// Delete a saved pin straight from its map popup.
+//
+// By KEY, not by index: the map renders getSavedPins().filter(_savedMatch), so the position in
+// that filtered list has nothing to do with the position in the real array — passing the loop
+// index to removeSavedPin would delete whatever unrelated pin happened to sit there.
+window._deleteSavedFromMap = function (key) {
+  try {
+    var pins = getSavedPins(), idx = -1;
+    for (var i = 0; i < pins.length; i++) {
+      if (window._pinKey(pins[i]) === key) { idx = i; break; }
+    }
+    if (idx < 0) { toast('That pin is already gone', 2200); return; }
+    var nm = pins[idx].label || pins[idx].cat || 'this pin';
+    _confirm('Delete this pin from your saved pins? This removes your copy only and cannot be undone.', function () {
+      try { window.removeSavedPin(idx); } catch (e) {}
+      // Drop the marker (and its open popup) immediately rather than leaving a live pin on
+      // screen for something that no longer exists.
+      try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+      try { toast('Deleted "' + nm + '"', 2400); } catch (e) {}
+    }, { yes: 'Delete', danger: true });
+  } catch (e) {}
+};
 window.removeSavedPin = function(idx) {
   var pins = getSavedPins();
   if (pins[idx]) window._addTomb('gl_pins_del', window._pinKey(pins[idx]));
@@ -17977,7 +17999,10 @@ function _renderSavedOnMap() {
       if (typeof mapboxgl !== 'undefined' && mapboxgl.Popup) {
         m.setPopup(new mapboxgl.Popup({ offset:18, closeButton:false }).setHTML(
           '<div style="font-weight:800;font-size:13px;color:#fff">' + escapeHtmlJs(pin.label || pin.cat) + '</div>' +
-          (pin.coll ? '<div style="font-size:11px;color:#a9b4bf;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '')));
+          (pin.coll ? '<div style="font-size:11px;color:#a9b4bf;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '') +
+          // Tapping the thing you want gone is the obvious gesture; before this the popup was
+          // read-only and the only way to delete was hunting the pin down in the Pins drawer.
+          '<button onclick="window._deleteSavedFromMap(\'' + escapeHtmlJs(window._pinKey(pin)) + '\')" style="margin-top:8px;width:100%;background:rgba(248,81,73,.16);border:1px solid rgba(248,81,73,.55);border-radius:8px;color:#f85149;font-size:12px;font-weight:800;padding:6px 10px;cursor:pointer">Delete pin</button>'));
       }
       window._savedMapMarkers.push(m);
     } catch(e){}
