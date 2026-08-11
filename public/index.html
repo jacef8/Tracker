@@ -2830,7 +2830,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 609;
+var APP_BUILD = 610;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12260,7 +12260,22 @@ function listenUsers() {
       // drawn. A sleeping iPhone never sets rest:1 (see the isResting note), so this hit every
       // parked iPhone in the room, and the last known position was gone for good.
       stale = (now - (d.ts || 0)) >= (d.noGps ? NO_GPS_STALE : (((d.lat || d.lng) || d.rest) ? BS_REST_MAX_MS : STALE_MS));
-      if (stale || (d.claiming && (now - (d.ts || 0)) > 30000)) {
+      // NEVER delete a stale record. Only genuinely transient junk — a "claiming" placeholder
+      // that never resolved into a real fix — gets removed.
+      //
+      // This branch ran on EVERY client and deleted OTHER people's records, so whoever happened
+      // to have the app open erased everyone who didn't. In a Crew, where presence is meant to
+      // persist whether or not anyone has the app running, that doesn't make someone look
+      // stale — it makes them cease to exist. Measured in family_men on 2026-08-08: 5 of 8
+      // members had no presence record at all, and one (Renner) had been reporting normally
+      // hours earlier. His record wasn't old, it was gone.
+      //
+      // The display filter above already decides what to DRAW. Hiding is a rendering decision;
+      // this was making it a data-destruction decision, and the two kept disagreeing — the
+      // comment history above records the same class of loss twice before. Keeping the row
+      // costs a few hundred bytes and preserves "last seen 3 days ago", which is real
+      // information. Deleting it throws away the only copy.
+      if (d.claiming && (now - (d.ts || 0)) > 30000) {
         fbRemove(fbRef(db, `gl/${groupName}/users/${uid}`));
       }
     });
