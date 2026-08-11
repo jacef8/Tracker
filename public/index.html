@@ -2830,7 +2830,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 610;
+var APP_BUILD = 611;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7204,13 +7204,20 @@ window._talkLoadDetail = async function () {
 // touches it, so it cannot be faked by the background service.
 var FG_BEAT_MS = 45 * 1000;      // how often a visible page re-stamps
 var FG_FRESH_MS = 2 * 60 * 1000; // how recent that stamp must be to count as reachable
+// Rooms this device has genuinely written a position into. The heartbeat may only stamp these
+// — writing fgTs anywhere else conjures a record out of nothing.
+window._fgRooms = window._fgRooms || {};
+function _fgMark(k) { try { if (k) window._fgRooms[k] = 1; } catch (e) {} }
 window._fgBeat = function () {
   try {
     if (document.visibilityState !== 'visible') return;   // the entire point — hidden doesn't count
     var fb = window._fb; if (!fb || !fb.db || !userId) return;
-    var rooms = {};
-    try { var c = _getCircles() || {}; Object.keys(c).forEach(function (k) { rooms[k] = 1; }); } catch (e) {}
-    try { if (typeof groupName === 'string' && groupName) rooms[groupName] = 1; } catch (e) {}
+    // ONLY rooms this device has actually written a fix into. Stamping every Crew you belong
+    // to created a record containing nothing but fgTs wherever the device had no presence —
+    // a nameless, positionless row that counts as a member and shows up as a phantom. Found
+    // one in family_men on 2026-08-08: a PC that never reports location there, sitting in the
+    // Crew as {"fgTs":...} and nothing else.
+    var rooms = window._fgRooms || {};
     var now = Date.now();
     Object.keys(rooms).forEach(function (k) {
       try { fb.set(fb.ref(fb.db, 'gl/' + k + '/users/' + userId + '/fgTs'), now); } catch (e) {}
@@ -11520,7 +11527,7 @@ function startLocationSharing() {
         }
       }
     } catch (e) {}
-    if (groupName && !window._roomClosed && _roomWritable(groupName)) fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
+    if (groupName && !window._roomClosed && _roomWritable(groupName)) { fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload); _fgMark(groupName); }
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
     // so background location keeps updating there too. This one function is the single place
@@ -11535,7 +11542,7 @@ function startLocationSharing() {
         _ensurePlacesSubscribed(_ck); // no-op after the first call per circle — see the guard inside
         if (_ck === groupName) continue; // already written above, skip the duplicate
         if (!_roomWritable(_ck)) continue;   // server no longer has it — never recreate it
-        fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload);
+        fbSet(fbRef(db, `gl/${_ck}/users/${userId}`), _fixPayload); _fgMark(_ck);
       }
       if (_circleKeys.length) _checkPlaceGeofences(lat, lng, _circleKeys, _effAccM);
     } catch (e) {}
@@ -11552,7 +11559,7 @@ function startLocationSharing() {
         var _fk = _favKeys[_fi];
         if (_fk === groupName || _circleKeys.indexOf(_fk) !== -1) continue; // already written above
         if (!_roomWritable(_fk)) continue;
-        fbSet(fbRef(db, `gl/${_fk}/users/${userId}`), _fixPayload);
+        fbSet(fbRef(db, `gl/${_fk}/users/${userId}`), _fixPayload); _fgMark(_fk);
       }
     } catch (e) {}
     // Quick-join rooms this device has entered: same always-on fan-out, but each entry carries
@@ -11570,7 +11577,7 @@ function startLocationSharing() {
         var _jEntry = _joined[_jk];
         if (_jEntry && _jEntry.expires && now > _jEntry.expires) { delete _joined[_jk]; _joinedChanged = true; continue; }
         if (!_roomWritable(_jk)) { delete _joined[_jk]; _joinedChanged = true; continue; }
-        fbSet(fbRef(db, `gl/${_jk}/users/${userId}`), _fixPayload);
+        fbSet(fbRef(db, `gl/${_jk}/users/${userId}`), _fixPayload); _fgMark(_jk);
       }
       if (_joinedChanged) _setJoinedRooms(_joined);
     } catch (e) {}
