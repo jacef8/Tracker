@@ -2830,7 +2830,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 611;
+var APP_BUILD = 612;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12586,6 +12586,14 @@ function listenUsers() {
           ? '<button id="ms-trail-toggle" onclick="window._toggleMemberTrail(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (_msTrailOn ? 'rgba(63,185,80,0.16)' : 'transparent') + ';border:1px solid ' + (_msTrailOn ? '#3fb950' : 'var(--border)') + ';border-radius:9px;font-size:13px;font-weight:800;color:' + (_msTrailOn ? '#3fb950' : 'var(--text)') + ';cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg><span>' + (_msTrailOn ? 'Hide trail' : 'Show trail') + '</span></button>'
           : '';
         var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
+        // Talk, full width above the grid. This card had Follow, Navigate, History and Trail
+        // but no way to actually speak to the person you just tapped — in a push-to-talk app
+        // that's the one action that should never be missing. Full width rather than a fifth
+        // grid cell: five buttons in a two-column grid leaves a hole, and this is the primary
+        // verb anyway. Hidden for your own card and when voice is switched off on this device.
+        var _msTalk = (!isMine && !document.body.classList.contains('voice-off'))
+          ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + _safeName + '\')" style="width:100%;margin-top:10px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk to ' + _safeName + '</button>'
+          : '';
         // The map label only appears above 25 mph, and the header badge only while _driving,
         // so "how fast are they actually going" was unanswerable for a walk, a bike, or a slow
         // crawl through a campground. This card is opt-in — you tapped this person — so give
@@ -12624,6 +12632,7 @@ function listenUsers() {
             (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
+          _msTalk +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msTrailDraw + '</div>';
         if (window._openMemberUid === uid) {
           var _msb = document.getElementById('member-sheet-body');
