@@ -102,7 +102,48 @@
         if (!current) {
           localStorage.setItem('gl_uid', u.uid);
           sessionStorage.setItem('gl_uid', u.uid);
+          return;
         }
+        // ── Sign-in merge ────────────────────────────────────────────────────────────
+        // This device is the ONLY party that will ever know both ids: it holds the old
+        // anonymous gl_uid in localStorage and has just been handed a Google/Apple auth.uid.
+        // No server and no other client can reconstruct that link afterwards, so it has to be
+        // captured here, at the moment of sign-in. Miss it and the old id becomes a permanent
+        // ghost — a second "you" on the roster that can't be merged or reached, which is
+        // exactly where the two stray "Jace" entries came from.
+        //
+        // Deliberately does NOT touch presence. gl_uid is kept as-is on purpose (so history,
+        // trails and saved pins stay attached), which means the device keeps reporting under
+        // the same key — once _devOwner maps it, every lookup resolves correctly and there is
+        // no orphan to delete. Additive plus a roster re-key; nothing is destroyed.
+        if (current === u.uid) return;                    // already the account id
+        var fb = window._fb; if (!fb || !fb.db) return;
+        // 1) The mapping. Everything else in the app resolves device -> person through this.
+        try { fb.set(fb.ref(fb.db, 'gl/_devOwner/' + current), { acct: u.uid, ts: Date.now() }); } catch (e) {}
+        // 2) Roster membership belongs to the PERSON, so move it off the device id. Only when
+        //    the account row doesn't already exist — never clobber a real one.
+        try {
+          var circles = {};
+          try { circles = JSON.parse(localStorage.getItem('gl_circles') || '{}'); } catch (e2) {}
+          Object.keys(circles).forEach(function (k) {
+            fb.get(fb.ref(fb.db, 'gl/' + k + '/members/' + current)).then(function (snap) {
+              var old = snap && snap.val && snap.val();
+              if (!old) return;
+              fb.get(fb.ref(fb.db, 'gl/' + k + '/members/' + u.uid)).then(function (s2) {
+                if (s2 && s2.val && s2.val()) {
+                  // Account row already there — the device row is the duplicate. Drop it.
+                  try { fb.remove(fb.ref(fb.db, 'gl/' + k + '/members/' + current)); } catch (e3) {}
+                  return;
+                }
+                try {
+                  fb.set(fb.ref(fb.db, 'gl/' + k + '/members/' + u.uid), old);
+                  fb.remove(fb.ref(fb.db, 'gl/' + k + '/members/' + current));
+                } catch (e3) {}
+              }).catch(function () {});
+            }).catch(function () {});
+          });
+        } catch (e) {}
+        try { if (window._evt) window._evt('signed in — linked this device to the account'); } catch (e) {}
       } catch (e) {}
     }
     // Anonymous baseline ONLY when persistence restores nothing. `auth.currentUser` is null
@@ -2835,7 +2876,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 614;
+var APP_BUILD = 615;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
