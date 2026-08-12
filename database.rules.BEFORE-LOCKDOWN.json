@@ -1,0 +1,137 @@
+{
+  "rules": {
+    // PHASE 1 — blast-radius reduction, identity-independent.
+    //
+    // The defect this replaces: ".write": true sat on `gl` itself and CASCADED to
+    // every path beneath it. One request (admin.html's nukeEverything) could delete
+    // the entire database, and any unknown path was writable by anyone.
+    //
+    // Here `gl` grants NOTHING. Writes are granted per-path below, so anything not
+    // explicitly listed is denied by default, and `remove(ref(db,'gl'))` fails.
+    //
+    // NOT yet enforced: per-user ownership (auth.uid === $uid). That needs Phase 2 —
+    // Google/Apple sign-in currently REPLACES the anonymous session, so a signed-in
+    // device's auth.uid is its provider uid while its data is keyed by its older
+    // anonymous uid. Enforcing a uid match today would lock out every signed-in
+    // device. Note that with anonymous auth enabled, "auth != null" is a shape check,
+    // not a real gate — anyone can obtain a uid. The genuine win here is the removal
+    // of the cascading grant, not the auth requirement.
+    "gl": {
+      ".read": "auth != null",
+
+      // The Wear OS watch (github.com/jacef8/GroundLinkWatch, checked out at
+      // C:\Users\jford\Projects\GroundLinkWatch) uses NO Firebase Auth at all:
+      // every call is a raw
+      // HttpURLConnection with no token. Confirmed by grep — zero hits for
+      // FirebaseAuth / signInAnonymously / getIdToken / auth=.
+      //
+      // It writes live, fcmToken, ownerName, voiceLog/<slot> and wakeLog/<slot>
+      // under _devices/<id>, and registers its pairing code at
+      // _deviceShares/<code> (MainActivity.kt:313). Both subtrees must therefore
+      // stay world-writable until the watch can authenticate.
+      //
+      // Gating _deviceShares behind auth broke the watch's pairing-code flow the
+      // first time these rules shipped; it is open here for that reason, not by
+      // oversight.
+      // The watch also READS two of its own fields, and gl's ".read" gate
+      // (auth != null) has blocked both since c619fed — it has been unable to
+      // read its own schedule or owner name. Opened per-field rather than on
+      // _devices as a whole, deliberately: `live` (the child's location) and
+      // `fcmToken` stay unreadable without auth.
+      //   sched     LocationService.kt:195
+      //   ownerName MainActivity.kt:328
+      "_devices": {
+        ".write": true,
+        "$id": {
+          "sched":     { ".read": true },
+          "ownerName": { ".read": true }
+        }
+      },
+      "_deviceShares": { ".write": true },
+
+      // Apple sign-in diagnostics are written by a raw fetch() DURING sign-in,
+      // before any auth session exists. Requiring auth here would silently stop
+      // the logging that exists precisely to debug sign-in.
+      "_debug": { ".write": true },
+
+      // Device-version beacons (index.html writes one record per launch; the admin panel's
+      // Device versions table reads them). Not listed here originally, so the path fell
+      // through to the $room wildcard, which has no `devices` child grant — every beacon
+      // write failed silently and the table stayed empty.
+      "_diag":               { "devices": { "$uid": { ".write": "auth != null" } } },
+
+      "_activityLog":        { "$day":  { "$uid":  { ".write": "auth != null" } } },
+      "_deviceOwners":       { "$acct": { ".write": "auth != null" } },
+      "_deviceSharedWithMe": { "$acct": { ".write": "auth != null" } },
+      "_devOwner":           { "$uid":  { ".write": "auth != null" } },
+      "_directory":          { "$acct": { ".write": "auth != null" } },
+      "_invites":            { "$acct": { ".write": "auth != null" } },
+      "_presence":           { "$uid":  { ".write": "auth != null" } },
+      // Parent grant is DELETE-ONLY (!newData.exists()): the admin's "Clear User History"
+      // removes the whole node, and a write aimed at the parent is never satisfied by a
+      // child-level grant — the button failed silently for exactly that reason. A plain
+      // parent-level "auth != null" would also let any client overwrite everyone's sessions
+      // in one write; delete-only permits the wipe and nothing else.
+      "_sessions":           { ".write": "auth != null && !newData.exists()",
+                               "$sid":  { ".write": "auth != null" } },
+      "_users":              { "$acct": { ".write": "auth != null" } },
+
+      "$room": {
+        // Every whole-room write in the codebase is a REMOVE (empty-room GC at
+        // index.html:6168, expiry at :6175, owner delete at :10708, admin delete).
+        // Nothing ever writes a room node wholesale, so allow deletion only —
+        // a room can be dropped, never replaced out from under its members.
+        ".write": "auth != null && !newData.exists()",
+
+        "users":        { "$uid": { ".write": "auth != null" } },
+        "members":      { "$uid": { ".write": "auth != null" } },
+        "diag":         { "$uid": { ".write": "auth != null" } },
+        "favSubs":      { "$uid": { ".write": "auth != null" } },
+        "history":      { "$uid": { ".write": "auth != null" } },
+        "pushSubs":     { "$uid": { ".write": "auth != null" } },
+        "trails":       { ".write": "auth != null && !newData.exists()",
+                          "$uid": { ".write": "auth != null" } },
+        "voice":        { "$uid": { ".write": "auth != null" } },
+        "chat":         { ".write": "auth != null" },
+        "closed":       { ".write": "auth != null" },
+        "config":       { ".write": "auth != null" },
+        "debug":        { ".write": "auth != null" },
+        "ownerRequest": { ".write": "auth != null" },
+        "pins":         { ".write": "auth != null" },
+        "placeEvents":  { ".write": "auth != null" },
+        "places":       { ".write": "auth != null" },
+        "voiceAll":     { ".write": "auth != null" },
+        "voicelog":     { ".write": "auth != null" }
+      }
+    },
+
+    "gltest": {
+      ".read": "auth != null",
+      "$group": {
+        "users": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        },
+        // Location history, relocated OUT of gl/ (2026-07-29). It was the heaviest node in the
+    // tree — 1.1 MB of 1.5 MB within a day of defaulting history on — and the home screen
+    // holds a listener on all of gl/, so every device re-parsed mostly-history payloads on
+    // every write from anyone. Declared explicitly here because the $other fallback below is
+    // world-read/write; without this block the relocation would have LOOSENED access.
+    "glh": {
+      ".read": "auth != null",
+      "$room": {
+        ".write": "auth != null && !newData.exists()",
+        "$uid": { ".write": "auth != null" }
+      }
+    },
+    "$other": { ".write": true }
+      }
+    },
+
+    "$other": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
