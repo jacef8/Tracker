@@ -2876,7 +2876,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 616;
+var APP_BUILD = 617;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8348,31 +8348,50 @@ function loadRoomList() {
   window._roomListSubbed = true;
   try { var _le = document.getElementById("room-list"); if (_le && !_le.children.length) _le.innerHTML = "<div class=\"room-empty\">Loading your groups…</div>"; } catch (e) {}
   waitForFirebase(fb => {
-    fb.onValue(fb.ref(fb.db, 'gl'), snap => {
-      // DEBOUNCED. This listener covers the whole gl tree, so it fires for every GPS fix,
-      // trail crumb and heartbeat from every device — several times a second with a handful
-      // of people live. snap.val() re-serializes the entire tree (measured 1.5 MB) and then
-      // three renders run, per event. On a mid-range tablet that alone pegged the CPU and the
-      // app read as "slow and borderline unresponsive". The first snapshot still processes
-      // immediately so startup isn't delayed; after that, once per 2.5 s is far more than the
-      // home list, friends panel and switcher label need.
-      window._pendingGlSnapVal = snap;
-      var _process = function () {
-        window._glSnapTimer = null;
-        var sv = window._pendingGlSnapVal; if (!sv) return;
-        window._pendingGlSnapVal = null;
-        window._lastGlSnap = sv.val() || {};
-        try { _reconcileLocalRooms(window._lastGlSnap); } catch (e) {}
-        try { renderRoomList(window._lastGlSnap); } catch (e) {}
-        try { _renderFriends(); } catch (e) {}   // friend statuses are derived from room membership
-        try { window._renderCircleSwitcher(); } catch (e) {}
-      };
-      // _renderCircleSwitcher rides inside _process above — it was wired to this listener
-      // because a rename from another device otherwise left the Home-screen pill on the
-      // mechanical key-transform name ("My Girls" vs the renamed "Fordy Crew").
-      if (!window._glSnapSeen) { window._glSnapSeen = true; _process(); return; }
-      if (window._glSnapTimer) return;
-      window._glSnapTimer = setTimeout(_process, 2500);
+    // Reads gl/_roomIndex, NOT the whole gl tree. Since the enumeration lockdown, gl has no
+    // .read, so onValue(gl) is denied and this list went dark for everything not in local
+    // cache — and it stays denied once $room.read is ACL-gated. The index is the readable
+    // directory (see _writeRoomIndex). It's also far lighter: a few fields per room instead
+    // of re-serializing the entire 1.5 MB tree on every GPS fix, so the debounce that used to
+    // guard against that is no longer needed here.
+    fb.onValue(fb.ref(fb.db, 'gl/_roomIndex'), snap => {
+      var idx = snap.val() || {};
+      // Shape each index entry into what renderRoomList's per-room loop expects, marked _idx
+      // so that loop takes the precomputed fast-path and never runs husk-GC/expiry deletes on
+      // a room it only knows about second-hand.
+      var shaped = {};
+      Object.keys(idx).forEach(function (k) {
+        if (k.charAt(0) === '_' || k.startsWith('test_')) return;
+        var e = idx[k] || {};
+        shaped[k] = {
+          _idx: true,
+          _live: e.live || 0, _resting: e.resting || 0, _names: e.names || [],
+          _pins: e.pins || 0, _lastSeen: e.lastSeen || 0,
+          config: { name: e.name || '', visibility: e.vis || 'public', expires: e.expires || 0,
+                    persistent: e.persistent ? true : false, pin: e.pin ? true : false, owner: e.owner || '' }
+        };
+        if (e.name) { try { _cacheRoomName(k, e.name); } catch (_) {} }
+      });
+      // Local favorites/Crews the index hasn't caught (a private room nobody's currently in,
+      // or a just-created one) still must appear and must not be dropped as "gone". Inject a
+      // minimal stub from what this device already knows, so renderRoomList lists them.
+      try {
+        var localKeys = {};
+        (typeof _getFavs === 'function' ? _getFavs() : []).forEach(function (k) { localKeys[k] = 1; });
+        var circ = (typeof _getCircles === 'function') ? _getCircles() : {};
+        Object.keys(circ || {}).forEach(function (k) { localKeys[k] = 1; });
+        Object.keys(localKeys).forEach(function (k) {
+          if (shaped[k] || k.charAt(0) === '_') return;
+          shaped[k] = { _idx: true, _live: 0, _resting: 0, _names: [], _pins: 0, _lastSeen: 0,
+            config: { name: (circ && circ[k]) || _prettyGroup(k) || '', visibility: 'public',
+                      expires: 0, persistent: !!(circ && circ[k]), pin: false, owner: '' } };
+        });
+      } catch (e) {}
+      window._lastGlSnap = shaped;
+      try { _reconcileLocalRooms(shaped); } catch (e) {}
+      try { renderRoomList(shaped); } catch (e) {}
+      try { _renderFriends(); } catch (e) {}
+      try { window._renderCircleSwitcher(); } catch (e) {}
     });
   });
 }
@@ -8429,6 +8448,36 @@ function renderRoomList(all) {
       var _nm = key.replace(/_/g, ' ').toLowerCase();
       var _pretty = _prettyGroup(key).toLowerCase();
       if (_nm.indexOf(_sq) === -1 && key.toLowerCase().indexOf(_sq) === -1 && _pretty.indexOf(_sq) === -1) return;
+    }
+    // ── Room-index fast-path ──────────────────────────────────────────
+    // Directory entries carry precomputed counts and never the rich per-room data, so map
+    // them straight to a row and skip all the presence math AND the GC/expiry writes below —
+    // those act on rooms this device can read and own, which a directory entry is not.
+    if (group._idx) {
+      var _cfgX = group.config || {};
+      var _visX = _cfgX.visibility || 'public';
+      var _favX = favs.indexOf(key) !== -1;
+      var _keptX = (_cfgX.expires && _cfgX.expires > now) ? _cfgX.expires : 0;
+      var _liveX = group._live || 0, _restX = group._resting || 0, _presX = _liveX + _restX;
+      var _lastX = group._lastSeen || 0;
+      // Expired quick-join room — drop from the directory (don't delete; index GC is separate).
+      if (!_cfgX.persistent && _cfgX.expires && now > _cfgX.expires && !_favX) return;
+      // Hide an empty, stale, non-favorite room — same rule the old list used.
+      if (!_searching && !_presX && (!_lastX || (now - _lastX) > EMPTY_GRACE_MS) && !_favX && !_keptX) return;
+      // Public/Favorites tab filter (search bypasses it).
+      if (!_searching) {
+        if (_homeFilter === 'favorites') { if (!_favX) return; }
+        else { if (_visX !== 'public' || _favX) return; }
+      }
+      var _diffM = Math.floor((now - _lastX) / 60000), _diffH = Math.floor(_diffM / 60);
+      rooms.push({
+        key: key, displayName: _prettyGroup(key), liveCount: _liveX, restingCount: _restX,
+        presentCount: _presX, hasUsers: _presX, liveNames: group._names || [], pins: group._pins || 0,
+        lastActive: _lastX,
+        lastStr: _diffM < 1 ? 'just now' : _diffM < 60 ? _diffM + 'm ago' : _diffH < 24 ? _diffH + 'h ago' : 'over a day ago',
+        config: _cfgX, vis: _visX, isFav: _favX, keptUntil: _keptX
+      });
+      return;
     }
     var users = group.users ? Object.values(group.users) : [];
     var pins = group.pins ? Object.keys(group.pins).length : 0;
@@ -12132,6 +12181,9 @@ function startLocationSharing() {
       // so we stay "Live" for the group instead of flipping to "Paused" while sitting still.
       try { fbSet(fbRef(db, `gl/${groupName}/users/${userId}/ts`), Date.now()); } catch(_) {}
     }
+    // Keep this room's directory entry warm while anyone's here, so its lastSeen (which drives
+    // whether it shows as active) doesn't age out under a room full of parked phones.
+    try { window._writeRoomIndex(groupName); } catch (e) {}
   }, 30000);
 
   // When the app comes back to foreground, re-stamp timestamp immediately
@@ -12348,9 +12400,68 @@ function _listenRoomConfig() {
       // immediately, not only the next time Room Info is opened from scratch.
       try { if (typeof _renderRoomExpire === 'function') _renderRoomExpire(); } catch (e) {}
       try { var el = document.getElementById('group-name-label'); if (el && c.name) el.textContent = c.name; } catch (e) {}
+      // Name/visibility/expiry changed — refresh this room's directory entry immediately so a
+      // rename or public→private flip shows up on other people's home screens without waiting
+      // for the next heartbeat. Force past the throttle: config changes are rare and worth it.
+      try { window._writeRoomIndex(groupName, true); } catch (e) {}
     });
   } catch (e) {}
 }
+// ══ ROOM INDEX (home directory + join-by-name) ═══════════════════════
+// gl/_roomIndex/<key> = { name, vis, pin, expires, persistent, owner, lastSeen, live,
+// resting, names[], pins } — a slim, readable-by-any-authed-user directory of every room.
+//
+// It exists because the home list can no longer read the whole gl tree: since the
+// enumeration lockdown, gl itself has no .read, so onValue(gl) is denied and the public
+// directory + join-by-name search went dark (favorites/Crews kept working only because
+// they render from local cache). This index is the readable source that restores them —
+// and it's the same source the home screen will use once $room.read is gated on the ACL,
+// where a member can no longer read a room they aren't in but CAN still find it here.
+//
+// Maintained by whoever is standing in the room: entering writes the entry, the heartbeat
+// refreshes it, config changes force it. A room nobody is in keeps its last entry until it
+// ages out of the directory (same lastSeen window the old list used) — presence counts go
+// to zero on their own because they're derived from lastSeen, not held open.
+window._roomLiveSnap = {};   // raw users snapshot for the CURRENT room, set by _processUsersSnap
+window._writeRoomIndex = function (key, force) {
+  try {
+    if (!db || !key || !userId) return;
+    if (!_roomWritable(key)) return;        // tombstoned / being deleted — don't resurrect it
+    // Throttle: the heartbeat calls this every 30s and the users listener on every change.
+    // Once per ~25s per room is plenty for a directory; config changes pass force=true.
+    window._roomIndexLastWrite = window._roomIndexLastWrite || {};
+    var last = window._roomIndexLastWrite[key] || 0;
+    if (!force && (Date.now() - last) < 25000) return;
+    window._roomIndexLastWrite[key] = Date.now();
+
+    var cfg = (key === groupName) ? (window._roomCfg || {}) : {};
+    var snap = (key === groupName) ? (window._roomLiveSnap || {}) : {};
+    var now = Date.now();
+    var LIVE = 4 * 60 * 1000, REST_MAX = 3 * 24 * 60 * 60 * 1000;
+    var live = 0, resting = 0, names = [];
+    Object.keys(snap).forEach(function (uid) {
+      var d = snap[uid] || {};
+      if (!d.name || d.claiming) return;
+      var age = now - (d.ts || 0);
+      if (age < LIVE) { live++; if (names.length < 3) names.push(d.name); }
+      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < REST_MAX) resting++;
+    });
+    var entry = {
+      name: (cfg.name || _prettyGroup(key) || key),
+      vis: (cfg.visibility || 'public'),
+      pin: cfg.pin ? 1 : 0,
+      expires: cfg.expires || 0,
+      persistent: cfg.persistent ? 1 : 0,
+      owner: cfg.owner || '',
+      lastSeen: now,
+      live: live,
+      resting: resting,
+      names: names,
+      pins: (window._roomLivePins != null ? window._roomLivePins : 0)
+    };
+    fbSet(fbRef(db, 'gl/_roomIndex/' + key), entry);
+  } catch (e) {}
+};
 // Is the CURRENT room a Crew? Distinct from _isCircleMember, which asks whether *you* belong.
 // A visitor in a Crew room is exactly the case that had no representation before: the room is
 // a Crew, they are not in it, and the UI showed "Make this a Crew / OFF" as though neither
@@ -12377,6 +12488,10 @@ function listenUsers() {
   function _processUsersSnap(snap) {
     const allUsers = snap.val() || {};
     const now = Date.now();
+    // Feed the room-index writer: this is the freshest read of the current room's presence,
+    // and the writer derives live/resting counts + a few names from it. Throttled inside the
+    // writer, so calling it on every snapshot is cheap.
+    try { window._roomLiveSnap = allUsers; window._writeRoomIndex(groupName); } catch (e) {}
 
     // Keep all valid users — including no-GPS users (PC/desktop)
     // GPS users: keep for 8 hours (STALE_MS)
@@ -13550,6 +13665,7 @@ function maybeShowIosInstallNudge() {
 function listenPins() {
   fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
     const pins = snap.val() || {};
+    try { window._roomLivePins = Object.keys(pins).length; } catch (e) {}
 
     // Notify on new pins from others (not my own)
     Object.entries(pins).forEach(([pid, pin]) => {

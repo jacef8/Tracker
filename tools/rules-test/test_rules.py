@@ -172,6 +172,12 @@ CASES = [
     ("_aclMiss: write under own uid", True, "PUT", f"gl/_aclMiss/testroom/{BOB}", BOB, {"ts": 4}),
     ("_aclMiss: write under ANOTHER's uid", False, "PUT", f"gl/_aclMiss/testroom/{ALICE}", BOB, {"ts": 4}),
 
+    # --- room index (home directory / join-by-name) ---------------------------
+    ("roomIndex: authed reads the directory", True, "GET", "gl/_roomIndex", BOB, None),
+    ("roomIndex: unauth CANNOT read the directory", False, "GET", "gl/_roomIndex", None, None),
+    ("roomIndex: authed writes a room's entry", True, "PUT", "gl/_roomIndex/testroom", BOB, {"name": "T", "vis": "public", "lastSeen": 5}),
+    ("roomIndex: unauth CANNOT write an entry", False, "PUT", "gl/_roomIndex/testroom", None, {"name": "x"}),
+
     # --- delete hole (must run LAST — destructive to shared state) -------------
     ("acl DoS: non-owner wipes the whole acl node", False, "DELETE", "gl/testroom/acl", BOB, None),
     ("room DoS: non-owner deletes a LIVE room", False, "DELETE", "gl/liveroom", BOB, None),
