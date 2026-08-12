@@ -91,6 +91,14 @@ def seed():
     req("PUT", f"gl/testroom/members/{ALICE}", admin=True, body={"name": "Alice"})
     req("PUT", "gl/_devices/watch_abc/live", admin=True, body={"name": "watch", "ts": 1})
     req("PUT", "gl/gcroom/config", admin=True, body={"name": "Doomed"})
+    # ACL + joinReq surface, plus a second OWNED room with live content so the
+    # delete-hole cases have a real target that isn't testroom (which later cases
+    # still read).
+    req("PUT", f"gl/testroom/acl/{ALICE}", admin=True, body={"ts": 1, "by": "seed"})
+    req("PUT", f"gl/testroom/acl/{BOB}", admin=True, body={"ts": 1, "by": "seed"})
+    req("PUT", f"gl/testroom/joinReq/{BOB}", admin=True, body={"name": "Bob", "ts": 1})
+    req("PUT", "gl/liveroom/config", admin=True, body={"owner": ALICE, "name": "Live"})
+    req("PUT", f"gl/liveroom/users/{BOB}", admin=True, body={"name": "Bob", "ts": 1})
     req("PUT", "gl/_devices/watch_abc/sched", admin=True, body={"on": 1})
     req("PUT", "gl/_devices/watch_abc/ownerName", admin=True, body="Jace")
     req("PUT", "gl/_devices/watch_abc/fcmToken", admin=True, body="tok")
@@ -119,8 +127,13 @@ CASES = [
     ("privacy: UNAUTH read _devices/<id>/live must stay DENIED", False, "GET", "gl/_devices/watch_abc/live", None, None),
     ("privacy: UNAUTH read _devices/<id>/fcmToken must stay DENIED", False, "GET", "gl/_devices/watch_abc/fcmToken", None, None),
     ("authed write own presence", True, "PUT", f"gl/testroom/users/{ALICE}", ALICE, {"name": "Alice", "ts": 9}),
-    ("ghost cleanup: authed DELETE other's presence", True, "DELETE", f"gl/testroom/users/{BOB}", ALICE, None),
-    ("authed write members entry", True, "PUT", f"gl/testroom/members/{BOB}", ALICE, {"name": "Bob"}),
+    # Position/roster-spoofing lockdown (commit 2ace010): you may write ONLY your own
+    # id, so writing or deleting another person's presence/roster row is denied even
+    # for the owner. (These expected `allow` before that rule shipped; the harness
+    # was never updated, which would have masked a regression.)
+    ("roster lockdown: can't DELETE another's presence", False, "DELETE", f"gl/testroom/users/{BOB}", ALICE, None),
+    ("roster lockdown: can't write ANOTHER's member row", False, "PUT", f"gl/testroom/members/{BOB}", ALICE, {"name": "Bob"}),
+    ("roster: CAN write your OWN member row", True, "PUT", f"gl/testroom/members/{ALICE}", ALICE, {"name": "Alice"}),
     ("authed write room config", True, "PUT", "gl/testroom/config/name", ALICE, "Renamed"),
     ("authed post chat", True, "PUT", "gl/testroom/chat/m1", ALICE, {"t": "hi"}),
     ("authed write pins", True, "PUT", "gl/testroom/pins/p1", ALICE, {"lat": 1, "lng": 2}),
@@ -136,6 +149,33 @@ CASES = [
     ("authed write _directory", True, "PUT", f"gl/_directory/{ALICE}", ALICE, {"d": 1}),
     ("authed READ a room", True, "GET", "gl/testroom", ALICE, None),
     ("_forceReload still writable (deploy flow)", True, "PUT", "_forceReload", ALICE, 12345),
+
+    # --- ACL / joinReq surface (approval queue) -------------------------------
+    ("acl: non-owner grants SELF access", False, "PUT", f"gl/testroom/acl/{BOB}", BOB, {"ts": 2}),
+    ("acl: owner grants a member access", True, "PUT", f"gl/testroom/acl/{BOB}", ALICE, {"ts": 2, "by": "alice"}),
+    ("acl: non-owner deletes ANOTHER's entry", False, "DELETE", f"gl/testroom/acl/{ALICE}", BOB, None),
+    ("acl: member deletes their OWN entry", True, "DELETE", f"gl/testroom/acl/{BOB}", BOB, None),
+    ("joinReq: forge under own uid", True, "PUT", f"gl/testroom/joinReq/{BOB}", BOB, {"name": "B", "ts": 3}),
+    ("joinReq: forge under ANOTHER's uid", False, "PUT", f"gl/testroom/joinReq/{ALICE}", BOB, {"name": "x", "ts": 3}),
+    ("joinReq: owner reads the queue", True, "GET", "gl/testroom/joinReq", ALICE, None),
+    # An outsider must be able to read their OWN request even when NOT in the room —
+    # this is what lets the joiner's approval-watcher work from outside once the ACL
+    # read-gate lands and $room.read no longer blanket-grants. The child .read grants
+    # what the (future) gated parent denies.
+    ("joinReq: outsider reads their OWN request", True, "GET", f"gl/testroom/joinReq/{BOB}", BOB, None),
+    # NOTE: a non-owner reading the WHOLE queue is currently ALLOWED — $room.read is a
+    # blanket `auth != null` and that grant cascades into joinReq; the node-level
+    # owner-only .read cannot revoke a parent grant. It tightens to room-members-only
+    # the moment the ACL read-gate makes $room.read conditional. Asserted as-is so the
+    # test tells the truth about today's behavior rather than an aspiration.
+    ("joinReq: non-owner reads the queue (blanket room-read, pre-gate)", True, "GET", "gl/testroom/joinReq", BOB, None),
+    ("_aclMiss: write under own uid", True, "PUT", f"gl/_aclMiss/testroom/{BOB}", BOB, {"ts": 4}),
+    ("_aclMiss: write under ANOTHER's uid", False, "PUT", f"gl/_aclMiss/testroom/{ALICE}", BOB, {"ts": 4}),
+
+    # --- delete hole (must run LAST — destructive to shared state) -------------
+    ("acl DoS: non-owner wipes the whole acl node", False, "DELETE", "gl/testroom/acl", BOB, None),
+    ("room DoS: non-owner deletes a LIVE room", False, "DELETE", "gl/liveroom", BOB, None),
+    ("owner deletes their OWN live room", True, "DELETE", "gl/liveroom", ALICE, None),
 ]
 
 seed()
