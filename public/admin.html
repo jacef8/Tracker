@@ -329,6 +329,13 @@
   <!-- Private devices (the watch) — they also plot on the map above -->
   <div id="admin-devices" style="margin-top:16px"></div>
   <div style="margin:12px 0 6px;font-size:14px;font-weight:800">Device versions <button class="btn" onclick="renderDeviceVersions()" style="font-size:10.5px;padding:3px 9px;margin-left:8px">Refresh</button></div>
+    <!-- Ghost identities: roster rows that no longer resolve to a real person -->
+    <div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px">
+      <div style="font-weight:800;font-size:14px">Ghost roster entries</div>
+      <button onclick="window.scanGhosts()" style="background:rgba(240,165,0,.14);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Scan</button>
+    </div>
+    <div id="ghost-list" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:14px"><div class="empty" style="padding:10px 12px;font-size:12.5px">Tap Scan to look for roster entries that no longer resolve to anyone.</div></div>
+
     <div id="device-versions" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:14px"><div class="empty">Tap Refresh to load device reports.</div></div>
     <div id="ov-list" style="margin-bottom:16px"></div>
 </div>
@@ -1663,6 +1670,72 @@ function _settingsRow(r) {
 
 // Device-versions table (gl/_diag/devices) — who is on what binary/web build, and whether
 // the sign-in plugin is present in their install. Written by each device on launch.
+// ── Ghost roster entries ────────────────────────────────────────────────────────
+// A ghost is a roster row keyed by an id that resolves to nobody: no gl/_devOwner mapping and
+// no presence record anywhere. Almost always an old device id from before the identity re-key
+// (or an install whose storage was wiped and then signed in), left behind as a second copy of
+// a real person that can't be merged or reached.
+//
+// Read-only scan. Nothing is deleted without an explicit per-row confirm, because name
+// matching alone is NOT proof - two real people can share a first name, and a genuinely
+// offline member looks identical to a ghost until you check the mapping.
+window.scanGhosts = async function () {
+  var el = document.getElementById('ghost-list'); if (!el) return;
+  var fb = window._fb; if (!fb) { el.textContent = 'Firebase not ready'; return; }
+  el.innerHTML = '<div class="empty" style="padding:10px 12px">Scanning…</div>';
+  try {
+    var glSnap = await fb.get(fb.ref(fb.db, 'gl'));
+    var gl = (glSnap && glSnap.val && glSnap.val()) || {};
+    var devOwner = gl._devOwner || {};
+    // Every id that IS a live person: any presence uid, anything _devOwner maps, and every
+    // account those devices belong to.
+    var real = {};
+    Object.keys(devOwner).forEach(function (d) {
+      real[d] = 1;
+      var a = (devOwner[d] || {}).acct; if (a) real[a] = 1;
+    });
+    var rooms = Object.keys(gl).filter(function (k) { return k.charAt(0) !== '_'; });
+    rooms.forEach(function (r) {
+      Object.keys((gl[r] || {}).users || {}).forEach(function (u) { real[u] = 1; });
+    });
+    var ghosts = [];
+    rooms.forEach(function (r) {
+      var mem = (gl[r] || {}).members || {};
+      Object.keys(mem).forEach(function (uid) {
+        if (real[uid]) return;                       // resolves to a live identity — not a ghost
+        var nm = (mem[uid] || {}).name || '(no name)';
+        // Is there a REAL entry with the same name? That's what makes it a likely duplicate
+        // rather than simply a member who hasn't opened the app in a while.
+        var dupe = false;
+        rooms.forEach(function (r2) {
+          Object.keys(((gl[r2] || {}).users) || {}).forEach(function (u2) {
+            var un = ((gl[r2].users[u2]) || {}).name || '';
+            if (un && un.toLowerCase() === String(nm).toLowerCase()) dupe = true;
+          });
+        });
+        ghosts.push({ room: r, uid: uid, name: nm, dupe: dupe, added: (mem[uid] || {}).addedAt || 0 });
+      });
+    });
+    if (!ghosts.length) { el.innerHTML = '<div class="empty" style="padding:10px 12px;font-size:12.5px">No ghosts — every roster entry resolves to a real identity.</div>'; return; }
+    ghosts.sort(function (a, b) { return (b.dupe - a.dupe); });
+    el.innerHTML = ghosts.map(function (g) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);font-size:12.5px">' +
+        '<span style="min-width:120px;font-weight:700">' + g.name + '</span>' +
+        '<span style="min-width:110px;color:var(--muted)">' + g.room + '</span>' +
+        '<span style="min-width:150px;color:var(--muted);font-family:monospace;font-size:11px">' + g.uid.slice(0, 18) + '…</span>' +
+        '<span style="min-width:150px;color:' + (g.dupe ? '#f0a500' : 'var(--muted)') + '">' + (g.dupe ? 'duplicate of a live member' : 'no live copy — verify first') + '</span>' +
+        '<button onclick="window.deleteGhost(&quot;' + g.room + '&quot;,&quot;' + g.uid + '&quot;,&quot;' + String(g.name).replace(/"/g, '') + '&quot;)" style="margin-left:auto;background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:#f85149;border-radius:8px;padding:5px 11px;font-size:11px;font-weight:800;cursor:pointer">Delete</button>' +
+      '</div>';
+    }).join('') + '<div style="padding:9px 12px;font-size:11.5px;color:var(--muted)">' + ghosts.length + ' found. "Duplicate of a live member" means someone with that exact name is reporting under a different id — the safest ones to remove. The others may simply be members who have not opened the app; check before deleting.</div>';
+  } catch (e) { el.textContent = 'Scan failed: ' + (e && e.message); }
+};
+window.deleteGhost = function (room, uid, name) {
+  if (!confirm('Delete roster entry "' + name + '" from ' + room + '? Only their membership row is removed - no location data, and nothing on their device. If this is a real person they simply rejoin.')) return;
+  var fb = window._fb; if (!fb) return;
+  fb.remove(fb.ref(fb.db, 'gl/' + room + '/members/' + uid))
+    .then(function () { addLog('removed ghost roster entry ' + name + ' from ' + room, 'warn'); window.scanGhosts(); })
+    .catch(function (e) { alert('Failed: ' + (e && e.message)); });
+};
 window.renderDeviceVersions = function () {
   var el = document.getElementById('device-versions');
   if (!el) return;

@@ -55,6 +55,14 @@
         },
         ".read": "auth != null"
       },
+      "_aclMiss": {
+        "$room": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        },
+        ".read": "auth != null"
+      },
       "_directory": {
         "$acct": {
           ".write": "auth != null"
@@ -97,6 +105,18 @@
           "$uid": {
             ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid)"
           }
+        },
+        "acl": {
+          "$uid": {
+            ".write": "auth != null && (root.child('gl').child($room).child('config').child('owner').val() === auth.uid || root.child('gl').child($room).child('config').child('admins').child(auth.uid).exists() || (auth.uid === $uid && !newData.exists()))"
+          }
+        },
+        "joinReq": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child($room).child('config').child('owner').val() === auth.uid || root.child('gl').child($room).child('config').child('admins').child(auth.uid).exists())"
+          },
+          ".read": "auth != null && (root.child('gl').child($room).child('config').child('owner').val() === auth.uid || root.child('gl').child($room).child('config').child('admins').child(auth.uid).exists())"
         },
         "diag": {
           "$uid": {
