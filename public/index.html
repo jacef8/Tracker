@@ -2876,7 +2876,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 618;
+var APP_BUILD = 619;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5378,7 +5378,22 @@ function _deviceLabel() {
     return l;
   } catch (e) { return ''; }
 }
-function _withDev(d) { return (d && d.name ? d.name : '') + (d && d.dev ? ' · ' + d.dev : ''); }
+// "Jace · tablet" when there's a real name; just the device label when there isn't. The old
+// version emitted a dangling " · PC" for a nameless user, so anyone who never set a name showed
+// up on every map and list AS their device label ("· PC", "· phone") — the device masquerading
+// as the person. Now a missing name never drags a leading separator with it.
+function _withDev(d) {
+  if (!d) return '';
+  var nm = d.name ? String(d.name) : '';
+  var dev = d.dev ? String(d.dev) : '';
+  if (nm && dev) return nm + ' · ' + dev;
+  return nm || dev;
+}
+// The device auto-labels itself phone/tablet/PC (_deviceLabel). That label is meant to sit
+// AFTER a name for disambiguation, never to BE the name — but a bare label kept landing in the
+// "Your name" alias, so a guest read as "PC". Treat an alias that is exactly a device-label
+// word as "no name set," so the field prompts for a real one instead of showing the label.
+function _isDeviceLabelName(s) { return /^(phone|tablet|pc)$/i.test(String(s || '').trim()); }
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -9592,14 +9607,25 @@ function showJoinScreen() {
   // Pre-fill the name from the last session so returning users can join a room in one
   // tap without re-typing their name (and so an empty name doesn't silently block join).
   try {
+    // One-time cleanup: if the saved alias is nothing but a device-label word ("PC", "phone",
+    // "tablet"), it was never a real name — clear it so the field prompts for one instead of
+    // showing the device as though it were the person. Safe: a real name isn't a bare label.
+    var _gn = ''; try { _gn = localStorage.getItem('gl_name') || ''; } catch (e) {}
+    if (_gn && _isDeviceLabelName(_gn)) {
+      try { localStorage.removeItem('gl_name'); } catch (e) {}
+      try { sessionStorage.removeItem('gl_name'); } catch (e) {}
+      try { _cookieSet('gl_name', ''); } catch (e) {}
+      if (typeof userName !== 'undefined' && _isDeviceLabelName(userName)) userName = '';
+    }
     var _ss = getSavedSession();
+    var _ssName = (_ss && _ss.name && !_isDeviceLabelName(_ss.name)) ? _ss.name : '';
     var _ni = document.getElementById('inp-name');
-    if (_ni && !_ni.value && _ss && _ss.name) _ni.value = _ss.name;
+    if (_ni && !_ni.value && _ssName) _ni.value = _ssName;
     // Returning users already have a name — hide the field here and let them edit it from
     // the Account page instead (decluttered home screen). Brand-new visitors with no saved
     // name yet still see it, since they need somewhere to enter one before their first join.
     var _hnr = document.getElementById('home-name-row');
-    if (_hnr) _hnr.style.display = (_ss && _ss.name) ? 'none' : '';
+    if (_hnr) _hnr.style.display = _ssName ? 'none' : '';
   } catch (e) {}
   // Live diagnostic on the build stamp: are we detected as the native app?
   try { window._refreshBuildStamp(); } catch (e) {}
@@ -9806,7 +9832,7 @@ function _showNativeUpdateBar(msg, url, mine, need) {
 
   // Always pre-fill name if we have it
   function prefillName() {
-    try { if (s.name) document.getElementById('inp-name').value = s.name; } catch(_) {}
+    try { if (s.name && !_isDeviceLabelName(s.name)) document.getElementById('inp-name').value = s.name; } catch(_) {}
   }
 
   // ?dshare=<code> — a family member opened a device share link. Stash it; it's accepted
