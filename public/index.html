@@ -2876,7 +2876,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 619;
+var APP_BUILD = 620;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12991,9 +12991,12 @@ function listenUsers() {
       // Status badge so the group can see at a glance who's actually reporting:
       // LIVE (updating now), PAUSED (in the room but no recent fix — stale/backgrounded),
       // OFF (location sharing turned off), NO GPS (desktop / no fix).
+      // Your own row carries a single "YOU" pill inline (added in the collapse pass below,
+      // where others get MEMBER), so this right-hand badge shows your REAL status like everyone
+      // else — LIVE / RESTING / etc. — instead of a second, redundant "YOU". Three "you" markers
+      // on one row (the name's "(you)", the inline pill, and a "YOU" badge here) was the report.
       var bd;
-      if (isMine)            bd = { t: 'YOU',    bg: 'rgba(240,165,0,.15)', c: '#f0a500' };
-      else if (_hiddenFromMap) bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#a9b4bf' };
+      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#a9b4bf' };
       else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#a9b4bf' };
       else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#a9b4bf' };
       else if (isLive)       bd = { t: 'LIVE',    bg: '#13361f',            c: '#3fb950' };
@@ -13019,7 +13022,9 @@ function listenUsers() {
       row.innerHTML =
         '<div style="display:flex;align-items:center;gap:9px;min-width:0">' +
           '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + escapeHtmlJs(initials(data.name)) + '</div>' +
-          '<div class="uname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtmlJs(_withDev(data)) + (isMine ? ' (you)' : '') +
+          '<div class="uname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtmlJs(_withDev(data)) +
+            // No "(you)" text here — the collapse pass appends a single "YOU" pill below, which
+            // is the one identity marker on your own row.
             // Crew membership vs. just currently being in the room are two different things —
             // anyone with the room link can show up live without ever being added to the
             // permanent roster (window._roomMembersRoster, Crew rooms only). Nothing shown for
