@@ -2876,7 +2876,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 617;
+var APP_BUILD = 618;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20094,8 +20094,35 @@ try {
   // Let other parts of the app push prefs up after a change.
   window._glSync = pushProfile;
 
+  // "Am I ACTUALLY signed in?" — not just "does the gl_account flag say so." Two legacy bugs
+  // leave the flag set on a device that never completed a real sign-in, and the flag alone
+  // then hides every sign-in affordance, stranding the person on a permanent fake "Signed in
+  // as X" with no way back (reported for Lexi: a phone stuck exactly here). Both poison shapes
+  // are detected WITHOUT the destructive auto-wipe that can't safely run on mobile:
+  //   • gl_account='google' but NO gl_account_uid — a real sign-in always writes the uid
+  //     (afterFirebaseUser, native and web alike), so its absence means it never happened.
+  //   • gl_account_uid EQUALS the current anonymous session's uid — the old fresh-install bug
+  //     stamped the anon uid as the "account," so the account id being the anon session is a
+  //     definitive tell. Safe on native, where a real sign-in's uid is the Google uid and the
+  //     JS session's anon uid is a DIFFERENT value, so this never fires on a genuine login.
+  function _reallySignedIn() {
+    if (LS.get('gl_account') !== 'google') return false;
+    var uid = LS.get('gl_account_uid');
+    if (!uid) return false;
+    try {
+      var cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
+      if (cu && cu.isAnonymous && cu.uid === uid) return false;
+    } catch (e) {}
+    return true;
+  }
+  // Escape hatch from any stuck/wrong "signed in" state: drop the account cleanly, then open
+  // sign-in. Reachable from the home status even when the app believes it's already signed in.
+  function switchAccount() {
+    try { signOutUser(); } catch (e) {}
+    setTimeout(function () { try { signInGoogle(); } catch (e) {} }, 250);
+  }
   function refreshUI() {
-    var signedIn = LS.get('gl_account') === 'google';
+    var signedIn = _reallySignedIn();
     var inEl = document.getElementById('acct-in');
     var guestEl = document.getElementById('acct-guest');
     if (inEl)    inEl.style.display = signedIn ? 'flex' : 'none';
@@ -20148,7 +20175,11 @@ try {
         statusEl.innerHTML =
           '<div style="display:flex;align-items:center;gap:9px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:8px 12px">' +
             '<span style="width:8px;height:8px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>' +
-            '<div style="font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(LS.get('gl_email') || name() || 'you') + ' <span style="color:#a7b0bd;font-weight:400">· synced</span></div>' +
+            '<div style="flex:1;min-width:0;font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(LS.get('gl_email') || name() || 'you') + ' <span style="color:#a7b0bd;font-weight:400">· synced</span></div>' +
+            // Always an escape hatch — "Signed in as X" is sometimes wrong (a wrong account, or
+            // a stale flag the mobile repair can't touch), and without this the home screen
+            // offers no way to re-authenticate. "Not you?" flips to a clean sign-out + sign-in.
+            '<button onclick="window.GLAuth && GLAuth.switchAccount && GLAuth.switchAccount()" style="flex-shrink:0;background:none;border:none;color:var(--accent);font-size:11.5px;font-weight:700;cursor:pointer;padding:2px 4px;text-decoration:underline">Not you?</button>' +
           '</div>';
       } else {
         statusEl.innerHTML =
@@ -20421,7 +20452,7 @@ try {
 
   window.GLAuth = {
     signInGoogle: signInGoogle, signInApple: signInApple, signOutUser: signOutUser,
-    refreshUI: refreshUI, sync: pushProfile
+    switchAccount: switchAccount, refreshUI: refreshUI, sync: pushProfile
   };
   // Exposed so the buttons' inline "GLAuth not loaded yet" fallback can leave a trace —
   // that path was completely invisible in the diagnostic log.
