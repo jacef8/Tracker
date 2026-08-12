@@ -2503,6 +2503,11 @@
       <!-- Ask to be an admin. Hidden for the owner and for anyone who already is one. -->
       <button id="ri-request-admin-btn" onclick="window._requestAdmin()" style="display:none;margin-top:7px;width:100%;padding:9px;background:var(--surface);border:1px solid rgba(167,139,250,.45);border-radius:8px;color:#a78bfa;font-size:12.5px;font-weight:700;cursor:pointer">Request admin</button>
     </div>
+    <!-- People asking to be let in. Sits ABOVE Invite deliberately: a queue buried under the
+         settings wall is a queue nobody clears, and someone is standing outside the room
+         waiting on this exact tap. Owner/admin only — hidden for everyone else. Filled by
+         _renderJoinQueue(). -->
+    <div id="ri-pending-row" style="display:none;background:rgba(240,165,0,.07);border:1px solid rgba(240,165,0,.4);border-radius:10px;padding:12px 14px;margin-bottom:8px"></div>
     <!-- Invite + Favorite are the two things people actually open this sheet to DO most often —
          kept up top. Circle/secure-devices/expiry/passcode/visibility below are configuration,
          reached far less often, so they moved toward the bottom instead of burying the action
@@ -2830,7 +2835,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 613;
+var APP_BUILD = 614;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5657,6 +5662,8 @@ function openRoomInfo() {
       reqAdm.style.cursor = pendA ? 'default' : 'pointer';
     }
   }
+  // Pending join requests — owner/admin only; hides itself otherwise.
+  try { _renderJoinQueue(); } catch (e) {}
   var row = document.getElementById('ri-pin-row');
   if (row) {
     var head = '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Passcode</div>';
@@ -7180,7 +7187,10 @@ window._talkLoadDetail = async function () {
         var c = clips[id] || {};
         return { id: id, room: k, uid: c.uid, name: c.name || 'Member', ts: c.ts || 0,
                  dur: c.dur || 0, audio: c.audio || '', unheard: (c.ts > seenTs && c.uid !== userId) };
-      }).filter(function (c) { return c.audio && c.ts > cutoff; })
+      // Drop your OWN transmissions. They were excluded from the unread COUNT but not from the
+      // list, so Talk led with a recording of yourself — you already know what you said, and
+      // it pushed the messages you actually missed further down.
+      }).filter(function (c) { return c.audio && c.ts > cutoff && c.uid !== userId; })
         .sort(function (a, b) { return b.ts - a.ts; })
         .slice(0, TX_PER_CREW);
       recent.forEach(function (c) { window._talkClips[c.room + '|' + c.id] = c; });
@@ -8889,6 +8899,58 @@ function enterMap(name, group, uid) {
     try {
       fbOnValue(fbRef(db, 'gl/' + groupName + '/config/adminRequest'), function (snap) {
         window._adminRequests = snap.val() || {};
+        try { renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
+    // ── Room ACL + join queue ─────────────────────────────────────────
+    // gl/<room>/acl/<uid> = {ts, by} is the list of ids allowed to READ this room.
+    // It sits at the room's top level, NOT under config/, because the read rule that
+    // will eventually consume it (`$room .read` requires acl.child(auth.uid).exists())
+    // has to reach it without already having read access to the room — a rule can
+    // always root.child() its way there, but keeping it a sibling of users/members
+    // makes that obvious rather than clever.
+    //
+    // Keyed on auth.uid, which in this app is THREE different things depending on the
+    // session (see tools/acl-backfill.mjs for the full write-up): the Google account
+    // id when signed in, the device id when the session was created after anonymous
+    // auth landed and adopted it, and an unrelated anonymous uid for legacy sessions
+    // still carrying a pre-auth Math.random() id. The backfill writes an entry for
+    // every form it can see; the third form is invisible server-side, which is what
+    // the miss reporter below exists to find.
+    window._roomAcl = {}; window._roomAclLoaded = false;
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/acl'), function (snap) {
+        window._roomAcl = snap.val() || {};
+        window._roomAclLoaded = true;
+        // Self-heal for whoever runs the room. A room you just created has an empty
+        // ACL, and the rules only let the owner/admins write one — so if the owner
+        // isn't in it the moment the read gate lands, nobody can ever put them there
+        // and the room is orphaned for good. Cheap to write, impossible to recover
+        // from if skipped. Non-admins can't take this path: the rule refuses them.
+        try {
+          if (window._canManageRoom && window._canManageRoom() && !window._aclHasMe()) {
+            var _au = _authUid();
+            if (_au) fbSet(fbRef(db, 'gl/' + groupName + '/acl/' + _au), { ts: Date.now(), by: 'self:manage' });
+          }
+        } catch (e) {}
+        try { _reportAclMiss(groupName); } catch (e) {}
+        try { renderRoomInfoOwner(); } catch (e) {}
+      });
+    } catch (e) {}
+    // Pending join requests. Readable by the owner/admins only once the rules land;
+    // for everyone else this listener just never yields anything, which is fine.
+    window._roomJoinReqs = {};
+    try {
+      fbOnValue(fbRef(db, 'gl/' + groupName + '/joinReq'), function (snap) {
+        var was = Object.keys(window._roomJoinReqs || {}).length;
+        window._roomJoinReqs = snap.val() || {};
+        var now = Object.keys(window._roomJoinReqs).length;
+        // Nudge the owner/admin the first time a request appears while they're sitting
+        // in the room — the push (sent by the requester) only reaches them when the app
+        // is closed, and a queue nobody looks at is the same as no queue at all.
+        if (now > was && window._canManageRoom && window._canManageRoom() && was !== 0) {
+          try { toast('Someone is asking to join — Room Info to approve', 4000); } catch (e) {}
+        }
         try { renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
@@ -14604,6 +14666,201 @@ window._makeOwner = function() {
 // to act, nobody could ever transfer it the normal way either. Deliberately NOT instant/self-
 // service (an earlier version was, and was reverted as too permissive) — this just files a
 // request; approving it happens on the admin screen (/777) instead.
+// ══ ROOM ACCESS (ACL + approval queue) ═══════════════════════════════
+// The id the database rules will actually test. NOT userId and NOT _myAcct():
+// userId is gl_uid, which is only sometimes the auth uid (adopted from anonymous
+// auth when the device had no id yet, otherwise a legacy Math.random id), and
+// _myAcct() is empty for anyone who never signed in with Google. Everything in
+// this section keys on the live Firebase uid so that what the UI believes and
+// what the rule enforces can never drift apart.
+function _authUid() {
+  try {
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    return (u && u.uid) || '';
+  } catch (e) { return ''; }
+}
+// Am I in this room's ACL? Checks every id form, because the backfill writes an
+// entry per form and a room populated by an older backfill may only carry one.
+window._aclHasMe = function () {
+  var a = window._roomAcl || {};
+  var au = _authUid();
+  if (au && a[au]) return true;
+  if (userId && a[userId]) return true;
+  try { var m = _myAcct(); if (m && a[m]) return true; } catch (e) {}
+  return false;
+};
+// ── Shadow mode ──────────────────────────────────────────────────────
+// The read rule isn't on yet. Until it is, every client that CAN read a room
+// checks whether it would still be able to once the rule lands, and records a
+// miss if not. This is the only way to prove the backfill was complete: the
+// value the rule tests (auth.uid) exists on the device and nowhere in the
+// database, so no server-side script can enumerate who is about to be locked
+// out. Watch gl/_aclMiss for a few days of normal use; flipping the rule with
+// entries sitting in there means locking those people out of that room.
+function _reportAclMiss(roomKey) {
+  try {
+    if (!roomKey || !window._roomAclLoaded) return;
+    var acl = window._roomAcl || {};
+    if (!Object.keys(acl).length) return;     // room not backfilled yet — not a miss, just absent
+    if (window._aclHasMe()) return;
+    var au = _authUid();
+    if (!au) return;                          // auth hasn't resolved; the next snapshot will retry
+    window._aclMissSent = window._aclMissSent || {};
+    if (window._aclMissSent[roomKey]) return; // once per room per session
+    window._aclMissSent[roomKey] = 1;
+    var acct = ''; try { acct = _myAcct(); } catch (e) {}
+    fbSet(fbRef(db, 'gl/_aclMiss/' + roomKey + '/' + au), {
+      name: userName || '', glUid: userId || '', acct: acct || '', ts: Date.now(),
+      // Which form failed tells you the fix: 'legacy' means gl_uid predates anonymous
+      // auth and nothing in the database can be matched to this session.
+      kind: (acct ? 'signed-in' : (au === userId ? 'anon-adopted' : 'legacy'))
+    });
+  } catch (e) {}
+}
+// ── Joiner side ──────────────────────────────────────────────────────
+// Ask the owner to be let in. Writes under auth.uid deliberately — that is the id
+// approval has to grant, so the request carries it rather than making the approver
+// guess which of the requester's three ids the rule will see.
+window._requestRoomAccess = function (roomKey, label) {
+  var key = roomKey || groupName;
+  if (!db || !key) return;
+  var au = _authUid();
+  if (!au) { toast('Still connecting — try again in a second.'); return; }
+  try {
+    fbSet(fbRef(db, 'gl/' + key + '/joinReq/' + au), { name: userName || 'Someone', ts: Date.now() });
+  } catch (e) { toast('Couldn\'t send the request.'); return; }
+  toast('Request sent to the room owner', 3200);
+  // Push it, so an owner whose app is closed finds out. The room's own pushSubs are
+  // no use here (they're for people already inside), so target the owner and admins
+  // by id through the same /pushTo path the one-to-one call ping uses.
+  try {
+    var targets = [];
+    if (window._roomOwnerUid) targets.push(window._roomOwnerUid);
+    Object.keys(window._roomAdmins || {}).forEach(function (a) { if (targets.indexOf(a) === -1) targets.push(a); });
+    if (typeof _pushToUid === 'function') {
+      targets.forEach(function (t) {
+        _pushToUid(t, 'Someone wants to join ' + (label || _prettyGroup(key)),
+                   (userName || 'Someone') + ' is asking for access.', 'join');
+      });
+    }
+  } catch (e) {}
+  // Watch my own request node for the approval. joinReq/$uid is readable by its own
+  // author even when the room isn't, which is what makes this work from OUTSIDE the
+  // room — the approver clears the request and adds the ACL entry, and this fires.
+  // The request disappearing does NOT mean yes. Approve and turn-down both clear
+  // this node — and a refused write leaves it null from the start — so treating
+  // absence as approval would bounce someone into a room they still can't open,
+  // on a loop. Instead: wait until we've actually seen the request sitting there,
+  // and when it goes, ASK the room whether it will let us in now. The probe is the
+  // same read the rule gates, so its answer is the truth rather than an inference.
+  window._accessReqWatching = false;
+  try {
+    fbOnValue(fbRef(db, 'gl/' + key + '/joinReq/' + au), function (snap) {
+      if (snap.val()) { window._accessReqWatching = true; return; }   // still pending
+      if (!window._accessReqWatching) return;
+      window._accessReqWatching = false;
+      window._fb.get(fbRef(db, 'gl/' + key + '/config/owner')).then(function () {
+        toast('You\'re in — opening the room', 2500);
+        setTimeout(function () { location.reload(); }, 900);
+      }).catch(function () {
+        // Turned down (or the grant hasn't propagated). Say nothing about which —
+        // "you were refused" between family members is a message the app has no
+        // business delivering — and just let them ask again.
+        var b = document.getElementById('acl-req-btn');
+        if (b) { b.disabled = false; b.textContent = 'Ask again'; b.style.opacity = '1'; b.style.cursor = 'pointer'; }
+      });
+    });
+  } catch (e) {}
+};
+// Full-screen "waiting on approval" state, shown instead of dropping someone onto a
+// blank map when the room refuses to open. Same shape as _removedByOwner's recovery
+// screen rather than a toast, because there is nothing else on screen to go back to.
+window._showAccessRequestScreen = function (roomKey, label) {
+  if (document.getElementById('acl-request-overlay')) return;
+  var nm = label || _prettyGroup(roomKey);
+  var o = document.createElement('div');
+  o.id = 'acl-request-overlay';
+  o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.96);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#e6edf3';
+  o.innerHTML =
+    '<svg class="licon" style="color:var(--accent);width:34px;height:34px;margin-bottom:12px"><use href="#ic-users"/></svg>' +
+    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">' + _escHtml(nm) + ' is private</div>' +
+    '<div id="acl-req-sub" style="font-size:14px;color:#a9b4bf;max-width:320px;line-height:1.5;margin-bottom:18px">Ask the room owner to let you in. They\'ll get a notification, and this screen will open the room as soon as they approve.</div>' +
+    '<button id="acl-req-btn" style="width:100%;max-width:280px;padding:13px;background:var(--accent);border:none;border-radius:10px;color:#1a1200;font-size:15px;font-weight:800;cursor:pointer">Ask to join</button>' +
+    '<button id="acl-req-back" style="margin-top:10px;width:100%;max-width:280px;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Back to home</button>';
+  document.body.appendChild(o);
+  document.getElementById('acl-req-btn').onclick = function () {
+    var b = this;
+    b.disabled = true; b.textContent = 'Waiting for approval…';
+    b.style.opacity = '.6'; b.style.cursor = 'default';
+    window._requestRoomAccess(roomKey, nm);
+  };
+  document.getElementById('acl-req-back').onclick = function () {
+    try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
+    location.reload();
+  };
+};
+// ── Approver side ────────────────────────────────────────────────────
+window._approveJoinReq = function (uid) {
+  if (!(window._canManageRoom && window._canManageRoom()) || !db || !groupName || !uid) return;
+  var req = (window._roomJoinReqs || {})[uid] || {};
+  var nm = req.name || 'them';
+  _confirm('Let ' + nm + ' into this room?\n\nThey\'ll be able to see everyone\'s location here.', function () {
+    try {
+      fbSet(fbRef(db, 'gl/' + groupName + '/acl/' + uid), { ts: Date.now(), by: _authUid() || userId });
+      // Clear the request only AFTER the grant — the requester's own listener treats
+      // the request disappearing as "approved", so clearing first would tell them
+      // they were let in a beat before they actually were.
+      fbRemove(fbRef(db, 'gl/' + groupName + '/joinReq/' + uid));
+    } catch (e) {}
+    try { if (typeof _pushToUid === 'function') _pushToUid(uid, 'You\'re in', 'You now have access to ' + _prettyGroup(groupName) + '.', 'join'); } catch (e) {}
+    try { window._evt('approved join request'); } catch (e) {}
+    toast(nm + ' can now see this room', 2600);
+    renderRoomInfoOwner();
+  }, { yes: 'Approve' });
+};
+window._denyJoinReq = function (uid) {
+  if (!(window._canManageRoom && window._canManageRoom()) || !db || !groupName || !uid) return;
+  var req = (window._roomJoinReqs || {})[uid] || {};
+  var nm = req.name || 'them';
+  _confirm('Turn down ' + nm + '’s request?\n\nThey aren\'t told they were refused — the request just goes away, and they can ask again.', function () {
+    try { fbRemove(fbRef(db, 'gl/' + groupName + '/joinReq/' + uid)); } catch (e) {}
+    // No _pushToUid here on purpose: a "you were denied" notification turns a quiet
+    // no into a confrontation between family members. On their side the request just
+    // clears, their re-probe still comes back denied, and the button resets to "Ask
+    // again" — indistinguishable from an approval that hasn't happened yet.
+    toast('Request dismissed', 2200);
+    renderRoomInfoOwner();
+  }, { yes: 'Turn down', danger: true });
+};
+// Renders the pending queue into Room Info. Owner/admin only — everyone else gets
+// an empty, hidden row.
+function _renderJoinQueue() {
+  var row = document.getElementById('ri-pending-row');
+  if (!row) return;
+  var reqs = window._roomJoinReqs || {};
+  var uids = Object.keys(reqs);
+  if (!uids.length || !(window._canManageRoom && window._canManageRoom())) { row.style.display = 'none'; return; }
+  row.style.display = 'block';
+  uids.sort(function (a, b) { return (reqs[a].ts || 0) - (reqs[b].ts || 0); });
+  var html =
+    '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">' +
+      'Waiting to join (' + uids.length + ')' +
+    '</div>';
+  uids.forEach(function (uid) {
+    var r = reqs[uid] || {};
+    var when = (typeof timeAgo === 'function' && r.ts) ? timeAgo(r.ts) : 'just now';
+    html +=
+      '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(r.name || 'Someone') + '</div>' +
+          '<div style="font-size:11px;color:var(--muted)">asked ' + _escHtml(when) + '</div>' +
+        '</div>' +
+        '<button onclick="window._denyJoinReq(\'' + _escHtml(uid) + '\')" style="flex-shrink:0;padding:8px 12px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">No</button>' +
+        '<button onclick="window._approveJoinReq(\'' + _escHtml(uid) + '\')" style="flex-shrink:0;padding:8px 14px;background:var(--accent);border:none;border-radius:8px;color:#1a1200;font-size:12px;font-weight:800;cursor:pointer">Let in</button>' +
+      '</div>';
+  });
+  row.innerHTML = html;
+}
 window._requestRoomOwnership = function () {
   if (!db || !groupName || !userId || window._isRoomOwner) return;
   if (window._ownerRequestPending && window._ownerRequestPending.uid === userId) return; // already pending
@@ -19200,14 +19457,40 @@ function checkGroupPasscode(name, group, uid, invitePin) {
     }
 
     var fb = window._fb;
-    // Blocked by the room owner? Refuse entry (covers invite links too).
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/banned/' + uid), function(bsnap) {
-      // Banned from this room — same full-screen recovery as being kicked mid-session,
-      // instead of a bare toast that leaves the visitor stranded on a blank join screen.
-      if (bsnap.val()) { _removedByOwner(); return; }
-      _continuePasscode();
-    }, { onlyOnce: true });
+    // ── Read access ──────────────────────────────────────────────────
+    // Probe the room BEFORE the ban and passcode checks, because both of those are
+    // themselves reads of this room: once `$room .read` requires an ACL entry, the
+    // ban check below stops resolving at all for an outsider and its onValue has no
+    // error callback, so entry would hang on a blank screen with nothing on it.
+    // Asking one explicit question first turns that dead end into the request queue.
+    //
+    // Dormant until the read rule lands — today this always succeeds. Fails OPEN on
+    // anything that isn't an outright permission denial (offline, a dropped socket):
+    // the rules are the real gate, and a flaky connection shouldn't tell someone
+    // they've been shut out of their own family's room.
+    var _accessProbe;
+    try { _accessProbe = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) { _accessProbe = null; }
+    if (!_accessProbe || !_accessProbe.then) { _checkBanned(); return; }
+    _accessProbe.then(function () { _checkBanned(); }).catch(function (err) {
+      var denied = false;
+      try {
+        var code = (err && (err.code || err.message) || '').toString().toUpperCase();
+        denied = code.indexOf('PERMISSION_DENIED') !== -1 || code.indexOf('PERMISSION DENIED') !== -1;
+      } catch (e) {}
+      if (denied) { window._showAccessRequestScreen(groupKey, group); return; }
+      _checkBanned();
+    });
     return;
+
+    // Blocked by the room owner? Refuse entry (covers invite links too).
+    function _checkBanned() {
+      fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/banned/' + uid), function(bsnap) {
+        // Banned from this room — same full-screen recovery as being kicked mid-session,
+        // instead of a bare toast that leaves the visitor stranded on a blank join screen.
+        if (bsnap.val()) { _removedByOwner(); return; }
+        _continuePasscode();
+      }, { onlyOnce: true });
+    }
 
     function _continuePasscode() {
     fb.onValue(fb.ref(fb.db, 'gl/' + groupKey + '/config/pin'), function(snap) {
