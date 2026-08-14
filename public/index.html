@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 621;
+var APP_BUILD = 622;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6396,6 +6396,7 @@ window._placeGeoState = window._placeGeoState || {}; // 'uid_placeId' -> {inside
 var PLACE_HYSTERESIS_M = 15; // avoids flapping arrive/leave right on the boundary line
 var PLACE_MIN_TRANSITION_MS = 3 * 60 * 1000; // even a clean transition won't re-fire faster than this
 var PLACE_MAX_TRUST_ACC_M = 150; // a fix this inaccurate can't judge a geofence at all — skip it
+var PLACE_CONFIRM_MS = 90 * 1000; // a boundary flip must PERSIST this long (and across ≥2 fixes) before it fires — kills lone outlier fixes
 function _ensurePlacesSubscribed(circleKey) {
   if (window._placesSubbed[circleKey]) return;
   window._placesSubbed[circleKey] = true;
@@ -6600,7 +6601,7 @@ function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
       // exactly as it was and wait for a better fix instead of guessing.
       if (accM && accM > PLACE_MAX_TRUST_ACC_M) return;
       var stateKey = userId + '_' + placeId;
-      var state = window._placeGeoState[stateKey] || { inside: null, ts: 0 }; // null = not yet known
+      var state = window._placeGeoState[stateKey] || { inside: null, ts: 0, cand: null }; // null = not yet known
       // Hysteresis margin scales with how bad the fix's accuracy actually is — a noisy fix
       // needs to clearly beat its OWN uncertainty before a transition is trusted, not just
       // the fixed 15m that's fine for a good fix but far too tight for a noisy one.
@@ -6612,13 +6613,39 @@ function _checkPlaceGeofences(lat, lng, circleKeys, accM) {
       else if (state.inside === false) isInside = edgeM >= hyst; // stay outside until well within
       else isInside = edgeM >= 0; // first-ever check for this place — no transition to fire, just establish state
       var firstCheck = state.inside === null;
-      if (!firstCheck && isInside !== state.inside) {
-        // Even a hysteresis-cleared transition can repeat if the fix is bouncing right at the
-        // (now-wider) edge — don't let the SAME place re-fire faster than this, regardless.
-        if (Date.now() - (state.ts || 0) < PLACE_MIN_TRANSITION_MS) return;
+      var now = Date.now();
+
+      // FIRST fix for this place — establish state silently, nothing to fire.
+      if (firstCheck) { window._placeGeoState[stateKey] = { inside: isInside, ts: now, cand: null }; return; }
+
+      // This fix AGREES with the committed side — so any flip we were tentatively tracking was a
+      // transient outlier. Drop it. This is the half that makes a lone bad fix harmless: it flips
+      // us to "pending" for one sample, then the next good fix lands here and clears it.
+      if (isInside === state.inside) {
+        if (state.cand) { state.cand = null; window._placeGeoState[stateKey] = state; }
+        return;
       }
-      window._placeGeoState[stateKey] = { inside: isInside, ts: (firstCheck || isInside !== state.inside) ? Date.now() : (state.ts || 0) };
-      if (firstCheck || isInside === state.inside) return; // no transition
+
+      // ── DEBOUNCE ──────────────────────────────────────────────────────────────────────
+      // This fix wants to FLIP the state, but a single sample isn't enough. A throttled/Wi-Fi
+      // device (a parked tablet is the classic case) periodically emits one confident-but-wrong
+      // fix that lands outside a geofence and then snaps back — the source of the endless
+      // "left home / returned home" pairs. Require the new side to be seen on a SECOND fix and to
+      // have held for at least PLACE_CONFIRM_MS before it counts. A real arrival/departure holds
+      // and confirms; a glitch reverts on the next fix and is cleared by the branch above.
+      if (!state.cand || state.cand.inside !== isInside) {
+        state.cand = { inside: isInside, since: now };   // first sighting of the flip — start the clock
+        window._placeGeoState[stateKey] = state;
+        return;
+      }
+      if (now - state.cand.since < PLACE_CONFIRM_MS) {
+        window._placeGeoState[stateKey] = state;         // confirming, but hasn't held long enough yet
+        return;
+      }
+      // Confirmed: the flip has persisted across ≥2 fixes for ≥PLACE_CONFIRM_MS. Still honour the
+      // per-place minimum spacing so nothing can machine-gun even after a real transition.
+      if (now - (state.ts || 0) < PLACE_MIN_TRANSITION_MS) return;
+      window._placeGeoState[stateKey] = { inside: isInside, ts: now, cand: null };
       var kind = isInside ? 'arrive' : 'leave';
       if (p.alertOn && p.alertOn[kind] === false) return; // this transition type isn't wanted
       // CROSS-DEVICE dedupe. _placeGeoState above is per-device, in-memory — so a phone and a

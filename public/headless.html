@@ -168,6 +168,7 @@
   var PLACE_HYSTERESIS_M = 15;
   var PLACE_MIN_TRANSITION_MS = 3 * 60 * 1000;
   var PLACE_MAX_TRUST_ACC_M = 150;
+  var PLACE_CONFIRM_MS = 90 * 1000; // a boundary flip must persist this long (and across ≥2 fixes) before firing
   var placesCache = {}, placesCacheTs = {};
   var placeGeoState = {}; // 'uid_placeId' -> {inside: bool|null}
   var PLACES_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -248,7 +249,7 @@
           // judge a geofence at all (common for a tablet on weak GPS indoors/poor sky view).
           if (accM > PLACE_MAX_TRUST_ACC_M) return;
           var stateKey = uid + '_' + placeId;
-          var state = placeGeoState[stateKey] || { inside: null, ts: 0 };
+          var state = placeGeoState[stateKey] || { inside: null, ts: 0, cand: null };
           var hyst = Math.max(PLACE_HYSTERESIS_M, accM * 0.75);
           // Signed boundary distance (+ inside) — circle or drawn polygon, same hysteresis.
           var edgeM = placeEdgeM(c.latitude, c.longitude, p);
@@ -257,9 +258,18 @@
           else if (state.inside === false) isInside = edgeM >= hyst;
           else isInside = edgeM >= 0;
           var firstCheck = state.inside === null;
-          if (!firstCheck && isInside !== state.inside && (Date.now() - (state.ts || 0)) < PLACE_MIN_TRANSITION_MS) return;
-          placeGeoState[stateKey] = { inside: isInside, ts: (firstCheck || isInside !== state.inside) ? Date.now() : (state.ts || 0) };
-          if (firstCheck || isInside === state.inside) return;
+          var now = Date.now();
+          // FIRST fix — establish state silently.
+          if (firstCheck) { placeGeoState[stateKey] = { inside: isInside, ts: now, cand: null }; return; }
+          // This fix agrees with the committed side — drop any pending flip; it was a transient.
+          if (isInside === state.inside) { if (state.cand) { state.cand = null; placeGeoState[stateKey] = state; } return; }
+          // DEBOUNCE: a flip must be confirmed by a 2nd fix AND hold PLACE_CONFIRM_MS before it
+          // fires. This is the background service — the exact place a parked tablet's lone
+          // wrong-then-right Wi-Fi fixes were minting endless "left/returned home" pairs.
+          if (!state.cand || state.cand.inside !== isInside) { state.cand = { inside: isInside, since: now }; placeGeoState[stateKey] = state; return; }
+          if (now - state.cand.since < PLACE_CONFIRM_MS) { placeGeoState[stateKey] = state; return; }
+          if (now - (state.ts || 0) < PLACE_MIN_TRANSITION_MS) return;
+          placeGeoState[stateKey] = { inside: isInside, ts: now, cand: null };
           var kind = isInside ? 'arrive' : 'leave';
           if (p.alertOn && p.alertOn[kind] === false) return;
           try {
