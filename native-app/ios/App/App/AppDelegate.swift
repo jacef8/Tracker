@@ -3,6 +3,8 @@ import Capacitor
 import CoreLocation
 import WebKit
 import AVFoundation
+import PushKit
+import CallKit
 // Hard link-time reference for the sign-in plugin — see didFinishLaunching. Without any
 // compile-time use, the static CapacitorFirebaseAuthentication framework can end up absent
 // from the shipped binary even though `pod install` succeeds and the CI GoogleSignIn guard
@@ -13,7 +15,7 @@ import AVFoundation
 import CapacitorFirebaseAuthentication
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate, WKNavigationDelegate, WKScriptMessageHandler, PKPushRegistryDelegate, CXProviderDelegate {
 
     var window: UIWindow?
 
@@ -60,6 +62,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var audioPlayReasons = Set<String>()      // playback-only consumers (recorded clips)
     private var glAudioSessionActive = false
 
+    // ── CallKit + PushKit VoIP (2026-08-15) ────────────────────────────────────────────
+    // The ONLY iOS-sanctioned way to get live audio to a LOCKED / fully-backgrounded iPhone: a
+    // PushKit VoIP push wakes the app even when killed, we report a CallKit call (mandatory —
+    // iOS 13+ terminates the app if a VoIP push doesn't report one), and when CallKit activates
+    // the audio session we tell the web layer to join the LiveKit room so its WebRTC audio plays
+    // through the call. The VoIP token is handed to the web (window._onVoipToken) which registers
+    // it in Firebase so the server's /voip endpoint can target this device.
+    private var voipRegistry: PKPushRegistry?
+    private var cxProvider: CXProvider?
+    private var callController = CXCallController()
+    private var currentCallUUID: UUID?
+    private var pendingCallRoom: String = ""
+    private var voipToken: String = ""
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Forces the linker to keep the sign-in plugin's class (see the import note above).
         _ = FirebaseAuthenticationPlugin.self
@@ -91,6 +107,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
         bgLocationManager = mgr
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
+        setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
         // A stationary device (moved less than distanceFilter) never gets another
         // didUpdateLocations callback at all, so its last-known fix would otherwise go stale in
         // Firebase after a few minutes and look exactly like tracking had silently stopped, even
@@ -575,6 +592,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // OVER the ring/silent switch (the whole point) and keep audio alive with the screen off while
     // active; .defaultToSpeaker keeps a phone-in-hand call on the loudspeaker, not the earpiece.
     private func applyAudioSession() {
+        // During a CallKit call, CallKit OWNS the audio session — don't set/activate/deactivate it
+        // underneath, or the call audio breaks. The web's GLAudioRouter calls become no-ops here.
+        if currentCallUUID != nil { return }
         let sess = AVAudioSession.sharedInstance()
         if !audioRecordReasons.isEmpty {
             do {
@@ -593,6 +613,99 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             do { try sess.setActive(false, options: [.notifyOthersOnDeactivation]) } catch { }
             glAudioSessionActive = false
         }
+    }
+
+    // MARK: - PushKit (VoIP) + CallKit
+
+    private func setupVoip() {
+        // CallKit provider — the native call UI that lets audio ring through a locked phone.
+        let cfg = CXProviderConfiguration()
+        cfg.supportsVideo = false
+        cfg.maximumCallsPerCallGroup = 1
+        cfg.maximumCallGroups = 1
+        cfg.supportedHandleTypes = [.generic]
+        let provider = CXProvider(configuration: cfg)
+        provider.setDelegate(self, queue: nil)
+        cxProvider = provider
+        // PushKit — register for VoIP pushes; the token arrives in didUpdate below.
+        let reg = PKPushRegistry(queue: .main)
+        reg.delegate = self
+        reg.desiredPushTypes = [.voIP]
+        voipRegistry = reg
+    }
+
+    // The live Capacitor WebView, fetched on demand (it may not have existed when a background
+    // wake began). Nil if the UI hasn't loaded yet — e.g. a cold VoIP launch mid-page-load.
+    private func mainWebView() -> WKWebView? {
+        return (window?.rootViewController as? CAPBridgeViewController)?.webView
+    }
+
+    // MARK: PKPushRegistryDelegate
+
+    func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
+        guard type == .voIP else { return }
+        let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
+        voipToken = token
+        UserDefaults.standard.set(token, forKey: "gl_voip_token")
+        // Hand to the web so it registers the token in Firebase (the server /voip endpoint targets it).
+        DispatchQueue.main.async { [weak self] in
+            self?.mainWebView()?.evaluateJavaScript("window._onVoipToken && window._onVoipToken('\(token)')", completionHandler: nil)
+        }
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+        voipToken = ""
+        UserDefaults.standard.removeObject(forKey: "gl_voip_token")
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
+        // iOS 13+ REQUIRES reporting a CallKit call synchronously here or it terminates the app and
+        // throttles future VoIP pushes. Parse room + caller from the payload, report the call.
+        let dict = payload.dictionaryPayload
+        let room = (dict["room"] as? String) ?? ""
+        let fromName = (dict["fromName"] as? String) ?? "GroundLink"
+        pendingCallRoom = room
+        let uuid = UUID()
+        currentCallUUID = uuid
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: fromName)
+        update.hasVideo = false
+        update.localizedCallerName = fromName
+        cxProvider?.reportNewIncomingCall(with: uuid, update: update) { _ in completion() }
+    }
+
+    // MARK: CXProviderDelegate
+
+    func providerDidReset(_ provider: CXProvider) {
+        currentCallUUID = nil
+        pendingCallRoom = ""
+    }
+
+    // CallKit activated the audio session — NOW the web layer can join and its WebRTC audio plays
+    // through the call, even on a locked phone. This is the entire point of the VoIP path.
+    func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        glAudioSessionActive = true
+        let room = pendingCallRoom
+        DispatchQueue.main.async { [weak self] in
+            self?.mainWebView()?.evaluateJavaScript("window._callkitJoin && window._callkitJoin('\(room)')", completionHandler: nil)
+        }
+    }
+
+    func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) { }
+
+    // Answered (user swiped, or an auto-answer) — audio starts on didActivate above.
+    func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        action.fulfill()
+    }
+
+    // Ended/declined — tell the web to leave the channel.
+    func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        currentCallUUID = nil
+        pendingCallRoom = ""
+        DispatchQueue.main.async { [weak self] in
+            self?.mainWebView()?.evaluateJavaScript("window._callkitEnd && window._callkitEnd()", completionHandler: nil)
+        }
+        action.fulfill()
     }
 
 }
