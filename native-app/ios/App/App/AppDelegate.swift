@@ -2,6 +2,7 @@ import UIKit
 import Capacitor
 import CoreLocation
 import WebKit
+import AVFoundation
 // Hard link-time reference for the sign-in plugin — see didFinishLaunching. Without any
 // compile-time use, the static CapacitorFirebaseAuthentication framework can end up absent
 // from the shipped binary even though `pod install` succeeds and the CI GoogleSignIn guard
@@ -12,7 +13,7 @@ import WebKit
 import CapacitorFirebaseAuthentication
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate, WKNavigationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     var window: UIWindow?
 
@@ -42,6 +43,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var pendingFix: CLLocation?
     private var lastReportedAt: Date?
     private var staleFixTimer: Timer?
+
+    // ── Voice audio session bridge (2026-08-15) ────────────────────────────────────────
+    // The web voice layer (voice.js) already calls window.GLAudioRouter.startVoiceService() /
+    // stopVoiceService() the moment a LiveKit room connects/disconnects, plus start/stopMediaMode
+    // around active speech. On Android those are wired to a native audio router. On iOS the object
+    // never existed, so EVERY call was a silent no-op — no AVAudioSession was ever configured or
+    // activated. Consequence: WebRTC (live PTT) and <audio> (recorded-clip playback) obeyed the
+    // ring/silent switch, defaulted to the earpiece, and couldn't play with the screen off. This
+    // installs a window.GLAudioRouter shim that posts those same calls to the handler below, which
+    // drives a real AVAudioSession. Reason-sets so overlapping start/stop calls can't deactivate a
+    // session another consumer still needs (e.g. mediaMode toggling mid-call must not kill the
+    // whole-room session held by voiceService).
+    private var glAudioBridgeInstalled = false
+    private var audioRecordReasons = Set<String>()   // live voice (mic + playback) consumers
+    private var audioPlayReasons = Set<String>()      // playback-only consumers (recorded clips)
+    private var glAudioSessionActive = false
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Forces the linker to keep the sign-in plugin's class (see the import note above).
@@ -179,6 +196,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             guard let self = self,
                   let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
                   let wv = bridgeVC.webView else { return }
+            self.installAudioBridge(wv)
             wv.evaluateJavaScript("window.__nativeSync ? window.__nativeSync() : ''") { result, _ in
                 guard let json = result as? String, !json.isEmpty else { return }
                 UserDefaults.standard.set(json, forKey: "gl_native_places")
@@ -496,6 +514,84 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         if bgTask != .invalid {
             UIApplication.shared.endBackgroundTask(bgTask)
             bgTask = .invalid
+        }
+    }
+
+    // MARK: - Voice audio session bridge
+
+    // JS shim defining window.GLAudioRouter with the SAME method names Android's native router
+    // exposes, so voice.js needs zero platform branching. Each method posts to the handler below.
+    // Guarded so it only defines the object once and never clobbers a real (Android) router.
+    private static let glAudioShim = """
+    (function(){
+      if (window.GLAudioRouter) return;
+      function post(op, reason){
+        try { window.webkit.messageHandlers.glAudioRouter.postMessage({ op: op, reason: reason || 'default' }); } catch (e) {}
+      }
+      window.GLAudioRouter = {
+        startVoiceService: function(){ post('rec+', 'service'); },
+        stopVoiceService:  function(){ post('rec-', 'service'); },
+        startMediaMode:    function(){ post('rec+', 'media'); },
+        stopMediaMode:     function(){ post('rec-', 'media'); },
+        startClipPlayback: function(){ post('play+', 'clip'); },
+        stopClipPlayback:  function(){ post('play-', 'clip'); },
+        setVoiceNotificationVisible: function(){ /* iOS has no persistent voice notification */ }
+      };
+    })();
+    """
+
+    private func installAudioBridge(_ wv: WKWebView) {
+        if !glAudioBridgeInstalled {
+            let ucc = wv.configuration.userContentController
+            ucc.add(self, name: "glAudioRouter")
+            // Document-start user script so the shim is re-defined on EVERY page load — including a
+            // force-reload or web update — before voice.js ever looks for window.GLAudioRouter.
+            ucc.addUserScript(WKUserScript(source: AppDelegate.glAudioShim,
+                                           injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            glAudioBridgeInstalled = true
+        }
+        // Inject once now for the ALREADY-loaded page (the user script only affects future loads).
+        // The shim is idempotent (it early-returns if window.GLAudioRouter already exists).
+        wv.evaluateJavaScript(AppDelegate.glAudioShim, completionHandler: nil)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard message.name == "glAudioRouter",
+              let body = message.body as? [String: Any],
+              let op = body["op"] as? String else { return }
+        let reason = (body["reason"] as? String) ?? "default"
+        switch op {
+        case "rec+":  audioRecordReasons.insert(reason)
+        case "rec-":  audioRecordReasons.remove(reason)
+        case "play+": audioPlayReasons.insert(reason)
+        case "play-": audioPlayReasons.remove(reason)
+        default: return
+        }
+        applyAudioSession()
+    }
+
+    // Drives the shared AVAudioSession from the reason-sets. .playAndRecord / .playback both play
+    // OVER the ring/silent switch (the whole point) and keep audio alive with the screen off while
+    // active; .defaultToSpeaker keeps a phone-in-hand call on the loudspeaker, not the earpiece.
+    private func applyAudioSession() {
+        let sess = AVAudioSession.sharedInstance()
+        if !audioRecordReasons.isEmpty {
+            do {
+                try sess.setCategory(.playAndRecord,
+                                     options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers])
+                try sess.setActive(true)
+                glAudioSessionActive = true
+            } catch { /* best-effort — never crash a call over audio routing */ }
+        } else if !audioPlayReasons.isEmpty {
+            do {
+                try sess.setCategory(.playback, options: [.mixWithOthers])
+                try sess.setActive(true)
+                glAudioSessionActive = true
+            } catch { }
+        } else if glAudioSessionActive {
+            do { try sess.setActive(false, options: [.notifyOthersOnDeactivation]) } catch { }
+            glAudioSessionActive = false
         }
     }
 
