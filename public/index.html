@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 624;
+var APP_BUILD = 625;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14793,13 +14793,18 @@ window._memberActionsMenu = function(uid, name) {
   if (icb) {
     icb.style.display = 'none';
     try {
-      if (typeof _isCircleMember === 'function' && _isCircleMember(groupName) && uid !== userId && window._fb && window._fb.get) {
-        window._fb.get(window._fb.ref(window._fb.db, 'gl/' + groupName + '/members/' + uid)).then(function (s) {
-          if (s && s.val()) return;                       // already a member — nothing to offer
-          if (_ownMemUid !== uid) return;                 // sheet moved on to someone else meanwhile
-          icb.style.display = 'flex';
-          // (the stepped Remove flow hides its own Crew option for non-roster members)
-        }).catch(function () {});
+      // Offer "invite to Crew" only to a genuine OUTSIDER — someone in a Crew room who isn't on
+      // its roster. Resolve by PERSON, not the raw device uid: the roster keys on the account id,
+      // so a member's OTHER device (phone vs tablet) has a uid that isn't literally a roster key.
+      // The old check did a raw get() of members/<uid> and so flagged your own second device as a
+      // non-member — offering to "invite Jace to the Crew" when Jace is the owner. _rosterHas
+      // resolves device→account and checks every id form against the live roster, exactly like the
+      // MEMBER badge does, so the badge and this button now agree.
+      if (uid !== userId
+          && !(window._isMyOwnUid && window._isMyOwnUid(uid))
+          && typeof _isCircleMember === 'function' && _isCircleMember(groupName)
+          && !(window._rosterHas && window._rosterHas(uid))) {
+        icb.style.display = 'flex';
       }
     } catch (e) {}
   }
