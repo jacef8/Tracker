@@ -2941,7 +2941,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 631;
+var APP_BUILD = 632;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20207,6 +20207,13 @@ try {
       var f = window._fb; if (!f || !f.db) return;
       var u = profileKey(); if (!u) return;
       var prof = localProfile();
+      // A device-label word ("Tablet"/"phone"/"PC") is never a real name. The old label-as-name
+      // bug let one leak into the synced profile, and because this push MERGES, the offending
+      // device kept re-asserting it as the shared account name on every sync — a tablet forcing
+      // everyone's account name to "Tablet", which build 619 then wiped locally, so the name
+      // field reappeared every launch. Omit it here so a device with a REAL name wins and the
+      // corruption heals itself.
+      try { if (typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(prof.name)) { delete prof.name; delete prof.nameCustom; } } catch (e) {}
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
       try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
@@ -20218,6 +20225,7 @@ try {
       try {
         if (LS.get('gl_account') === 'google') {
           var _dnm = name() || '';
+          if (typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(_dnm)) _dnm = '';   // don't publish a device word as the account's public name
           var _ddev = LS.get('gl_uid') || '';
           if (_dnm) {
             var _dent = { name: _dnm, dev: _ddev, ts: (f.serverTimestamp ? f.serverTimestamp() : Date.now()) };
@@ -20244,8 +20252,10 @@ try {
   function applyProfile(p) {
     if (!p) return;
     try {
-      if (p.name)    LS.set('gl_name', p.name);
-      if (p.nameCustom != null) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
+      // Ignore a device-label name coming down from the cloud (see pushProfile) — restoring it
+      // would just re-trigger the wipe-and-reprompt loop on this device.
+      if (p.name && !(typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(p.name))) LS.set('gl_name', p.name);
+      if (p.nameCustom != null && !(typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(p.name))) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
       if (p.pinMuted) LS.set('gl_pin_muted', typeof p.pinMuted === 'string' ? p.pinMuted : JSON.stringify(p.pinMuted));
