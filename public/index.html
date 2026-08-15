@@ -2786,6 +2786,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-autochannel-row" onclick="window._setToggleAutoChannel && window._setToggleAutoChannel()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Live voice with my crew</div><div style="font-size:11px;color:var(--muted);margin-top:2px">On = hear &amp; talk to your crew live, automatically, like a walkie-talkie. Off = you just get a notification when someone talks.</div></div></div>
+      <span id="set-autochannel-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-statusicons-row" onclick="window._setToggleStatusIcons()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Status icons while tracking</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Background voice &amp; location keep working either way — this only controls whether Android shows a status-bar icon while they run. Off by default.</div></div></div>
       <span id="set-statusicons-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
@@ -2941,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 634;
+var APP_BUILD = 635;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5695,6 +5699,27 @@ window._setToggleCarAudio = function () {
   } catch (e) {}
   toast(on ? 'Car radio stays on during voice' : 'Car-radio fix off');
 };
+// Live voice with your crew, ON BY DEFAULT. Being in a Crew now automatically puts you on the
+// live walkie-talkie channel — no separate "Open channel" step to discover. People kept not
+// realizing a distinct "channel" even existed ("we're in a crew, that's all I know"), so the
+// crew IS the channel now unless you opt out here. Default ON.
+function _autoChannelOn() { try { return localStorage.getItem('gl_auto_channel') !== '0'; } catch (e) { return true; } }
+window._setToggleAutoChannel = function () {
+  var on = !_autoChannelOn();
+  try { localStorage.setItem('gl_auto_channel', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-autochannel-pill', on); } catch (e) {}
+  if (on) {
+    try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}   // engage right now
+    try { toast('Live voice on — you’ll hear your crew automatically'); } catch (e) {}
+  } else {
+    // Off now too: leave the channel if we're in it.
+    try { localStorage.setItem('gl_open_channel', '0'); } catch (e) {}
+    window._inOpenChannel = false;
+    try { if (window._updateChannelBtn) window._updateChannelBtn(); } catch (e) {}
+    try { window._voiceMod().then(function (m) { if (m.leaveVoice) m.leaveVoice(); }).catch(function () {}); } catch (e) {}
+    try { toast('Live voice off — you’ll get a notification when someone talks'); } catch (e) {}
+  }
+};
 // Status icons while tracking: the foreground services that keep background voice reception
 // and background location working REQUIRE a notification to exist (that's the OS-level
 // trade-off for staying alive unthrottled) — but the status-bar ICON specifically can be
@@ -6289,6 +6314,9 @@ function _syncSettings() {
   // Car-radio fix toggle — native app only.
   var carRow = document.getElementById('set-caraudio-row');
   if (carRow) { carRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-caraudio-pill', _carAudioOn()); } catch (e) {} }
+  // Live-voice-with-crew toggle — all platforms (the channel works on web too).
+  var acRow = document.getElementById('set-autochannel-row');
+  if (acRow) { acRow.style.display = (typeof _voiceEnabled !== 'function' || _voiceEnabled()) ? 'flex' : 'none'; try { _setPill('set-autochannel-pill', _autoChannelOn()); } catch (e) {} }
   // Status-icons toggle (voice + location notification icons, merged into one) — native app only.
   var siRow = document.getElementById('set-statusicons-row');
   if (siRow) { siRow.style.display = _isNativeApp() ? 'flex' : 'none'; try { _setPill('set-statusicons-pill', _voiceNotifIconOn() && _locNotifIconOn()); } catch (e) {} }
@@ -6296,7 +6324,7 @@ function _syncSettings() {
   // session with no linked devices) — otherwise it's a dead-end that expands to nothing.
   try {
     var advBanner = document.getElementById('set-advanced-banner'), advBody = document.getElementById('set-advanced-body');
-    var anyAdvRowVisible = ['set-devlisten-row', 'set-secdevall-row', 'set-hearothers-row', 'set-caraudio-row', 'set-statusicons-row']
+    var anyAdvRowVisible = ['set-devlisten-row', 'set-secdevall-row', 'set-hearothers-row', 'set-caraudio-row', 'set-autochannel-row', 'set-statusicons-row']
       .some(function (id) { var r = document.getElementById(id); return r && r.style.display !== 'none'; });
     if (advBanner) advBanner.style.display = anyAdvRowVisible ? 'flex' : 'none';
     if (advBody && !anyAdvRowVisible) advBody.style.display = 'none';
@@ -21112,10 +21140,21 @@ window._toggleOpenChannel = async function () {
 // On room entry, rejoin the channel if the user left it open. Android joins silently; iOS shows
 // the one-tap prompt (a fresh page load needs a gesture to unlock audio on iPhones).
 window._maybeRejoinChannel = function () {
-  if (!_openChannelOn()) return;
   if (document.body.classList.contains('voice-off')) return;
   if (!userId || !groupName) return;
+  // Auto-on for Crews: being in a Crew means live voice is ON by default (the walkie-talkie),
+  // unless the user turned it off in Settings. If the channel isn't already engaged, engage it —
+  // but ONLY in a Crew room (a random public/quick-join room shouldn't force everyone live).
+  if (!_openChannelOn()) {
+    if (!_autoChannelOn()) return;                                                   // opted out
+    if (!(typeof _isCircleMember === 'function' && _isCircleMember(groupName))) return; // crews only
+    try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
+  }
   _updateChannelBtn();
+  // Already connected to this channel? Don't re-join or (on iOS) re-prompt on every room entry.
+  try {
+    if (window._voiceModSync && window._voiceModSync.currentRoom && window._voiceModSync.currentRoom() === _channelRoomId()) return;
+  } catch (e) {}
   if (_isIOSVoice()) { window._showIncomingVoice(_channelRoomId(), '📻 Group channel', true); }
   else { _joinOpenChannel(); }
 };
