@@ -2941,7 +2941,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 633;
+var APP_BUILD = 634;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6912,10 +6912,25 @@ window._playVlogClip = function (key) {
   // exactly what "the replay button doesn't work" looks like from the outside.
   if (!c || !c.audio) { try { toast('That clip isn’t available to play', 2600); } catch (e) {} return; }
   var a = _vlogAudioEl();
-  try {
-    a.onended = null; a.src = c.audio;
-    a.play().catch(function (e) { console.error('[vlog] play failed', e); try { toast('Couldn’t play that clip', 2600); } catch (e2) {} });
-  } catch (e) { try { toast('Couldn’t play that clip', 2600); } catch (e2) {} }
+  // Tactile "press registered" feedback — on iOS the tap otherwise looked completely dead.
+  try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) {}
+  // iOS: unlock the audio system in this tap gesture, then activate a native PLAYBACK audio
+  // session (window.GLAudioRouter, installed by the native shell) so the clip is actually AUDIBLE
+  // — WKWebView <audio> otherwise obeys the ring/silent switch and plays nothing. No-op on
+  // web/Android (where clip audio already works via the media stream / foreground service).
+  try { if (window._voiceModSync && window._voiceModSync.unlockAudio) window._voiceModSync.unlockAudio(); } catch (e) {}
+  var _clipDone = function () { try { if (window.GLAudioRouter && window.GLAudioRouter.stopClipPlayback) window.GLAudioRouter.stopClipPlayback(); } catch (e) {} };
+  var _fireClip = function () {
+    try {
+      a.onended = _clipDone; a.onerror = _clipDone; a.src = c.audio;
+      a.play().catch(function (e) { console.error('[vlog] play failed', e); _clipDone(); try { toast('Couldn’t play that clip', 2600); } catch (e2) {} });
+    } catch (e) { _clipDone(); try { toast('Couldn’t play that clip', 2600); } catch (e2) {} }
+  };
+  if (window.GLAudioRouter && window.GLAudioRouter.startClipPlayback) {
+    // Native iOS: let the audio session activate before play() so the very start isn't swallowed.
+    window.GLAudioRouter.startClipPlayback();
+    setTimeout(_fireClip, 160);
+  } else { _fireClip(); }
   _setVlogSeen(c.ts); _updateVlogBadge(); _renderVoiceLog();
 };
 // Delete one transmission (removes it for EVERYONE in the group — voicelog is shared).
@@ -20950,6 +20965,18 @@ window._openVoiceTo = async function (uid, name) {
   if (!cfg.livekitUrl || !cfg.tokenEndpoint) { toast('Voice isn\'t configured yet.'); return; }
   if (!userId || !groupName) { toast('Join a group first, then tap a member to talk.'); return; }
   _closePeopleDrawer();   // get the People panel out of the way so the voice bar is clear
+  // A private 1:1 call must not leak to the whole crew. If the always-open group channel is on,
+  // turn it OFF first — otherwise this device stays in gv_<group>_ALL and auto-rejoins it, so your
+  // audio keeps reaching everyone. Clearing the flag also stops _maybeRejoinChannel pulling you
+  // back into the group room on the next room entry.
+  try {
+    if (typeof _openChannelOn === 'function' && _openChannelOn()) {
+      try { localStorage.setItem('gl_open_channel', '0'); } catch (e) {}
+      window._inOpenChannel = false;
+      try { if (window._updateChannelBtn) window._updateChannelBtn(); } catch (e) {}
+      try { toast('Left the group channel — this is a private call'); } catch (e) {}
+    }
+  } catch (e) {}
   var roomId = _gvRoomId(uid);
   // Ping the other device so it auto-joins (if it has voice on).
   try {

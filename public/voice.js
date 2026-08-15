@@ -35,6 +35,11 @@ let remoteTalking = false; // true while a REMOTE participant is actively speaki
 // ── Transmission recording: each PTT press is captured as a short clip and handed
 // to the page (window._onVoiceClip) so missed transmissions can be replayed later.
 let _rec = null, _recChunks = [], _recStart = 0, _recCap = null;
+// Caller feedback + self-healing: a "nobody joined yet" timer so the initiator isn't left on
+// "waiting for others…" forever, and reconnect-with-backoff state so a terminal drop on the main
+// Talk channel recovers on its own instead of dying silently (LiveKit only auto-recovers blips).
+let _waitTimer = null;
+let _talkReconnectTimer = null, _talkReconnects = 0;
 
 function emit(evt) {
   listeners.forEach((cb) => { try { cb(evt); } catch (e) { /* ignore */ } });
@@ -225,9 +230,14 @@ export function openVoice(opts) {
 
 // ── Public: leave + tear down ──────────────────────────────────────────────
 export function leaveVoice() {
+  // Null session FIRST so the room's Disconnected handler treats this as an intentional exit and
+  // doesn't schedule a reconnect against the room we're deliberately tearing down.
+  session = null;
+  try { if (_waitTimer) { clearTimeout(_waitTimer); _waitTimer = null; } } catch (e) {}
+  try { if (_talkReconnectTimer) { clearTimeout(_talkReconnectTimer); _talkReconnectTimer = null; } } catch (e) {}
+  _talkReconnects = 0;
   if (room) { try { room.disconnect(); } catch (e) {} }
   room = null;
-  session = null;
   micOn = false;
   remoteTalking = false;
   _syncCarAudio();   // restore normal audio routing UNLESS a device monitor is still active
@@ -414,6 +424,8 @@ async function connectVoice() {
   }
 
   room = new Room();
+  const _thisRoom = room;   // capture: if openVoice (room switch) or leaveVoice swaps `room` out,
+                            // the Disconnected handler below must NOT reconnect this stale instance.
   // Engage car-audio protection BEFORE connecting — not after. Chromium's WebRTC engine makes
   // its OWN automatic Bluetooth/communication-mode routing decision as a side effect of
   // room.connect()/getUserMedia, and it can grab an SCO "call" link to a paired car within
@@ -460,7 +472,22 @@ async function connectVoice() {
   room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
     if (room && room.canPlaybackAudio) hideAudioBlocked(); else showAudioBlocked();
   });
-  room.on(RoomEvent.Disconnected, () => { setTalker('disconnected', '#8b949e'); });
+  // Self-heal a TERMINAL drop (server idle-room timeout, token expiry, a long outage). LiveKit
+  // already recovers transient ICE blips internally, so reaching this handler means the session
+  // really ended. If the user didn't leave on purpose (session still set), reconnect with backoff
+  // — previously this only printed "disconnected" and the channel stayed dead until a full reload.
+  room.on(RoomEvent.Disconnected, () => {
+    if (room !== _thisRoom) return;              // superseded by a newer room (switch or leave)
+    if (!session) return;                        // leaveVoice() nulls session — an intentional exit
+    setTalker('reconnecting…', '#f0a500');
+    if (_talkReconnectTimer) return;             // already scheduled
+    const delay = Math.min(2000 * Math.pow(2, Math.min(_talkReconnects, 4)), 30000);
+    _talkReconnects++;
+    _talkReconnectTimer = setTimeout(() => {
+      _talkReconnectTimer = null;
+      try { if (session) connectVoice(); } catch (e) {}
+    }, delay);
+  });
 
   try {
     // Not forcing iceTransportPolicy:'relay' — see comment in the device-monitor path above.
@@ -473,6 +500,19 @@ async function connectVoice() {
     updatePttButton();
     if (room.canPlaybackAudio === false) showAudioBlocked();
     _syncCarAudio();   // keep the car radio alive — don't let this read as a phone call
+    _talkReconnects = 0;   // a clean connect resets the backoff ladder
+    // Caller feedback: if this is an outgoing call (not a listen-only auto-join) and nobody has
+    // joined after 20s, stop implying "connecting" forever — the callee got a push notification.
+    try { if (_waitTimer) { clearTimeout(_waitTimer); _waitTimer = null; } } catch (e) {}
+    if (session && !session.listen) {
+      _waitTimer = setTimeout(() => {
+        try {
+          const hasRemote = room && room.remoteParticipants &&
+            Array.from(room.remoteParticipants.values()).some((p) => !String(p.identity || '').endsWith('__mon'));
+          if (!hasRemote && session && !micOn && !remoteTalking) setTalker('No answer yet — they got a notification', '#f0a500');
+        } catch (e) {}
+      }, 20000);
+    }
     emit({ type: 'joined', room: session.room });
   } catch (e) {
     console.error('[voice] connect failed', e);
@@ -598,7 +638,7 @@ function updatePresence() {
     : [];
   const names = remotes.map((p) => p.name || p.identity);
   if (names.length === 0) setTalker('waiting for others…', '#8b949e');
-  else setTalker('✓ Connected — ' + names.join(', '), '#8b949e');
+  else { try { if (_waitTimer) { clearTimeout(_waitTimer); _waitTimer = null; } } catch (e) {} setTalker('✓ Connected — ' + names.join(', '), '#8b949e'); }
 }
 
 // ── Autoplay blocked: show a tap target that resumes audio ──────────────────
