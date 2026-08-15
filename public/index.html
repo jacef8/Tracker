@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 623;
+var APP_BUILD = 624;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13187,22 +13187,16 @@ function listenUsers() {
           toast('Tap 👁 to show ' + data.name + ' on your map again');
           return;
         }
-        if (!hasGps) {
-          toast((isMine ? 'You have' : data.name + ' has') + ' no GPS location' + (isMine ? ' on this device' : ' (PC/desktop)'));
+        // ONE door for everyone: _openPersonSheet hands off to the rich live sheet when this
+        // person has a marker, and to the lean sheet (same actions) when they don't — including
+        // a no-GPS/desktop member, who used to get only a toast. Your own row still just
+        // recenters on you rather than opening a sheet about yourself.
+        if (isMine) {
+          if (hasGps) { try { window._followUser(userId, 'you'); } catch (e) {} }
+          else { toast('You have no GPS location on this device'); }
           return;
         }
-        // Tapping a row used to just fly the camera there and follow, which left you looking
-        // at a dot with no way into the detail. Open the same info card tapping the dot gives
-        // you — name, accuracy, coordinates, Trail — since that's what people are after when
-        // they tap a person. _showMemberSheet does its own fly-to and follow.
-        if (userMarkers[uid]) {
-          window._showMemberSheet(uid);
-        } else if (isMine) {
-          window._followUser(userId, 'you');
-        } else {
-          map.flyTo({ center: [data.lng, data.lat], zoom: 17, duration: 1000 });
-          setTimeout(function() { window._followUser(uid, data.name); }, 1100);
-        }
+        window._openPersonSheet(uid, data);
       });
       // Someone else's PRIVATE device: no dot and no row. Half-hiding it (dot gone, row still
       // listing name/battery/coordinates) would leak the very thing the setting exists to hide.
@@ -13284,6 +13278,10 @@ function listenUsers() {
         {
           var _orob = orow.querySelector('.uowner-btn');
           if (_orob) _orob.addEventListener('click', function (e) { e.stopPropagation(); window._memberActionsMenu(uid, m.name || 'Member'); });
+          // Tapping the row now opens the SAME person sheet everyone else gets (Talk, Favorite,
+          // History, More) — previously an offline member had only the ⋮ and no way through.
+          orow.style.cursor = 'pointer';
+          orow.addEventListener('click', function () { try { window._openPersonSheet(uid, m); } catch (e) {} });
         }
         _rowsCrew.push(orow);   // offline roster members belong in the Crew section
       });
@@ -19420,6 +19418,67 @@ window._closeMemberSheet = function() {
   var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
   document.body.classList.remove('member-open');
   try { map.flyTo({ padding: { top: 0, left: 0, right: 0, bottom: 0 }, duration: 400 }); } catch (e) {}
+};
+// ── Consolidation (Stage 2): ONE person sheet, reachable from every entry point ──
+// The rich member sheet above is built per-marker inside listenUsers and only exists for
+// people currently ON the map. This lean builder covers everyone else — an offline roster
+// member, a Friends-panel person, a cluster row — from whatever data we have, offering the
+// SAME action set (Talk · Favorite · Color · History · More, plus Follow/Navigate only when
+// there's a position). _openPersonSheet is the single door: it hands off to the rich sheet
+// when a marker exists and falls back to this otherwise, so tapping a person anywhere opens
+// the same thing.
+window._buildPersonSheetHTML = function (uid, data) {
+  data = data || {};
+  var isMine = (typeof _isMyOwnUid === 'function' && _isMyOwnUid(uid)) || uid === userId;
+  var nm = escapeHtmlJs(_withDev(data) || data.name || 'Member');
+  var safe = String(data.name || 'Member').replace(/'/g, '');
+  var now = Date.now();
+  var hasPos = (typeof data.lat === 'number' && typeof data.lng === 'number');
+  var ts = data.fixTs || data.ts || 0;
+  var live = !!ts && (now - ts) < (4 * 60 * 1000);
+  var lastStr = ts ? (function () { var mm = Math.floor((now - ts) / 60000); return mm < 1 ? 'just now' : mm < 60 ? (mm + 'm ago') : (Math.floor(mm / 60) + 'h ago'); })() : '';
+  var statusLine = live ? 'Live now' : (ts ? ('Last seen ' + lastStr) : 'Offline — not sharing right now');
+  var S = 'padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px';
+  var voiceOff = document.body.classList.contains('voice-off');
+  var talk = (!isMine && !voiceOff) ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + safe + '\')" style="width:100%;margin-top:10px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk to ' + safe + '</button>' : '';
+  var follow = (!isMine && hasPos) ? '<button onclick="window._closeMemberSheet();try{map.flyTo({center:[' + data.lng + ',' + data.lat + '],zoom:16,duration:800})}catch(e){};window._followUser(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">' + (live ? 'Follow Live' : 'Go to Last') + '</button>' : '';
+  var nav = (!isMine && hasPos) ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>' : '';
+  var hist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-history"/></svg>History</button>';
+  var fav = !isMine ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + safe + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + S + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>' : '';
+  var color = !isMine ? '<button onclick="window._pickUserColor(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">🎨 Color</button>' : '';
+  var more = !isMine ? '<button onclick="window._memberActionsMenu(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">⋯ More</button>' : '';
+  var grid = follow + nav + hist + fav + color + more;
+  return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
+      '<div style="color:' + (live ? '#00e676' : '#a9b4bf') + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + (live ? 'LIVE' : (ts ? 'LAST KNOWN' : 'OFFLINE')) + '</div>' +
+      '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
+    '</div>' +
+    '<div style="min-width:0;margin-top:2px"><div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm +
+      ((window._rosterHas && window._rosterHas(uid)) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#a78bfa;background:rgba(167,139,250,.15);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+      '</div>' +
+      '<div style="font-size:12px;color:#a9b4bf;margin-top:3px">' + statusLine + '</div></div>' +
+    talk +
+    (grid ? ('<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + grid + '</div>') : '');
+};
+window._openPersonSheet = function (uid, data) {
+  if (!uid) return;
+  // On the map right now → the rich, live sheet (unchanged path).
+  if (typeof userMarkers !== 'undefined' && userMarkers[uid]) { window._showMemberSheet(uid); return; }
+  // Not on the map → fill in a name from whatever we know, then show the lean sheet in the
+  // same container (no fly-to; there's no position to fly to).
+  var d = data || {};
+  if (!d.name) {
+    try {
+      d.name = (typeof knownUsers !== 'undefined' && knownUsers[uid])
+        || (window._roomMembersRoster && window._roomMembersRoster[uid] && window._roomMembersRoster[uid].name)
+        || 'Member';
+    } catch (e) { d.name = 'Member'; }
+  }
+  window._openMemberUid = uid;
+  var body = document.getElementById('member-sheet-body');
+  var sheet = document.getElementById('member-sheet');
+  if (body) body.innerHTML = window._buildPersonSheetHTML(uid, d);
+  if (sheet) sheet.style.display = 'block';
+  document.body.classList.add('member-open');
 };
 // Per-device preference (not synced — each viewer decides what THEIR OWN "Follow group" fits
 // around): should this member/device count toward the group's bounds? Default included; opt out
