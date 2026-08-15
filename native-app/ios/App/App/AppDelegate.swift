@@ -619,7 +619,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     private func setupVoip() {
         // CallKit provider — the native call UI that lets audio ring through a locked phone.
-        let cfg = CXProviderConfiguration()
+        // Use the localizedName initializer, not CXProviderConfiguration() — the empty init is
+        // iOS 14+, but this app deploys to iOS 13.
+        let cfg = CXProviderConfiguration(localizedName: "GroundLink")
         cfg.supportsVideo = false
         cfg.maximumCallsPerCallGroup = 1
         cfg.maximumCallGroups = 1
