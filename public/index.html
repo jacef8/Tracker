@@ -2945,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 635;
+var APP_BUILD = 636;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21213,6 +21213,10 @@ window._listenVoiceInvites = function () {
       if (inv.ts <= _gvLastPingTs) return;                           // already handled
       _gvLastPingTs = inv.ts;
       if (inv.from && window._isMuted(inv.from)) return;             // muted — ignore entirely, no popup, no join
+      // Already connected to this exact room? A repeat / keep-alive ping must NOT re-prompt (iOS)
+      // or re-join — this is what made an already-joined iPhone show the tap-to-join sheet again
+      // for every transmission. Silently ignore; the live audio is already flowing.
+      try { if (window._voiceModSync && window._voiceModSync.currentRoom && window._voiceModSync.currentRoom() === inv.room) return; } catch (e) {}
       // Log on the RECEIVE side so diagnostics show the ping actually reached THIS device
       // (previously only the Android auto-join logged, so an iPhone that got the ping but
       // showed no prompt was indistinguishable from one that never got it).
@@ -21248,6 +21252,10 @@ window._listenVoiceInvites = function () {
       if (Date.now() - (inv.ts || 0) > 60000) return;
       if (inv.ts <= _gvLastGroupTs) return;
       _gvLastGroupTs = inv.ts;
+      // Already connected to this channel? The 12s keep-alive re-ping must NOT re-prompt (iOS) or
+      // re-join — this was showing the tap-to-join sheet every ~12s to someone already in the room
+      // (confirmed in the crew debug log). Silently ignore; the live audio is already flowing.
+      try { if (window._voiceModSync && window._voiceModSync.currentRoom && window._voiceModSync.currentRoom() === inv.room) return; } catch (e) {}
       if (window._evt) window._evt('🎙 incoming GROUP voice from ' + (inv.fromName || 'member') + (_isIOSVoice() ? ' — iOS tap-to-join shown' : ''));
       var cfg = window.VOICE_CONFIG || {};
       if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
