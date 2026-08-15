@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 626;
+var APP_BUILD = 627;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17401,7 +17401,14 @@ function _trackStats(pts){
       var pr=pts[i-1];
       var dM=metersApart(pr.lat,pr.lng,p.lat,p.lng); s.distM+=dM;
       var dt=p.t-pr.t;
-      if (dt>0 && dt<60000){ if ((dM/(dt/1000))*2.23694>=1) s.movMs+=dt; }
+      // Moving-time: count a segment's elapsed time when it implies real travel. The old
+      // `dt<60000` cap was meant to drop long PARKED gaps, but a sparse history/merged trail has
+      // points MINUTES apart, so it dropped genuine travel too — leaving movMs near zero while
+      // distM stayed full, which made the average explode ("556.8 mph avg" for a 70-mile, 70-hour
+      // trail). Now any segment whose implied pace is between a walk and a car's ceiling counts as
+      // moving; a barely-moved long gap (pace <1 mph) is a stop and is excluded, and an impossible
+      // jump (a bad fix) is excluded so it can't inflate the average either.
+      if (dt>0){ var _segMph=(dM/(dt/1000))*2.23694; if (_segMph>=1 && _segMph<=120) s.movMs+=dt; }
       var sp=(p.sp!=null&&p.sp>=0)?p.sp:(dt>0?dM/(dt/1000):0);
       var mph=sp*2.23694; if (mph<200 && mph>s.maxMph) s.maxMph=mph;
     }
@@ -17409,6 +17416,9 @@ function _trackStats(pts){
   s.durMs=s.endTs-s.startTs;
   if (firstAlt!=null && finalAlt!=null) s.netAlt=finalAlt-firstAlt;
   var movHr=s.movMs/3600000; s.avgMph = movHr>0 ? _trkMi(s.distM)/movHr : 0;
+  // Safety net for pathological sampling: never report a physically impossible average — fall
+  // back to distance-over-ELAPSED, which for a mostly-parked trail reads as ~1 mph (honest).
+  if ((s.avgMph > 120 || !isFinite(s.avgMph)) && s.durMs > 0) s.avgMph = _trkMi(s.distM) / (s.durMs / 3600000);
   return s;
 }
 
