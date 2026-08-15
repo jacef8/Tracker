@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 622;
+var APP_BUILD = 623;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13014,6 +13014,23 @@ function listenUsers() {
         var _msTrailDraw = !isMine
           ? '<button id="ms-trail-toggle" onclick="window._toggleMemberTrail(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (_msTrailOn ? 'rgba(63,185,80,0.16)' : 'transparent') + ';border:1px solid ' + (_msTrailOn ? '#3fb950' : 'var(--border)') + ';border-radius:9px;font-size:13px;font-weight:800;color:' + (_msTrailOn ? '#3fb950' : 'var(--text)') + ';cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg><span>' + (_msTrailOn ? 'Hide trail' : 'Show trail') + '</span></button>'
           : '';
+        // ── Consolidation (Stage 1): the actions that used to live ONLY on the People row or
+        // the ⋮ modal now also sit on the member sheet, so tapping a person on the map is the
+        // one place that offers everything — Favorite, Color, and a "More" that opens the full
+        // actions modal (mute · hide dot/pins · make admin/owner · remove). Hidden for your own.
+        var _msBtnStyle = 'padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px';
+        var _msFav = !isMine
+          ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + _safeName + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + _msBtnStyle + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>'
+          : '';
+        var _msColor = !isMine
+          ? '<button onclick="window._pickUserColor(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '">🎨 Color</button>'
+          : '';
+        // Opens the existing owner-member-modal (unchanged) over the sheet; its Cancel returns
+        // here. This is the single overflow for the less-common per-person and owner/admin
+        // actions, so the sheet stays scannable while still reaching all of them.
+        var _msMore = !isMine
+          ? '<button onclick="window._memberActionsMenu(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '">⋯ More</button>'
+          : '';
         var _msGfExcl = !isMine ? _gfExclButtonHtml(uid, _safeName) : '';
         // Talk, full width above the grid. This card had Follow, Navigate, History and Trail
         // but no way to actually speak to the person you just tapped — in a push-to-talk app
@@ -13062,7 +13079,7 @@ function listenUsers() {
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
           _msTalk +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msTrailDraw + '</div>';
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msTrailDraw + _msFav + _msColor + _msMore + '</div>';
         if (window._openMemberUid === uid) {
           var _msb = document.getElementById('member-sheet-body');
           if (_msb) _msb.innerHTML = userMarkers[uid]._sheetHTML;
