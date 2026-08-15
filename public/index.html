@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 625;
+var APP_BUILD = 626;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8150,19 +8150,10 @@ function _renderCircles() {
 }
 window._showCircleMemberPopup = function (uid) {
   var mk = window._circleMarkers[uid]; if (!mk || !mk._data) return;
-  var data = mk._data, now = Date.now();
-  var isLive = (now - (data.ts || 0)) < LIVE_MS;
-  var safeName = (data.name || 'Member').replace(/'/g, '');
-  var gps = window._lastGPS;
-  var distLine = gps ? (distanceMiles(gps.lat, gps.lng, data.lat, data.lng) + ' ' + getBearing(gps.lat, gps.lng, data.lat, data.lng) + ' from you · ') : '';
-  var _cmCoords = (typeof data.lat === 'number' && typeof data.lng === 'number') ? data.lat.toFixed(6) + ', ' + data.lng.toFixed(6) : '';
-  var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:170px">' +
-    '<div style="font-weight:800;font-size:14px;color:#0d1117">' + escapeHtmlJs(_withDev(data)) + '</div>' +
-    '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">' + distLine + (isLive ? 'live now' : 'last seen ' + _devAgo(data.ts)) + '</div>' +
-    (_cmCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + _cmCoords + '\')" title="Tap to copy">' + _cmCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
-    '<button onclick="window._followUser(\'' + uid + '\',\'' + safeName + '\')" style="width:100%;background:' + (isLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;padding:9px">' + (isLive ? 'Follow Live' : 'Go to Last') + '</button>' +
-  '</div>';
-  try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px' }).setLngLat([data.lng, data.lat]).setHTML(h).addTo(map); } catch (e) {}
+  // Route to the ONE person sheet rather than a Follow-only Mapbox popup, so a circle-preview
+  // dot offers the same actions as everywhere else. Actions that need a room (Talk) degrade
+  // gracefully with their own "join a group first" toast when the preview is roomless.
+  try { window._openPersonSheet(uid, mk._data); } catch (e) {}
 };
 
 // ── Account page: stats · map color · your groups · quick settings ──────────
@@ -13160,26 +13151,19 @@ function listenUsers() {
           // copying doesn't also fire the row tap (which closes the drawer and flies the map).
           (_coordsStr ? '<div class="ustatus" style="margin-top:2px;color:#8d97a1;font-size:10.5px;cursor:pointer" onclick="event.stopPropagation();window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
           '</div>' +
+          // Just the one quick-talk mic now. Favorite (★), the ⋮ actions menu, and set-color
+          // (avatar tap) all moved OFF the row into the person sheet the row tap opens — so the
+          // row stops being a scatter of partial shortcuts and there's one place with every
+          // action. The mic stays because one-tap talk from the list is the app's headline move.
           (!isMine ? '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center;flex-shrink:0"><svg class="licon"><use href="#ic-mic"/></svg></button>' : '') +
-          (!isMine ? '<button class="ufriend-btn" title="Add to friends" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:' + (_isFriend(uid) ? 'var(--accent)' : 'var(--muted)') + ';flex-shrink:0">' + (_isFriend(uid) ? '★' : '☆') + '</button>' : '') +
-          // Mute/pin-mute/hide-from-map used to each be their own icon here — six icons plus
-          // the status badge stopped fitting on a phone-width row (names started wrapping,
-          // the mic button overlapping the text). All three moved into this ⋮ menu, which is
-          // now a general "member actions" menu for everyone, not just owner-only controls.
-          (!isMine ? '<button class="uowner-btn" title="More actions" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted);flex-shrink:0">⋮</button>' : '') +
         '</div>';
       // Tap the avatar dot → set this member's color (only for others). Stops the tap from
       // bubbling to the row so it doesn't start tracking them at the same time.
-      var _av = row.querySelector('.user-avatar');
-      if (_av && !isMine) _av.addEventListener('click', function(e) { e.stopPropagation(); window._pickUserColor(uid, data.name); });
-      var _frb = row.querySelector('.ufriend-btn');
-      if (_frb) _frb.addEventListener('click', function(e) { window._toggleFriend(uid, data.name, e); });
+      // The only inline control left is the quick-talk mic. Favorite, ⋮-actions and set-color
+      // (the old avatar tap) now live in the person sheet the row tap opens — one surface, full
+      // action set — so their row wiring is gone.
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
-      // Mute/pin-mute/hide-from-map are no longer separate row icons (see the ⋮ comment
-      // above) — all three now live inside the member-actions modal this opens.
-      var _ob = row.querySelector('.uowner-btn');
-      if (_ob) _ob.addEventListener('click', function(e) { e.stopPropagation(); window._memberActionsMenu(uid, data.name); });
       row.addEventListener('click', function() {
         document.getElementById('user-drawer').classList.remove('open');
         setLocateMeVisible(true);
@@ -13272,14 +13256,11 @@ function listenUsers() {
             '<div class="ustatus" style="color:var(--muted)">Offline — not sharing right now</div>' +
           '</div>' +
           '<div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:8px">' +
-            '<button class="uowner-btn" title="More actions" style="background:none;border:none;cursor:pointer;font-size:19px;line-height:1;padding:0 2px;color:var(--muted)">⋮</button>' +
             '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">OFFLINE</span>' +
           '</div>';
         {
-          var _orob = orow.querySelector('.uowner-btn');
-          if (_orob) _orob.addEventListener('click', function (e) { e.stopPropagation(); window._memberActionsMenu(uid, m.name || 'Member'); });
-          // Tapping the row now opens the SAME person sheet everyone else gets (Talk, Favorite,
-          // History, More) — previously an offline member had only the ⋮ and no way through.
+          // Tapping the row opens the person sheet (Talk · Favorite · History · More) — the ⋮
+          // that used to be the only handle on an offline member is gone, folded into "More".
           orow.style.cursor = 'pointer';
           orow.addEventListener('click', function () { try { window._openPersonSheet(uid, m); } catch (e) {} });
         }
