@@ -1849,6 +1849,9 @@
     <button id="ownmem-mute-btn" onclick="window._modalToggleMute()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg><span id="ownmem-mute-label">Mute</span></button>
     <button id="ownmem-pinmute-btn" onclick="window._modalTogglePinMute()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px"><svg class="licon licon-sm"><use href="#ic-pin"/></svg><span id="ownmem-pinmute-label">Hide their pins</span></button>
     <button id="ownmem-hidemap-btn" onclick="window._modalToggleHideMap()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px">👁<span id="ownmem-hidemap-label" style="margin-left:2px">Hide their dot from my map</span></button>
+    <!-- Set-map-color moved here from a top-level button on the member sheet — a set-once view
+         preference doesn't belong beside Talk/Follow. -->
+    <button id="ownmem-color-btn" onclick="window._modalPickColor()" style="width:100%;padding:12px;margin-bottom:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:9px">🎨<span style="margin-left:2px">Set map color</span></button>
     <div id="ownmem-owner-divider" style="display:none;margin:4px 0 10px">
       <div style="border-top:1px solid var(--border);margin-bottom:8px"></div>
       <div style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase">Owner actions</div>
@@ -2932,7 +2935,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 628;
+var APP_BUILD = 629;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3096,6 +3099,14 @@ function _assignDistinctAutoColors(usersMap, myUid, myColor) {
   return result;
 }
 var _cpTargetUid = null;
+// Opens the color picker for whoever the ⋮/More modal is currently about. Closes the modal
+// first so the picker isn't stacked behind it.
+window._modalPickColor = function () {
+  var uid = window._ownMemUid; if (!uid) return;
+  var nm = (document.getElementById('ownmem-name') || {}).textContent || 'this member';
+  try { document.getElementById('owner-member-modal').style.display = 'none'; } catch (e) {}
+  window._pickUserColor(uid, nm);
+};
 window._pickUserColor = function(uid, name) {
   _cpTargetUid = uid;
   var nm = document.getElementById('cp-name'); if (nm) nm.textContent = name || 'member';
@@ -12997,28 +13008,17 @@ function listenUsers() {
         var _msNav = (!isMine && hasGps)
           ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--accent);border-radius:9px;font-size:13px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>'
           : '';
-        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-history"/></svg>History</button>';
-        // Per-person breadcrumb toggle. Only for OTHER people — your own line is the toolbar
-        // footprints button, and having two controls for the same thing is how the old
-        // global flag became confusing in the first place.
-        var _msTrailOn = (typeof window._isMemberTrailOn === 'function') && window._isMemberTrailOn(uid);
-        var _msTrailDraw = !isMine
-          ? '<button id="ms-trail-toggle" onclick="window._toggleMemberTrail(\'' + uid + '\',\'' + _safeName + '\')" style="padding:9px 14px;background:' + (_msTrailOn ? 'rgba(63,185,80,0.16)' : 'transparent') + ';border:1px solid ' + (_msTrailOn ? '#3fb950' : 'var(--border)') + ';border-radius:9px;font-size:13px;font-weight:800;color:' + (_msTrailOn ? '#3fb950' : 'var(--text)') + ';cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg><span>' + (_msTrailOn ? 'Hide trail' : 'Show trail') + '</span></button>'
-          : '';
-        // ── Consolidation (Stage 1): the actions that used to live ONLY on the People row or
-        // the ⋮ modal now also sit on the member sheet, so tapping a person on the map is the
-        // one place that offers everything — Favorite, Color, and a "More" that opens the full
-        // actions modal (mute · hide dot/pins · make admin/owner · remove). Hidden for your own.
         var _msBtnStyle = 'padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px';
+        // ONE "Trail" — was two buttons ("History" viewer + a "Show trail" live-line toggle) for
+        // the same idea. Opens the day viewer, which draws the trail on the map (with start/stop
+        // markers), so the separate toggle is redundant. Trail/History/breadcrumb collapse to
+        // this single word.
+        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>Trail</button>';
         var _msFav = !isMine
           ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + _safeName + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + _msBtnStyle + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>'
           : '';
-        var _msColor = !isMine
-          ? '<button onclick="window._pickUserColor(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '">🎨 Color</button>'
-          : '';
-        // Opens the existing owner-member-modal (unchanged) over the sheet; its Cancel returns
-        // here. This is the single overflow for the less-common per-person and owner/admin
-        // actions, so the sheet stays scannable while still reaching all of them.
+        // Color moved into "More" — a set-once preference didn't earn a top-level slot. More
+        // opens the owner-member-modal, which now carries Set color alongside mute/hide/owner.
         var _msMore = !isMine
           ? '<button onclick="window._memberActionsMenu(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '">⋯ More</button>'
           : '';
@@ -13070,7 +13070,7 @@ function listenUsers() {
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
           _msTalk +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msTrailDraw + _msFav + _msColor + _msMore + '</div>';
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msFav + _msMore + '</div>';
         if (window._openMemberUid === uid) {
           var _msb = document.getElementById('member-sheet-body');
           if (_msb) _msb.innerHTML = userMarkers[uid]._sheetHTML;
@@ -19466,11 +19466,10 @@ window._buildPersonSheetHTML = function (uid, data) {
   var talk = (!isMine && !voiceOff) ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + safe + '\')" style="width:100%;margin-top:10px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk to ' + safe + '</button>' : '';
   var follow = (!isMine && hasPos) ? '<button onclick="window._closeMemberSheet();try{map.flyTo({center:[' + data.lng + ',' + data.lat + '],zoom:16,duration:800})}catch(e){};window._followUser(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">' + (live ? 'Follow Live' : 'Go to Last') + '</button>' : '';
   var nav = (!isMine && hasPos) ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>' : '';
-  var hist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-history"/></svg>History</button>';
+  var hist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>Trail</button>';
   var fav = !isMine ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + safe + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + S + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>' : '';
-  var color = !isMine ? '<button onclick="window._pickUserColor(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">🎨 Color</button>' : '';
   var more = !isMine ? '<button onclick="window._memberActionsMenu(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">⋯ More</button>' : '';
-  var grid = follow + nav + hist + fav + color + more;
+  var grid = follow + nav + hist + fav + more;
   return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
       '<div style="color:' + (live ? '#00e676' : '#a9b4bf') + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + (live ? 'LIVE' : (ts ? 'LAST KNOWN' : 'OFFLINE')) + '</div>' +
       '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
