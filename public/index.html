@@ -2945,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 636;
+var APP_BUILD = 637;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6841,6 +6841,13 @@ window._onVoiceTx = function () {
   var now = Date.now();
   if (now - (window._lastVoiceTxPush || 0) < 25000) return;
   window._lastVoiceTxPush = now;
+  // In the always-live group channel, members are already connected and hear live — a
+  // per-transmission "X is talking" push just buzzes everyone in the room (the reported popup
+  // spam). Skip the push for the group channel entirely. A direct 1:1 call notifies its one
+  // recipient through _pushToUid instead, so a closed app there can still tap in.
+  try {
+    if (/_ALL$/.test(window._imVoiceRoom || '') || (typeof _openChannelOn === 'function' && _openChannelOn())) return;
+  } catch (e) {}
   try { pushNotify('voice', (userName || 'Someone') + ' is talking 🔊', 'Tap to listen in ' + (groupName ? _prettyGroup(groupName) : 'your room')); } catch (e) {}
 };
 

@@ -203,40 +203,6 @@ export function unlockAudio() {
   try { Object.keys(monRooms).forEach((id) => { if (monRooms[id].room) monRooms[id].room.startAudio(); }); } catch (e) {}
 }
 
-// iOS background keep-alive. iOS suspends a backgrounded WKWebView the instant no audio is being
-// produced — which drops the LiveKit connection during the silence BETWEEN transmissions, so a
-// backgrounded iPhone hears nothing. Running a continuous inaudible tone through the native
-// (build-33) audio session keeps the session in use, which keeps the app process alive so WebRTC
-// stays connected. iOS-only (Android's foreground service already covers this); only while in a
-// room; stopped on leave. Not a guaranteed substitute for CallKit — the honest fallback if iOS
-// still suspends — but it's the standard trick and costs nothing to try.
-let _kaOsc = null, _kaGain = null;
-function _isAppleUA() {
-  try { const ua = navigator.userAgent || ''; return /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1); }
-  catch (e) { return false; }
-}
-function _startKeepAlive() {
-  if (!_isAppleUA()) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    if (!window._gvAC) window._gvAC = new AC();
-    if (window._gvAC.state === 'suspended') window._gvAC.resume();
-    if (_kaOsc) return;                 // already running
-    _kaOsc = window._gvAC.createOscillator();
-    _kaGain = window._gvAC.createGain();
-    _kaGain.gain.value = 0.0001;        // inaudible — but a REAL output keeps the session/app alive
-    _kaOsc.frequency.value = 30;
-    _kaOsc.connect(_kaGain); _kaGain.connect(window._gvAC.destination);
-    _kaOsc.start();
-  } catch (e) {}
-}
-function _stopKeepAlive() {
-  try { if (_kaOsc) { _kaOsc.stop(); _kaOsc.disconnect(); } } catch (e) {}
-  try { if (_kaGain) _kaGain.disconnect(); } catch (e) {}
-  _kaOsc = null; _kaGain = null;
-}
-
 // ── Public: open a voice session and connect right away ─────────────────────
 // Idempotent: if already in the SAME room, just re-show the bar (audio survives).
 // Initiator path (from a tap) primes the mic. Receiver path (`listen:true`,
@@ -274,7 +240,6 @@ export function leaveVoice() {
   room = null;
   micOn = false;
   remoteTalking = false;
-  _stopKeepAlive();  // no longer in a room — release the background keep-alive tone
   _syncCarAudio();   // restore normal audio routing UNLESS a device monitor is still active
   removeBar();
   emit({ type: 'left' });
@@ -478,6 +443,13 @@ async function connectVoice() {
       el.autoplay = true;
       el.setAttribute('playsinline', '');
       ensureAudioSink().appendChild(el);
+      // iOS: a freshly-attached WebRTC <audio> won't autoplay on its own — EACH transmission
+      // creates a new track/element, which is why an already-connected iPhone went silent between
+      // taps. Once audio has been unlocked (tap-to-join), an explicit play() + room.startAudio()
+      // makes every later transmission audible with no further tapping. If it's still blocked
+      // (never unlocked), the AudioPlaybackStatusChanged handler below surfaces the "Tap to hear".
+      try { const p = el.play && el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+      try { if (room) room.startAudio(); } catch (e) {}
     }
   });
   room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -535,7 +507,6 @@ async function connectVoice() {
     updatePttButton();
     if (room.canPlaybackAudio === false) showAudioBlocked();
     _syncCarAudio();   // keep the car radio alive — don't let this read as a phone call
-    _startKeepAlive(); // iOS: keep the app alive in the background so the channel survives silence
     _talkReconnects = 0;   // a clean connect resets the backoff ladder
     // Caller feedback: if this is an outgoing call (not a listen-only auto-join) and nobody has
     // joined after 20s, stop implying "connecting" forever — the callee got a push notification.
