@@ -398,6 +398,12 @@
   /* The locate + north buttons open a chooser, so their press shouldn't flash gold (that
      reads as "activated"). Use a neutral press; gold is reserved for the active mode. */
   #map-controls #locate-me:active, #map-controls #north-up-btn:active { background: rgba(255,255,255,0.10); color: #e6edf3; }
+  /* The compass needle rotates to point at TRUE north — so when the map isn't north-up, it
+     visibly swings off vertical. When off-north the button gets a gold ring + soft pulse so the
+     "you're rotated, tap to straighten" cue is unmissable. */
+  #north-up-btn svg { transition: transform .12s linear; transform-origin: 50% 50%; }
+  #map-controls #north-up-btn.north-off { box-shadow: 0 0 0 2px var(--accent), 0 0 12px rgba(240,165,0,.55); animation: northPulse 1.8s ease-in-out infinite; }
+  @keyframes northPulse { 0%,100% { box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(240,165,0,.35); } 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 15px rgba(240,165,0,.7); } }
   /* Hide zoom buttons on mobile */
   @media (max-width: 768px) {
     #zoom-in-btn, #zoom-out-btn { display: none !important; }
@@ -2935,7 +2941,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 629;
+var APP_BUILD = 630;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10533,6 +10539,27 @@ function initMap() {
     if (typeof fitAllInterval !== 'undefined' && fitAllInterval) window._groupFollowUserZoomed = true;
   });
   map.on('rotatestart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
+  // Live north indicator: rotate the compass needle to point at TRUE north (opposite the map's
+  // bearing) so it visibly swings off vertical the moment the map is turned, and flag the button
+  // as off-north (gold ring + pulse) — the "the map isn't north-up right now" cue. `rotate`
+  // fires continuously through a two-finger twist; `moveend` catches programmatic bearing
+  // changes (heading-up follow) too.
+  window._updateNorthIndicator = function () {
+    try {
+      var btn = document.getElementById('north-up-btn'); if (!btn || typeof map === 'undefined' || !map) return;
+      var svg = btn.querySelector('svg'); if (!svg) return;
+      var b = map.getBearing() || 0;
+      svg.style.transform = 'rotate(' + (-b) + 'deg)';
+      var norm = ((b % 360) + 360) % 360;
+      var offBy = Math.min(norm, 360 - norm);            // angular distance from due north
+      btn.classList.toggle('north-off', offBy > 1);
+      btn.title = offBy > 1 ? ('Map rotated ' + Math.round(offBy) + '° — tap to face north') : 'Map orientation';
+    } catch (e) {}
+  };
+  map.on('rotate', window._updateNorthIndicator);
+  map.on('moveend', window._updateNorthIndicator);
+  map.on('load', window._updateNorthIndicator);
+  try { window._updateNorthIndicator(); } catch (e) {}
 
   // All map control buttons registered here after map exists
   var layerBtn   = document.getElementById('layer-btn');
