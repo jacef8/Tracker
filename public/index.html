@@ -2932,7 +2932,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 627;
+var APP_BUILD = 628;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17513,6 +17513,21 @@ function _drawSavedTrack(t, fit){
     map.addSource('saved-track',{type:'geojson',data:gj});
     map.addLayer({id:'saved-track-glow',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':8,'line-opacity':0.25}});
     map.addLayer({id:'saved-track',type:'line',source:'saved-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#00b0ff','line-width':3.5,'line-opacity':0.95}});
+    // Start / stop / end symbology — a bare line doesn't say where they set off, where they
+    // parked, or where it ends. Reuse the live trail's stop detection (red squares, with dwell
+    // time) and mark the two endpoints: green start, orange finish. _trailStops keys on `.ts`;
+    // track pts carry `.t`, so remap first.
+    try {
+      _ensureStopIcon();
+      var _tp = (t.pts||[]).map(function(p){ return { lat:p.lat, lng:p.lng, ts:(p.t!=null?p.t:p.ts) }; });
+      var _stops = (typeof _trailStops === 'function') ? _trailStops(_tp) : [];
+      map.addSource('saved-track-stops',{type:'geojson',data:{type:'FeatureCollection',features:_stops.map(function(s){ return {type:'Feature',geometry:{type:'Point',coordinates:[s.lng,s.lat]},properties:{dur:(typeof _trkFmtDur==='function'?_trkFmtDur(s.durMs):'')}}; })}});
+      map.addLayer({id:'saved-track-stops',type:'symbol',source:'saved-track-stops',layout:{'icon-image':'gl-stop-sq','icon-allow-overlap':true,'text-field':['get','dur'],'text-size':10,'text-offset':[0,1.2],'text-optional':true},paint:{'text-color':'#f0a500','text-halo-color':'rgba(0,0,0,0.85)','text-halo-width':1.4}});
+      var _ends=[];
+      if (coords.length){ _ends.push({type:'Feature',geometry:{type:'Point',coordinates:coords[0]},properties:{kind:'start'}}); _ends.push({type:'Feature',geometry:{type:'Point',coordinates:coords[coords.length-1]},properties:{kind:'end'}}); }
+      map.addSource('saved-track-ends',{type:'geojson',data:{type:'FeatureCollection',features:_ends}});
+      map.addLayer({id:'saved-track-ends',type:'circle',source:'saved-track-ends',paint:{'circle-radius':7,'circle-color':['match',['get','kind'],'start','#3fb950','#ff7b72'],'circle-stroke-width':2.5,'circle-stroke-color':'#0b0f14'}});
+    } catch(e){}
     window._shownTrackId=t.id;
     // maxZoom 18, not 16: a short walk is a legitimate track, and 55 ft capped at zoom 16 is a
     // few dozen pixels — technically drawn, effectively invisible. Long tracks are bounded by
@@ -17521,7 +17536,7 @@ function _drawSavedTrack(t, fit){
     _showTrackViewBar(t, t.stats||_trackStats(t.pts||[]));
   } catch(e){}
 }
-function _clearSavedTrack(){ try { ['saved-track','saved-track-glow'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); if (map.getSource('saved-track')) map.removeSource('saved-track'); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
+function _clearSavedTrack(){ try { ['saved-track','saved-track-glow','saved-track-stops','saved-track-ends'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); ['saved-track','saved-track-stops','saved-track-ends'].forEach(function(id){ if (map.getSource(id)) map.removeSource(id); }); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
 
 // — tracks library list —
 function openTracks(){ document.getElementById('tracks-drawer').classList.add('open'); try { setLocateMeVisible(false); } catch(e){} renderTracks(); }
@@ -17726,15 +17741,27 @@ window._loadTrailRange = function () {
     for (var i = 0; i < merged.length; i++) {
       if (!pts.length || (merged[i].t - pts[pts.length - 1].t) > 3000) pts.push(merged[i]);
     }
+    // Clip to the SELECTED CALENDAR DAY. History is already day-bucketed, but the live trail
+    // (merged in for "today") is a rolling store with no date bucket and only client-side
+    // pruning — so an un-pruned trail dragged in points from days ago, and "today" spanned 70
+    // hours instead of ≤24. Now every view is genuinely one day.
+    try {
+      var _dayStart = new Date(dateStr + 'T00:00:00').getTime();
+      if (isFinite(_dayStart)) {
+        var _dayEnd = _dayStart + 24 * 60 * 60 * 1000;
+        pts = pts.filter(function (p) { return p.t >= _dayStart && p.t < _dayEnd; });
+      }
+    } catch (e) {}
     var now = Date.now();
     var label = dateStr;
     if (pts.length >= 2) {
-      var spanMin = Math.round((pts[pts.length - 1].t - pts[0].t) / 60000);
       var agoMin  = Math.round((now - pts[pts.length - 1].t) / 60000);
       var ago = agoMin < 2 ? 'just now'
               : agoMin < 60 ? agoMin + 'm ago'
               : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
-      label = isToday ? (spanMin + ' min · last point ' + ago) : (dateStr + ' · ' + spanMin + ' min');
+      // The span itself is already in the stats line ("13:13:45 · Span"), so the header just
+      // names the day — "794 min" alongside it was the same number twice, in a clumsy unit.
+      label = isToday ? ('Today · last point ' + ago) : dateStr;
     }
     _renderTrailResult(pts, label,
       isToday
