@@ -94,6 +94,59 @@ async function _dbSet(path, value) {
   });
 }
 
+// ─── APNs VoIP push (CallKit / PushKit) ───────────────────────────────────────────
+// FCM CANNOT send VoIP pushes, so these go DIRECT to Apple over HTTP/2, signed with the SAME APNs
+// auth key (.p8) already used for FCM. Set on the host: APNS_KEY_P8 (the full -----BEGIN PRIVATE
+// KEY----- block), APNS_KEY_ID, APNS_TEAM_ID. Bundle defaults to com.groundlink.ios → VoIP topic
+// com.groundlink.ios.voip. A VoIP push wakes a LOCKED iPhone; the app reports a CallKit call and,
+// on answer, the web layer joins the channel (see AppDelegate + window._callkitJoin).
+const http2 = require('http2');
+const crypto = require('crypto');
+const APNS_KEY_P8  = (process.env.APNS_KEY_P8 || '').replace(/\\n/g, '\n');
+const APNS_KEY_ID  = process.env.APNS_KEY_ID || '';
+const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
+const APNS_BUNDLE  = process.env.APNS_BUNDLE || 'com.groundlink.ios';
+const APNS_HOST    = 'https://api.push.apple.com';   // production (TestFlight + App Store use prod APNs)
+const apnsVoipReady = !!(APNS_KEY_P8 && APNS_KEY_ID && APNS_TEAM_ID);
+if (apnsVoipReady) console.log('APNs VoIP ready');
+else console.warn('APNs VoIP not configured (APNS_KEY_P8/APNS_KEY_ID/APNS_TEAM_ID) — CallKit disabled');
+
+let _apnsJwt = '', _apnsJwtAt = 0;
+function _apnsToken() {
+  const now = Math.floor(Date.now() / 1000);
+  if (_apnsJwt && (now - _apnsJwtAt) < 2400) return _apnsJwt;   // reuse < 40 min (Apple caps at 60)
+  const header  = Buffer.from(JSON.stringify({ alg: 'ES256', kid: APNS_KEY_ID })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ iss: APNS_TEAM_ID, iat: now })).toString('base64url');
+  const signingInput = header + '.' + payload;
+  const sig = crypto.sign('SHA256', Buffer.from(signingInput), { key: APNS_KEY_P8, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  _apnsJwt = signingInput + '.' + sig; _apnsJwtAt = now;
+  return _apnsJwt;
+}
+function sendVoipPush(deviceToken, data) {
+  return new Promise(function (resolve, reject) {
+    let client;
+    try { client = http2.connect(APNS_HOST); } catch (e) { return reject(e); }
+    client.on('error', function (e) { try { client.close(); } catch (_) {} reject(e); });
+    const body = Buffer.from(JSON.stringify(Object.assign({ aps: {} }, data)));
+    const r = client.request({
+      ':method': 'POST',
+      ':path': '/3/device/' + deviceToken,
+      'authorization': 'bearer ' + _apnsToken(),
+      'apns-push-type': 'voip',
+      'apns-topic': APNS_BUNDLE + '.voip',
+      'apns-priority': '10',
+      'content-type': 'application/json',
+      'content-length': body.length
+    });
+    let status = 0, respData = '';
+    r.on('response', function (h) { status = h[':status']; });
+    r.on('data', function (c) { respData += c; });
+    r.on('end', function () { try { client.close(); } catch (_) {} (status === 200) ? resolve(true) : reject(new Error('apns ' + status + ' ' + respData)); });
+    r.on('error', function (e) { try { client.close(); } catch (_) {} reject(e); });
+    r.write(body); r.end();
+  });
+}
+
 // ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
 // The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
 // FCM (no notification UI) to the device's token, which the watch's WakeMessagingService
@@ -301,6 +354,29 @@ app.post('/pushTo', rateLimit(30, 60000), async function(req, res) {
     }
   }
   res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
+});
+
+// VoIP wake (CallKit): ring a LOCKED / closed iPhone through as a call so live channel audio can
+// play. The client passes the target uids + the channel room; we look up each one's registered
+// VoIP token (gl/_voipSubs/<uid>) and send a direct APNs VoIP push. Uids with no token (Android,
+// or an iPhone that never registered) are simply skipped.
+app.post('/voip', rateLimit(60, 60000), async function (req, res) {
+  if (!apnsVoipReady) return res.json({ ok: false, reason: 'voip-not-configured' });
+  const b = req.body || {};
+  const uids = Array.isArray(b.uids) ? b.uids.slice(0, 20).map(u => String(u || '')).filter(Boolean) : [];
+  const room = String(b.room || '').slice(0, 200);
+  const fromName = String(b.fromName || 'GroundLink').slice(0, 60);
+  if (!uids.length || !room) return res.json({ ok: false, reason: 'no-target' });
+  let sent = 0;
+  const seen = new Set();
+  for (const uid of uids) {
+    if (seen.has(uid)) continue; seen.add(uid);
+    let tok = null;
+    try { const rec = await _dbGet('gl/_voipSubs/' + uid); tok = rec && rec.token; } catch (e) {}
+    if (!tok) continue;
+    try { await sendVoipPush(tok, { room: room, fromName: fromName }); sent++; } catch (e) { /* stale token / bad status */ }
+  }
+  res.json({ ok: sent > 0, sent: sent });
 });
 
 // Fan-out a push to everyone in a group except the sender. The client calls

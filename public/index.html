@@ -2945,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 637;
+var APP_BUILD = 638;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6841,12 +6841,23 @@ window._onVoiceTx = function () {
   var now = Date.now();
   if (now - (window._lastVoiceTxPush || 0) < 25000) return;
   window._lastVoiceTxPush = now;
-  // In the always-live group channel, members are already connected and hear live — a
-  // per-transmission "X is talking" push just buzzes everyone in the room (the reported popup
-  // spam). Skip the push for the group channel entirely. A direct 1:1 call notifies its one
-  // recipient through _pushToUid instead, so a closed app there can still tap in.
+  // In the always-live group channel, connected members already hear live (no banner needed), but
+  // LOCKED / closed iPhones can't — so instead of an FCM banner, wake them via VoIP/CallKit: the
+  // server /voip endpoint sends a VoIP push that rings the phone as a call and auto-joins the
+  // channel. Sent to crew members' registered VoIP tokens; Android/connected users just ignore it.
   try {
-    if (/_ALL$/.test(window._imVoiceRoom || '') || (typeof _openChannelOn === 'function' && _openChannelOn())) return;
+    if (/_ALL$/.test(window._imVoiceRoom || '') || (typeof _openChannelOn === 'function' && _openChannelOn())) {
+      try {
+        var _rm = window._imVoiceRoom || (typeof _channelRoomId === 'function' ? _channelRoomId() : '');
+        var _u = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+        var _tg = Object.keys(_u).filter(function (x) { return x !== userId; });
+        if (_rm && _tg.length) {
+          fetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uids: _tg, room: _rm, fromName: userName || 'Someone' }) }).catch(function () {});
+        }
+      } catch (e) {}
+      return;   // no FCM banner for the channel
+    }
   } catch (e) {}
   try { pushNotify('voice', (userName || 'Someone') + ' is talking 🔊', 'Tap to listen in ' + (groupName ? _prettyGroup(groupName) : 'your room')); } catch (e) {}
 };
@@ -9605,6 +9616,7 @@ function enterMap(name, group, uid) {
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
+    try { if (window._registerVoipToken) window._registerVoipToken(); } catch (e) {}   // (re)file iOS VoIP token now that db+uid are ready
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
     try { if (window._listenCircles) _listenCircles(); } catch (e) {}   // Family Circles — show regardless of which room this is
     try { setTimeout(function () { try { _renderDevices(); _renderCircles(); if (window._locatePending) { window._locatePending = false; _flyToDevice(); } } catch (e) {} }, 1400); } catch (e) {}
@@ -21164,6 +21176,46 @@ window._maybeRejoinChannel = function () {
   } catch (e) {}
   if (_isIOSVoice()) { window._showIncomingVoice(_channelRoomId(), '📻 Group channel', true); }
   else { _joinOpenChannel(); }
+};
+
+// ── CallKit / VoIP bridge (iOS) ──────────────────────────────────────────────
+// The native shell (AppDelegate PushKit + CallKit) calls these. _onVoipToken hands us the VoIP
+// push token so we can register it in Firebase for the server's /voip endpoint to target; the
+// server sends a VoIP push when someone talks, iOS wakes the LOCKED phone as a call, and on
+// answer CallKit calls _callkitJoin so this web layer joins the channel and its WebRTC audio plays.
+window._registerVoipToken = function () {
+  try {
+    var t = window._voipToken || localStorage.getItem('gl_voip_token') || '';
+    if (!t || !db || !userId) return;
+    fbSet(fbRef(db, 'gl/_voipSubs/' + userId), { token: t, name: (userName || ''), ts: Date.now() });
+  } catch (e) {}
+};
+window._onVoipToken = function (token) {
+  try {
+    if (!token) return;
+    window._voipToken = token;
+    try { localStorage.setItem('gl_voip_token', token); } catch (e) {}
+    _registerVoipToken();   // writes to Firebase if db/userId are ready; also retried on room entry
+  } catch (e) {}
+};
+window._callkitJoin = function (room) {
+  try {
+    if (!room) room = (typeof _channelRoomId === 'function') ? _channelRoomId() : '';
+    if (!room) return;
+    var cfg = window.VOICE_CONFIG || {};
+    if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+    var _uid = userId || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
+    var _nm = userName || (function () { try { return localStorage.getItem('gl_name') || 'Member'; } catch (e) { return 'Member'; } })();
+    if (!_uid) return;
+    window._voiceMod().then(function (m) {
+      try { if (m.unlockAudio) m.unlockAudio(); } catch (e) {}
+      m.openVoice({ room: room, identity: _uid, name: _nm, partnerName: 'Crew · channel', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+      if (window._evt) window._evt('🎙 CallKit join → ' + room);
+    }).catch(function () {});
+  } catch (e) {}
+};
+window._callkitEnd = function () {
+  try { window._voiceMod().then(function (m) { if (m.leaveVoice) m.leaveVoice(); }).catch(function () {}); } catch (e) {}
 };
 
 // ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
