@@ -214,6 +214,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                   let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
                   let wv = bridgeVC.webView else { return }
             self.installAudioBridge(wv)
+            // Re-hand the VoIP token to the web now that the page is definitely loaded — the
+            // didUpdate handoff can fire before window._onVoipToken exists (early launch), losing
+            // it before it reaches Firebase. Idempotent; the web just re-files it. Falls back to
+            // the persisted token if a fresh one hasn't arrived this session.
+            let vt = self.voipToken.isEmpty ? (UserDefaults.standard.string(forKey: "gl_voip_token") ?? "") : self.voipToken
+            if !vt.isEmpty {
+                wv.evaluateJavaScript("window._onVoipToken && window._onVoipToken('\(vt)')", completionHandler: nil)
+            }
             wv.evaluateJavaScript("window.__nativeSync ? window.__nativeSync() : ''") { result, _ in
                 guard let json = result as? String, !json.isEmpty else { return }
                 UserDefaults.standard.set(json, forKey: "gl_native_places")
