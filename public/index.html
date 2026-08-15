@@ -2941,7 +2941,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 632;
+var APP_BUILD = 633;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7855,6 +7855,69 @@ window._declineCrewDisclaimer = function () {
 //
 // Shown after the join completes, never in front of it, and re-asked at the same
 // 24h cadence the Crew prompt itself uses.
+// ══ NOTIFICATIONS NUDGE (Crews) ══════════════════════════════════════
+// Does this device have a working PUSH path — not just in-app alerts? That's what lets someone
+// reach you (a voice call, a place alert) while the app is closed or backgrounded. Native: an
+// FCM token exists. Web/PWA: notification permission is granted. If neither, you're only
+// reachable while staring at the app — which for a Crew, and for PTT, is basically unreachable.
+// (This is exactly why an iOS Crew member's "wants to talk" prompt never arrived: no push sub.)
+window._hasPushReach = function () {
+  try {
+    if (typeof _isNativeApp === 'function' && _isNativeApp()) return !!(window._fcmToken || localStorage.getItem('gl_fcm'));
+    return (typeof Notification !== 'undefined') && Notification.permission === 'granted';
+  } catch (e) { return true; }   // unknown → don't nag
+};
+// Nudge a Crew member whose notifications are off to turn them on. Same delayed, throttled,
+// waits-its-turn shape as the sign-in nag, and only ever spends its 24h throttle when actually shown.
+window._nagNotifsForCrew = function () {
+  try {
+    var crews = {}; try { crews = _getCircles() || {}; } catch (e) {}
+    if (!Object.keys(crews).length) return;                       // only Crew members need this
+    if (window._hasPushReach && window._hasPushReach()) return;   // already reachable
+    var last = 0; try { last = parseInt(localStorage.getItem('gl_notif_nag_ts'), 10) || 0; } catch (e) {}
+    if (Date.now() - last < CREW_REASK_MS) return;
+  } catch (e) { return; }
+  var tries = 0;
+  var attempt = function () {
+    try {
+      if (document.getElementById('notif-nag-modal')) return;
+      if (window._hasPushReach && window._hasPushReach()) return;   // enabled while we waited
+      var busy = false;
+      try { busy = Array.prototype.some.call(document.querySelectorAll('[id$="-modal"]'), function (el) { return el.id !== 'notif-nag-modal' && el.offsetParent !== null; }); } catch (e) {}
+      if (busy) { if (++tries > 8) return; setTimeout(attempt, 5000); return; }
+      try { localStorage.setItem('gl_notif_nag_ts', String(Date.now())); } catch (e) {}
+      var denied = false; try { denied = (typeof Notification !== 'undefined') && Notification.permission === 'denied'; } catch (e) {}
+      var m = document.createElement('div');
+      m.id = 'notif-nag-modal';
+      m.style.cssText = 'position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px';
+      m.innerHTML =
+        '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:340px;width:100%">' +
+          '<div style="font-size:16px;font-weight:800;color:var(--accent);margin-bottom:9px">Turn on notifications</div>' +
+          '<div style="font-size:13px;color:var(--text);line-height:1.55;margin-bottom:14px">Right now your Crew can\'t reach you unless GroundLink is open on your screen. Turn on notifications and a <b>voice call</b> or <b>place alert</b> reaches you even with the app closed or in your pocket.</div>' +
+          (denied
+            ? '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:14px">Notifications are currently <b>blocked</b> for GroundLink. Turn them on in your phone\'s <b>Settings → GroundLink → Notifications</b>, then reopen the app.</div>'
+            : '<button id="notif-nag-enable" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#1a1200;font-size:14px;font-weight:800;cursor:pointer">Turn on notifications</button>') +
+          '<button id="notif-nag-later" style="width:100%;margin-top:9px;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Not now</button>' +
+        '</div>';
+      document.body.appendChild(m);
+      var close = function () { try { m.remove(); } catch (e) {} };
+      m.addEventListener('click', function (ev) { if (ev.target === m) close(); });
+      var later = document.getElementById('notif-nag-later'); if (later) later.onclick = close;
+      var en = document.getElementById('notif-nag-enable');
+      if (en) en.onclick = async function () {
+        var b = this; b.disabled = true; b.textContent = 'Asking…'; b.style.opacity = '.6';
+        try { if (typeof enableAlerts === 'function') await enableAlerts(false); } catch (e) {}
+        close();
+        setTimeout(function () {
+          if (window._hasPushReach && window._hasPushReach()) { try { toast('✅ Notifications on — your Crew can reach you now', 3000); } catch (e) {} }
+          else { try { toast('Still off — allow notifications for GroundLink in your phone Settings', 5000); } catch (e) {} }
+        }, 700);
+      };
+      try { window._evt('shown the notifications nudge'); } catch (e) {}
+    } catch (e) {}
+  };
+  setTimeout(attempt, 2600);
+};
 window._nagSignInForCrew = function (label, delayMs) {
   try {
     // Already signed in — nothing to nag about.
@@ -9729,6 +9792,10 @@ function showJoinScreen() {
   try { if (window._watchInvites) window._watchInvites(); if (window._renderInviteInbox) window._renderInviteInbox(); } catch (e) {}
   // Talk section — rebuilt on every return to Home so a newly joined Crew shows up.
   try { if (window._renderTalkSection) window._renderTalkSection(); } catch (e) {}
+  // Nudge a Crew member whose notifications are off — without push, nobody can reach them
+  // (voice, alerts) unless they're staring at the app. Self-throttled to once a day, and a
+  // no-op if they already have push or aren't in any Crew.
+  try { if (window._nagNotifsForCrew) window._nagNotifsForCrew(); } catch (e) {}
   // Re-apply the hub so returning Home lands on one area rather than the whole stack. Talk is
   // the default because it's the thing you most often open the app in a hurry to do.
   try { if (window._homeGo) window._homeGo(window._homeArea || 'rooms', true); } catch (e) {}
