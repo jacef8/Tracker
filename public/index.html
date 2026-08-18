@@ -1297,7 +1297,7 @@
 
         <div id="crews-section" class="join-section" style="display:none">
           <div class="join-section-title"><svg class="licon licon-sm" style="color:#a78bfa"><use href="#ic-users"/></svg>My Crews</div>
-          <div id="crews-list" style="display:flex;flex-direction:column;gap:7px"></div>
+          <div id="crews-list" style="display:flex;flex-direction:column;gap:7px;max-height:200px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none"></div>
         </div>
 
         <div id="room-list-section" class="join-section">
@@ -2953,7 +2953,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 641;
+var APP_BUILD = 642;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6917,6 +6917,15 @@ function _updateVlogBadge() {
 window._onVoiceClip = function (dataUrl, meta) {
   meta = meta || {};
   if (!dataUrl || !db || !groupName || !userId) return;
+  // The shared crew voicelog (every crew member can replay it) is ONLY for the GROUP channel. A
+  // direct 1:1 (gv_<group>_<uid>~<uid>) or a pick-some subset call is private to its participants,
+  // so recording it here leaked private transmissions into the log the whole crew sees. Only log
+  // clips from the group channel; anything from a different (private) voice room is skipped.
+  try {
+    var _room = window._imVoiceRoom || '';
+    var _chan = (typeof _channelRoomId === 'function') ? _channelRoomId() : ('gv_' + groupName + '_ALL');
+    if (_room && _room !== _chan) return;
+  } catch (e) {}
   try {
     var ref = fbPush(fbRef(db, _VLOG_NS + '/' + groupName + '/voicelog'));
     fbSet(ref, { uid: userId, name: userName || 'Member', ts: Date.now(), dur: Math.round((meta.durMs || 0) / 100) / 10, mime: meta.mime || '', audio: dataUrl });
