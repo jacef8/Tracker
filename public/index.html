@@ -2914,6 +2914,14 @@ let groupName = '', userId = '', userName = '';
 // straight from window._lastGlSnap (the live full-room snapshot already used for the room list,
 // circle switcher, etc.) means every existing call site picks up a rename automatically, with
 // no separate cache to keep in sync.
+// A crew display name should never show the raw slug's underscores ("jace_devices"). A name that
+// still carries underscores is always the key leaking through (users type "Jace Devices", never
+// "jace_devices"), so treat any underscored string as a slug and prettify it. Names with no
+// underscore are left exactly as-is, so proper custom names ("Fordy Crew") are never re-cased.
+function _cleanName(s) {
+  s = String(s == null ? '' : s);
+  return /_/.test(s) ? s.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : s;
+}
 function _prettyGroup(g) {
   var key = String(g == null ? '' : g);
   // Three sources, cheapest-and-freshest first. The bulk gl-root snapshot alone was not
@@ -2922,16 +2930,16 @@ function _prettyGroup(g) {
   // "my_girls" showing as "My Girls" long after it was renamed "Fordy Crew".
   try {
     var custom = window._lastGlSnap && window._lastGlSnap[key] && window._lastGlSnap[key].config && window._lastGlSnap[key].config.name;
-    if (custom) return custom;
+    if (custom) return _cleanName(custom);
   } catch (e) {}
   try {
     // The current room's own config listener — resolves even when the gl-root read hasn't.
-    if (key === groupName && window._roomCfg && window._roomCfg.name) return window._roomCfg.name;
+    if (key === groupName && window._roomCfg && window._roomCfg.name) return _cleanName(window._roomCfg.name);
   } catch (e) {}
   try {
     // Last known good name, so a cold start shows the right thing before either read lands.
     var cached = _cachedRoomNames()[key];
-    if (cached) return cached;
+    if (cached) return _cleanName(cached);
   } catch (e) {}
   return key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }
@@ -2953,7 +2961,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 642;
+var APP_BUILD = 643;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6157,7 +6165,7 @@ window._riRenameRoom = function () {
 // demand instead of only when that prompt happens to fire.
 window._joinCrewNow = function (_k, _lbl) {
   if (!_k || !db) return;
-  _lbl = _lbl || (typeof _prettyGroup === 'function' ? _prettyGroup(_k) : _k);
+  _lbl = _cleanName(_lbl) || (typeof _prettyGroup === 'function' ? _prettyGroup(_k) : _k);
   _confirm('Join "' + _lbl + '" as a Crew member?\n\nYou\'ll always show up here for each other — no matter what other room you\'re in, or if the app\'s in the background. Right now you only appear while you\'re actually in this room.', function () {
     try { fbSet(fbRef(db, 'gl/' + _k + '/members/' + window._myRosterId()), { name: userName, addedAt: Date.now(), addedBy: userId }); } catch (e) {}
     // Deliberate rejoin — clear both "don't auto-add" markers, or the next snapshot would
@@ -7669,7 +7677,7 @@ window._renderCrewsSection = function () {
   }
   var detail = window._talkDetail || {};
   list.innerHTML = keys.map(function (k) {
-    var label = circles[k] || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
+    var label = _cleanName(circles[k]) || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
     var d = detail[k] || {};
     var on = (d.people || []).filter(function (p) { return p.live; }).length;
     return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
@@ -7769,7 +7777,7 @@ window._renderTalkSection = function (skipLoad) {
   // 3) Whole-Crew channels last — the broadcast option, not the default.
   html += '<div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin:8px 0 1px">CREWS</div>' +
     keys.map(function (k) {
-      var label = circles[k] || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
+      var label = _cleanName(circles[k]) || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
       var d = detail[k] || {};
       return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
         '<div onclick="window._openCrew(\'' + _escHtml(k) + '\',' + (d.unread ? 'true' : 'false') + ')" style="flex:1;min-width:0;cursor:pointer">' +
@@ -7918,7 +7926,7 @@ window._ackCrewDisclaimer = function () {
   // per person, when it's true.
   try {
     if (ctx.key && typeof _announceJoinOn === 'function' && _announceJoinOn() && typeof pushNotify === 'function') {
-      var _lbl = ctx.label || (typeof _prettyGroup === 'function' ? _prettyGroup(ctx.key) : ctx.key);
+      var _lbl = _cleanName(ctx.label) || (typeof _prettyGroup === 'function' ? _prettyGroup(ctx.key) : ctx.key);
       _ensurePushIdentity().then(function () {
         pushNotify('join', _lbl, (userName || 'Someone') + ' joined the Crew', { toFavs: true }, ctx.key);
       }).catch(function () {});
