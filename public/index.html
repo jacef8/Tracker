@@ -2945,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 638;
+var APP_BUILD = 639;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21166,6 +21166,10 @@ window._maybeRejoinChannel = function () {
   // but ONLY in a Crew room (a random public/quick-join room shouldn't force everyone live).
   if (!_openChannelOn()) {
     if (!_autoChannelOn()) return;                                                   // opted out
+    // Auto-live is a MOBILE / walkie-talkie thing. Don't force it on desktop web (a PC used for
+    // admin/monitoring shouldn't auto-open the voice bar every time you open a crew). Desktop can
+    // still open the channel manually with the Talk/Open-channel button.
+    if (typeof _isNativeApp === 'function' && !_isNativeApp()) return;
     if (!(typeof _isCircleMember === 'function' && _isCircleMember(groupName))) return; // crews only
     try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
   }
