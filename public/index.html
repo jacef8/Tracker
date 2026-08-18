@@ -1467,15 +1467,23 @@
               <div id="account-sessions"></div>
             </div>
 
-            <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you -->
-            <div style="margin-top:14px">
-              <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">⌚ Watches &amp; trackers</div>
-              <div style="font-size:10px;color:var(--muted);margin:1px 0 4px">Private to you &amp; family you share with</div>
+            <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you.
+                 The whole block is gated in _renderMyDevices: full section only when you actually
+                 have a device (or a pending share); otherwise it collapses to the compact
+                 "+ Add" link below, so it isn't clutter for the ~everyone who has no watch. -->
+            <div id="account-devices-section" style="margin-top:14px">
+              <div id="account-devices-head">
+                <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">⌚ Watches &amp; trackers</div>
+                <div style="font-size:10px;color:var(--muted);margin:1px 0 4px">Private to you &amp; family you share with</div>
+              </div>
               <div id="account-devices"></div>
-              <div style="font-size:11px;color:var(--muted);margin-top:8px">Add a device — enter the <b>link code</b> shown on its screen:</div>
-              <div style="display:flex;gap:6px;margin-top:5px">
-                <input id="dshare-code-input" maxlength="6" placeholder="Device code" autocapitalize="characters" autocomplete="off" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:.1em;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;padding:9px 11px" />
-                <button onclick="window._enterShareCode && window._enterShareCode()" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer;flex-shrink:0">Add</button>
+              <div id="dshare-add-link" style="display:none"><button onclick="window._showAddDeviceBox && window._showAddDeviceBox()" style="background:none;border:none;color:#7c3aed;font-size:12px;font-weight:700;padding:7px 0;cursor:pointer">+ Add a watch or tracker</button></div>
+              <div id="dshare-add-box">
+                <div style="font-size:11px;color:var(--muted);margin-top:8px">Add a device — enter the <b>link code</b> shown on its screen:</div>
+                <div style="display:flex;gap:6px;margin-top:5px">
+                  <input id="dshare-code-input" maxlength="6" placeholder="Device code" autocapitalize="characters" autocomplete="off" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:.1em;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;font-weight:700;padding:9px 11px" />
+                  <button onclick="window._enterShareCode && window._enterShareCode()" style="background:#7c3aed;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800;padding:9px 14px;cursor:pointer;flex-shrink:0">Add</button>
+                </div>
               </div>
             </div>
 
@@ -2945,7 +2953,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 640;
+var APP_BUILD = 641;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4735,14 +4743,43 @@ window._renderMyDevices = function () {
   if (pend && !me) {
     html += '<div style="font-size:12px;color:var(--text);padding:10px;background:rgba(124,58,237,0.10);border:1px solid #7c3aed;border-radius:10px;margin-bottom:6px">A device was shared with you. <b>Sign in with Google above</b> to accept it.</div>';
   }
-  if (!me) {
-    html += '<div style="font-size:12px;color:var(--muted);padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px">Sign in with Google (above) to add a private device like a kid’s watch using its code.</div>';
-  }
   // NOTE: devices are NO LONGER openly claimable. A device only appears here once you've added
-  // it with the code shown on its screen (see the "Add a device" box below) — so a stranger
-  // with the app can never see or claim your watch.
-  if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Open GroundLink Watch, read the <b>link code</b> on its screen, and enter it below to add it.</div>';
+  // it with the code shown on its screen — so a stranger with the app can never see your watch.
+  //
+  // Section gating: the ⌚ Watches & trackers block is clutter for the ~everyone with no device.
+  //  • Have a device (or a pending share)  → full section (list + label + add box).
+  //  • Signed in, no device                → collapse to a compact "+ Add a watch or tracker" link.
+  //  • Signed out, no device               → hide the whole block.
+  var _hasDev = owned.length || sharedMe.length;
+  var _sec = document.getElementById('account-devices-section');
+  var _head = document.getElementById('account-devices-head');
+  var _box = document.getElementById('dshare-add-box');
+  var _link = document.getElementById('dshare-add-link');
+  var _showFull = _hasDev || !!pend;
+  if (_showFull) {
+    if (_sec) _sec.style.display = 'block';
+    if (_head) _head.style.display = 'block';
+    if (_box) _box.style.display = 'block';
+    if (_link) _link.style.display = 'none';
+    if (!html) html = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px">No devices yet. Open GroundLink Watch, read the <b>link code</b> on its screen, and enter it below to add it.</div>';
+  } else if (me) {
+    if (_sec) _sec.style.display = 'block';
+    if (_head) _head.style.display = 'none';
+    if (_box) _box.style.display = 'none';
+    if (_link) _link.style.display = 'block';
+    html = '';   // no list, no placeholder — just the compact add link
+  } else {
+    if (_sec) _sec.style.display = 'none';   // signed out with no device — hide entirely
+    html = '';
+  }
   el.innerHTML = html;
+};
+// Reveal the add-by-code box from the collapsed "+ Add a watch or tracker" link.
+window._showAddDeviceBox = function () {
+  var b = document.getElementById('dshare-add-box'), l = document.getElementById('dshare-add-link');
+  if (b) b.style.display = 'block';
+  if (l) l.style.display = 'none';
+  try { var i = document.getElementById('dshare-code-input'); if (i) i.focus(); } catch (e) {}
 };
 // ── Battery schedule: owner sets active hours; the watch polls gl/_devices/<id>/sched and
 // runs voice only during those hours (conserves otherwise). ───────────────────────────────
@@ -20670,6 +20707,18 @@ try {
       // own name, that custom name sticks (and syncs across devices) — we don't overwrite it.
       var custom = LS.get('gl_name_custom') === '1';
       if (!custom && googleName) LS.set('gl_name', googleName);
+      // Safety net: a SIGNED-IN user should never be stuck at a blank "name required" screen. Some
+      // Google accounts carry no display name at all (and Apple withholds it), so if there's still
+      // no name and none synced down, seed a readable default from the email local-part
+      // (title-cased, separators to spaces, trailing digits trimmed): jaceford08 → "Jaceford",
+      // john.smith → "John Smith". Not marked custom, so a real Google name or a synced custom name
+      // still overrides it later; they can also just edit it and it sticks.
+      try {
+        if (!custom && (!name() || _isDeviceLabelName(name())) && user.email) {
+          var _lp = String(user.email).split('@')[0].replace(/[._+-]+/g, ' ').replace(/\d+$/, '').trim();
+          if (_lp) LS.set('gl_name', _lp.replace(/\b\w/g, function (c) { return c.toUpperCase(); }));
+        }
+      } catch (e) {}
       pushProfile();
       refreshUI();
       try { var ni = document.getElementById('inp-name'); if (ni && name()) ni.value = name(); } catch (e) {}
