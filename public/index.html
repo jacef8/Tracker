@@ -2945,7 +2945,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 639;
+var APP_BUILD = 640;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14273,25 +14273,24 @@ var STOP_MIN_MS   = 10 * 1000;           // catch a stop sign, not just a parkin
 // elapsed time — a real stop implies near-zero speed across the gap, a crawl doesn't.
 var STOP_MAX_MPH  = 2.5;
 function _trailStops(pts) {
-  var stops = [], i = 0;
-  while (i < pts.length) {
-    var j = i + 1;
-    while (j < pts.length && metersApart(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng) <= STOP_RADIUS_M) j++;
-    var dur = pts[j - 1].ts - pts[i].ts;
-    if ((j - i) >= 2 && dur >= STOP_MIN_MS) {
-      // Straight-line displacement across the whole dwell, not path length: someone parked
-      // wanders a few metres on GPS noise, and summing that noise would read as motion.
-      var disp = metersApart(pts[i].lat, pts[i].lng, pts[j - 1].lat, pts[j - 1].lng);
-      var mph = (disp / (dur / 1000)) * 2.23694;
-      if (mph <= STOP_MAX_MPH) {
-        var la = 0, ln = 0;
-        for (var k = i; k < j; k++) { la += pts[k].lat; ln += pts[k].lng; }
-        stops.push({ lat: la / (j - i), lng: ln / (j - i), durMs: dur });
-        i = j;                           // consumed this whole dwell
-        continue;
-      }
+  // A stop is a TIME GAP between two consecutive breadcrumbs — the device stops writing points
+  // while parked (writes are distance-gated at HIST_MIN_DIST_M), so a parked spell is never a
+  // cluster of nearby points; it's the last point rolling in, then a long pause, then the first
+  // point pulling away >50 m later. The OLD code scanned for spatial clusters (points within
+  // STOP_RADIUS_M of each other) which distance-gated history never produces, so it found NOTHING
+  // — that's why stop markers were missing. Detect the gap directly, with the same speed gate so a
+  // slow crawl through traffic (points still ticking over) doesn't read as a stop.
+  var stops = [];
+  if (!pts || pts.length < 2) return stops;
+  for (var i = 0; i < pts.length - 1; i++) {
+    var dur = (pts[i + 1].ts || 0) - (pts[i].ts || 0);
+    if (dur < STOP_MIN_MS) continue;
+    var disp = metersApart(pts[i].lat, pts[i].lng, pts[i + 1].lat, pts[i + 1].lng);
+    var mph = (disp / (dur / 1000)) * 2.23694;   // near-zero across a real stop; higher for a crawl
+    if (mph <= STOP_MAX_MPH) {
+      // Mark it where they sat (the point they arrived at), tagged with the dwell duration.
+      stops.push({ lat: pts[i].lat, lng: pts[i].lng, durMs: dur });
     }
-    i++;
   }
   return stops;
 }
