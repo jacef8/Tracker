@@ -759,10 +759,18 @@ function renderBar() {
   // the gesture on some mobile browsers.
   const _pttDown = (e) => {
     e.preventDefault(); e.stopPropagation();
-    try { ptt.setPointerCapture(e.pointerId); } catch (_) {}
+    // pointerId only exists on pointer events; touch events set natural capture on their own.
+    try { if (e.pointerId != null && ptt.setPointerCapture) ptt.setPointerCapture(e.pointerId); } catch (_) {}
     setPtt(true);
   };
   const _pttUp = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(false); };
+  // TOUCH events first — on iOS these fire immediately and reliably, whereas pointer events can lag
+  // or drop entirely (reported: sluggish keying + presses that don't register). setPtt is
+  // idempotent, so if a device fires both touch and pointer for one press it's a harmless no-op.
+  // touchstart's preventDefault also suppresses the synthesized pointer/mouse events + the callout.
+  ptt.addEventListener('touchstart', _pttDown, { passive: false });
+  ptt.addEventListener('touchend', _pttUp, { passive: false });
+  ptt.addEventListener('touchcancel', _pttUp, { passive: false });
   ptt.addEventListener('pointerdown', _pttDown);
   ptt.addEventListener('pointerup', _pttUp);
   ptt.addEventListener('pointercancel', _pttUp);
