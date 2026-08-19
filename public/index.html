@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 652;
+var APP_BUILD = 653;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5483,6 +5483,27 @@ function _updateMarkerSpeed(el, data, isLive, uid) {
 }
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+// Collision-aware initials for MAP PINS: "Laura Ford" and "Lexi Ford" are both "LF", which made
+// two identical pins. When another visible member or device in this room shares the same 2-letter
+// initials, extend to a 3-letter form using more of the first name — "LaF" vs "LeF" — so the pins
+// read distinctly. No collision → the normal 2-letter initials, unchanged.
+function _initialsFor(uid, name) {
+  var base = initials(name || '');
+  try {
+    var others = [];
+    var ru = (typeof groupName !== 'undefined' && groupName && window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
+    Object.keys(ru).forEach(function (u) { if (u !== uid && ru[u] && ru[u].name && !ru[u].hidden) others.push(ru[u].name); });
+    var dm = window._devicesAll || {};
+    Object.keys(dm).forEach(function (id) { if (id !== uid) { var n = dm[id] && dm[id].live && dm[id].live.name; if (n) others.push(n); } });
+    if (name && others.some(function (n) { return initials(n) === base; })) {
+      var parts = String(name).trim().split(/\s+/);
+      var first = parts[0] || '', lastI = parts.length > 1 ? (parts[parts.length - 1][0] || '') : '';
+      var ext = first.substring(0, 2) + lastI.toUpperCase();
+      if (ext.length >= 3) return ext.charAt(0).toUpperCase() + ext.substring(1);
+    }
+  } catch (e) {}
+  return base;
 }
 // Prefers the real, cryptographically-issued Firebase anonymous-auth uid (kicked off at
 // module load, near the top of the file) — a NEW session created once that's resolved gets
@@ -13084,7 +13105,7 @@ function listenUsers() {
         var _initEl = document.createElement('div');
         _initEl.className = 'mk-initials';
         _initEl.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit';
-        _initEl.textContent = initials(data.name);
+        _initEl.textContent = _initialsFor(uid, data.name);
         el.appendChild(_initEl);
         // MUST stay 'absolute'. Mapbox's own .mapboxgl-marker rule is position:absolute, and it
         // places every marker purely by transform from the container's origin. An inline
@@ -13122,7 +13143,7 @@ function listenUsers() {
         userMarkers[uid]._uid = uid;   // lets _animateMarker drag this member's trail tip along
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
-        userMarkers[uid]._initials = initials(data.name);
+        userMarkers[uid]._initials = _initialsFor(uid, data.name);
         userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         // Tap marker → open the bottom info card (a full-width bar that never covers the
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
@@ -13151,7 +13172,7 @@ function listenUsers() {
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
-        userMarkers[uid]._initials = initials(data.name);
+        userMarkers[uid]._initials = _initialsFor(uid, data.name);
         userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         if (el) {
           el.style.background   = fillColor;

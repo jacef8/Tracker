@@ -40,6 +40,8 @@ let _rec = null, _recChunks = [], _recStart = 0, _recCap = null;
 // Talk channel recovers on its own instead of dying silently (LiveKit only auto-recovers blips).
 let _waitTimer = null;
 let _talkReconnectTimer = null, _talkReconnects = 0;
+let barMin = false;          // minimized bar (mic bubble only) — auto-joins start this way
+let _reMinTimer = null;      // re-minimize after an auto-expand once the talking stops
 
 function emit(evt) {
   listeners.forEach((cb) => { try { cb(evt); } catch (e) { /* ignore */ } });
@@ -227,6 +229,11 @@ export function openVoice(opts) {
   };
   micOn = false;
   remoteTalking = false;
+  // Auto-joins (listen:true — the always-on crew channel engaging on room entry) start MINIMIZED:
+  // just the mic bubble, not the full bar. The full bar covering the map on every single open was
+  // the complaint; a deliberate outgoing call (no listen) still opens the full bar. Auto-expands
+  // when someone actually talks (see ActiveSpeakersChanged).
+  barMin = !!listen;
   renderBar();
   setTalker('connecting…', '#8b949e');
   connectVoice();
@@ -468,6 +475,10 @@ async function connectVoice() {
     if (remoteTalking !== wasTalking) _syncCarAudio();
     if (remote) {
       const who = (remote.name || remote.identity);
+      // Someone's talking — surface the full bar so you can SEE who, even if it was minimized.
+      // Re-minimizes on its own a few seconds after the transmission ends (see below).
+      if (barMin && barEl) { barEl.classList.remove('gv-min'); barEl._autoExpanded = true; }
+      try { if (_reMinTimer) { clearTimeout(_reMinTimer); _reMinTimer = null; } } catch (e) {}
       setTalker('◉ ' + who + ' talking', '#00e676');
       setRx(true);
       emit({ type: 'talking', who, identity: remote.identity });
@@ -475,6 +486,11 @@ async function connectVoice() {
       setRx(false);
       updatePresence();
       emit({ type: 'talking', who: null });
+      // If we auto-expanded for an incoming transmission, tuck back down shortly after it ends.
+      if (barMin && barEl && barEl._autoExpanded) {
+        try { if (_reMinTimer) clearTimeout(_reMinTimer); } catch (e) {}
+        _reMinTimer = setTimeout(() => { try { if (barMin && barEl) { barEl.classList.add('gv-min'); barEl._autoExpanded = false; } } catch (e) {} }, 6000);
+      }
     }
   });
   room.on(RoomEvent.ParticipantConnected, (p) => { emit({ type: 'diag', message: 'participant JOINED ' + ((p && p.identity) || '?') }); updatePresence(); });
@@ -729,6 +745,13 @@ function injectStylesOnce() {
       border-radius: 8px; background: #ff5252; color: #fff; font-size: 10px; font-weight: 900; line-height: 16px;
       text-align: center; box-shadow: 0 0 0 2px #161b22; display: none; }
     #gv-bar .gv-badge.show { display: block; }
+    /* Minimized: just the mic bubble (hold to talk) + a small expand chevron, parked bottom-right
+       so the map stays clear. The full bar returns on expand or automatically when someone talks. */
+    #gv-bar.gv-min { left: auto; right: 10px; width: auto; padding: 5px; border-radius: 44px; gap: 2px; }
+    #gv-bar.gv-min .gv-leds, #gv-bar.gv-min .gv-meta, #gv-bar.gv-min #gv-log, #gv-bar.gv-min #gv-leave { display: none; }
+    #gv-bar.gv-min #gv-ptt { width: 58px; height: 58px; }
+    #gv-bar #gv-expand { display: none; }
+    #gv-bar.gv-min #gv-expand { display: flex; align-items: center; justify-content: center; background: none; border: none; color: #8b949e; font-size: 16px; padding: 4px 6px 4px 2px; cursor: pointer; }
   `;
   document.head.appendChild(s);
 }
@@ -749,7 +772,9 @@ function renderBar() {
     </div>
     <button id="gv-ptt" title="Hold to talk" aria-label="Hold to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><span class="gv-ptt-hint">HOLD</span></button>
     <button class="gv-icon" id="gv-log" title="Missed transmissions" aria-label="Transmissions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;display:block"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg><span class="gv-badge" id="gv-log-badge"></span></button>
-    <button class="gv-icon" id="gv-leave" title="Leave">✕</button>`;
+    <button class="gv-icon" id="gv-leave" title="Leave">✕</button>
+    <button id="gv-expand" title="Expand" aria-label="Expand voice bar">⌃</button>`;
+  if (barMin) barEl.classList.add('gv-min');
   document.body.appendChild(barEl);
   document.body.classList.add('gv-active');   // lets the page lift its bottom toolbar above the voice bar
 
@@ -789,6 +814,13 @@ function renderBar() {
   updatePttButton();
   barEl.querySelector('#gv-log').addEventListener('click', (e) => { e.stopPropagation(); try { if (window._openVoiceLog) window._openVoiceLog(); } catch (_) {} });
   barEl.querySelector('#gv-leave').addEventListener('click', (e) => { e.stopPropagation(); leaveVoice(); });
+  barEl.querySelector('#gv-expand').addEventListener('click', (e) => { e.stopPropagation(); setBarMin(false); });
+}
+
+function setBarMin(on) {
+  barMin = !!on;
+  if (barEl) barEl.classList.toggle('gv-min', barMin);
+  try { if (_reMinTimer) { clearTimeout(_reMinTimer); _reMinTimer = null; } } catch (e) {}
 }
 
 function showBar() { if (barEl) barEl.style.display = 'flex'; }
