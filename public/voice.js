@@ -473,8 +473,13 @@ async function connectVoice() {
       emit({ type: 'talking', who: null });
     }
   });
-  room.on(RoomEvent.ParticipantConnected, updatePresence);
-  room.on(RoomEvent.ParticipantDisconnected, updatePresence);
+  room.on(RoomEvent.ParticipantConnected, (p) => { emit({ type: 'diag', message: 'participant JOINED ' + ((p && p.identity) || '?') }); updatePresence(); });
+  room.on(RoomEvent.ParticipantDisconnected, (p) => { emit({ type: 'diag', message: 'participant LEFT ' + ((p && p.identity) || '?') }); updatePresence(); });
+  // DIAGNOSTIC: connection-state + track-subscription visibility for the "both connected, neither
+  // hears the other" investigation — surfaces to the room debug log via the 'diag' event.
+  try { room.on(RoomEvent.ConnectionStateChanged, (st) => { emit({ type: 'diag', message: 'conn-state=' + st }); }); } catch (e) {}
+  try { room.on(RoomEvent.TrackSubscribed, (t, pub, p) => { emit({ type: 'diag', message: 'track SUBSCRIBED ' + (t && t.kind) + ' from ' + ((p && p.identity) || '?') }); }); } catch (e) {}
+  try { room.on(RoomEvent.TrackPublished, (pub, p) => { emit({ type: 'diag', message: 'track PUBLISHED by ' + ((p && p.identity) || '?') }); }); } catch (e) {}
   // Autoplay may be blocked (esp. on an auto-join with no gesture) — surface a tap.
   room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
     if (room && room.canPlaybackAudio) hideAudioBlocked(); else showAudioBlocked();
@@ -521,6 +526,7 @@ async function connectVoice() {
       }, 20000);
     }
     emit({ type: 'joined', room: session.room });
+    try { const _n = room && room.remoteParticipants ? room.remoteParticipants.size : 0; emit({ type: 'diag', message: 'connected room=' + session.room + ' remoteParticipants=' + _n }); } catch (e) {}
   } catch (e) {
     console.error('[voice] connect failed', e);
     setTalker('connect failed', '#f85149');
