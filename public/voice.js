@@ -705,8 +705,12 @@ function injectStylesOnce() {
     #gv-bar .gv-ind.rx-on .gv-led { background: #00e676; box-shadow: 0 0 8px #00e676; }
     #gv-ptt { width: 66px; height: 66px; border-radius: 50%; border: none; flex: 0 0 auto;
       background: #f0a500; color: #1a1200; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-      user-select: none; -webkit-user-select: none; touch-action: none; box-shadow: 0 2px 0 #b87d00;
-      transition: transform .08s, box-shadow .12s, background .12s; }
+      user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; box-shadow: 0 2px 0 #b87d00;
+      -webkit-tap-highlight-color: transparent; transition: transform .08s, box-shadow .12s, background .12s; }
+    /* Children must NOT catch the press — on iOS a long-press on the icon/text fired the native
+       text-selection / copy callout instead of holding PTT, so the mic never keyed. pointer-events
+       none routes every touch to the button itself, and the selection/callout are killed. */
+    #gv-ptt * { pointer-events: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     #gv-ptt svg { width: 22px; height: 22px; }
     #gv-ptt .gv-ptt-hint { font-size: 10px; font-weight: 900; letter-spacing: .06em; line-height: 1; }
     #gv-ptt:active { transform: scale(.95); }
