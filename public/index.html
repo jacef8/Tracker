@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 650;
+var APP_BUILD = 651;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20733,6 +20733,11 @@ try {
     if (user.email) LS.set('gl_email', user.email);
     pullProfile(user.uid, function (p) {
       if (p) applyProfile(p);
+      // A device-label word ("PC" / "phone" / "tablet") saved as the name is NOT a real name — it's
+      // the device masquerading as the person (and it fails _reallySignedIn's name check, so the
+      // "name required" nag never clears). Clear the bogus custom flag so the Google / email default
+      // can populate instead of the user being stuck typing forever.
+      try { if (_isDeviceLabelName(name())) { LS.set('gl_name', ''); LS.set('gl_name_custom', '0'); } } catch (e) {}
       // Use the Google display name only as the INITIAL default. Once the user has set their
       // own name, that custom name sticks (and syncs across devices) — we don't overwrite it.
       var custom = LS.get('gl_name_custom') === '1';
@@ -21162,7 +21167,7 @@ window._openVoiceToGroup = async function () {
   try {
     var mod = await window._voiceMod();
     mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
-      partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
+      partnerName: (typeof _prettyGroup === 'function' ? _prettyGroup(groupName) : groupName) + ' · group', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint });
   } catch (e) { console.error('[voice] group open failed', e); toast('Voice failed to load: ' + e.message); }
 };
 
@@ -21197,7 +21202,7 @@ async function _joinOpenChannel() {
     var already = mod.currentRoom && mod.currentRoom() === roomId;
     if (!already) {
       mod.openVoice({ room: roomId, identity: userId, name: userName || 'Member',
-        partnerName: groupName + ' · channel', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+        partnerName: (typeof _prettyGroup === 'function' ? _prettyGroup(groupName) : groupName) + ' · channel', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
       if (window._evt) window._evt('📻 joined the open channel');
     }
     window._inOpenChannel = true;
@@ -21456,7 +21461,7 @@ window._listenVoiceInvites = function () {
         var mod = await window._voiceMod();
         if (mod.currentRoom && mod.currentRoom() === inv.room) return; // already in (incl. the starter)
         mod.openVoice({ room: inv.room, identity: userId, name: userName || 'Member',
-          partnerName: groupName + ' · group', livekitUrl: cfg.livekitUrl,
+          partnerName: (typeof _prettyGroup === 'function' ? _prettyGroup(groupName) : groupName) + ' · group', livekitUrl: cfg.livekitUrl,
           tokenEndpoint: cfg.tokenEndpoint, listen: true });
         if (window._evt) window._evt('🎙 auto-joined GROUP voice from ' + (inv.fromName || 'member'));
         if (!(inv.from && window._isMuted(inv.from))) {
