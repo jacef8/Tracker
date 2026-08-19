@@ -369,14 +369,19 @@ app.post('/voip', rateLimit(60, 60000), async function (req, res) {
   if (!uids.length || !room) return res.json({ ok: false, reason: 'no-target' });
   let sent = 0;
   const seen = new Set();
+  const results = [];   // diagnostic — what happened per target (written to gl/_debug/voipLog)
   for (const uid of uids) {
     if (seen.has(uid)) continue; seen.add(uid);
     let tok = null;
     try { const rec = await _dbGet('gl/_voipSubs/' + uid); tok = rec && rec.token; } catch (e) {}
-    if (!tok) continue;
-    try { await sendVoipPush(tok, { room: room, fromName: fromName }); sent++; } catch (e) { /* stale token / bad status */ }
+    if (!tok) { results.push({ uid: uid.slice(0, 10), r: 'no-token' }); continue; }
+    try { await sendVoipPush(tok, { room: room, fromName: fromName }); sent++; results.push({ uid: uid.slice(0, 10), r: 'ok' }); }
+    catch (e) { results.push({ uid: uid.slice(0, 10), r: String((e && e.message) || e).slice(0, 140) }); }
   }
-  res.json({ ok: sent > 0, sent: sent });
+  // Diagnostic trail so we can see whether the push fired and what Apple said (BadDeviceToken,
+  // TopicDisallowed, 200, etc.) without server-log access. Best-effort; capped implicitly by use.
+  try { if (adminDb) adminDb.ref('gl/_debug/voipLog').push({ ts: Date.now(), room: room, from: fromName, targets: uids.length, sent: sent, results: results }); } catch (e) {}
+  res.json({ ok: sent > 0, sent: sent, results: results });
 });
 
 // Fan-out a push to everyone in a group except the sender. The client calls
