@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 645;
+var APP_BUILD = 646;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21117,6 +21117,13 @@ window._openVoiceTo = async function (uid, name) {
   try {
     _pushToUid(uid, (userName || 'Someone') + ' wants to talk',
                'Open GroundLink to join the channel', 'voice');
+  } catch (e) {}
+  // Also ring a LOCKED iPhone via CallKit for a direct call — the FCM push above only shows a
+  // banner, but a VoIP push rings the phone as a call and auto-joins THIS 1:1 room on answer
+  // (same mechanism the group channel uses). No-op for Android / anyone with no VoIP token.
+  try {
+    fetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uids: [uid], room: roomId, fromName: userName || 'Someone' }) }).catch(function () {});
   } catch (e) {}
   if (window._evt) window._evt('🎙 started voice with ' + name);
   try {
