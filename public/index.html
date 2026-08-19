@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 651;
+var APP_BUILD = 652;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19856,7 +19856,12 @@ function _groupFollowTick(force) {
       // invisible point. Confirmed from device diag: gfPts=3 with only one dot on screen.
       if (window._isMemberHidden && window._isMemberHidden(uid)) return;
       if (window._isHiddenForAll && window._isHiddenForAll(uid)) return;
-      _add(uid, u.lng, u.lat, (Date.now() - (u.fixTs || u.ts || 0)) < GROUP_FIT_ACTIVE_MS);
+      // Judge "active for the fit" by the HEARTBEAT ts, not the GPS fixTs. A battery-saver RESTING
+      // device re-reports its position every few minutes (ts stays fresh) without a new GPS lock
+      // (fixTs goes old), so keying off fixTs wrongly dropped it from Follow Group the moment
+      // anyone else was live. ts is fresh for anyone actually present (live or resting) and old for
+      // a member who genuinely stopped reporting — which is the real thing we want to exclude.
+      _add(uid, u.lng, u.lat, (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_ACTIVE_MS);
     });
   } catch (e) {}
   // Markers still count, for anything on the map that isn't a room member (and as a fallback
