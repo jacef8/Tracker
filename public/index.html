@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 649;
+var APP_BUILD = 650;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9683,6 +9683,7 @@ function enterMap(name, group, uid) {
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { if (window._registerVoipToken) window._registerVoipToken(); } catch (e) {}   // (re)file iOS VoIP token now that db+uid are ready
+    try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}     // (re)file iOS 16 Push-to-Talk ephemeral token
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
     try { if (window._listenCircles) _listenCircles(); } catch (e) {}   // Family Circles — show regardless of which room this is
     try { setTimeout(function () { try { _renderDevices(); _renderCircles(); if (window._locatePending) { window._locatePending = false; _flyToDevice(); } } catch (e) {} }, 1400); } catch (e) {}
@@ -21262,6 +21263,14 @@ window._maybeRejoinChannel = function () {
   try {
     if (window._voiceModSync && window._voiceModSync.currentRoom && window._voiceModSync.currentRoom() === _channelRoomId()) return;
   } catch (e) {}
+  // iOS 16+ native Push to Talk: join the ringless framework channel (it owns the audio session +
+  // system UI, so NO tap-to-join banner), register the ephemeral token, and join LiveKit to hear.
+  if (window._hasNativePtt && window._hasNativePtt()) {
+    try { if (window.GLPushToTalk) window.GLPushToTalk.joinChannel(typeof _prettyGroup === 'function' ? _prettyGroup(groupName) : groupName); } catch (e) {}
+    try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}
+    try { window._pttJoin(_channelRoomId()); } catch (e) {}
+    return;
+  }
   if (_isIOSVoice()) { window._showIncomingVoice(_channelRoomId(), '📻 Group channel', true); }
   else { _joinOpenChannel(); }
 };
@@ -21305,6 +21314,42 @@ window._callkitJoin = function (room) {
 window._callkitEnd = function () {
   try { window._voiceMod().then(function (m) { if (m.leaveVoice) m.leaveVoice(); }).catch(function () {}); } catch (e) {}
 };
+
+// ── Push to Talk framework bridge (iOS 16+) ──────────────────────────────────
+// The native GLPushToTalk (AppDelegate) calls these. It owns the ringless UI + audio session; the
+// web still moves the actual audio over LiveKit. _onPttToken files the per-channel ephemeral token
+// in Firebase so the server can send Push-to-Talk pushes; _pttJoin joins the LiveKit room to hear;
+// _pttBeginTx/_pttEndTx publish/unpublish the mic when the framework keys transmit.
+window._registerPttToken = function () {
+  try {
+    var t = window._pttToken || ''; if (!t || !db || !userId) return;
+    fbSet(fbRef(db, 'gl/_pttSubs/' + userId), { token: t, name: (userName || ''), ts: Date.now() });
+  } catch (e) {}
+};
+window._onPttToken = function (token) {
+  try { if (!token) return; window._pttToken = token; _registerPttToken(); } catch (e) {}
+};
+window._pttJoin = function (room) {
+  try {
+    if (!room) room = (typeof _channelRoomId === 'function') ? _channelRoomId() : '';
+    if (!room) return;
+    var cfg = window.VOICE_CONFIG || {};
+    if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
+    var _uid = userId || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
+    var _nm = userName || (function () { try { return localStorage.getItem('gl_name') || 'Member'; } catch (e) { return 'Member'; } })();
+    if (!_uid) return;
+    window._voiceMod().then(function (m) {
+      try { if (m.unlockAudio) m.unlockAudio(); } catch (e) {}
+      if (m.currentRoom && m.currentRoom() === room) return;   // already in it
+      m.openVoice({ room: room, identity: _uid, name: _nm, partnerName: 'Crew · channel', livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, listen: true });
+      if (window._evt) window._evt('📻 PTT join → ' + room);
+    }).catch(function () {});
+  } catch (e) {}
+};
+window._pttBeginTx = function () { try { window._voiceMod().then(function (m) { if (m.pttKey) m.pttKey(true); }).catch(function () {}); } catch (e) {} };
+window._pttEndTx = function () { try { window._voiceMod().then(function (m) { if (m.pttKey) m.pttKey(false); }).catch(function () {}); } catch (e) {} };
+// True when the ringless native PTT framework is available (iOS 16+ native build).
+window._hasNativePtt = function () { try { return !!(window.GLPushToTalk && window.GLPushToTalk.available); } catch (e) { return false; } };
 
 // ── Receiver: watch for a ping addressed to me and auto-join as a listener ───
 var _gvLastPingTs = 0;

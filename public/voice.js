@@ -185,6 +185,10 @@ export function onVoiceEvent(cb) {
   return () => { listeners = listeners.filter((x) => x !== cb); };
 }
 
+// External transmit control — used by the iOS Push to Talk framework, which owns the key/unkey
+// decision (system button + audio session) and just tells us to publish/unpublish the mic.
+export function pttKey(on) { try { setPtt(!!on); } catch (e) {} }
+
 export function currentRoom() { return session ? session.room : null; }
 
 // iOS won't play WebRTC audio until a user gesture unlocks the audio system. Call this
@@ -761,9 +765,16 @@ function renderBar() {
     e.preventDefault(); e.stopPropagation();
     // pointerId only exists on pointer events; touch events set natural capture on their own.
     try { if (e.pointerId != null && ptt.setPointerCapture) ptt.setPointerCapture(e.pointerId); } catch (_) {}
+    // iOS 16+ Push to Talk framework owns the transmit (system audio session + UI); it calls back
+    // to pttKey() to publish the mic. Elsewhere we key the mic directly.
+    try { if (typeof window !== 'undefined' && window.GLPushToTalk && window.GLPushToTalk.available) { window.GLPushToTalk.beginTransmit(); return; } } catch (_) {}
     setPtt(true);
   };
-  const _pttUp = (e) => { e.preventDefault(); e.stopPropagation(); setPtt(false); };
+  const _pttUp = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    try { if (typeof window !== 'undefined' && window.GLPushToTalk && window.GLPushToTalk.available) { window.GLPushToTalk.endTransmit(); return; } } catch (_) {}
+    setPtt(false);
+  };
   // TOUCH events first — on iOS these fire immediately and reliably, whereas pointer events can lag
   // or drop entirely (reported: sluggish keying + presses that don't register). setPtt is
   // idempotent, so if a device fires both touch and pointer for one press it's a harmless no-op.

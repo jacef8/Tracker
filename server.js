@@ -122,7 +122,7 @@ function _apnsToken() {
   _apnsJwt = signingInput + '.' + sig; _apnsJwtAt = now;
   return _apnsJwt;
 }
-function sendVoipPush(deviceToken, data) {
+function _sendApns(deviceToken, data, pushType, topic) {
   return new Promise(function (resolve, reject) {
     let client;
     try { client = http2.connect(APNS_HOST); } catch (e) { return reject(e); }
@@ -132,8 +132,8 @@ function sendVoipPush(deviceToken, data) {
       ':method': 'POST',
       ':path': '/3/device/' + deviceToken,
       'authorization': 'bearer ' + _apnsToken(),
-      'apns-push-type': 'voip',
-      'apns-topic': APNS_BUNDLE + '.voip',
+      'apns-push-type': pushType,
+      'apns-topic': topic,
       'apns-priority': '10',
       'content-type': 'application/json',
       'content-length': body.length
@@ -146,6 +146,10 @@ function sendVoipPush(deviceToken, data) {
     r.write(body); r.end();
   });
 }
+// CallKit VoIP push (rings a locked phone). Topic <bundle>.voip, push-type voip.
+function sendVoipPush(deviceToken, data) { return _sendApns(deviceToken, data, 'voip', APNS_BUNDLE + '.voip'); }
+// Push to Talk push (iOS 16+, ringless). Topic <bundle>.voip-ptt, push-type pushtotalk.
+function sendPttPush(deviceToken, data) { return _sendApns(deviceToken, data, 'pushtotalk', APNS_BUNDLE + '.voip-ptt'); }
 
 // ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
 // The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
@@ -372,11 +376,20 @@ app.post('/voip', rateLimit(60, 60000), async function (req, res) {
   const results = [];   // diagnostic — what happened per target (written to gl/_debug/voipLog)
   for (const uid of uids) {
     if (seen.has(uid)) continue; seen.add(uid);
+    // Prefer the RINGLESS Push-to-Talk token (iOS 16+); fall back to the CallKit VoIP token. An
+    // iOS 16 device registers BOTH, so preferring PTT avoids double-notifying (a ring AND a PTT).
+    let pttTok = null;
+    try { const r0 = await _dbGet('gl/_pttSubs/' + uid); pttTok = r0 && r0.token; } catch (e) {}
+    if (pttTok) {
+      try { await sendPttPush(pttTok, { room: room, fromName: fromName }); sent++; results.push({ uid: uid.slice(0, 10), r: 'ptt-ok' }); }
+      catch (e) { results.push({ uid: uid.slice(0, 10), r: 'ptt-' + String((e && e.message) || e).slice(0, 120) }); }
+      continue;
+    }
     let tok = null;
     try { const rec = await _dbGet('gl/_voipSubs/' + uid); tok = rec && rec.token; } catch (e) {}
     if (!tok) { results.push({ uid: uid.slice(0, 10), r: 'no-token' }); continue; }
-    try { await sendVoipPush(tok, { room: room, fromName: fromName }); sent++; results.push({ uid: uid.slice(0, 10), r: 'ok' }); }
-    catch (e) { results.push({ uid: uid.slice(0, 10), r: String((e && e.message) || e).slice(0, 140) }); }
+    try { await sendVoipPush(tok, { room: room, fromName: fromName }); sent++; results.push({ uid: uid.slice(0, 10), r: 'voip-ok' }); }
+    catch (e) { results.push({ uid: uid.slice(0, 10), r: 'voip-' + String((e && e.message) || e).slice(0, 120) }); }
   }
   // Diagnostic trail so we can see whether the push fired and what Apple said (BadDeviceToken,
   // TopicDisallowed, 200, etc.) without server-log access. Best-effort; capped implicitly by use.

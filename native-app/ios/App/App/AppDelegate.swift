@@ -576,15 +576,50 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // force-reload or web update — before voice.js ever looks for window.GLAudioRouter.
             ucc.addUserScript(WKUserScript(source: AppDelegate.glAudioShim,
                                            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            // Push to Talk bridge — ONLY on iOS 16+, so the web can feature-detect
+            // `window.GLPushToTalk` to know the ringless framework is available here.
+            if #available(iOS 16.0, *) {
+                ucc.add(self, name: "glPtt")
+                ucc.addUserScript(WKUserScript(source: AppDelegate.glPttShim,
+                                               injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
             glAudioBridgeInstalled = true
         }
         // Inject once now for the ALREADY-loaded page (the user script only affects future loads).
-        // The shim is idempotent (it early-returns if window.GLAudioRouter already exists).
+        // The shim is idempotent (it early-returns if the object already exists).
         wv.evaluateJavaScript(AppDelegate.glAudioShim, completionHandler: nil)
+        if #available(iOS 16.0, *) { wv.evaluateJavaScript(AppDelegate.glPttShim, completionHandler: nil) }
     }
+
+    private static let glPttShim = """
+    (function(){
+      if (window.GLPushToTalk) return;
+      function post(fn, arg){ try { window.webkit.messageHandlers.glPtt.postMessage({ fn: fn, arg: arg || '' }); } catch (e) {} }
+      window.GLPushToTalk = {
+        available: true,                                     // presence = iOS 16+ native PTT
+        joinChannel:   function(name){ post('join', name); },
+        leave:         function(){ post('leave'); },
+        beginTransmit: function(){ post('beginTx'); },
+        endTransmit:   function(){ post('endTx'); }
+      };
+    })();
+    """
 
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
+        // Push to Talk control from the web (iOS 16+).
+        if message.name == "glPtt" {
+            guard let body = message.body as? [String: Any], let fn = body["fn"] as? String else { return }
+            let arg = (body["arg"] as? String) ?? ""
+            switch fn {
+            case "join":    pttJoin(arg)
+            case "leave":   pttLeave()
+            case "beginTx": pttBeginTransmit()
+            case "endTx":   pttEndTransmit()
+            default: break
+            }
+            return
+        }
         guard message.name == "glAudioRouter",
               let body = message.body as? [String: Any],
               let op = body["op"] as? String else { return }
