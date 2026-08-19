@@ -5,6 +5,7 @@ import WebKit
 import AVFoundation
 import PushKit
 import CallKit
+import PushToTalk   // iOS 16+ walkie-talkie framework (used only under @available guards below)
 // Hard link-time reference for the sign-in plugin — see didFinishLaunching. Without any
 // compile-time use, the static CapacitorFirebaseAuthentication framework can end up absent
 // from the shipped binary even though `pod install` succeeds and the CI GoogleSignIn guard
@@ -75,6 +76,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var currentCallUUID: UUID?
     private var pendingCallRoom: String = ""
     private var voipToken: String = ""
+    private var pttBox: Any?   // holds GLPushToTalk on iOS 16+ (Any so the class still builds < iOS 16)
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Forces the linker to keep the sign-in plugin's class (see the import note above).
@@ -108,6 +110,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         bgLocationManager = mgr
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
         setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
+        setupPushToTalk()        // iOS 16+ Push to Talk framework (ringless walkie-talkie)
         // A stationary device (moved less than distanceFilter) never gets another
         // didUpdateLocations callback at all, so its last-known fix would otherwise go stale in
         // Firebase after a few minutes and look exactly like tracking had silently stopped, even
@@ -718,4 +721,93 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         action.fulfill()
     }
 
+    // MARK: - Push to Talk (iOS 16+, ringless walkie-talkie)
+
+    private func setupPushToTalk() {
+        guard #available(iOS 16.0, *) else { return }   // older iPhones keep the CallKit path
+        let ptt = GLPushToTalk()
+        // Ephemeral push token → hand to the web, which files it in Firebase (gl/_pttSubs/<uid>)
+        // so the server can send Push-to-Talk pushes to this channel.
+        ptt.onEphemeralToken = { [weak self] tok in
+            DispatchQueue.main.async {
+                self?.mainWebView()?.evaluateJavaScript("window._onPttToken && window._onPttToken('\(tok)')", completionHandler: nil)
+            }
+        }
+        // RX: framework activated audio for an incoming transmission — tell the web to join LiveKit.
+        ptt.onJoinRoom = { [weak self] room in
+            DispatchQueue.main.async {
+                self?.mainWebView()?.evaluateJavaScript("window._pttJoin && window._pttJoin('\(room)')", completionHandler: nil)
+            }
+        }
+        // TX: user pressed the system PTT — tell the web to publish the mic; release → stop.
+        ptt.onBeginTx = { [weak self] in
+            DispatchQueue.main.async { self?.mainWebView()?.evaluateJavaScript("window._pttBeginTx && window._pttBeginTx()", completionHandler: nil) }
+        }
+        ptt.onEndTx = { [weak self] in
+            DispatchQueue.main.async { self?.mainWebView()?.evaluateJavaScript("window._pttEndTx && window._pttEndTx()", completionHandler: nil) }
+        }
+        ptt.start()
+        pttBox = ptt
+    }
+
+    // Called from the web (glPtt message handler) to drive the framework.
+    private func pttJoin(_ name: String) { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.joinChannel(name: name) } }
+    private func pttLeave() { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.leaveChannel() } }
+    private func pttBeginTransmit() { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.beginTransmit() } }
+    private func pttEndTransmit() { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.endTransmit() } }
+
+}
+
+// Self-contained Push to Talk manager — kept in its own @available class so AppDelegate still
+// compiles for iOS 13+. Bridges Apple's PTChannelManager to the web LiveKit layer: the framework
+// owns the ringless UI + audio session; the web still transports the actual audio.
+@available(iOS 16.0, *)
+final class GLPushToTalk: NSObject, PTChannelManagerDelegate, PTChannelRestorationDelegate {
+    private var manager: PTChannelManager?
+    private var channelUUID: UUID?
+    private var channelName = "GroundLink"
+    private var pendingRoom = ""
+    var onEphemeralToken: ((String) -> Void)?
+    var onJoinRoom: ((String) -> Void)?
+    var onBeginTx: (() -> Void)?
+    var onEndTx: (() -> Void)?
+
+    func start() {
+        guard manager == nil else { return }
+        Task {
+            do { self.manager = try await PTChannelManager.channelManager(delegate: self, restorationDelegate: self) }
+            catch { }
+        }
+    }
+
+    func joinChannel(name: String) {
+        if !name.isEmpty { channelName = name }
+        let uuid = channelUUID ?? UUID(); channelUUID = uuid
+        let descriptor = PTChannelDescriptor(name: channelName, image: nil)
+        manager?.requestJoinChannel(channelUUID: uuid, descriptor: descriptor)
+    }
+    func leaveChannel() { if let uuid = channelUUID { manager?.leaveChannel(channelUUID: uuid) } }
+    func beginTransmit() { if let uuid = channelUUID { manager?.requestBeginTransmitting(channelUUID: uuid) } }
+    func endTransmit() { if let uuid = channelUUID { manager?.stopTransmitting(channelUUID: uuid) } }
+
+    // MARK: PTChannelManagerDelegate
+    func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {}
+    func channelManager(_ channelManager: PTChannelManager, didLeaveChannel channelUUID: UUID, reason: PTChannelLeaveReason) {}
+    func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didBeginTransmittingFrom source: PTChannelTransmitRequestSource) { onBeginTx?() }
+    func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) { onEndTx?() }
+    func channelManager(_ channelManager: PTChannelManager, receivedEphemeralPushToken pushToken: Data) {
+        onEphemeralToken?(pushToken.map { String(format: "%02x", $0) }.joined())
+    }
+    func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
+        pendingRoom = (pushPayload["room"] as? String) ?? ""
+        let who = (pushPayload["fromName"] as? String) ?? "GroundLink"
+        return .activeRemoteParticipant(PTParticipant(name: who, image: nil))
+    }
+    func channelManager(_ channelManager: PTChannelManager, didActivate audioSession: AVAudioSession) { onJoinRoom?(pendingRoom) }
+    func channelManager(_ channelManager: PTChannelManager, didDeactivate audioSession: AVAudioSession) {}
+
+    // MARK: PTChannelRestorationDelegate
+    func channelDescriptor(restoredChannelUUID: UUID) -> PTChannelDescriptor {
+        return PTChannelDescriptor(name: channelName, image: nil)
+    }
 }
