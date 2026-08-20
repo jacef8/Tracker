@@ -229,12 +229,13 @@ export function openVoice(opts) {
   };
   micOn = false;
   remoteTalking = false;
-  // Auto-joins (listen:true — the always-on crew channel engaging on room entry) start MINIMIZED:
-  // just the mic bubble, not the full bar. The full bar covering the map on every single open was
-  // the complaint; a deliberate outgoing call (no listen) still opens the full bar. Auto-expands
-  // when someone actually talks (see ActiveSpeakersChanged).
-  barMin = !!listen;
+  // Auto-joins (listen:true — the always-on crew channel engaging on room entry) show NO UI at
+  // all: the connection runs silently in the background (you hear the crew), and the bar appears
+  // only when the user deliberately opens voice (tapping Talk — which re-enters here without
+  // listen, or hits the same-room early-return above whose showBar() reveals it).
+  barMin = false;
   renderBar();
+  if (session.listen && barEl) barEl.style.display = 'none';
   setTalker('connecting…', '#8b949e');
   connectVoice();
 }
