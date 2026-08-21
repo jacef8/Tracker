@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 655;
+var APP_BUILD = 656;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19679,12 +19679,12 @@ window._showMemberSheet = function(uid) {
   }
   if (mk._isLive) { try { window._followUser(uid, ''); } catch (e) {} }
   else {
-    // NOT live — the user still deliberately chose this person, so the camera must GO to their
-    // last-known spot and STAY there. Without this, an active self-follow (locate-me) or group
-    // follow kept ticking and yanked the view back within ~3s — reported as "snaps toward them,
-    // then immediately snaps back to my location" for inactive members.
-    try { if (typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}
-    try { if (typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {}
+    // NOT live — a PEEK: hold the camera on their last-known spot for ~5s, then whatever follow
+    // mode the user already had on (self-follow / group follow) resumes on its own. Both follow
+    // ticks respect _followPausedUntil, so pausing fixes the original bug (the 3s tick yanked the
+    // view back mid-flight — "snaps toward them, then immediately snaps back") without
+    // permanently killing the user's chosen follow mode.
+    try { if (window._pauseFollow) window._pauseFollow(5000); } catch (e) {}
   }
 };
 window._closeMemberSheet = function() {
