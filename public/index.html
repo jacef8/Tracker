@@ -2965,7 +2965,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 656;
+var APP_BUILD = 657;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3247,12 +3247,20 @@ function _animateMarker(marker, toLng, toLat) {
 // matches the marker glide, so the icon stays centered and moves smoothly together).
 function _followRecenter(lng, lat) {
   if (!followUid) return;
+  // Respect the interaction pause. Fixes arrive ~every second, so without this check a manual
+  // pan was stomped almost immediately — dragstart sets _followPausedUntil, but this per-fix
+  // recenter ignored it ("can't hardly move the map at all before it snaps back"). The follow
+  // tick resumes centering a few seconds after the user stops touching the map.
+  if (Date.now() < (window._followPausedUntil || 0)) return;
   try { map.easeTo({ center: [lng, lat], duration: 1400, easing: function(t) { return t; } }); } catch (e) {}
 }
 // One camera update per self-fix, combining recenter (if following yourself) and rotate
 // (if Heading Up is on) — a single easeTo so the two don't cancel each other.
 function _applyCameraOnSelfFix(lng, lat) {
   if (typeof fitAllInterval !== 'undefined' && fitAllInterval) return; // group-follow owns the camera
+  // Same interaction-pause rule as _followRecenter — self fixes land every ~1s, and this was the
+  // other path yanking the camera back mid-pan while following yourself.
+  if (Date.now() < (window._followPausedUntil || 0)) return;
   var headed = (typeof headingUpOn !== 'undefined') && headingUpOn &&
                window._lastHeading != null && !isNaN(window._lastHeading) && window._lastSpeedMph > 3;
   var opts = null;
