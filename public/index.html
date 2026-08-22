@@ -932,10 +932,14 @@
     left: 50%; transform: translateX(-50%) translateY(60px);
     background: rgba(30,36,44,.97); border: 1px solid var(--border);
     border-radius: 20px; padding: 8px 18px;
-    font-size: 13px; color: var(--text); white-space: nowrap;
+    /* Wrap, don't ellipsize: nowrap + ellipsis silently chopped every message longer than the
+       screen ("you can't read the follow group message"). width:max-content keeps short toasts
+       tight; long ones wrap within 90vw and stay fully readable. */
+    font-size: 13px; color: var(--text); white-space: normal; text-align: center;
+    width: max-content;
     transition: transform .25s ease, opacity .25s ease;
     opacity: 0; z-index: 600; pointer-events: none;
-    max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
+    max-width: 90vw;
   }
   #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
@@ -2979,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 659;
+var APP_BUILD = 660;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20108,7 +20112,7 @@ window._fitAllTapped = function() {
   if (btn) { btn.style.background = '#1f6feb'; btn.style.color = '#fff'; btn.style.borderColor = '#1f6feb'; btn.style.boxShadow = '0 0 15px rgba(31,111,235,0.6)'; }
   // Tick often + ease smoothly so the group view glides instead of lurching every few seconds.
   fitAllInterval = setInterval(function() { _groupFollowTick(false); }, 1000);
-  toast('Following the group — the map keeps everyone in view. Tap the locate button to stop', 2800);
+  toast('Following the group — tap locate to stop', 2800);
 };
 
 // dragstart wired inside initMap() below
