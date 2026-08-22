@@ -59,6 +59,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // session another consumer still needs (e.g. mediaMode toggling mid-call must not kill the
     // whole-room session held by voiceService).
     private var glAudioBridgeInstalled = false
+    private var uiDelegateProxy: GLWebUIDelegateProxy?
     private var audioRecordReasons = Set<String>()   // live voice (mic + playback) consumers
     private var audioPlayReasons = Set<String>()      // playback-only consumers (recorded clips)
     private var glAudioSessionActive = false
@@ -217,6 +218,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                   let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
                   let wv = bridgeVC.webView else { return }
             self.installAudioBridge(wv)
+            self.installUIDelegateProxy(wv)
             // Re-hand the VoIP token to the web now that the page is definitely loaded — the
             // didUpdate handoff can fire before window._onVoipToken exists (early launch), losing
             // it before it reaches Firebase. Idempotent; the web just re-files it. Falls back to
@@ -661,6 +663,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
+    // Auto-answer the WKWebView per-site geolocation prompt. iOS shows "tracker-….railway.app
+    // would like to use your current location" INSIDE the app even though the app itself already
+    // holds Always/precise location — and unlike Safari, the WebView doesn't durably remember the
+    // grant across app restarts/updates, so family members were re-prompted over and over. The
+    // proxy wraps Capacitor's own WKUIDelegate (forwarding everything else — JS alerts etc.) and
+    // grants geolocation for any frame, which tells WebKit to use the app's existing CoreLocation
+    // permission with no dialog.
+    private func installUIDelegateProxy(_ wv: WKWebView) {
+        guard #available(iOS 15.0, *) else { return }
+        if let p = uiDelegateProxy, wv.uiDelegate === p { return }
+        let proxy = GLWebUIDelegateProxy()
+        proxy.wrapped = wv.uiDelegate
+        uiDelegateProxy = proxy      // WKWebView holds uiDelegate weakly — we must retain it
+        wv.uiDelegate = proxy
+    }
+
     // MARK: - PushKit (VoIP) + CallKit
 
     private func setupVoip() {
@@ -791,6 +809,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func pttBeginTransmit() { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.beginTransmit() } }
     private func pttEndTransmit() { if #available(iOS 16.0, *) { (pttBox as? GLPushToTalk)?.endTransmit() } }
 
+}
+
+// WKUIDelegate proxy: implements ONLY the geolocation-permission callback (auto-grant, so the
+// app's existing CoreLocation permission is used without the per-site dialog) and forwards every
+// other delegate method to Capacitor's real WKUIDelegate via the responder machinery.
+final class GLWebUIDelegateProxy: NSObject, WKUIDelegate {
+    weak var wrapped: WKUIDelegate?
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return wrapped?.responds(to: aSelector) ?? false
+    }
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if super.responds(to: aSelector) { return nil }
+        return wrapped
+    }
+
+    @available(iOS 15.0, *)
+    func webView(_ webView: WKWebView, requestGeolocationPermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(.grant)
+    }
 }
 
 // Self-contained Push to Talk manager — kept in its own @available class so AppDelegate still
