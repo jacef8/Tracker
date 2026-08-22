@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 663;
+var APP_BUILD = 664;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4381,6 +4381,14 @@ window._toggleSecureDevices = function () {
   try { _renderDeviceList(); } catch (e) {}
   try { toast(on ? 'Secure devices shown on this map' : 'Secure devices hidden here'); } catch (e) {}
 };
+// Watch fix quality, from the accuracy the watch reports with every fix (same number the phone
+// rows carry, in feet). Lets you SEE why a dot isn't tracking: a big radius means the watch is on
+// Wi-Fi/cell estimation with no satellite lock, not that the map is stale.
+window._devAccLabel = function (live) {
+  var a = live && Number(live.accuracy); if (!isFinite(a) || a <= 0) return '';
+  var q = a <= 100 ? 'GPS' : a <= 300 ? 'weak GPS / Wi-Fi' : 'cell estimate — no GPS lock';
+  return '±' + Math.round(a) + ' · ' + q;
+};
 function _renderDevices() {
   if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
   if (!window._secDevOn()) {   // hidden on this group map — clear any drawn markers and stop
@@ -4410,7 +4418,7 @@ function _renderDevices() {
           var dCoords = (typeof dd.lat === 'number' && typeof dd.lng === 'number') ? dd.lat.toFixed(6) + ', ' + dd.lng.toFixed(6) : '';
           var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
             '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#8d97a1;font-weight:600">· watch</span></div>' +
-            '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + '</div>' +
+            '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + (window._devAccLabel(dd) ? ' · ' + _escHtml(window._devAccLabel(dd)) : '') + '</div>' +
             (dCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
             '<div style="display:flex;gap:6px">' +
             '<button onclick="window._talkToDevice(\'' + id2 + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
@@ -4473,7 +4481,7 @@ window._renderDeviceList = function _renderDeviceList() {
       '<div class="user-avatar" style="background:#7c3aed;color:#fff;font-weight:800">⌚</div>' +
       '<div style="min-width:0">' +
         '<div class="uname">' + escapeHtmlJs(nm) + ' <span style="font-size:10px;color:var(--muted,#a9b4bf);font-weight:600">· watch</span></div>' +
-        '<div class="ustatus" style="color:' + bd.c + '">' + (live.ts ? ((online ? 'Live · ' : 'Last seen: ') + _devAgo(live.ts)) : 'No location yet') + '</div>' +
+        '<div class="ustatus" style="color:' + bd.c + '">' + (live.ts ? ((online ? 'Live · ' : 'Last seen: ') + _devAgo(live.ts)) : 'No location yet') + (window._devAccLabel(live) ? ' <span style="color:var(--muted)">· ' + escapeHtmlJs(window._devAccLabel(live)) + '</span>' : '') + '</div>' +
       '</div>' +
       '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">' +
         '<button class="utalk-btn" title="Talk" style="background:none;border:none;cursor:pointer;line-height:1;padding:0 2px;color:var(--accent);display:flex;align-items:center"><svg class="licon"><use href="#ic-mic"/></svg></button>' +
