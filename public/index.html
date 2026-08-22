@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 662;
+var APP_BUILD = 663;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4666,7 +4666,23 @@ window._syncDeviceMonitor = function () {
       var d = dv[id] || {}; if (_canSeeDevice(d) && !window._isMuted(id)) owned.push({ id: id, name: (d.live || {}).name || d.ownerName || 'device' });
     });
     var inForeground = typeof document === 'undefined' || !document.hidden;
-    var wantOn = inForeground && window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
+    // BACKGROUND listening, bounded. The foreground-only rule above was about hours-long idle
+    // sessions; the real-world cost of it was the watch talking to nobody whenever the phone was
+    // in a pocket ("spotty, most of the time it doesn't reach me at all"). On native ANDROID (the
+    // voice foreground service keeps audio alive there; iOS can't hold a background WebView
+    // connection anyway) keep the monitor up while backgrounded ONLY while a watch is actually
+    // AWAKE — reported within the last 3 min. A sleeping watch stops reporting, the minute-ly
+    // re-sync below sees it go stale, and the monitor drops — so no more 200-400 min ghost sessions.
+    var _androidNative = (typeof _isNativeApp === 'function' && _isNativeApp()) && !(typeof _isIOSVoice === 'function' && _isIOSVoice());
+    var _watchAwake = owned.some(function (o) { var l = (dv[o.id] || {}).live || {}; return l.ts && (Date.now() - l.ts) < 3 * 60 * 1000; });
+    var _allowBg = _androidNative && _watchAwake;
+    var wantOn = (inForeground || _allowBg) && window._devListenOn() && !document.body.classList.contains('voice-off') && owned.length > 0 && cfg.livekitUrl && cfg.tokenEndpoint && myUid;
+    // Background re-check so a monitor kept up for an awake watch is torn down once it sleeps.
+    try {
+      if (!inForeground && wantOn && !window._devMonBgTimer) {
+        window._devMonBgTimer = setInterval(function () { try { window._syncDeviceMonitor(); } catch (e) {} }, 60 * 1000);
+      } else if ((inForeground || !wantOn) && window._devMonBgTimer) { clearInterval(window._devMonBgTimer); window._devMonBgTimer = null; }
+    } catch (e) {}
     if (wantOn) mod.startDeviceMonitor({ devices: owned, identity: myUid, livekitUrl: cfg.livekitUrl, tokenEndpoint: cfg.tokenEndpoint, hearOthers: window._hearOthersOn() });
     else if (mod.stopDeviceMonitor) mod.stopDeviceMonitor();
   }).catch(function () {});
