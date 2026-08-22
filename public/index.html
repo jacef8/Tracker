@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 661;
+var APP_BUILD = 662;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13170,6 +13170,7 @@ function listenUsers() {
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = _initialsFor(uid, data.name);
+        userMarkers[uid]._lastTs = data.ts || data.fixTs || 0;   // heartbeat age for follow-group's 6h rule
         userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         // Tap marker → open the bottom info card (a full-width bar that never covers the
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
@@ -13199,6 +13200,7 @@ function listenUsers() {
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = _initialsFor(uid, data.name);
+        userMarkers[uid]._lastTs = data.ts || data.fixTs || 0;   // heartbeat age for follow-group's 6h rule
         userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
         if (el) {
           el.style.background   = fillColor;
@@ -19955,17 +19957,31 @@ function _groupFollowTick(force) {
       _add(uid, u.lng, u.lat, _actv);
     });
   } catch (e) {}
-  if (_dbgR) { try { window._evt('🎥 follow-group verdicts: ' + _dbgR.join(' · ')); } catch (e) {} }
-  // Markers still count, for anything on the map that isn't a room member (and as a fallback
-  // if the snapshot hasn't arrived). _seen keeps these from double-adding a member.
+  // NOTE: since the gl-root enumeration lockdown this markers path is the PRIMARY source in
+  // practice — _lastGlSnap[group].users is empty on-device (permission-denied root listener), so
+  // the room-data loop above contributes nothing. Confirmed 2026-08-21 via the verdict log:
+  // "follow-group verdicts:" fired EMPTY on a fully-loaded app — which is why every fix applied
+  // to the room-data classification never changed behavior. Classify markers by the SAME 6h
+  // heartbeat rule (_lastTs, stamped at marker create/update): _isLive alone classed a resting
+  // member as stale and silently dropped her whenever anyone was live (the "Lexi missing" bug).
   Object.keys(userMarkers).forEach(function(uid) {
-    if (window._groupFollowExcluded(uid)) return;
+    var _mNm = (userMarkers[uid] && userMarkers[uid]._name) || uid.slice(0, 6);
+    if (window._groupFollowExcluded(uid)) { if (_dbgR) _dbgR.push(_mNm + ':excluded-pref(mk)'); return; }
     // Same rule as above — a marker that isn't drawn must not steer the camera. (Hidden
     // members are normally deleted from userMarkers, but this can't rely on render order.)
-    if (window._isMemberHidden && window._isMemberHidden(uid)) return;
-    if (window._isHiddenForAll && window._isHiddenForAll(uid)) return;
-    try { var ll = userMarkers[uid].getLngLat(); _add(uid, ll.lng, ll.lat, userMarkers[uid]._isLive !== false); } catch (e) {}
+    if (window._isMemberHidden && window._isMemberHidden(uid)) { if (_dbgR) _dbgR.push(_mNm + ':hidden-by-you(mk)'); return; }
+    if (window._isHiddenForAll && window._isHiddenForAll(uid)) { if (_dbgR) _dbgR.push(_mNm + ':hidden-for-all(mk)'); return; }
+    try {
+      var mk = userMarkers[uid];
+      var ll = mk.getLngLat();
+      var _mAct = mk._lastTs ? ((Date.now() - mk._lastTs) < GROUP_FIT_REST_MS) : (mk._isLive !== false);
+      if (_dbgR) _dbgR.push(_mNm + ':' + (_mAct ? 'IN' : 'stale') + '(mk)');
+      _add(uid, ll.lng, ll.lat, _mAct);
+    } catch (e) {}
   });
+  // Verdict log AFTER both sources so it reflects the full decision (the room-data loop is
+  // usually empty — see the lockdown note above — and the markers loop is the one that matters).
+  if (_dbgR) { try { window._evt('🎥 follow-group verdicts: ' + (_dbgR.join(' · ') || '(no members seen)')); } catch (e) {} }
   // Devices (the watch) are a SEPARATE marker set from people — include them too, so "Follow
   // group" actually keeps the whole group (people + visible devices) in view, not just people.
   try {
