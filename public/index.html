@@ -1718,6 +1718,13 @@
          full morning of driving in history showed "No recent trail", because the wrong store was
          asked. Now the date drives everything, and TODAY merges both stores. -->
     <input id="qt-date-input" type="date" onchange="window._loadTrailRange()" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:10px" />
+    <!-- Adjustable window (today only — a past date is inherently the whole day). -->
+    <div id="qt-hours-row" style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="qt-hr" data-h="3" onclick="window._setTrailHours(3)">3h</button>
+      <button class="qt-hr" data-h="6" onclick="window._setTrailHours(6)">6h</button>
+      <button class="qt-hr" data-h="12" onclick="window._setTrailHours(12)">12h</button>
+      <button class="qt-hr" data-h="0" onclick="window._setTrailHours(0)">All day</button>
+    </div>
     <div id="qt-body"></div>
   </div>
 </div>
@@ -2972,7 +2979,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 658;
+var APP_BUILD = 659;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17937,6 +17944,25 @@ window._openHistoryForMember = function (uid, name, circleKey) {
 // this whole area has been plagued by.
 window._setTrailRangeButtons = function () {};
 window._pickTrailRange = function () { window._loadTrailRange(); };
+// Adjustable trail window (0 = the whole selected day). Applies on TOP of the day view: for
+// today, "3h" means the trailing 3 hours ending now. Chips restyle here + visibility is decided
+// in _loadTrailRange (hidden for past dates, where only the full day makes sense).
+window._trailHours = 0;
+window._setTrailHours = function (h) {
+  window._trailHours = h || 0;
+  window._loadTrailRange();
+};
+window._styleTrailChips = function (isToday) {
+  try {
+    var row = document.getElementById('qt-hours-row'); if (!row) return;
+    row.style.display = isToday ? 'flex' : 'none';
+    row.querySelectorAll('.qt-hr').forEach(function (b) {
+      var on = String(window._trailHours || 0) === b.getAttribute('data-h');
+      b.style.cssText = 'flex:1;padding:8px 0;border-radius:9px;font-size:12px;font-weight:800;cursor:pointer;border:1px solid ' +
+        (on ? 'var(--accent);background:var(--accent);color:#000' : 'var(--border);background:var(--bg);color:var(--muted)');
+    });
+  } catch (e) {}
+};
 // One view for one date. For TODAY it merges both stores; for a past date, history is all
 // there is.
 //
@@ -18011,6 +18037,11 @@ window._loadTrailRange = function () {
       }
     } catch (e) {}
     var now = Date.now();
+    // Adjustable window: for TODAY, an hours chip narrows the view to the trailing N hours
+    // ending now. Past dates are always the whole day (the chips are hidden there).
+    try { window._styleTrailChips(isToday); } catch (e) {}
+    var _hrs = isToday ? (window._trailHours || 0) : 0;
+    if (_hrs > 0) pts = pts.filter(function (p) { return p.t >= now - _hrs * 3600000; });
     var label = dateStr;
     if (pts.length >= 2) {
       var agoMin  = Math.round((now - pts[pts.length - 1].t) / 60000);
@@ -18019,7 +18050,7 @@ window._loadTrailRange = function () {
               : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
       // The span itself is already in the stats line ("13:13:45 · Span"), so the header just
       // names the day — "794 min" alongside it was the same number twice, in a clumsy unit.
-      label = isToday ? ('Today · last point ' + ago) : dateStr;
+      label = isToday ? ((_hrs > 0 ? ('Last ' + _hrs + 'h') : 'Today') + ' · last point ' + ago) : dateStr;
     }
     _renderTrailResult(pts, label,
       isToday
@@ -19870,6 +19901,11 @@ function _groupFollowTick(force) {
   // stretched the bounds until the people actually moving right now were specks — "zoom to
   // group" has to mean the group that's currently out there.
   var GROUP_FIT_ACTIVE_MS = 15 * 60 * 1000;
+  // RESTING members count too. A battery-saver / backgrounded device can have a heartbeat an
+  // hour old and still be legitimately ON the map as "resting" — the camera must frame what the
+  // map shows ("even if a device is resting, it should still show in follow group"). 6h matches
+  // the app's own "present today" semantics; the 14-hours-ago member stays excluded.
+  var GROUP_FIT_REST_MS = 6 * 60 * 60 * 1000;
   var pts = [], ptsStale = [];
   var _seen = {};
   var _add = function (uid, lng, lat, active) {
@@ -19900,12 +19936,12 @@ function _groupFollowTick(force) {
       // invisible point. Confirmed from device diag: gfPts=3 with only one dot on screen.
       if (window._isMemberHidden && window._isMemberHidden(uid)) return;
       if (window._isHiddenForAll && window._isHiddenForAll(uid)) return;
-      // Judge "active for the fit" by the HEARTBEAT ts, not the GPS fixTs. A battery-saver RESTING
-      // device re-reports its position every few minutes (ts stays fresh) without a new GPS lock
-      // (fixTs goes old), so keying off fixTs wrongly dropped it from Follow Group the moment
-      // anyone else was live. ts is fresh for anyone actually present (live or resting) and old for
-      // a member who genuinely stopped reporting — which is the real thing we want to exclude.
-      _add(uid, u.lng, u.lat, (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_ACTIVE_MS);
+      // Judge "active for the fit" by the HEARTBEAT ts (not fixTs — a resting device stops getting
+      // GPS locks), and use the WIDE resting window: resting members' heartbeats can legitimately
+      // be an hour+ old while their dot is still shown, and the camera must frame what the map
+      // shows. Only a member who genuinely stopped reporting (> GROUP_FIT_REST_MS) drops to the
+      // stale-fallback tier.
+      _add(uid, u.lng, u.lat, (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_REST_MS);
     });
   } catch (e) {}
   // Markers still count, for anything on the map that isn't a room member (and as a fallback

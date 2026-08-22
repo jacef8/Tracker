@@ -235,7 +235,10 @@ export function openVoice(opts) {
   // listen, or hits the same-room early-return above whose showBar() reveals it).
   barMin = false;
   renderBar();
-  if (session.listen && barEl) barEl.style.display = 'none';
+  // Hidden auto-join: also drop the gv-active class renderBar added — it lifts the map's bottom
+  // toolbar ~100px to clear a bar that isn't visible ("toolbar sitting too high up in the map").
+  // showBar() restores the class when the bar is deliberately opened.
+  if (session.listen && barEl) { barEl.style.display = 'none'; try { document.body.classList.remove('gv-active'); } catch (e) {} }
   setTalker('connecting…', '#8b949e');
   connectVoice();
 }
@@ -824,7 +827,7 @@ function setBarMin(on) {
   try { if (_reMinTimer) { clearTimeout(_reMinTimer); _reMinTimer = null; } } catch (e) {}
 }
 
-function showBar() { if (barEl) barEl.style.display = 'flex'; }
+function showBar() { if (barEl) { barEl.style.display = 'flex'; try { document.body.classList.add('gv-active'); } catch (e) {} } }
 function removeBar() { if (barEl) { barEl.remove(); barEl = null; } document.body.classList.remove('gv-active'); }
 function setTalker(txt, color) { const el = barEl && barEl.querySelector('#gv-talker'); if (el) { el.textContent = txt; if (color) el.style.color = color; } }
 function setTx(on) { const el = barEl && barEl.querySelector('#gv-tx'); if (el) el.classList.toggle('tx-on', !!on); }
