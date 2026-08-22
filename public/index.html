@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 660;
+var APP_BUILD = 661;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19926,28 +19926,36 @@ function _groupFollowTick(force) {
   // silently left out of the fit. Combined with the duplicate below, the usual result was a
   // "group" of one: the map zoomed hard onto the tapper and looked like Follow Group was
   // simply centring on them.
+  // Diagnostic: on an EXPLICIT engage (force), report every member's include/exclude verdict to
+  // the room debug log — "who exactly did the camera consider, and why was X left out" has been
+  // un-debuggable from the outside ("Lexi still not showing in follow group").
+  var _dbgR = force ? [] : null;
   try {
     var _ru = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
     Object.keys(_ru).forEach(function (uid) {
-      if (window._groupFollowExcluded(uid)) return;
       var u = _ru[uid] || {};
-      if (!u.name || u.claiming || u.hidden || u.noGps) return;   // same test the renderer uses
-      if (window._isPrivateOther && window._isPrivateOther(uid, u)) return;   // someone else's private device
+      var _nm = (u.name || uid.slice(0, 6));
+      if (window._groupFollowExcluded(uid)) { if (_dbgR) _dbgR.push(_nm + ':excluded-pref'); return; }
+      if (!u.name || u.claiming || u.hidden || u.noGps) { if (_dbgR) _dbgR.push(_nm + ':row-filter' + (u.hidden ? '(hidden)' : u.noGps ? '(noGps)' : '')); return; }   // same test the renderer uses
+      if (window._isPrivateOther && window._isPrivateOther(uid, u)) { if (_dbgR) _dbgR.push(_nm + ':private'); return; }   // someone else's private device
       // ...and skip anyone whose DOT ISN'T ON THIS MAP: hidden by this viewer, or hidden
       // room-wide by the owner/an admin. The camera was still framing them, so a hidden
       // device (e.g. a tablet parked 2 miles away) silently pushed the people you CAN see
       // into a corner — the group looked off-centre because the map was making room for an
       // invisible point. Confirmed from device diag: gfPts=3 with only one dot on screen.
-      if (window._isMemberHidden && window._isMemberHidden(uid)) return;
-      if (window._isHiddenForAll && window._isHiddenForAll(uid)) return;
+      if (window._isMemberHidden && window._isMemberHidden(uid)) { if (_dbgR) _dbgR.push(_nm + ':hidden-by-you'); return; }
+      if (window._isHiddenForAll && window._isHiddenForAll(uid)) { if (_dbgR) _dbgR.push(_nm + ':hidden-for-all'); return; }
       // Judge "active for the fit" by the HEARTBEAT ts (not fixTs — a resting device stops getting
       // GPS locks), and use the WIDE resting window: resting members' heartbeats can legitimately
       // be an hour+ old while their dot is still shown, and the camera must frame what the map
       // shows. Only a member who genuinely stopped reporting (> GROUP_FIT_REST_MS) drops to the
       // stale-fallback tier.
-      _add(uid, u.lng, u.lat, (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_REST_MS);
+      var _actv = (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_REST_MS;
+      if (_dbgR) _dbgR.push(_nm + (isFinite(u.lng) && (u.lng || u.lat) ? (_actv ? ':IN' : ':stale') : ':no-pos'));
+      _add(uid, u.lng, u.lat, _actv);
     });
   } catch (e) {}
+  if (_dbgR) { try { window._evt('🎥 follow-group verdicts: ' + _dbgR.join(' · ')); } catch (e) {} }
   // Markers still count, for anything on the map that isn't a room member (and as a fallback
   // if the snapshot hasn't arrived). _seen keeps these from double-adding a member.
   Object.keys(userMarkers).forEach(function(uid) {
