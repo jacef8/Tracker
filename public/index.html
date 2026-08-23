@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 664;
+var APP_BUILD = 665;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5546,6 +5546,13 @@ function _initialsFor(uid, name) {
     Object.keys(ru).forEach(function (u) { if (u !== uid && ru[u] && ru[u].name && !ru[u].hidden) others.push(ru[u].name); });
     var dm = window._devicesAll || {};
     Object.keys(dm).forEach(function (id) { if (id !== uid) { var n = dm[id] && dm[id].live && dm[id].live.name; if (n) others.push(n); } });
+    // The MARKERS are the real source of "who else is on this map" — the room snapshot above is
+    // empty on-device since the enumeration lockdown (same discovery as the follow-group fix), so
+    // people-vs-people clashes (Laura Ford vs Lexi Ford) were never detected, only watch names.
+    try {
+      var um = (typeof userMarkers !== 'undefined' && userMarkers) || {};
+      Object.keys(um).forEach(function (u) { if (u !== uid && um[u] && um[u]._name) others.push(um[u]._name); });
+    } catch (e) {}
     if (name && others.some(function (n) { return initials(n) === base; })) {
       var parts = String(name).trim().split(/\s+/);
       var first = parts[0] || '', lastI = parts.length > 1 ? (parts[parts.length - 1][0] || '') : '';
@@ -13226,6 +13233,14 @@ function listenUsers() {
         userMarkers[uid]._initials = _initialsFor(uid, data.name);
         userMarkers[uid]._lastTs = data.ts || data.fixTs || 0;   // heartbeat age for follow-group's 6h rule
         userMarkers[uid]._name = data.name || '';   // merged ovals grow initials to disambiguate
+        // Initials can CHANGE after creation (a same-initials member appears later → "LF" must
+        // become "LaF"); the create path wrote the text once and nothing refreshed it. Update the
+        // visible text here unless this marker is currently a merged oval (that path owns it).
+        try {
+          var _ie = el && el.querySelector('.mk-initials');
+          var _merged = window._markerGroupMembers && window._markerGroupMembers[uid] && window._markerGroupMembers[uid].length > 1;
+          if (_ie && !_merged && _ie.textContent !== userMarkers[uid]._initials) _ie.textContent = userMarkers[uid]._initials;
+        } catch (e) {}
         if (el) {
           el.style.background   = fillColor;
           el.style.borderColor  = borderColor;
