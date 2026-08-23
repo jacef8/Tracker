@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 666;
+var APP_BUILD = 667;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6714,7 +6714,11 @@ window.__nativeWriteConfig = function () {
       dev: (typeof _deviceLabel === 'function') ? _deviceLabel() : 'phone',
       priv: (typeof _devicePrivate === 'function' && _devicePrivate()) ? 1 : 0,
       spdH: (typeof _shareSpeed === 'function' && !_shareSpeed()) ? 1 : 0,
-      rooms: Object.keys(rooms)
+      rooms: Object.keys(rooms),
+      // For the native iOS background reporter's trail writes (glh/<crew>/<uid>/<date>): which
+      // rooms are Crews (history is crew-only) and whether this person keeps their trail on.
+      circles: (function () { try { return Object.keys(_getCircles() || {}); } catch (e) { return []; } })(),
+      hist: (function () { try { return localStorage.getItem('gl_history_on') === '1' ? 1 : 0; } catch (e) { return 0; } })()
     });
   } catch (e) { return ''; }
 };

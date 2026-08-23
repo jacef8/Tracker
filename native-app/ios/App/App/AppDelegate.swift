@@ -412,6 +412,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return false }
 
+        // ── Trail history (2026-08-22) ────────────────────────────────────────────────────
+        // This native path only ever PATCHed the LIVE row; trail points (glh/<crew>/<uid>/<date>)
+        // came from the web layer, which iOS freezes in the background and wakes only every ~5 min
+        // — so a backgrounded iPhone's trail had one breadcrumb per 5 minutes and short stops were
+        // invisible. Mirror the web writer's rules here: Crews only, history on, accuracy <= 50 m,
+        // moved > 50 m since the last point we wrote, and no > 150 mph jump. Our own last point is
+        // persisted (UserDefaults) so the rule survives relaunches. Point shape matches the web's.
+        var histRooms: [String] = []
+        var histBody: Data? = nil
+        var histDate = ""
+        let histOn = ((cfg["hist"] as? NSNumber)?.intValue ?? 0) == 1
+        let circles = (cfg["circles"] as? [String]) ?? []
+        if histOn, !circles.isEmpty, loc.horizontalAccuracy > 0, loc.horizontalAccuracy <= 50 {
+            let d = UserDefaults.standard
+            let lastTs = d.double(forKey: "gl_hist_ts")
+            var ok = true
+            if lastTs > 0 {
+                let last = CLLocation(latitude: d.double(forKey: "gl_hist_lat"), longitude: d.double(forKey: "gl_hist_lng"))
+                let dist = loc.distance(from: last)
+                if dist <= 50 { ok = false }
+                let dt = max(1.0, (Double(ts) - lastTs) / 1000.0)
+                if (dist / dt) * 2.23694 > 150 { ok = false }
+            }
+            if ok {
+                d.set(loc.coordinate.latitude, forKey: "gl_hist_lat")
+                d.set(loc.coordinate.longitude, forKey: "gl_hist_lng")
+                d.set(Double(ts), forKey: "gl_hist_ts")
+                let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"; df.timeZone = .current
+                histDate = df.string(from: Date())
+                let pt: [String: Any] = ["lat": loc.coordinate.latitude, "lng": loc.coordinate.longitude,
+                                         "ts": ts, "acc": Int(loc.horizontalAccuracy.rounded()), "src": "native"]
+                histBody = try? JSONSerialization.data(withJSONObject: pt)
+                histRooms = circles
+            }
+        }
+
         withAuthToken(apiKey: apiKey) { [weak self] token in
             guard let token = token else {
                 // Couldn't authenticate — let the WebView path try instead of dropping the fix.
@@ -430,6 +466,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 r.timeoutInterval = 20
                 group.enter()
                 URLSession.shared.dataTask(with: r) { _, _, _ in group.leave() }.resume()
+            }
+            // Trail point: POST (Firebase REST push → auto key) into each Crew's history for today.
+            if let hb = histBody, !histDate.isEmpty {
+                for room in histRooms {
+                    guard let hu = URL(string: "\(dbUrl)/glh/\(room)/\(uid)/\(histDate).json?auth=\(token)") else { continue }
+                    var hr = URLRequest(url: hu)
+                    hr.httpMethod = "POST"
+                    hr.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    hr.httpBody = hb
+                    hr.timeoutInterval = 20
+                    group.enter()
+                    URLSession.shared.dataTask(with: hr) { _, _, _ in group.leave() }.resume()
+                }
             }
             group.notify(queue: .main) { self?.endBackgroundTaskIfNeeded() }
         }
