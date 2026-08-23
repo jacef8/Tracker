@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 665;
+var APP_BUILD = 666;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14426,7 +14426,11 @@ var STOP_MIN_MS   = 10 * 1000;           // catch a stop sign, not just a parkin
 // It's also why a speed gate is needed at this threshold: two points 10s apart and 30 m
 // apart could equally be a stop sign or a crawl through traffic. Divide displacement by
 // elapsed time — a real stop implies near-zero speed across the gap, a crawl doesn't.
-var STOP_MAX_MPH  = 2.5;
+// 5 mph, not 2.5: background iPhones log a point only every ~5 min, so a real stop's arrival and
+// departure points include a little driving on each side (typ. 500 m apart over 5-6 min = 3-4
+// mph). 2.5 rejected those as "a crawl" and hid genuine stops (2026-08-22: three 5-6 min stops
+// on one drive, all implied 3.2-4.0 mph). Real driving gaps imply 40-75 mph, so 5 stays safe.
+var STOP_MAX_MPH  = 5;
 function _trailStops(pts) {
   // A stop is a TIME GAP between two consecutive breadcrumbs — the device stops writing points
   // while parked (writes are distance-gated at HIST_MIN_DIST_M), so a parked spell is never a
