@@ -476,7 +476,12 @@ if (mode === 'diagnose' || mode === 'addgroup') {
 // ── invite ────────────────────────────────────────────────────────────────────────────
 // Default to only those who haven't installed; --all overrides. INSTALLED means they already
 // have the build and don't need chasing.
-const pending = inviteAll ? rows : rows.filter(r => !/INSTALLED/i.test(r.state));
+// A positional email narrows the resend to ONE tester (workflow passes inputs.email through);
+// without it the old behaviour stands: everyone not yet installed (or --all for everyone).
+const pending = inviteAll ? rows
+  : argEmail ? rows.filter(r => r.email.toLowerCase() === argEmail)
+  : rows.filter(r => !/INSTALLED/i.test(r.state));
+if (argEmail && !pending.length) { console.error(`no tester with email ${argEmail}`); process.exit(1); }
 console.log(`\nRe-sending Apple's TestFlight invitation to ${pending.length} tester(s)${inviteAll ? ' (--all)' : ' not yet installed'}:`);
 
 let failed = 0;
