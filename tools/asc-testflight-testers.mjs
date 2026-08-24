@@ -26,7 +26,7 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add'].includes(mode)) {
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add', 'submitversion'].includes(mode)) {
   console.error('usage: asc-testflight-testers.mjs [verify|list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
@@ -74,6 +74,95 @@ if (!apps.ok || !apps.json?.data?.length) {
 }
 const app = apps.json.data[0];
 console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
+
+
+// ── submitversion ─────────────────────────────────────────────────────────────────────
+// Create (or reuse) an App Store version, attach a build, set Whats New, submit for review.
+// The email positional carries "<versionString>:<buildNumber>", e.g. "1.0.2:41".
+if (mode === 'submitversion') {
+  const parts = (argEmail || '').split(':');
+  const verStr = parts[0], buildNum = parts[1];
+  if (!verStr || !buildNum) { console.error('submitversion needs "<version>:<build>" in the email field, e.g. 1.0.2:41'); process.exit(2); }
+
+  let vRes = await asc('GET', `/apps/${app.id}/appStoreVersions?filter[versionString]=${encodeURIComponent(verStr)}&limit=5`);
+  let ver = (vRes.json?.data || [])[0];
+  if (!ver) {
+    const mk = await asc('POST', '/appStoreVersions', {
+      data: {
+        type: 'appStoreVersions',
+        attributes: { platform: 'IOS', versionString: verStr, releaseType: 'AFTER_APPROVAL' },
+        relationships: { app: { data: { type: 'apps', id: app.id } } },
+      },
+    });
+    if (!mk.ok) { console.error(`! create version FAILED (HTTP ${mk.status}): ${mk.json?.errors?.map(e => e.detail || e.title).join('; ') || mk.text.slice(0, 300)}`); process.exit(1); }
+    ver = mk.json.data;
+    console.log(`+ created App Store version ${verStr} (auto-release after approval)`);
+  } else {
+    console.log(`= version ${verStr} already exists (state ${ver.attributes?.appStoreState || '?'})`);
+  }
+
+  const bRes = await asc('GET', `/builds?filter[app]=${app.id}&filter[version]=${encodeURIComponent(buildNum)}&limit=5`);
+  const build = (bRes.json?.data || []).sort((a, b) => String(b.attributes?.uploadedDate || '').localeCompare(String(a.attributes?.uploadedDate || '')))[0];
+  if (!build) { console.error(`! no build with number ${buildNum} found`); process.exit(1); }
+  console.log(`build ${buildNum}: id ${build.id}, processing=${build.attributes?.processingState}`);
+
+  const att = await asc('PATCH', `/appStoreVersions/${ver.id}/relationships/build`, { data: { type: 'builds', id: build.id } });
+  if (!att.ok) { console.error(`! attach build FAILED (HTTP ${att.status}): ${att.json?.errors?.map(e => e.detail || e.title).join('; ') || att.text.slice(0, 300)}`); process.exit(1); }
+  console.log('+ build attached');
+
+  const notes = [
+    '- Much more detailed location trails on iPhone',
+    '- Live walkie-talkie voice for your Crew',
+    '- Notifications on iPhone',
+    '- Trail stop markers showing how long you parked',
+    '- Many fixes and performance improvements',
+  ].join('\n');
+  try {
+    const locs = await asc('GET', `/appStoreVersions/${ver.id}/appStoreVersionLocalizations?limit=10`);
+    for (const loc of (locs.json?.data || [])) {
+      const upd = await asc('PATCH', `/appStoreVersionLocalizations/${loc.id}`, {
+        data: { type: 'appStoreVersionLocalizations', id: loc.id, attributes: { whatsNew: notes } },
+      });
+      console.log(`${upd.ok ? '+' : '!'} whatsNew ${loc.attributes?.locale}: ${upd.ok ? 'set' : 'HTTP ' + upd.status}`);
+    }
+  } catch (e) { console.log('! whatsNew step skipped: ' + e.message); }
+
+  let sub = null;
+  const open = await asc('GET', `/reviewSubmissions?filter[app]=${app.id}&filter[state]=READY_FOR_REVIEW,WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES&limit=5`);
+  sub = (open.json?.data || []).find(x => !/COMPLETE|CANCEL/i.test(x.attributes?.state || ''));
+  if (!sub) {
+    const mk = await asc('POST', '/reviewSubmissions', {
+      data: { type: 'reviewSubmissions', attributes: { platform: 'IOS' }, relationships: { app: { data: { type: 'apps', id: app.id } } } },
+    });
+    if (!mk.ok) { console.error(`! create reviewSubmission FAILED (HTTP ${mk.status}): ${mk.json?.errors?.map(e => e.detail || e.title).join('; ') || mk.text.slice(0, 300)}`); process.exit(1); }
+    sub = mk.json.data;
+    console.log(`+ review submission created (${sub.id})`);
+  } else {
+    console.log(`= reusing open review submission ${sub.id} (state ${sub.attributes?.state})`);
+  }
+
+  const item = await asc('POST', '/reviewSubmissionItems', {
+    data: {
+      type: 'reviewSubmissionItems',
+      relationships: {
+        reviewSubmission: { data: { type: 'reviewSubmissions', id: sub.id } },
+        appStoreVersion: { data: { type: 'appStoreVersions', id: ver.id } },
+      },
+    },
+  });
+  if (!item.ok && item.status !== 409) {
+    console.error(`! add item FAILED (HTTP ${item.status}): ${item.json?.errors?.map(e => e.detail || e.title).join('; ') || item.text.slice(0, 300)}`);
+    process.exit(1);
+  }
+  console.log(item.ok ? '+ version added to the submission' : '= version already in the submission');
+
+  const go = await asc('PATCH', `/reviewSubmissions/${sub.id}`, {
+    data: { type: 'reviewSubmissions', id: sub.id, attributes: { submitted: true } },
+  });
+  if (!go.ok) { console.error(`! SUBMIT FAILED (HTTP ${go.status}): ${go.json?.errors?.map(e => e.detail || e.title).join('; ') || go.text.slice(0, 300)}`); process.exit(1); }
+  console.log(`SUBMITTED: ${verStr} (build ${buildNum}) is now waiting for App Review.`);
+  process.exit(0);
+}
 
 // ── add ───────────────────────────────────────────────────────────────────────────────
 // Create a brand-new tester and put them straight into the external group. For an external
