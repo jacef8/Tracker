@@ -77,6 +77,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var currentCallUUID: UUID?
     private var pendingCallRoom: String = ""
     private var voipToken: String = ""
+    private var callEndTimer: Timer?
     private var pttBox: Any?   // holds GLPushToTalk on iOS 16+ (Any so the class still builds < iOS 16)
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
@@ -677,7 +678,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         let reason = (body["reason"] as? String) ?? "default"
         switch op {
         case "rec+":  audioRecordReasons.insert(reason)
-        case "rec-":  audioRecordReasons.remove(reason)
+        case "rec-":
+            audioRecordReasons.remove(reason)
+            // Voice session finished (room disconnected) — tear the CallKit call down with it,
+            // instead of leaving it active in the phone's call stack forever.
+            if reason == "service" { endActiveCall(reason: .remoteEnded) }
         case "play+": audioPlayReasons.insert(reason)
         case "play-": audioPlayReasons.remove(reason)
         default: return
@@ -779,6 +784,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         let dict = payload.dictionaryPayload
         let room = (dict["room"] as? String) ?? ""
         let fromName = (dict["fromName"] as? String) ?? "GroundLink"
+        // NEVER stack our call on top of a real phone call. CallKit puts every reported call in
+        // the SAME system call stack, so a GroundLink call raised during a cellular call fought
+        // with it — the hang-up button acted on the wrong call (reported 2026-08-27). If any call
+        // already exists, take the push as a no-op.
+        if !CXCallObserver().calls.isEmpty { completion(); return }
         pendingCallRoom = room
         let uuid = UUID()
         currentCallUUID = uuid
@@ -787,6 +797,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         update.hasVideo = false
         update.localizedCallerName = fromName
         cxProvider?.reportNewIncomingCall(with: uuid, update: update) { _ in completion() }
+        // Hard stop: an unanswered call must not linger in the system call stack. Nothing ended
+        // it before, so a missed transmission left the phone believing a call was still up.
+        DispatchQueue.main.async { [weak self] in
+            self?.callEndTimer?.invalidate()
+            self?.callEndTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+                self?.endActiveCall(reason: .unanswered)
+            }
+        }
+    }
+
+    /// End whatever CallKit call we currently have, and stop the timeout. Safe to call repeatedly.
+    private func endActiveCall(reason: CXCallEndedReason) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.callEndTimer?.invalidate(); self.callEndTimer = nil
+            guard let uuid = self.currentCallUUID else { return }
+            self.currentCallUUID = nil
+            self.pendingCallRoom = ""
+            self.cxProvider?.reportCall(with: uuid, endedAt: nil, reason: reason)
+            self.applyAudioSession()   // CallKit no longer owns the session
+        }
     }
 
     // MARK: CXProviderDelegate
@@ -810,11 +841,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     // Answered (user swiped, or an auto-answer) — audio starts on didActivate above.
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        callEndTimer?.invalidate(); callEndTimer = nil
         action.fulfill()
     }
 
     // Ended/declined — tell the web to leave the channel.
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        callEndTimer?.invalidate(); callEndTimer = nil
         currentCallUUID = nil
         pendingCallRoom = ""
         DispatchQueue.main.async { [weak self] in
