@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 669;
+var APP_BUILD = 670;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21445,6 +21445,7 @@ window._toggleOpenChannel = async function () {
 window._maybeRejoinChannel = function () {
   if (document.body.classList.contains('voice-off')) return;
   if (!userId || !groupName) return;
+  if (window._inPrivateCall && window._inPrivateCall()) return;   // don't interrupt a 1:1 call
   // Auto-on for Crews: being in a Crew means live voice is ON by default (the walkie-talkie),
   // unless the user turned it off in Settings. If the channel isn't already engaged, engage it —
   // but ONLY in a Crew room (a random public/quick-join room shouldn't force everyone live).
@@ -21519,6 +21520,18 @@ window._callkitEnd = function () {
 // web still moves the actual audio over LiveKit. _onPttToken files the per-channel ephemeral token
 // in Firebase so the server can send Push-to-Talk pushes; _pttJoin joins the LiveKit room to hear;
 // _pttBeginTx/_pttEndTx publish/unpublish the mic when the framework keys transmit.
+// A deliberate 1:1 (or pick-some) call OUTRANKS the always-on group channel. The channel
+// re-broadcasts every 12s and its listeners auto-join gv_<group>_ALL — which was yanking the
+// other person OUT of a private call mid-sentence (confirmed 2026-08-27: Lexi subscribed to the
+// audio track, then got pulled back to _ALL 8s later, so the two ends sat in different rooms and
+// nobody heard anything). While a private room is connected, ignore channel auto-joins.
+window._inPrivateCall = function () {
+  try {
+    var m = window._voiceModSync; if (!m || !m.currentRoom) return false;
+    var r = m.currentRoom(); if (!r) return false;
+    return !/_ALL$/.test(r);
+  } catch (e) { return false; }
+};
 window._registerPttToken = function () {
   try {
     var t = window._pttToken || ''; if (!t || !db || !userId) return;
@@ -21532,6 +21545,8 @@ window._pttJoin = function (room) {
   try {
     if (!room) room = (typeof _channelRoomId === 'function') ? _channelRoomId() : '';
     if (!room) return;
+    // Same priority rule: the framework's channel join must not evict a live 1:1 call.
+    if (/_ALL$/.test(room) && window._inPrivateCall && window._inPrivateCall()) return;
     var cfg = window.VOICE_CONFIG || {};
     if (!cfg.livekitUrl || !cfg.tokenEndpoint) return;
     var _uid = userId || (function () { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } })();
@@ -21643,6 +21658,8 @@ window._listenVoiceInvites = function () {
       if (Date.now() - (inv.ts || 0) > 60000) return;
       if (inv.ts <= _gvLastGroupTs) return;
       _gvLastGroupTs = inv.ts;
+      if (inv.from && inv.from === userId) return;              // our own broadcast echoing back
+      if (window._inPrivateCall && window._inPrivateCall()) return;  // a 1:1 call outranks the channel
       // Already connected to this channel? The 12s keep-alive re-ping must NOT re-prompt (iOS) or
       // re-join — this was showing the tap-to-join sheet every ~12s to someone already in the room
       // (confirmed in the crew debug log). Silently ignore; the live audio is already flowing.

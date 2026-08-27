@@ -108,6 +108,9 @@ const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
 const APNS_BUNDLE  = process.env.APNS_BUNDLE || 'com.groundlink.ios';
 const APNS_HOST    = 'https://api.push.apple.com';   // production (TestFlight + App Store use prod APNs)
 const apnsVoipReady = !!(APNS_KEY_P8 && APNS_KEY_ID && APNS_TEAM_ID);
+// Kill switch for the CallKit VoIP push (see /voip). Ringless Push-to-Talk pushes are
+// unaffected. Set VOIP_CALLKIT=1 on the host to turn CallKit back on.
+const VOIP_CALLKIT_ENABLED = process.env.VOIP_CALLKIT === '1';
 if (apnsVoipReady) console.log('APNs VoIP ready');
 else console.warn('APNs VoIP not configured (APNS_KEY_P8/APNS_KEY_ID/APNS_TEAM_ID) — CallKit disabled');
 
@@ -385,6 +388,13 @@ app.post('/voip', rateLimit(60, 60000), async function (req, res) {
       catch (e) { results.push({ uid: uid.slice(0, 10), r: 'ptt-' + String((e && e.message) || e).slice(0, 120) }); }
       continue;
     }
+    // CallKit VoIP fallback DISABLED 2026-08-27. A CallKit push makes iOS report a real system
+    // call; the shipped app never ends that call (no reportCall(endedAt:) / no timeout), so it
+    // lingered in the phone's call stack and interfered with actual phone calls and the hang-up
+    // button. Killing the push here stops that on every already-installed build with no app
+    // update. Re-enable only once the native call lifecycle is fixed (end on voice-stop, answer
+    // timeout, and skip when a real call is active).
+    if (!VOIP_CALLKIT_ENABLED) { results.push({ uid: uid.slice(0, 10), r: 'callkit-disabled' }); continue; }
     let tok = null;
     try { const rec = await _dbGet('gl/_voipSubs/' + uid); tok = rec && rec.token; } catch (e) {}
     if (!tok) { results.push({ uid: uid.slice(0, 10), r: 'no-token' }); continue; }
