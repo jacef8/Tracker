@@ -691,6 +691,17 @@
   #user-drawer.open, #saved-pins-drawer.open, #tracks-drawer.open, #track-detail-drawer.open, #places-drawer.open {
     transform: translateY(0) !important;
   }
+  /* The People sheet used to scroll as ONE element with a position:sticky header. Inside a
+     scroller that has its own top padding, the sticky bar does not pin flush to the top — so
+     the tab row and the Channel/Choose buttons slid up INTO and ABOVE the "People" title and
+     were sliced in half (reported 2026-08-27). Every other drawer avoids this by scrolling a
+     CHILD instead, which is what the .panel-header comment already assumes. Do the same here:
+     the sheet itself stops scrolling, the header stays put, and #user-drawer-body scrolls. */
+  #user-drawer { padding: 0 !important; overflow: hidden !important; gap: 0 !important; }
+  #user-drawer-body {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain; padding: 10px 0 14px;
+  }
   @media (min-width: 769px) {
     #user-drawer, #saved-pins-drawer, #tracks-drawer, #track-detail-drawer, #places-drawer {
       left: 50% !important; right: auto !important; width: min(640px, 94vw) !important;
@@ -2580,6 +2591,7 @@
       <button class="panel-close" id="close-user-drawer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
   </div>
+  <div id="user-drawer-body">
   <div style="display:flex;gap:6px;padding:0 12px 8px">
     <button id="ptab-inroom" onclick="window._peopleTab('inroom')" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:9px;font-size:13px;font-weight:800;color:#1a1200;cursor:pointer">In room</button>
     <button id="ptab-friends" onclick="window._peopleTab('friends')" style="flex:1;padding:9px;background:var(--bg);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer">★ Friends</button>
@@ -2594,6 +2606,7 @@
   </div>
   <div id="tab-friends" style="display:none">
     <div id="friends-list"></div>
+  </div>
   </div>
 </div>
 
@@ -3006,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 674;
+var APP_BUILD = 675;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5647,9 +5660,17 @@ window._avatars = {};
 try { window._avatars = JSON.parse(localStorage.getItem('gl_avatars_cache') || '{}') || {}; } catch (e) {}
 window._avatarSrc = function (uid) {
   try {
-    if (!uid) return '';
+    if (!uid || !window._avatars) return '';
     var a = window._avatars[uid];
-    if (!a) { var pid = (typeof window._personId === 'function') ? window._personId(uid) : uid; if (pid && pid !== uid) a = window._avatars[pid]; }
+    // Try every id this person could be filed under: the raw id, the resolved person id, and
+    // the device->account map directly (_personId depends on _devOwnerAll, which may not have
+    // loaded yet on a cold start — that alone would leave every marker photo-less).
+    if (!a) {
+      try { var pid = (typeof window._personId === 'function') ? window._personId(uid) : ''; if (pid && pid !== uid) a = window._avatars[pid]; } catch (e) {}
+    }
+    if (!a) {
+      try { var o = window._devOwnerAll && window._devOwnerAll[uid]; if (o && o.acct) a = window._avatars[o.acct]; } catch (e) {}
+    }
     if (!a) return '';
     return a.img || a.url || '';
   } catch (e) { return ''; }
@@ -5705,6 +5726,26 @@ window._listenAvatars = function () {
       window._avatars = snap.val() || {};
       try { localStorage.setItem('gl_avatars_cache', JSON.stringify(window._avatars)); } catch (e) {}
       window._repaintAllAvatars();
+      // One-time self-report: three rounds of guessing at why photos did not render is enough.
+      // Says what the DEVICE actually sees, so the next answer comes from data.
+      try {
+        if (!window._avaDiagSent) {
+          window._avaDiagSent = 1;
+          var _n = Object.keys(window._avatars || {}).length;
+          var _acc = (typeof _myAcct === 'function') ? (_myAcct() || '') : '';
+          var _mine = _acc ? window._avatarSrc(_acc) : '';
+          var _dev = (typeof userId !== 'undefined' && userId) ? window._avatarSrc(userId) : '';
+          var _el = !!document.getElementById('home-avatar');
+          setTimeout(function () {
+            try {
+              window._evt('🖼 avatars=' + _n + ' acct=' + (_acc ? _acc.slice(0, 8) : 'NONE') +
+                ' mine=' + (_mine ? _mine.slice(0, 12) + '(' + _mine.length + ')' : 'NONE') +
+                ' byDevice=' + (_dev ? 'yes' : 'no') +
+                ' homeEl=' + _el + ' devOwner=' + Object.keys(window._devOwnerAll || {}).length);
+            } catch (e) {}
+          }, 3000);
+        }
+      } catch (e) {}
       // Adopt the provider photo HERE, not at sign-in: auth resolves before the database handle
       // exists, so the sign-in call always hit the `!db` guard and bailed — gl/_avatars stayed
       // empty for everyone (found 2026-08-27, Jace's Google photo never appeared). By this point
