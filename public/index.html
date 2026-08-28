@@ -1413,6 +1413,8 @@
             </div>
             <button id="btn-signout" type="button" onclick="window.GLAuth ? GLAuth.signOutUser() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
           </div>
+          <!-- Preset icons: an alternative to a photo, and NOT buried behind Advanced. -->
+          <div id="acct-preset-row" style="display:none"></div>
         </div>
 
         <!-- ══ ACCOUNT EXTRAS (stats · color · your groups · quick settings) ════ -->
@@ -3024,7 +3026,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 693;
+var APP_BUILD = 695;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3474,6 +3476,57 @@ function _applyMarkerMerged(primary, members) {
 // print their chips on top of each other — the "66 mph" over "55 mph" pile-up. Nudge each
 // colliding chip to a free slot below its dot instead of leaving them stacked.
 var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
+
+// Push apart dots that overlap on screen but belong to people who are NOT together. Merging
+// them would assert they are in the same place; leaving them stacked hides one behind the
+// other. Neither is acceptable, so nudge them a few pixels instead — a purely visual
+// separation that costs a little positional precision at the zoom where a pixel is already a
+// mile, and unwinds completely as soon as you zoom in far enough for them not to collide.
+var SPREAD_HIT_PX = 46;        // marker is 44px — closer than this and one is hidden
+var SPREAD_MAX_PX = 30;        // never displace a dot further than this from its true spot
+function _spreadOverlappingMarkers() {
+  try {
+    if (typeof map === 'undefined' || !map || window._spider) return;
+    var vis = [];
+    Object.keys(userMarkers).forEach(function (u) {
+      var mk = userMarkers[u], el = mk && mk._el;
+      if (!el || el.style.display === 'none' || !mk._ll) return;
+      var p; try { p = map.project(mk._ll); } catch (e) { return; }
+      vis.push({ u: u, mk: mk, el: el, x: p.x, y: p.y, dx: 0, dy: 0 });
+    });
+    if (vis.length < 2) {
+      vis.forEach(function (v) { if (v.el.style.marginLeft) { v.el.style.marginLeft = ''; v.el.style.marginTop = ''; } });
+      return;
+    }
+    // Two relaxation passes is plenty for the handful of dots a family map ever has.
+    for (var pass = 0; pass < 2; pass++) {
+      for (var i = 0; i < vis.length; i++) {
+        for (var j = i + 1; j < vis.length; j++) {
+          var a = vis[i], b = vis[j];
+          var ax = a.x + a.dx, ay = a.y + a.dy, bx = b.x + b.dx, by = b.y + b.dy;
+          var dx = bx - ax, dy = by - ay;
+          var d = Math.sqrt(dx * dx + dy * dy);
+          if (d >= SPREAD_HIT_PX) continue;
+          // Exactly coincident: pick a deterministic direction so it does not jitter.
+          if (d < 0.001) { dx = (i % 2 ? 1 : -1); dy = (j % 2 ? 1 : -1); d = Math.sqrt(2); }
+          var push = (SPREAD_HIT_PX - d) / 2;
+          var ux = dx / d, uy = dy / d;
+          a.dx -= ux * push; a.dy -= uy * push;
+          b.dx += ux * push; b.dy += uy * push;
+        }
+      }
+    }
+    vis.forEach(function (v) {
+      var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
+      if (m > SPREAD_MAX_PX) { v.dx = v.dx / m * SPREAD_MAX_PX; v.dy = v.dy / m * SPREAD_MAX_PX; }
+      // margin, not transform: Mapbox owns the element's transform for positioning.
+      var ml = Math.abs(v.dx) < 0.5 ? '' : (Math.round(v.dx) + 'px');
+      var mt = Math.abs(v.dy) < 0.5 ? '' : (Math.round(v.dy) + 'px');
+      if (v.el.style.marginLeft !== ml) v.el.style.marginLeft = ml;
+      if (v.el.style.marginTop !== mt) v.el.style.marginTop = mt;
+    });
+  } catch (e) {}
+}
 function _layoutMarkerChips() {
   try {
     var used = [];
@@ -3592,6 +3645,9 @@ function _updateMarkerGrouping(immediate) {
     _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
   });
+  // Separate the dots that would otherwise hide each other, THEN place the chips (which key
+  // off where the markers actually ended up).
+  _spreadOverlappingMarkers();
   // Chips can only be placed once we know which markers are visible (merged ones hide their
   // members), so this runs last.
   _layoutMarkerChips();
@@ -5945,6 +6001,57 @@ window._adoptProviderPhoto = function (user) {
 };
 // Upload: downscale to a 160px square JPEG (~6-10 KB) entirely on-device, then store the data
 // URL. Small enough to live in the database and be cached on every phone.
+
+// Not everyone wants their face on a shared map, and initials are exactly what the photo work
+// was trying to get away from. A preset renders an emoji onto the same 160px canvas an upload
+// goes through, so every existing render path lights up unchanged.
+var AVATAR_PRESETS = [
+  { e: '\uD83E\uDD8C', bg: '#2f5d3a' },
+  { e: '\uD83D\uDEFB', bg: '#4a3b2a' },
+  { e: '\uD83C\uDFAF', bg: '#5c2f2f' },
+  { e: '\uD83D\uDC15', bg: '#4a3f2a' },
+  { e: '\uD83D\uDC1F', bg: '#1f4a5c' },
+  { e: '\uD83C\uDF32', bg: '#274d33' },
+  { e: '\uD83D\uDEA4', bg: '#1f3f5c' },
+  { e: '\uD83D\uDE9C', bg: '#5c4a1f' },
+  { e: '\u2B50', bg: '#4a3d14' },
+  { e: '\u2764\uFE0F', bg: '#5c1f2f' },
+  { e: '\uD83C\uDFE0', bg: '#3a3a5c' },
+  { e: '\uD83D\uDD25', bg: '#5c3312' }
+];
+window._setPresetAvatar = function (i) {
+  try {
+    var pre = AVATAR_PRESETS[i]; if (!pre) return;
+    var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
+    if (!acct) { toast('Sign in first to set an icon'); return; }
+    var S = 160, c = document.createElement('canvas'); c.width = c.height = S;
+    var x = c.getContext('2d');
+    x.fillStyle = pre.bg; x.fillRect(0, 0, S, S);
+    x.font = '104px "Apple Color Emoji","Noto Color Emoji","Segoe UI Emoji",sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText(pre.e, S / 2, S / 2 + 6);
+    fbSet(fbRef(db, 'gl/_avatars/' + acct), { img: c.toDataURL('image/jpeg', 0.82), ts: Date.now(), src: 'preset' });
+    toast('Icon updated');
+  } catch (e) { toast('Could not set that icon'); }
+};
+window._renderPresetRow = function () {
+  try {
+    var host = document.getElementById('acct-preset-row'); if (!host) return;
+    var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
+    host.style.display = acct ? 'block' : 'none';
+    if (!acct || host.dataset.built) return;
+    host.dataset.built = '1';
+    var btns = AVATAR_PRESETS.map(function (pre, i) {
+      return '<button type="button" onclick="window._setPresetAvatar(' + i + ')" ' +
+        'style="width:38px;height:38px;flex:0 0 auto;border-radius:50%;border:1px solid var(--border);' +
+        'background:' + pre.bg + ';font-size:20px;line-height:1;cursor:pointer;padding:0;display:grid;place-items:center">' +
+        pre.e + '</button>';
+    }).join('');
+    host.innerHTML =
+      '<div style="font-size:11px;color:var(--muted);margin:10px 0 6px">No photo? Pick an icon instead.</div>' +
+      '<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + btns + '</div>';
+  } catch (e) {}
+};
 window._pickAvatar = function (file) {
   try {
     if (!file) return;
@@ -6016,6 +6123,7 @@ window._refreshAvatarPanel = function () {
       lbl.textContent = s3 ? '' : ((typeof initials === 'function' && userName) ? initials(userName) : '');
     }
   } catch (e) {}
+  try { window._renderPresetRow(); } catch (e) {}
   try {
     var row = document.getElementById('account-photo-row'); if (!row) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
@@ -9938,6 +10046,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 694, t: 'Pick an icon instead of a photo',
+    d: 'Do not want your face on the map? Open Account and choose an icon under your name \u2014 a deer, a truck, a dog. It shows everywhere a photo would.' },
   { b: 692, t: 'Walking, moving, driving',
     d: 'The map now shows HOW someone is moving, not just how fast. Walking and cycling used to look the same as standing still.' },
   { b: 690, t: 'Fewer false "they are together"',
