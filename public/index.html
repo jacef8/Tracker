@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 683;
+var APP_BUILD = 684;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3581,6 +3581,40 @@ window._collapseSpider = function () {
   });
   try { _updateMarkerGrouping(true); } catch (e) {}
 };
+
+// Everyone standing on this spot, by SCREEN position — the merge groups plus anything else
+// drawn over the same pixels. Merging and overlapping are different questions: the merge pass
+// decides who belongs together, but a marker it excluded still covers the ones beneath it.
+var CLUSTER_HIT_PX = 46;
+window._clusterAt = function (uid) {
+  var out = {};
+  out[uid] = 1;
+  try {
+    var g = window._markerGroupMembers && window._markerGroupMembers[uid];
+    if (g && g.length) g.forEach(function (u) { out[u] = 1; });
+  } catch (e) {}
+  try {
+    var mk = userMarkers[uid];
+    if (mk && mk._ll && typeof map !== 'undefined' && map) {
+      var p0 = map.project(mk._ll);
+      Object.keys(userMarkers).forEach(function (u) {
+        if (out[u]) return;
+        var m2 = userMarkers[u]; if (!m2 || !m2._ll) return;
+        // A merged member is hidden by design; its primary already represents it.
+        var el2 = m2._el;
+        if (el2 && el2.style.display === 'none') {
+          var owner = window._prevGroupOf && window._prevGroupOf[u];
+          if (owner && owner !== uid) return;
+        }
+        var p1 = map.project(m2._ll);
+        var dx = p0.x - p1.x, dy = p0.y - p1.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= CLUSTER_HIT_PX) out[u] = 1;
+      });
+    }
+  } catch (e) {}
+  return Object.keys(out);
+};
+
 window._spiderfy = function (primary, members) {
   if (!members || members.length < 2) return false;
   window._collapseSpider();
@@ -3632,8 +3666,14 @@ window._showGroupedMemberSheet = function (uids) {
       // off the same room record the marker was built from.
       var _dev = '';
       try {
-        var _ru2 = window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users;
-        _dev = (_ru2 && _ru2[u] && _ru2[u].dev) || '';
+        // _lastGlSnap is empty on-device (the root listener is denied), so this used to resolve
+        // to '' every time and the labels this sheet exists for never appeared. The marker
+        // itself carries the device label — _updateMarkerDev stores it on the element.
+        _dev = (mk._el && mk._el.dataset && mk._el.dataset.dev) || '';
+        if (!_dev) {
+          var _ru2 = window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users;
+          _dev = (_ru2 && _ru2[u] && _ru2[u].dev) || '';
+        }
       } catch (e) {}
       if (_dev) nm += ' · ' + _dev;
       // Initials from the RAW name, before " (you)" / " · tablet" decorations — initials() of
@@ -3646,7 +3686,7 @@ window._showGroupedMemberSheet = function (uids) {
       var statusColor = mk._isLive ? '#00e676' : '#a9b4bf';
       var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
       return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
-        '<div style="width:34px;height:34px;border-radius:50%;background:' + _avCol + ';display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(_baseNm)) + '</div>' +
+        '<div data-ava="' + escapeHtmlJs(u) + '" style="width:34px;height:34px;border-radius:50%;background:' + _avCol + ';background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(_baseNm)) + '</div>' +
         '<div style="flex:1;min-width:0">' +
           '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(nm) + '</div>' +
           '<div style="font-size:11px;color:' + statusColor + ';font-weight:800;letter-spacing:.04em">' + statusLabel + '</div>' +
@@ -3658,6 +3698,7 @@ window._showGroupedMemberSheet = function (uids) {
         '<div style="color:#a9b4bf;font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + uids.length + ' PEOPLE TOGETHER</div>' +
         '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
       '</div>' + rows;
+    try { window._paintAvatars(body); } catch (e) {}   // faces in the list match the map
   }
   if (sheet) sheet.style.display = 'block';
   document.body.classList.add('member-open');
@@ -13765,7 +13806,10 @@ function listenUsers() {
         // dot) instead of a Mapbox popup. _showMemberSheet handles the fly-to + follow.
         el.addEventListener('click', function() {
           if (window._pauseFollow) window._pauseFollow(9000);
-          var _grpMembers = window._markerGroupMembers && window._markerGroupMembers[uid];
+          // Ask what is actually stacked here, not just what merged — see _clusterAt.
+          var _grpMembers = uid;
+          try { _grpMembers = window._clusterAt(uid); } catch (e) { _grpMembers = null; }
+          if (!_grpMembers || !_grpMembers.length) _grpMembers = window._markerGroupMembers && window._markerGroupMembers[uid];
           if (_grpMembers && _grpMembers.length > 1) {
             // Fan the cluster out so each person is separately visible and tappable, and
             // ALSO open the list — the fan answers "which dot is who", the sheet answers
