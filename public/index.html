@@ -2983,7 +2983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 670;
+var APP_BUILD = 671;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5606,6 +5606,23 @@ function _withDev(d) {
 // "Your name" alias, so a guest read as "PC". Treat an alias that is exactly a device-label
 // word as "no name set," so the field prompts for a real one instead of showing the label.
 function _isDeviceLabelName(s) { return /^(phone|tablet|pc)$/i.test(String(s || '').trim()); }
+// The name that should represent THIS PERSON on shared records (presence rows, crew roster).
+// A device whose saved name is a device word ("PC", "Tablet", "phone") is the device naming
+// ITSELF, not the human — and because the roster is person-keyed, that word then overwrote the
+// shared entry for every device on the account (2026-08-27: Jace's crew roster entry read "PC"
+// because his PC wrote last). Prefer the account's synced name whenever the local one is a bare
+// device label. The device label field still distinguishes phone / tablet / PC.
+window._personDisplayName = function () {
+  try {
+    var local = (typeof userName !== 'undefined' && userName) || '';
+    if (local && !_isDeviceLabelName(local)) return local;
+    var acct = '';
+    try { acct = (window._acctProfileName || '') || ''; } catch (e) {}
+    if (!acct) { try { acct = localStorage.getItem('gl_acct_name') || ''; } catch (e) {} }
+    if (acct && !_isDeviceLabelName(acct)) return acct;
+    return local;
+  } catch (e) { return (typeof userName !== 'undefined' && userName) || ''; }
+};
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -12183,7 +12200,7 @@ function startLocationSharing() {
     // the still-good held coordinates would be misleading.
     var _effAccM = (lat === rawLat && lng === rawLng) ? _accNow : window._lastGoodFix.acc;
     var _fixPayload = {
-      lat, lng, name: userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
+      lat, lng, name: (typeof _personDisplayName === 'function') ? _personDisplayName() : userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
       // fixTs marks a position confirmed by an ACTUAL GPS fix. `ts` alone can't: the no-GPS
       // heartbeat bumps it on a timer whether or not a fix ever arrives, so "LIVE" meant only
       // "their app is running". A device whose background watcher had silently died showed a
@@ -12792,12 +12809,12 @@ function _listenRoomMembersRoster() {
       try {
         var _rid   = window._myRosterId();
         var _mine  = window._roomMembersRoster[_rid] || window._roomMembersRoster[userId];
-        var _needs = !_mine || ((_mine.name || '') !== (userName || ''));
+        var _needs = !_mine || ((_mine.name || '') !== ((typeof _personDisplayName === 'function' ? _personDisplayName() : userName) || ''));
         if (userId && _needs && _isCircleMember(groupName)) {
           var _rm = (window._roomCfg && window._roomCfg.removed)
                  || (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].config && window._lastGlSnap[groupName].config.removed) || {};
           if (!_rm[userId]) fbSet(fbRef(db, 'gl/' + groupName + '/members/' + _rid), {
-            name: userName,
+            name: (typeof _personDisplayName === 'function') ? _personDisplayName() : userName,
             addedAt: (_mine && _mine.addedAt) || Date.now(),
             addedBy: (_mine && _mine.addedBy) || userId
           });
@@ -20644,6 +20661,9 @@ try {
       // Ignore a device-label name coming down from the cloud (see pushProfile) — restoring it
       // would just re-trigger the wipe-and-reprompt loop on this device.
       if (p.name && !(typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(p.name))) LS.set('gl_name', p.name);
+      // Keep the ACCOUNT's own name available even when this device has a local override,
+      // so _personDisplayName can fall back to it for shared (person-keyed) records.
+      try { if (p.name && !_isDeviceLabelName(p.name)) { window._acctProfileName = p.name; LS.set('gl_acct_name', p.name); } } catch (e) {}
       if (p.nameCustom != null && !(typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(p.name))) LS.set('gl_name_custom', p.nameCustom ? '1' : '0');
       if (p.friends) LS.set('gl_friends', typeof p.friends === 'string' ? p.friends : JSON.stringify(p.friends));
       if (p.muted)   LS.set('gl_muted', typeof p.muted === 'string' ? p.muted : JSON.stringify(p.muted));
