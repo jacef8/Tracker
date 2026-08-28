@@ -53,7 +53,7 @@ function emit(evt) {
 // turned it off (gl_car_audio === '0'). Safe to call repeatedly.
 function _carAudio(on) {
   try {
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('gl_car_audio') === '0') return;
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('gl_car_audio') === '0' && !_iosNative()) return;
     const a = (typeof window !== 'undefined') && window.GLAudioRouter;
     if (!a) return;
     if (on) { if (a.startMediaMode) a.startMediaMode(); }
@@ -155,6 +155,16 @@ export function flushCarAudioForBackground() {
   try { _syncCarAudio(true); } catch (e) {}
 }
 
+
+// iOS vs Android native shell. Both inject window.GLAudioRouter, but they need OPPOSITE
+// treatment for an idle-but-connected room (see _syncVoiceService), so tell them apart.
+function _iosNative() {
+  try {
+    if (typeof window === 'undefined' || !window.GLAudioRouter) return false;
+    return !/Android/i.test(navigator.userAgent || '');
+  } catch (e) { return false; }
+}
+
 // Native foreground service (window.GLAudioRouter.startVoiceService/stopVoiceService) that keeps
 // the app's voice pipeline alive and RECEIVING while backgrounded — a real Android requirement,
 // not just an audio-routing nicety like _carAudio above. Deliberately broader than talkActive/
@@ -167,7 +177,20 @@ function _syncVoiceService() {
     const a = (typeof window !== 'undefined') && window.GLAudioRouter;
     if (!a) return;
     const anyRoomConnected = !!(session && room) || Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
-    if (anyRoomConnected) {
+    // iOS: startVoiceService maps to a RECORD reason, which puts AVAudioSession into
+    // .playAndRecord and holds it there for the whole session. iOS then shows the blue/orange
+    // microphone indicator permanently — even sitting idle, never transmitting — because the
+    // app genuinely does hold the mic open. The silent auto-listen monitor connects on its own
+    // in the background, so this happened without anyone touching the Talk button.
+    //
+    // Android really does need the foreground service to keep receiving. iOS does not: a
+    // .playback session is enough to keep audio alive in the background, and it claims no
+    // microphone. Record is claimed only while actually transmitting (startMediaMode, below),
+    // which is exactly when the indicator SHOULD be lit.
+    if (anyRoomConnected && _iosNative()) {
+      if (a.startClipPlayback) a.startClipPlayback();     // play-only session: no mic indicator
+      if (a.stopVoiceService) a.stopVoiceService();       // drop any record reason left over
+    } else if (anyRoomConnected) {
       if (a.startVoiceService) a.startVoiceService();
       // Push the current notification-visibility preference every time the service (re)starts —
       // it may have been changed in a PRIOR session, and the native side has no other way to
@@ -176,8 +199,9 @@ function _syncVoiceService() {
         const iconOn = (typeof localStorage === 'undefined') || localStorage.getItem('gl_voice_notif_icon') !== '0';
         if (a.setVoiceNotificationVisible) a.setVoiceNotificationVisible(iconOn);
       } catch (e) { /* ignore */ }
-    } else if (a.stopVoiceService) {
-      a.stopVoiceService();
+    } else {
+      if (a.stopVoiceService) a.stopVoiceService();
+      if (_iosNative() && a.stopClipPlayback) a.stopClipPlayback();
     }
   } catch (e) { /* ignore */ }
 }
@@ -836,3 +860,7 @@ function setRx(on) { const el = barEl && barEl.querySelector('#gv-rx'); if (el) 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// Re-assert the audio session after something else releases it (clip playback finishing shares
+// the same 'clip' reason as the iOS idle-listen session).
+export function resyncAudio() { try { _syncVoiceService(); } catch (e) {} }

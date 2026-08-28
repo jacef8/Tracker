@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 678;
+var APP_BUILD = 679;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5894,6 +5894,89 @@ window._refreshAvatarPanel = function () {
 // Groups -> the Crews hub. Pins / Saved spots -> My Map with the Pins drawer open (that
 // drawer holds BOTH the room's live pins and your personal saved library, so the same
 // destination serves both, and the map is what makes a location mean anything).
+
+// ══ iOS BACKGROUND-LOCATION NUDGE ═══════════════════════════════════════════
+// The native shell has been calling window.__nativeSettings(...) on every foreground since
+// 1.0.2 with the OS settings that decide whether background location survives — and nothing
+// on this side ever defined the function, so every report was discarded. That is why "why is
+// this person not updating" could only ever be answered by asking them to read their own
+// Settings screen out loud.
+//
+// "While Using the App" is the big one: it looks completely healthy in the foreground and
+// stops reporting the moment the phone is locked, which reads to everyone else as the member
+// randomly going stale. Tell the member directly, in their own app, instead.
+window._iosSettings = null;
+window.__nativeSettings = function (s) {
+  try {
+    if (!s || typeof s !== 'object') return;
+    window._iosSettings = s;
+    // Published to the crew by riding along on the next position fix (_fixPayload) — the user
+    // node is fbSet WHOLE on every fix, so a separate write here would be erased seconds later.
+    window._checkLocNudge();
+  } catch (e) {}
+};
+
+// Which problems are worth interrupting someone over, worst first. Only settings the member
+// can actually change themselves — no point nagging about something they cannot fix.
+window._locProblems = function () {
+  var s = window._iosSettings; if (!s) return [];
+  var out = [];
+  if (s.locDenied) {
+    out.push({ k: 'denied', t: 'GroundLink cannot see your location',
+               f: 'Settings › GroundLink › Location › Always' });
+  } else if (s.locWhenInUse && !s.locAlways) {
+    out.push({ k: 'whenInUse', t: 'Your location stops when your phone locks',
+               f: 'Settings › GroundLink › Location › Always' });
+  }
+  if (s.precise === false) {
+    out.push({ k: 'precise', t: 'Your location is only accurate to about a mile',
+               f: 'Settings › GroundLink › Location › Precise Location ON' });
+  }
+  if (s.bgRefreshDenied) {
+    out.push({ k: 'bgRefresh', t: 'Background updating is turned off',
+               f: 'Settings › GroundLink › Background App Refresh ON' });
+  }
+  return out;
+};
+
+// Snoozes rather than a permanent dismiss: every one of these silently breaks the whole point
+// of the app, and a member who taps "later" once should not be invisible to the crew forever.
+window._checkLocNudge = function () {
+  try {
+    var probs = window._locProblems();
+    var bar = document.getElementById('loc-nudge');
+    if (!probs.length) { if (bar) bar.remove(); return; }
+    var top = probs[0];
+    var until = 0;
+    try { until = parseInt(localStorage.getItem('gl_locnudge_' + top.k) || '0', 10) || 0; } catch (e) {}
+    if (Date.now() < until) return;
+    if (bar) bar.remove();
+    bar = document.createElement('div');
+    bar.id = 'loc-nudge';
+    bar.style.cssText = 'position:fixed;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);' +
+      'z-index:9200;background:#1a1206;border:2px solid #f0a500;border-radius:14px;padding:12px 14px;' +
+      'box-shadow:0 6px 26px rgba(0,0,0,.6);font-family:system-ui,sans-serif;color:#ffe9bd';
+    bar.innerHTML =
+      '<div style="font-weight:800;font-size:14px;color:#f0a500;margin-bottom:4px">' + escapeHtmlJs(top.t) + '</div>' +
+      '<div style="font-size:13px;line-height:1.35;color:#ffe9bd">Fix it here:<br><b>' + escapeHtmlJs(top.f) + '</b></div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button type="button" id="loc-nudge-later" style="flex:1;background:#2a2113;border:1px solid #6b5320;color:#ffe9bd;border-radius:9px;padding:9px;font-size:13px;font-weight:700">Later</button>' +
+      '<button type="button" id="loc-nudge-done" style="flex:1;background:#f0a500;border:none;color:#1a1206;border-radius:9px;padding:9px;font-size:13px;font-weight:800">I fixed it</button>' +
+      '</div>';
+    document.body.appendChild(bar);
+    var snooze = function (ms) {
+      try { localStorage.setItem('gl_locnudge_' + top.k, String(Date.now() + ms)); } catch (e) {}
+      bar.remove();
+    };
+    // "Later" = one day. "I fixed it" = three days, NOT forever: the native side re-reports the
+    // real setting on the next foreground, so if it actually was fixed this never comes back,
+    // and if they only thought they fixed it, it returns instead of failing silently.
+    bar.querySelector('#loc-nudge-later').onclick = function () { snooze(24 * 3600 * 1000); };
+    bar.querySelector('#loc-nudge-done').onclick  = function () { snooze(3 * 24 * 3600 * 1000); };
+  } catch (e) {}
+};
+try { document.addEventListener('visibilitychange', function () { if (!document.hidden) window._checkLocNudge(); }); } catch (e) {}
+
 window._statGo = function (which) {
   try {
     if (which === 'groups') { if (window._homeGo) window._homeGo('crews'); return; }
@@ -7424,7 +7507,11 @@ window._playVlogClip = function (key) {
   // — WKWebView <audio> otherwise obeys the ring/silent switch and plays nothing. No-op on
   // web/Android (where clip audio already works via the media stream / foreground service).
   try { if (window._voiceModSync && window._voiceModSync.unlockAudio) window._voiceModSync.unlockAudio(); } catch (e) {}
-  var _clipDone = function () { try { if (window.GLAudioRouter && window.GLAudioRouter.stopClipPlayback) window.GLAudioRouter.stopClipPlayback(); } catch (e) {} };
+  var _clipDone = function () {
+    try { if (window.GLAudioRouter && window.GLAudioRouter.stopClipPlayback) window.GLAudioRouter.stopClipPlayback(); } catch (e) {}
+    // On iOS the idle-listen session uses this same reason — put it back if a room is still up.
+    try { window._voiceMod().then(function (m) { if (m.resyncAudio) m.resyncAudio(); }); } catch (e) {}
+  };
   var _fireClip = function () {
     try {
       a.onended = _clipDone; a.onerror = _clipDone; a.src = c.audio;
@@ -12514,6 +12601,9 @@ function startLocationSharing() {
     // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
     // encoding of "this platform doesn't say" (iOS).
     try { if (window._batt) { _fixPayload.batt = window._batt.pct; _fixPayload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
+    // Carry the OS settings that govern background location, so "why is this person stale"
+    // is answerable from the crew view instead of over the phone.
+    try { if (window._iosSettings) _fixPayload.oss = window._iosSettings; } catch (e) {}
     // Low-battery Crew alert — the Life360 "Battery is at 10%" push. Edge-triggered: fires
     // once when the level first crosses 15% while discharging, and re-arms only after real
     // recovery (back above 30%, or plugged in) so a battery hovering at the line can't spam.
