@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 698;
+var APP_BUILD = 699;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5641,18 +5641,29 @@ window._displaySpeed = function (uid, data) {
     var rep = (data && data.spd) || 0;
     if (!uid || !data || typeof data.lat !== 'number') return rep;
     var ts = data.fixTs || data.ts || 0;
-    var prev = window._spdCheck[uid];
-    if (!prev || prev.ts !== ts) window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, prev: prev };
-    if (rep < SPEED_CHECK_MIN_MPH || !prev || prev.ts === ts) return rep;
-    var dtH = (ts - prev.ts) / 3600000;
-    if (dtH <= 0) return rep;
-    var dtS = dtH * 3600;
-    if (dtS < 1.5 || dtS > 60) return rep;            // too short to measure, or too long to trust
-    var miles = metersApart(prev.lat, prev.lng, data.lat, data.lng) / 1609.344;
-    var implied = miles / dtH;
-    if (implied < 5) return rep;                      // barely moved: believe the sensor, not this
-    var ceiling = implied * SPEED_CHECK_TOLERANCE;
-    return rep > ceiling ? Math.round(ceiling) : rep;
+    var st = window._spdCheck[uid];
+
+    // The result is CACHED per fix. The markers re-render many times between fixes, and the
+    // first version of this recomputed each time -- so the very next render, with no newer
+    // position to compare against, fell through to the raw sensor value and painted it back
+    // over the corrected one. The number would blink right and then go wrong again.
+    if (st && st.ts === ts) return st.out;
+
+    if (!st) { window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, out: rep }; return rep; }
+
+    var out = rep;
+    if (rep >= SPEED_CHECK_MIN_MPH) {
+      var dtS = (ts - st.ts) / 1000;
+      if (dtS >= 1.5 && dtS <= 60) {
+        var implied = (metersApart(st.lat, st.lng, data.lat, data.lng) / 1609.344) / (dtS / 3600);
+        if (implied >= 5) {                       // barely moved: believe the sensor, not this
+          var ceiling = implied * SPEED_CHECK_TOLERANCE;
+          if (rep > ceiling) out = Math.round(ceiling);
+        }
+      }
+    }
+    window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, out: out };
+    return out;
   } catch (e) { return (data && data.spd) || 0; }
 };
 function _shouldShowSpeed(uid, data, eligibleOverride) {
