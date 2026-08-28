@@ -3024,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 689;
+var APP_BUILD = 690;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3361,6 +3361,12 @@ var MERGE_JOIN_M = 15, MERGE_SPLIT_M = 30, GROUP_DEBOUNCE_MS = 5000;
 // and the same join/split hysteresis the metre thresholds use, so a pair sitting right at
 // the boundary doesn't flicker between merged and split.
 var MERGE_JOIN_PX = 54, MERGE_SPLIT_PX = 72;
+// Ceiling on the SCREEN-overlap merge. Overlapping dots are a drawing problem; a merged oval
+// says "these people are together", and at county zoom the pixel rule alone was saying it about
+// people miles apart ("it seems like people are together when really they are not"). Past this
+// distance the dots may still overlap — tapping the pile fans it out and lists everyone — but
+// the app stops asserting they are in the same place.
+var MERGE_PX_MAX_M = 400;   // ~a quarter mile: same yard, same lot, same building
 var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
 var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
@@ -3412,7 +3418,12 @@ function _applyMarkerMerged(primary, members) {
   el.style.display = 'flex';
   el.style.width = '68px';
   el.style.borderRadius = '22px';
-  el.style.border = '3px solid #ffffff';
+  // Liveness is per PERSON, but the oval used to inherit the primary's border and opacity — so
+  // one stale member greyed out everyone standing with them, showing live people as not
+  // reporting. The oval is live if ANYONE in it is live; each half then dims on its own.
+  var anyLive = ordered.some(function (u) { var m = userMarkers[u]; return !!(m && m._isLive); });
+  el.style.border = '3px solid ' + (anyLive ? '#ffffff' : '#a9b4bf');
+  el.style.opacity = anyLive ? '1' : '0.65';
   el.style.background = 'transparent';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
@@ -3442,11 +3453,15 @@ function _applyMarkerMerged(primary, members) {
       // Each half now carries that member's own photo, and only falls back to letters.
       var ava = '';
       try { ava = window._avatarSrc(u) || ''; } catch (e) {}
+      // Each half carries its OWN status: a person who has stopped reporting greys out without
+      // dragging the people beside them down with it.
+      var liveU = !!(m && m._isLive);
+      var dim = liveU ? '' : 'opacity:.45;filter:grayscale(1);';
       if (ava) {
-        return '<span style="flex:1;height:100%;background-image:url(&quot;' + ava +
+        return '<span style="flex:1;height:100%;' + dim + 'background-image:url(&quot;' + ava +
           '&quot;);background-size:cover;background-position:center"></span>';
       }
-      return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
+      return '<span style="flex:1;height:100%;' + dim + 'display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
     }).join('');
   }
   // The corner badge belongs to the primary marker alone; on a merged oval it would label
@@ -3520,7 +3535,7 @@ function _updateMarkerGrouping(immediate) {
         var sa = map.project(pa), sb = map.project(pb);
         var dx = sa.x - sb.x, dy = sa.y - sb.y;
         var px = Math.sqrt(dx * dx + dy * dy);
-        if (px < (wasTogether ? MERGE_SPLIT_PX : MERGE_JOIN_PX)) union(a, b);
+        if (px < (wasTogether ? MERGE_SPLIT_PX : MERGE_JOIN_PX) && d < MERGE_PX_MAX_M) union(a, b);
       } catch (e) {}
     }
   }
