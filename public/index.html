@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 705;
+var APP_BUILD = 706;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10268,6 +10268,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 706, t: 'Live breadcrumbs are back',
+    d: 'Tap someone on the map and choose Show trail to draw a live line behind them as they move. History, beside it, still opens a recorded day.' },
   { b: 705, t: 'Everyone stays visible',
     d: 'Nobody is hidden inside a merged blob any more. When people are packed together their dots move apart to stay readable, and a thin line points back to exactly where each one really is.' },
   { b: 704, t: 'No more tapping to split people apart',
@@ -14554,7 +14556,16 @@ function listenUsers() {
         // the same idea. Opens the day viewer, which draws the trail on the map (with start/stop
         // markers), so the separate toggle is redundant. Trail/History/breadcrumb collapse to
         // this single word.
-        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>Trail</button>';
+        var _msHist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>History</button>';
+        // Live breadcrumbs: the line that follows them as they move. Distinct from History
+        // beside it, which opens a recorded day -- merging the two lost this entirely.
+        var _liveOn = false;
+        try { _liveOn = !!window._isMemberTrailOn(uid); } catch (e) {}
+        var _msLive = !isMine
+          ? '<button id="ms-trail-toggle" onclick="window._toggleMemberTrail(\'' + uid + '\',\'' + _safeName + '\')" style="' + _msBtnStyle +
+            (_liveOn ? ';background:rgba(63,185,80,0.16);border-color:#3fb950;color:#3fb950' : '') +
+            '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg><span>' + (_liveOn ? 'Hide trail' : 'Show trail') + '</span></button>'
+          : '';
         var _msFav = !isMine
           ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + _safeName + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + _msBtnStyle + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>'
           : '';
@@ -14612,7 +14623,7 @@ function listenUsers() {
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
           _msTalk +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msHist + _msFav + _msMore + '</div>';
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msLive + _msHist + _msFav + _msMore + '</div>';
         if (window._openMemberUid === uid) {
           var _msb = document.getElementById('member-sheet-body');
           if (_msb) _msb.innerHTML = userMarkers[uid]._sheetHTML;
@@ -21061,7 +21072,7 @@ window._buildPersonSheetHTML = function (uid, data) {
   var talk = (!isMine && !voiceOff) ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + safe + '\')" style="width:100%;margin-top:10px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk to ' + safe + '</button>' : '';
   var follow = (!isMine && hasPos) ? '<button onclick="window._closeMemberSheet();try{map.flyTo({center:[' + data.lng + ',' + data.lat + '],zoom:16,duration:800})}catch(e){};window._followUser(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">' + (live ? 'Follow Live' : 'Go to Last') + '</button>' : '';
   var nav = (!isMine && hasPos) ? '<button onclick="window._navigateTo(' + data.lat + ',' + data.lng + ',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Navigate</button>' : '';
-  var hist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>Trail</button>';
+  var hist = '<button onclick="window._openHistoryForMember(\'' + uid + '\',\'' + safe + '\')" style="' + S + '"><svg class="licon licon-sm"><use href="#ic-footprints"/></svg>History</button>';
   var fav = !isMine ? '<button onclick="window._toggleFriend(\'' + uid + '\',\'' + safe + '\');var f=_isFriend(\'' + uid + '\');this.innerHTML=f?\'★ Favorited\':\'☆ Favorite\';this.style.color=f?\'var(--accent)\':\'var(--text)\';this.style.borderColor=f?\'var(--accent)\':\'var(--border)\';" style="' + S + (_isFriend(uid) ? ';color:var(--accent);border-color:var(--accent)' : '') + '">' + (_isFriend(uid) ? '★ Favorited' : '☆ Favorite') + '</button>' : '';
   var more = !isMine ? '<button onclick="window._memberActionsMenu(\'' + uid + '\',\'' + safe + '\')" style="' + S + '">⋯ More</button>' : '';
   var grid = follow + nav + hist + fav + more;
