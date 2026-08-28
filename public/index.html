@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 686;
+var APP_BUILD = 687;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9780,12 +9780,60 @@ window._forceRestartApp = function () {
   }, 300);
 })();
 
-window._applyUpdate = function() {
+// Applying an update is a NAVIGATION, and a navigation that starts while the app is going into
+// the background is how a phone goes permanently silent. Observed 2026-08-28: Lexi opened the
+// app mid-drive, took the update, and put the phone down — her position AND her diagnostics
+// stopped in the same second at 53 mph, 100% battery, no error, and never came back. iOS
+// suspends the WebView mid-load; the page never finishes, and because this function had already
+// deleted every cache and unregistered the service worker, there was nothing left to fall back
+// on. Both the web writer and the native path that runs through the hidden WebView die together.
+//
+// So: never navigate while hidden, and stop removing the safety net to do it.
+window._applyUpdate = function () {
   var b = document.getElementById('update-banner');
   if (b) { var sp = b.querySelector('span'); if (sp) sp.textContent = 'Updating…'; }
-  try { if (window.caches && caches.keys) caches.keys().then(function(ks) { ks.forEach(function(k) { try { caches.delete(k); } catch (e) {} }); }).catch(function(){}); } catch (e) {}
-  try { if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) navigator.serviceWorker.getRegistrations().then(function(rs) { rs.forEach(function(r) { try { r.unregister(); } catch (e) {} }); }).catch(function(){}); } catch (e) {}
-  setTimeout(function() {
+
+  // Wait for the foreground. A backgrounded app has nothing to gain from reloading NOW, and
+  // everything to lose — it is still reporting fine on the old build until the user comes back.
+  if (document.visibilityState !== 'visible') {
+    if (!window._updateDeferred) {
+      window._updateDeferred = 1;
+      document.addEventListener('visibilitychange', function _go() {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', _go);
+        window._updateDeferred = 0;
+        window._applyUpdate();
+      });
+    }
+    return;
+  }
+
+  // Clear the app's own cache so the new build is fetched — but keep the offline map tiles,
+  // which are large, expensive to rebuild, and have nothing to do with the app version.
+  try {
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (ks) {
+        ks.forEach(function (k) {
+          if (k.indexOf('gltiles_') === 0 || k === 'gl-offline-tiles') return;
+          try { caches.delete(k); } catch (e) {}
+        });
+      }).catch(function () {});
+    }
+  } catch (e) {}
+
+  // Update the worker instead of unregistering it. sw.js already versions its cache per build
+  // and purges the old ones on activate, so unregistering bought nothing and left the app with
+  // no offline fallback at exactly the moment it was about to need one.
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { try { r.update(); } catch (e) {} });
+      }).catch(function () {});
+    }
+  } catch (e) {}
+
+  setTimeout(function () {
+    if (document.visibilityState !== 'visible') { window._applyUpdate(); return; }   // backgrounded in the gap
     var u = location.origin + location.pathname + '?v=' + Date.now();
     try { location.replace(u); } catch (e) { location.href = u; }
   }, 500);
@@ -9806,7 +9854,11 @@ window._pageLoadTs = Date.now();
         if (v && v.ts && v.ts > window._pageLoadTs && !window._forcing) {
           window._forcing = true;
           if (typeof toast === 'function') toast('Updating to the latest version…', 4000);
-          setTimeout(function() { if (window._applyUpdate) window._applyUpdate(); else location.reload(); }, 900);
+          setTimeout(function () {
+            // _applyUpdate defers itself while hidden; only the bare fallback needs guarding.
+            if (window._applyUpdate) { window._applyUpdate(); return; }
+            if (document.visibilityState === 'visible') location.reload();
+          }, 900);
         }
       });
     } catch (e) {}
