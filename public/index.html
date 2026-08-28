@@ -1413,6 +1413,14 @@
             </div>
             <button id="btn-signout" type="button" onclick="window.GLAuth ? GLAuth.signOutUser() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
           </div>
+          <!-- Named in words. The avatar circle above opens the same picker, but a small
+               circle with a "+" badge reads as decoration and was being missed entirely. -->
+          <button type="button" id="acct-photo-cta"
+                  onclick="try{document.getElementById('avatar-file-input').click()}catch(e){}"
+                  style="display:none;width:100%;margin-top:8px;padding:11px;background:var(--accent);border:none;
+                         border-radius:10px;color:#1a1200;font-size:14px;font-weight:800;cursor:pointer">
+            Add a photo for your map icon
+          </button>
           <!-- Preset icons: an alternative to a photo, and NOT buried behind Advanced. -->
           <div id="acct-preset-row" style="display:none"></div>
         </div>
@@ -3026,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 696;
+var APP_BUILD = 697;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6118,6 +6126,8 @@ window._refreshAvatarPanel = function () {
         if (plus) plus.style.display = 'grid';
       }
       // Initials behind the badge until there is a photo.
+      var cta2 = document.getElementById('acct-photo-cta');
+      if (cta2) cta2.textContent = s3 ? 'Change your map icon' : 'Add a photo for your map icon';
       var lbl = ip.querySelector('.acct-ini');
       if (!lbl) { lbl = document.createElement('span'); lbl.className = 'acct-ini'; ip.insertBefore(lbl, ip.firstChild); }
       lbl.textContent = s3 ? '' : ((typeof initials === 'function' && userName) ? initials(userName) : '');
@@ -21805,6 +21815,15 @@ try {
     var guestEl = document.getElementById('acct-guest');
     if (inEl)    inEl.style.display = signedIn ? 'flex' : 'none';
     if (guestEl) guestEl.style.display = signedIn ? 'none' : 'block';
+    // Paint the photo controls HERE too. They used to appear only when the avatars listener
+    // fired, which is a dependency they never needed and which has silently failed before --
+    // reported twice as "I can't find the image upload".
+    try {
+      var cta = document.getElementById('acct-photo-cta');
+      if (cta) cta.style.display = signedIn ? 'block' : 'none';
+      if (signedIn && window._refreshAvatarPanel) window._refreshAvatarPanel();
+      if (signedIn && window._renderPresetRow) window._renderPresetRow();
+    } catch (e) {}
     var appleBtn = document.getElementById('btn-apple');
     var iosCheck = (!signedIn && typeof _isIOS === 'function' && _isIOS());
     if (appleBtn) appleBtn.style.display = iosCheck ? 'flex' : 'none';
