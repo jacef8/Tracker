@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 699;
+var APP_BUILD = 700;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8189,8 +8189,67 @@ function _isDeadRoom(key) {
 // Fails OPEN on an untrusted snapshot (not loaded, unreadable, or empty). A device that can't
 // read gl must keep sharing its location — going silent would be a far worse failure than a
 // stale room lingering, and it is exactly the case where we know least.
+
+// ══ TOMBSTONED ROOMS ════════════════════════════════════════════
+// A deleted room used to be discovered only through _lastGlSnap — the whole-gl snapshot, which
+// is EMPTY on-device since the enumeration lockdown (the root listener is denied). So the
+// reconcile that is supposed to drop dead rooms from the local lists never had anything to
+// work with, and a deleted crew stayed in the switcher forever. Reported 2026-08-28: "I just
+// deleted the test group and it is still showing in crew list".
+//
+// gl/_deadRooms is a small, explicitly readable node. Watch it directly and act on it: no
+// enumeration, no snapshot of every room, nothing that depends on permissions we do not have.
+window._deadRooms = window._deadRooms || {};
+window._listenDeadRooms = function () {
+  try {
+    if (window._deadRoomsUnsub || !window._fb || !window._fb.db) return;
+    window._deadRoomsUnsub = window._fb.onValue(
+      window._fb.ref(window._fb.db, 'gl/_deadRooms'),
+      function (snap) {
+        var dead = snap.val() || {};
+        window._deadRooms = dead;
+        var keys = Object.keys(dead);
+        if (!keys.length) return;
+        var removed = [];
+        try {
+          var c = _getCircles(), touched = false;
+          keys.forEach(function (k) { if (c[k]) { delete c[k]; touched = true; removed.push(k); } });
+          if (touched) _setCircles(c);
+        } catch (e) {}
+        try {
+          var f = _getFavs();
+          var f2 = f.filter(function (x) { return keys.indexOf(typeof x === 'string' ? x : (x && x.key)) === -1; });
+          if (f2.length !== f.length) _setFavs(f2);
+        } catch (e) {}
+        try {
+          var j = _getJoinedRooms(), tj = false;
+          keys.forEach(function (k) { if (j[k]) { delete j[k]; tj = true; } });
+          if (tj) _setJoinedRooms(j);
+        } catch (e) {}
+        // If the room you are STANDING IN was deleted, leave it rather than writing to a grave.
+        try {
+          if (typeof groupName !== 'undefined' && groupName && dead[groupName]) {
+            if (typeof toast === 'function') toast('That crew was deleted', 3200);
+            var btn = document.getElementById('switch-group-btn');
+            if (btn) btn.click();
+          }
+        } catch (e) {}
+        try { if (removed.length && window._renderCrewsSection) window._renderCrewsSection(); } catch (e) {}
+      }
+    );
+  } catch (e) {}
+};
+try {
+  var _drT = setInterval(function () {
+    if (!window._fb || !window._fb.onValue) return;
+    window._listenDeadRooms();
+    if (window._deadRoomsUnsub) clearInterval(_drT);
+  }, 400);
+} catch (e) {}
 function _roomWritable(key) {
   if (!key) return false;
+  // Checked BEFORE the snapshot: this is the one source that actually loads on a device.
+  try { if (window._deadRooms && window._deadRooms[key]) return false; } catch (e) {}
   try {
     var s = window._lastGlSnap;
     if (!s || typeof s !== 'object') return true;
