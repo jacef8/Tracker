@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 700;
+var APP_BUILD = 701;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5633,8 +5633,18 @@ window._motionOf = function (uid, data) {
 // has its own weakness -- position noise makes it useless at low speed, and a curving road
 // makes straight-line distance an UNDER-estimate -- so it is used only as a CEILING, at
 // highway speed, with generous headroom, never to raise a reading.
-var SPEED_CHECK_MIN_MPH = 25;    // below this, position noise dominates; leave the reading alone
-var SPEED_CHECK_TOLERANCE = 1.15; // allow 15% for a curving road before overriding
+var SPEED_CHECK_MIN_MPH = 20;    // below this, position noise dominates; leave the reading alone
+// 15% headroom was far too generous. Measured twice on 2026-08-28: positions implying 70-73 mph
+// reported as 94 (+30%), and positions implying 24-25 reported as 29 (+16%). A 15% ceiling let
+// the second case through untouched and only trimmed the first to ~84 -- still wrong, and still
+// the kind of number that starts an argument about someone's driving.
+//
+// Distance over time is the trustworthy quantity here; the tolerance exists only to absorb the
+// two ways it can UNDER-read: a curving road between two fixes, and position noise. Both are
+// small over a several-second interval on a road, so 5% covers them. Erring this way is also
+// the safer direction: it under-states rather than accusing someone of speeding.
+var SPEED_CHECK_TOLERANCE = 1.05;
+var SPEED_CHECK_MIN_DT_S = 2.5;  // shorter than this and GPS noise swamps the distance
 window._spdCheck = window._spdCheck || {};
 window._displaySpeed = function (uid, data) {
   try {
@@ -5647,14 +5657,14 @@ window._displaySpeed = function (uid, data) {
     // first version of this recomputed each time -- so the very next render, with no newer
     // position to compare against, fell through to the raw sensor value and painted it back
     // over the corrected one. The number would blink right and then go wrong again.
-    if (st && st.ts === ts) return st.out;
+    if (st && (st.ts === ts || st.lastTs === ts)) return st.out;
 
     if (!st) { window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, out: rep }; return rep; }
 
     var out = rep;
     if (rep >= SPEED_CHECK_MIN_MPH) {
       var dtS = (ts - st.ts) / 1000;
-      if (dtS >= 1.5 && dtS <= 60) {
+      if (dtS >= SPEED_CHECK_MIN_DT_S && dtS <= 60) {
         var implied = (metersApart(st.lat, st.lng, data.lat, data.lng) / 1609.344) / (dtS / 3600);
         if (implied >= 5) {                       // barely moved: believe the sensor, not this
           var ceiling = implied * SPEED_CHECK_TOLERANCE;
@@ -5662,7 +5672,14 @@ window._displaySpeed = function (uid, data) {
         }
       }
     }
-    window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, out: out };
+    // Only advance the comparison point once it is old enough to measure against. A phone
+    // reporting every second would otherwise always be comparing across ~1s -- below the noise
+    // floor -- and the check would silently never fire.
+    if ((ts - st.ts) / 1000 >= SPEED_CHECK_MIN_DT_S) {
+      window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, out: out };
+    } else {
+      st.out = out; st.lastTs = ts;
+    }
     return out;
   } catch (e) { return (data && data.spd) || 0; }
 };
