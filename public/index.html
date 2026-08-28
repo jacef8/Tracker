@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 684;
+var APP_BUILD = 685;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3299,6 +3299,18 @@ function _animateMarker(marker, toLng, toLat) {
 }
 // Smoothly recenter the map on a followed member as each new fix arrives (linear easing
 // matches the marker glide, so the icon stays centered and moves smoothly together).
+// The member sheet covers the bottom of the map, so every camera move made while it is open
+// has to keep the dot ABOVE it. The opening flyTo already did; the per-fix recenters did not,
+// so tapping a LIVE person worked for about a second and then the next fix pulled them back
+// under the card — which is why "the window covers the person" came back for someone driving
+// while it looked fixed for someone parked.
+function _camPad() {
+  try {
+    if (!document.body.classList.contains('member-open')) return null;
+    if (typeof _sheetPad !== 'function') return null;
+    return _sheetPad();
+  } catch (e) { return null; }
+}
 function _followRecenter(lng, lat) {
   if (!followUid) return;
   // Respect the interaction pause. Fixes arrive ~every second, so without this check a manual
@@ -3306,7 +3318,11 @@ function _followRecenter(lng, lat) {
   // recenter ignored it ("can't hardly move the map at all before it snaps back"). The follow
   // tick resumes centering a few seconds after the user stops touching the map.
   if (Date.now() < (window._followPausedUntil || 0)) return;
-  try { map.easeTo({ center: [lng, lat], duration: 1400, easing: function(t) { return t; } }); } catch (e) {}
+  try {
+    var _o = { center: [lng, lat], duration: 1400, easing: function (t) { return t; } };
+    var _p = _camPad(); if (_p) _o.padding = _p;
+    map.easeTo(_o);
+  } catch (e) {}
 }
 // One camera update per self-fix, combining recenter (if following yourself) and rotate
 // (if Heading Up is on) — a single easeTo so the two don't cancel each other.
@@ -3320,6 +3336,7 @@ function _applyCameraOnSelfFix(lng, lat) {
   var opts = null;
   if (followUid === userId) {
     opts = { center: [lng, lat], duration: 1400, easing: function(t) { return t; } };
+    var _sp = _camPad(); if (_sp) opts.padding = _sp;
     if (headed) opts.bearing = window._lastHeading;
   } else if (headed) {
     opts = { bearing: window._lastHeading, duration: 700 };
