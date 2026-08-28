@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 679;
+var APP_BUILD = 680;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5905,6 +5905,16 @@ window._refreshAvatarPanel = function () {
 // "While Using the App" is the big one: it looks completely healthy in the foreground and
 // stops reporting the moment the phone is locked, which reads to everyone else as the member
 // randomly going stale. Tell the member directly, in their own app, instead.
+
+// The native audio-session reasons outlive a page reload (they live in the app process, not
+// here). A build that changes how the session is claimed must therefore clear the previous
+// page's claim itself, or iOS keeps showing the microphone indicator until a force-quit.
+try {
+  if (window.GLAudioRouter && window.GLAudioRouter.stopVoiceService && !/Android/i.test(navigator.userAgent || '')) {
+    window.GLAudioRouter.stopVoiceService();
+  }
+} catch (e) {}
+
 window._iosSettings = null;
 window.__nativeSettings = function (s) {
   try {
@@ -6277,7 +6287,7 @@ function _applyVoicePref() {
   try { _setPill('set-voice-pill', on); } catch (e) {}
   // If voice was switched off during an active call, end it.
   if (!on && document.getElementById('gv-bar')) {
-    try { import('./voice.js').then(function (m) { if (m.leaveVoice) m.leaveVoice(); }); } catch (e) {}
+    try { window._voiceMod().then(function (m) { if (m.leaveVoice) m.leaveVoice(); }); } catch (e) {}
   }
   // Voice off also stops the device auto-listen monitor; on re-enables it.
   try { window._syncDeviceMonitor && window._syncDeviceMonitor(); } catch (e) {}
@@ -21611,7 +21621,9 @@ try {
 // device auto-joins the same room (if its voice is on) and hears you with no
 // "accept" step. The room id is deterministic so both sides converge on it.
 
-window._voiceMod = function () { return import('./voice.js'); };
+// Versioned so a new build actually gets the new voice.js. Without this the page updated and
+// the module kept running from cache, which silently discarded every voice fix we shipped.
+window._voiceMod = function () { return import('./voice.js?v=' + APP_BUILD); };
 function _gvRoomId(uid) { return 'gv_' + groupName + '_' + [userId, uid].sort().join('~'); }
 function _closePeopleDrawer() { try { document.getElementById('user-drawer').classList.remove('open'); if (typeof setLocateMeVisible === 'function') setLocateMeVisible(true); } catch (e) {} }
 // Deterministic room id for a chosen subset (same set of people → same room).
