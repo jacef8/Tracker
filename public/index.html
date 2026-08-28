@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 682;
+var APP_BUILD = 683;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5935,6 +5935,65 @@ try {
   }
 } catch (e) {}
 
+
+// ══ BACKGROUND-LOCATION SELF-CHECK ══════════════════════════════════════════
+// The native settings push (__nativeSettings) is present in the shipped app and still never
+// arrives, and changing that needs an App Store build. So don't ask the phone what its
+// permission is — measure whether background reporting actually WORKS, which is the thing we
+// care about anyway and is answerable on iOS, Android and plain web alike.
+//
+// The test has to be strict, because a stationary phone legitimately writes nothing: a member
+// sitting at home all evening is not broken. So a failure is only counted when the phone
+// MOVED a real distance while the app was backgrounded AND not one position was recorded in
+// that whole stretch. That combination has no innocent explanation — it is exactly what
+// "While Using the App", Background App Refresh off, or Low Power throttling look like.
+var _BG_MIN_HIDDEN_MS = 6 * 60 * 1000;   // ignore short app switches
+var _BG_MIN_MOVE_MI   = 0.25;            // far enough that a fix was certainly due
+var _BG_FAILS_TO_NUDGE = 2;              // one bad stretch could be a dead zone; two is a pattern
+
+function _bgMark() {
+  try {
+    var g = window._lastGPS;
+    localStorage.setItem('gl_bg_mark', JSON.stringify({
+      at: Date.now(), lat: g ? g.lat : null, lng: g ? g.lng : null
+    }));
+  } catch (e) {}
+}
+
+function _bgVerify() {
+  try {
+    var raw = localStorage.getItem('gl_bg_mark'); if (!raw) return;
+    localStorage.removeItem('gl_bg_mark');
+    var m = JSON.parse(raw); if (!m || !m.at) return;
+    if (Date.now() - m.at < _BG_MIN_HIDDEN_MS) return;        // too brief to prove anything
+    if (m.lat == null || m.lng == null) return;               // no starting point to compare
+    var g = window._lastGPS; if (!g) return;
+    if (typeof distanceMilesNum !== 'function') return;
+    var moved = distanceMilesNum(m.lat, m.lng, g.lat, g.lng);
+    if (moved < _BG_MIN_MOVE_MI) return;                      // stayed put — nothing to report
+    if (!window._fb || !groupName || !userId) return;
+    // Did ANY position land while we were away?
+    window._fb.get(window._fb.ref(window._fb.db, 'gl/' + groupName + '/users/' + userId)).then(function (snap) {
+      try {
+        var row = snap.val() || {};
+        var newest = row.ts || row.fixTs || 0;
+        var reported = newest > (m.at + 90 * 1000);
+        var n = 0;
+        try { n = parseInt(localStorage.getItem('gl_bg_fails') || '0', 10) || 0; } catch (e) {}
+        if (reported) { n = 0; } else { n++; }
+        try { localStorage.setItem('gl_bg_fails', String(n)); } catch (e) {}
+        if (n >= _BG_FAILS_TO_NUDGE) window._checkLocNudge();
+      } catch (e) {}
+    }).catch(function () {});
+  } catch (e) {}
+}
+
+try {
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) _bgMark(); else setTimeout(_bgVerify, 8000);   // let a fresh fix land first
+  });
+} catch (e) {}
+
 window._iosSettings = null;
 window.__nativeSettings = function (s) {
   try {
@@ -5950,8 +6009,21 @@ window.__nativeSettings = function (s) {
 // Which problems are worth interrupting someone over, worst first. Only settings the member
 // can actually change themselves — no point nagging about something they cannot fix.
 window._locProblems = function () {
-  var s = window._iosSettings; if (!s) return [];
+  var s = window._iosSettings;
   var out = [];
+  // Measured failure. Listed first because it is evidence rather than a setting: this phone
+  // demonstrably moved without reporting. Shown even when the native settings never arrive,
+  // which is currently every device.
+  try {
+    var fails = parseInt(localStorage.getItem('gl_bg_fails') || '0', 10) || 0;
+    if (fails >= 2) {
+      var android = /Android/i.test(navigator.userAgent || '');
+      out.push({ k: 'bg', t: 'Your location stops when GroundLink is closed',
+                 f: android ? 'Settings › Apps › GroundLink › Permissions › Location › Allow all the time'
+                            : 'Settings › GroundLink › Location › Always' });
+    }
+  } catch (e) {}
+  if (!s) return out;
   if (s.locDenied) {
     out.push({ k: 'denied', t: 'GroundLink cannot see your location',
                f: 'Settings › GroundLink › Location › Always' });
@@ -5995,15 +6067,18 @@ window._checkLocNudge = function () {
       '<button type="button" id="loc-nudge-done" style="flex:1;background:#f0a500;border:none;color:#1a1206;border-radius:9px;padding:9px;font-size:13px;font-weight:800">I fixed it</button>' +
       '</div>';
     document.body.appendChild(bar);
-    var snooze = function (ms) {
+    var snooze = function (ms, clearEvidence) {
       try { localStorage.setItem('gl_locnudge_' + top.k, String(Date.now() + ms)); } catch (e) {}
+      // Reset the measured count on "I fixed it" so the next background stretch judges the new
+      // setting on its own merits instead of re-firing on the old evidence.
+      if (clearEvidence) { try { localStorage.setItem('gl_bg_fails', '0'); } catch (e) {} }
       bar.remove();
     };
     // "Later" = one day. "I fixed it" = three days, NOT forever: the native side re-reports the
     // real setting on the next foreground, so if it actually was fixed this never comes back,
     // and if they only thought they fixed it, it returns instead of failing silently.
     bar.querySelector('#loc-nudge-later').onclick = function () { snooze(24 * 3600 * 1000); };
-    bar.querySelector('#loc-nudge-done').onclick  = function () { snooze(3 * 24 * 3600 * 1000); };
+    bar.querySelector('#loc-nudge-done').onclick  = function () { snooze(3 * 24 * 3600 * 1000, true); };
   } catch (e) {}
 };
 try { document.addEventListener('visibilitychange', function () { if (!document.hidden) window._checkLocNudge(); }); } catch (e) {}
@@ -12638,6 +12713,8 @@ function startLocationSharing() {
     try {
       _fixPayload.nb = (window.GLAudioRouter ? 'r' : '-') + (window.GLPushToTalk ? 'p' : '-') +
                        (window._nativeSettingsSeen ? 's' : '-');
+      var _bf = parseInt(localStorage.getItem('gl_bg_fails') || '0', 10) || 0;
+      if (_bf) _fixPayload.bgf = _bf;
     } catch (e) {}
     // Low-battery Crew alert — the Life360 "Battery is at 10%" push. Edge-triggered: fires
     // once when the level first crosses 15% while discharging, and re-arms only after real
