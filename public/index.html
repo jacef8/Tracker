@@ -3024,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 688;
+var APP_BUILD = 689;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9868,6 +9868,84 @@ window._applyUpdate = function () {
 // Global "force update" broadcast: an admin can set _forceReload to make every running
 // app reload to the latest build. Only fires for apps that loaded BEFORE the trigger
 // (so it never loops). Auto-rejoin restores the user to their room on the fresh build.
+
+// ══ WHAT'S NEW ══════════════════════════════════════════════════════════════
+// A feature nobody can find is the same as one that does not exist — the profile photo control
+// shipped and then sat unnoticed inside a collapsed section. The app updates itself silently,
+// so people have no way to learn anything changed. Show what is new since the build they last
+// opened, in plain language, and only for things they can actually SEE or DO.
+//
+// Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
+// the bug; internals never do. Newest first, and prune entries older than a few weeks.
+var CHANGELOG = [
+  { b: 688, t: 'Add your photo',
+    d: 'Open Account and tap your face at the top. Your picture replaces your initials on the map for everyone in your crews. Signed in with Google? Yours is used automatically.' },
+  { b: 687, t: 'Updates wait until you are looking',
+    d: 'Taking an update while the app was in your pocket could stop your location sharing until you reopened the app. Updates now hold until GroundLink is on screen.' },
+  { b: 685, t: 'The info card no longer hides the person',
+    d: 'Tapping someone who is driving used to slide them back underneath their own info card a second later. They stay in view now.' },
+  { b: 684, t: 'See everyone stacked on one spot',
+    d: 'When people are standing together their dots pile up. Tap the pile to fan it out and get a list of everyone there.' },
+  { b: 681, t: 'The channel no longer holds your microphone',
+    d: 'iPhones showed the microphone indicator all day because the walkie-talkie channel joined itself automatically. It is opt-in now — tap Talk to open it.' }
+];
+
+window._showWhatsNew = function (force) {
+  try {
+    if (document.getElementById('whatsnew')) return;
+    var last = 0;
+    try { last = parseInt(localStorage.getItem('gl_lastSeenBuild') || '0', 10) || 0; } catch (e) {}
+    // First run on a device: show only what this build brought, not a wall of history.
+    if (!last) last = APP_BUILD - 1;
+    var items = CHANGELOG.filter(function (c) { return c.b > last; }).slice(0, 5);
+    if (force) items = CHANGELOG.slice(0, 5);
+    if (!items.length) { _markWhatsNewSeen(); return; }
+
+    var wrap = document.createElement('div');
+    wrap.id = 'whatsnew';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:9400;background:rgba(0,0,0,.62);display:flex;align-items:flex-end;justify-content:center;padding:14px';
+    var rows = items.map(function (c) {
+      return '<div style="padding:11px 0;border-top:1px solid rgba(255,255,255,.09)">' +
+        '<div style="font-size:14px;font-weight:800;color:var(--text);margin-bottom:3px">' + escapeHtmlJs(c.t) + '</div>' +
+        '<div style="font-size:13px;line-height:1.45;color:#a9b4bf">' + escapeHtmlJs(c.d) + '</div>' +
+      '</div>';
+    }).join('');
+    wrap.innerHTML =
+      '<div style="width:100%;max-width:520px;max-height:80vh;overflow-y:auto;background:var(--card,#0d1117);border:1px solid var(--border);border-radius:16px;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -6px 30px rgba(0,0,0,.6)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">' +
+          '<div><div style="font-size:17px;font-weight:800;color:var(--accent)">What’s new</div>' +
+          '<div style="font-size:11px;color:#a9b4bf;margin-top:2px">Since you last opened GroundLink</div></div>' +
+          '<button type="button" id="whatsnew-x" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;border:none;border-radius:50%;background:rgba(255,255,255,.1);color:#e6edf3;font-size:19px;cursor:pointer">✕</button>' +
+        '</div>' + rows +
+        '<button type="button" id="whatsnew-ok" style="width:100%;margin-top:14px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#1a1200;font-size:14px;font-weight:800;cursor:pointer">Got it</button>' +
+      '</div>';
+    document.body.appendChild(wrap);
+    var close = function () { try { wrap.remove(); } catch (e) {} _markWhatsNewSeen(); };
+    wrap.querySelector('#whatsnew-x').onclick = close;
+    wrap.querySelector('#whatsnew-ok').onclick = close;
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+  } catch (e) {}
+};
+function _markWhatsNewSeen() {
+  try { localStorage.setItem('gl_lastSeenBuild', String(APP_BUILD)); } catch (e) {}
+}
+
+// Show it once the app has settled, and never over a backgrounded page (it would be dismissed
+// unseen and the entry would be marked read without anyone reading it).
+try {
+  setTimeout(function () {
+    if (document.visibilityState !== 'visible') {
+      document.addEventListener('visibilitychange', function _wn() {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', _wn);
+        setTimeout(function () { window._showWhatsNew(); }, 1200);
+      });
+      return;
+    }
+    window._showWhatsNew();
+  }, 2600);
+} catch (e) {}
+
 window._pageLoadTs = Date.now();
 (function _forceReloadWatch() {
   var t = setInterval(function() {
