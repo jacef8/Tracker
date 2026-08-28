@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 703;
+var APP_BUILD = 704;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3377,6 +3377,10 @@ var MERGE_JOIN_PX = 54, MERGE_SPLIT_PX = 72;
 // distance the dots may still overlap — tapping the pile fans it out and lists everyone — but
 // the app stops asserting they are in the same place.
 var MERGE_PX_MAX_M = 400;   // ~a quarter mile: same yard, same lot, same building
+// Below this many markers on one spot, spread them apart rather than merging them into an oval
+// that has to be tapped open. Two or three faces side by side is more useful than one shape
+// plus an interaction, and it never hides anyone.
+var MERGE_MIN_PILEUP = 4;
 var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
 var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
@@ -3491,7 +3495,9 @@ var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
 // separation that costs a little positional precision at the zoom where a pixel is already a
 // mile, and unwinds completely as soon as you zoom in far enough for them not to collide.
 var SPREAD_HIT_PX = 46;        // marker is 44px — closer than this and one is hidden
-var SPREAD_MAX_PX = 30;        // never displace a dot further than this from its true spot
+var SPREAD_MAX_PX = 46;        // never displace a dot further than this from its true spot
+// Raised from 30 when small clusters stopped merging: people standing together overlap almost
+// exactly, and 30px could not pull two 44px dots clear of each other.
 function _spreadOverlappingMarkers() {
   try {
     if (typeof map === 'undefined' || !map || window._spider) return;
@@ -3619,6 +3625,18 @@ function _updateMarkerGrouping(immediate) {
 
   var rawGroups = {};
   uids.forEach(function (u) { var r = find(u); (rawGroups[r] = rawGroups[r] || []).push(u); });
+  // Small clusters are handled by nudging the dots apart instead of collapsing them into one
+  // tappable oval, so nobody has to open a shape to find out who is inside it. Only a genuine
+  // pile-up still merges, where spreading alone would leave an unreadable scrum.
+  try {
+    Object.keys(rawGroups).forEach(function (r) {
+      var g = rawGroups[r];
+      if (g.length > 1 && g.length < MERGE_MIN_PILEUP) {
+        delete rawGroups[r];
+        g.forEach(function (u) { rawGroups['solo:' + u] = [u]; });
+      }
+    });
+  } catch (e) {}
   var newPrev = {};
   Object.keys(rawGroups).forEach(function (r) { rawGroups[r].forEach(function (u) { newPrev[u] = r; }); });
   window._prevGroupOf = newPrev;
@@ -10195,6 +10213,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 704, t: 'No more tapping to split people apart',
+    d: 'When people are close together their dots now separate on their own, so you can see everyone at a glance instead of tapping a merged blob to open it.' },
   { b: 694, t: 'Pick an icon instead of a photo',
     d: 'Do not want your face on the map? Open Account and choose an icon under your name \u2014 a deer, a truck, a dog. It shows everywhere a photo would.' },
   { b: 692, t: 'Walking, moving, driving',
