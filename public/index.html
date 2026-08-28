@@ -3026,7 +3026,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 695;
+var APP_BUILD = 696;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19924,8 +19924,13 @@ window._exitSoloMap = function() {
   // Account strands you somewhere you never asked to be.
   try { window._goPanel(0); } catch (e) {}
   try { if (window._joinPagerReset) window._joinPagerReset(); } catch (e) {}
-  // Land on the hub area you were last in rather than whatever was showing before My Map.
-  try { if (window._homeGo) window._homeGo(window._homeArea || 'talk'); } catch (e) {}
+  // Land on the hub area you were last in rather than whatever was showing before My Map --
+  // but NEVER back into My Map itself. _homeGo stamps _homeArea with whatever it opened, so
+  // after entering My Map that value IS 'mymap', and exiting re-entered it instantly: the EXIT
+  // button looked completely dead while in fact working perfectly and undoing itself.
+  var _back = window._homeArea;
+  if (_back === 'mymap') _back = 'rooms';
+  try { if (window._homeGo) window._homeGo(_back || 'talk'); } catch (e) {}
   try { if (window._sizePagerSoon) window._sizePagerSoon(); } catch (e) {}
 };
 window._soloPinPopup = function(feature, lngLat) {
