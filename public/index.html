@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 685;
+var APP_BUILD = 686;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6008,6 +6008,7 @@ try {
 var _BG_MIN_HIDDEN_MS = 6 * 60 * 1000;   // ignore short app switches
 var _BG_MIN_MOVE_MI   = 0.25;            // far enough that a fix was certainly due
 var _BG_FAILS_TO_NUDGE = 2;              // one bad stretch could be a dead zone; two is a pattern
+var _BG_SAME_AREA_MI   = 5;              // failures nearer than this are probably the same dead zone
 
 function _bgMark() {
   try {
@@ -6036,11 +6037,37 @@ function _bgVerify() {
         var row = snap.val() || {};
         var newest = row.ts || row.fixTs || 0;
         var reported = newest > (m.at + 90 * 1000);
-        var n = 0;
-        try { n = parseInt(localStorage.getItem('gl_bg_fails') || '0', 10) || 0; } catch (e) {}
-        if (reported) { n = 0; } else { n++; }
-        try { localStorage.setItem('gl_bg_fails', String(n)); } catch (e) {}
-        if (n >= _BG_FAILS_TO_NUDGE) window._checkLocNudge();
+        if (reported) {
+          try { localStorage.setItem('gl_bg_fails', '0'); localStorage.removeItem('gl_bg_spots'); } catch (e) {}
+          return;
+        }
+        // A gap is not proof of a permission problem. Out here the same rural stretches have no
+        // data service, and a GPS fix that cannot be uploaded looks identical to one that was
+        // never taken (observed 2026-08-28: Lexi, backgrounded, bgStarted, native fixes landing
+        // every second at 100% battery, silent from one point on Pea Ridge Rd). Counting that
+        // would nudge her to change a setting that was never wrong.
+        //
+        // Two signals separate the cases:
+        //   1. The phone says background location is running and has no error — then the gap is
+        //      transport, and there is nothing for the member to fix.
+        //   2. A dead zone is a PLACE; a permission fault travels with the phone. So failures
+        //      only add up when they happen in different parts of the county.
+        try {
+          if (window._bgGeoStarted && !window._bgGeoError && window._gotNativeFix) return;
+        } catch (e) {}
+        var spots = [];
+        try { spots = JSON.parse(localStorage.getItem('gl_bg_spots') || '[]') || []; } catch (e) {}
+        var here = { lat: g.lat, lng: g.lng };
+        var farFromAll = spots.every(function (sp) {
+          try { return distanceMilesNum(sp.lat, sp.lng, here.lat, here.lng) > _BG_SAME_AREA_MI; }
+          catch (e) { return true; }
+        });
+        if (!farFromAll) return;                 // same dead zone again — not new evidence
+        spots.push(here);
+        if (spots.length > 5) spots = spots.slice(-5);
+        try { localStorage.setItem('gl_bg_spots', JSON.stringify(spots)); } catch (e) {}
+        try { localStorage.setItem('gl_bg_fails', String(spots.length)); } catch (e) {}
+        if (spots.length >= _BG_FAILS_TO_NUDGE) window._checkLocNudge();
       } catch (e) {}
     }).catch(function () {});
   } catch (e) {}
@@ -6129,7 +6156,7 @@ window._checkLocNudge = function () {
       try { localStorage.setItem('gl_locnudge_' + top.k, String(Date.now() + ms)); } catch (e) {}
       // Reset the measured count on "I fixed it" so the next background stretch judges the new
       // setting on its own merits instead of re-firing on the old evidence.
-      if (clearEvidence) { try { localStorage.setItem('gl_bg_fails', '0'); } catch (e) {} }
+      if (clearEvidence) { try { localStorage.setItem('gl_bg_fails', '0'); localStorage.removeItem('gl_bg_spots'); } catch (e) {} }
       bar.remove();
     };
     // "Later" = one day. "I fixed it" = three days, NOT forever: the native side re-reports the
