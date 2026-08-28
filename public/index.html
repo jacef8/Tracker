@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 702;
+var APP_BUILD = 703;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3496,14 +3496,27 @@ function _spreadOverlappingMarkers() {
   try {
     if (typeof map === 'undefined' || !map || window._spider) return;
     var vis = [];
-    Object.keys(userMarkers).forEach(function (u) {
-      var mk = userMarkers[u], el = mk && mk._el;
-      if (!el || el.style.display === 'none' || !mk._ll) return;
-      var p; try { p = map.project(mk._ll); } catch (e) { return; }
-      vis.push({ u: u, mk: mk, el: el, x: p.x, y: p.y, dx: 0, dy: 0 });
-    });
+    // Every marker drawn on the map, whichever collection it came from. A dot that cannot be
+    // seen is not less of a problem because it belongs to a device rather than a person.
+    var collect = function (store, isDevice) {
+      Object.keys(store || {}).forEach(function (u) {
+        var mk = store[u];
+        var el = mk && (mk._el || (mk.getElement && mk.getElement()));
+        if (!el || el.style.display === 'none') return;
+        // Device markers carry no _ll; ask the marker itself where it is.
+        var ll = mk._ll;
+        if (!ll && mk.getLngLat) { try { var g = mk.getLngLat(); ll = [g.lng, g.lat]; } catch (e) { return; } }
+        if (!ll) return;
+        var p; try { p = map.project(ll); } catch (e) { return; }
+        vis.push({ u: u, mk: mk, el: el, x: p.x, y: p.y, dx: 0, dy: 0, dev: !!isDevice });
+      });
+    };
+    collect(userMarkers, false);
+    collect(window._deviceMarkers, true);
     if (vis.length < 2) {
-      vis.forEach(function (v) { if (v.el.style.marginLeft) { v.el.style.marginLeft = ''; v.el.style.marginTop = ''; } });
+      vis.forEach(function (v) {
+        if (v.el.style.marginLeft) { v.el.style.marginLeft = ''; v.el.style.marginTop = ''; }
+      });
       return;
     }
     // Two relaxation passes is plenty for the handful of dots a family map ever has.
@@ -3532,6 +3545,9 @@ function _spreadOverlappingMarkers() {
       var mt = Math.abs(v.dy) < 0.5 ? '' : (Math.round(v.dy) + 'px');
       if (v.el.style.marginLeft !== ml) v.el.style.marginLeft = ml;
       if (v.el.style.marginTop !== mt) v.el.style.marginTop = mt;
+      // The watch is the smallest dot on the map and the easiest to lose behind a 44px photo,
+      // so when anything is still overlapping it, it draws on top rather than underneath.
+      if (v.dev) { var z = (ml || mt) ? '6' : '5'; if (v.el.style.zIndex !== z) v.el.style.zIndex = z; }
     });
   } catch (e) {}
 }
