@@ -1209,10 +1209,18 @@
   <div class="join-card">
     <div style="display:flex;align-items:center;gap:12px">
       <img src="/icons/icon-192.png" alt="GroundLink" style="width:42px;height:42px;border-radius:11px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.4)" />
-      <div>
+      <div style="flex:1;min-width:0">
         <div class="join-title" style="font-size:20px">GroundLink</div>
         <div class="join-sub">Live field map · shared pins</div>
       </div>
+      <!-- Your own photo, where you actually see it. Tap to change (opens the same picker as
+           Account). Falls back to your initials, and hides entirely for signed-out guests. -->
+      <button id="home-avatar" type="button" title="Change your photo" aria-label="Change your photo"
+              onclick="try{document.getElementById('avatar-file-input').click()}catch(e){}"
+              style="display:none;width:44px;height:44px;border-radius:50%;flex-shrink:0;border:2px solid var(--accent);
+                     background:var(--bg);background-size:cover;background-position:center;cursor:pointer;
+                     color:var(--accent);font-weight:800;font-size:15px;align-items:center;justify-content:center;
+                     box-shadow:0 2px 10px rgba(0,0,0,.45)"></button>
     </div>
 
     <!-- Swipe pager: Quick join ⇄ Account -->
@@ -2997,7 +3005,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 672;
+var APP_BUILD = 673;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5160,7 +5168,7 @@ window._ensurePresenceSub = function (fb) {
 // opened Account could sit showing a nuked Crew/Favorite on its Home screen indefinitely. Firing
 // it here too — right after Firebase auth actually resolves, once per launch — means a nuke
 // self-heals on the very next cold start with no extra tap required.
-try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._listenAvatars(); } catch (e) {} try { _registerAllFavSubs(); } catch (e) {} try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._listenAvatars(); } catch (e) {} try { setTimeout(function(){ try { window._maybeAdoptPhoto(); } catch(e){} }, 2500); } catch (e) {} try { _registerAllFavSubs(); } catch (e) {} try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
 
 // ── ACCOUNT DEVICE SESSIONS ────────────────────────────────────────────────────────────────
 // Every device signed into YOUR account reports what it's doing to gl/_users/<acct>/sessions/<id>
@@ -5696,7 +5704,19 @@ window._listenAvatars = function () {
       window._avatars = snap.val() || {};
       try { localStorage.setItem('gl_avatars_cache', JSON.stringify(window._avatars)); } catch (e) {}
       window._repaintAllAvatars();
+      // Adopt the provider photo HERE, not at sign-in: auth resolves before the database handle
+      // exists, so the sign-in call always hit the `!db` guard and bailed — gl/_avatars stayed
+      // empty for everyone (found 2026-08-27, Jace's Google photo never appeared). By this point
+      // db is live AND we know which avatars already exist, so an upload is never clobbered.
+      try { window._maybeAdoptPhoto(); } catch (e) {}
     });
+  } catch (e) {}
+};
+// Pull the signed-in user straight from the auth handle rather than waiting to be handed one.
+window._maybeAdoptPhoto = function () {
+  try {
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    if (u && !u.isAnonymous) window._adoptProviderPhoto(u);
   } catch (e) {}
 };
 // Adopt the provider photo (Google) at sign-in - free, no upload, no storage of our own. Never
@@ -5754,6 +5774,17 @@ window._removeAvatar = function () {
 // Account panel: show the current photo (or initials) and reveal the row only when signed in,
 // since a photo is per-account and a guest has nowhere to store one.
 window._refreshAvatarPanel = function () {
+  try {
+    // Home-screen chip (same photo, tap to change).
+    var hb = document.getElementById('home-avatar');
+    if (hb) {
+      var acc2 = (typeof _myAcct === 'function') ? _myAcct() : '';
+      var s2 = acc2 ? window._avatarSrc(acc2) : '';
+      hb.style.display = acc2 ? 'flex' : 'none';
+      if (s2) { hb.style.backgroundImage = 'url("' + s2 + '")'; hb.textContent = ''; }
+      else { hb.style.backgroundImage = ''; hb.textContent = (typeof initials === 'function' && userName) ? initials(userName) : '+'; }
+    }
+  } catch (e) {}
   try {
     var row = document.getElementById('account-photo-row'); if (!row) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
