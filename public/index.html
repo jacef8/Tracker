@@ -1395,8 +1395,14 @@
             <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:9px;line-height:1.5">Free, and keeps your name, friends &amp; favorites on every device you use.</div>
           </div>
           <!-- Signed-in view -->
+          <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="window._pickAvatar && window._pickAvatar(this.files && this.files[0]); this.value='';" />
           <div id="acct-in" style="display:none;align-items:center;gap:10px;background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:9px 12px">
-            <span style="width:9px;height:9px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>
+            <!-- Tap your own face to change it. This is the primary way in; the Advanced row
+                 below still offers Remove. -->
+            <button type="button" id="acct-in-photo" onclick="document.getElementById('avatar-file-input').click()" title="Change your photo"
+              style="width:42px;height:42px;border-radius:50%;flex-shrink:0;background:var(--border);background-size:cover;background-position:center;border:2px solid rgba(63,185,80,.55);display:grid;place-items:center;font-weight:800;font-size:15px;color:var(--text);cursor:pointer;padding:0;position:relative">
+              <span id="acct-in-photo-plus" style="position:absolute;right:-2px;bottom:-2px;width:17px;height:17px;border-radius:50%;background:var(--accent);color:#1a1200;font-size:12px;font-weight:900;display:grid;place-items:center;border:2px solid var(--bg)">+</span>
+            </button>
             <div style="flex:1;min-width:0">
               <!-- Deliberately blank, not "Signed in": this is the DEFAULT shown before auth
                    resolves, so hard-coding "Signed in" made the app claim a signed-in state it
@@ -1513,7 +1519,6 @@
                 </div>
               </div>
               <div style="font-size:11px;color:var(--muted);margin-top:7px">Shown on the map for every device you are signed in on. Signed in with Google? Your Google picture is used automatically until you pick one.</div>
-              <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="window._pickAvatar && window._pickAvatar(this.files && this.files[0]); this.value='';" />
             </div>
 
             <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you.
@@ -3019,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 687;
+var APP_BUILD = 688;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5928,6 +5933,27 @@ window._refreshAvatarPanel = function () {
       hb.style.display = acc2 ? 'flex' : 'none';
       if (s2) { hb.style.backgroundImage = 'url("' + s2 + '")'; hb.textContent = ''; }
       else { hb.style.backgroundImage = ''; hb.textContent = (typeof initials === 'function' && userName) ? initials(userName) : '+'; }
+    }
+  } catch (e) {}
+  try {
+    // The primary control, on the signed-in row.
+    var ip = document.getElementById('acct-in-photo');
+    if (ip) {
+      var acc3 = (typeof _myAcct === 'function') ? _myAcct() : '';
+      var s3 = acc3 ? window._avatarSrc(acc3) : '';
+      var plus = document.getElementById('acct-in-photo-plus');
+      if (s3) {
+        ip.style.backgroundImage = 'url("' + s3 + '")';
+        if (plus) plus.style.display = 'none';
+      } else {
+        ip.style.backgroundImage = '';
+        ip.childNodes.forEach && null;
+        if (plus) plus.style.display = 'grid';
+      }
+      // Initials behind the badge until there is a photo.
+      var lbl = ip.querySelector('.acct-ini');
+      if (!lbl) { lbl = document.createElement('span'); lbl.className = 'acct-ini'; ip.insertBefore(lbl, ip.firstChild); }
+      lbl.textContent = s3 ? '' : ((typeof initials === 'function' && userName) ? initials(userName) : '');
     }
   } catch (e) {}
   try {
