@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 706;
+var APP_BUILD = 707;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21014,7 +21014,20 @@ function _sheetPad() {
     var sh = document.getElementById('member-sheet');
     var h = (sh && sh.style.display !== 'none') ? sh.getBoundingClientRect().height : 0;
     if (window.innerWidth >= 700) return { top: 0, left: 440, right: 0, bottom: 0 };
-    return { top: 0, left: 0, right: 0, bottom: Math.min(Math.round(h) + 24, Math.round(window.innerHeight * 0.7)) || 240 };
+    // Measure the header + toolbar too. Padding only for the sheet centred the dot in a band
+    // starting at the top of the CANVAS, which sits behind that chrome -- so the person landed
+    // near the top of the strip you can actually see instead of in the middle of it.
+    var top = 0;
+    try {
+      var tb = document.getElementById('topbar');
+      var r = tb && tb.getBoundingClientRect();
+      if (r && r.height > 0 && tb.style.display !== 'none') top = Math.round(r.bottom) + 12;
+    } catch (e) {}
+    var bottom = Math.min(Math.round(h) + 24, Math.round(window.innerHeight * 0.7)) || 240;
+    // Both insets together must leave a usable band; if the sheet is unusually tall, give the
+    // remaining space back to the map rather than squeezing the camera into nothing.
+    if (top + bottom > window.innerHeight * 0.85) top = Math.max(0, Math.round(window.innerHeight * 0.85) - bottom);
+    return { top: top, left: 0, right: 0, bottom: bottom };
   } catch (e) { return { top: 0, left: 0, right: 0, bottom: 240 }; }
 }
 window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 7000); };
