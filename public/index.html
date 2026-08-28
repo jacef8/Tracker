@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 704;
+var APP_BUILD = 705;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3380,7 +3380,10 @@ var MERGE_PX_MAX_M = 400;   // ~a quarter mile: same yard, same lot, same buildi
 // Below this many markers on one spot, spread them apart rather than merging them into an oval
 // that has to be tapped open. Two or three faces side by side is more useful than one shape
 // plus an interaction, and it never hides anyone.
-var MERGE_MIN_PILEUP = 4;
+// Set beyond any real crew: markers are never merged now. Everyone and everything on the map
+// stays its own visible dot, however tight the group -- see the leader lines below, which are
+// what make that honest rather than just crowded.
+var MERGE_MIN_PILEUP = 999;
 var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
 var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
@@ -3495,9 +3498,60 @@ var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
 // separation that costs a little positional precision at the zoom where a pixel is already a
 // mile, and unwinds completely as soon as you zoom in far enough for them not to collide.
 var SPREAD_HIT_PX = 46;        // marker is 44px — closer than this and one is hidden
-var SPREAD_MAX_PX = 46;        // never displace a dot further than this from its true spot
+var SPREAD_MAX_PX = 80;        // never displace a dot further than this from its true spot
+var SPREAD_PASSES = 4;         // more markers on one spot need more relaxation to settle
 // Raised from 30 when small clusters stopped merging: people standing together overlap almost
 // exactly, and 30px could not pull two 44px dots clear of each other.
+
+// A dot that has been nudged aside is no longer standing where the person is. On a map that
+// difference is the whole point, so draw a thin line from the moved dot back to its true
+// position: the separation becomes a readable device instead of a quiet lie about where
+// somebody is. Only drawn for dots actually displaced -- an untouched dot needs no explanation.
+var LEADER_MIN_PX = 6;
+function _drawMarkerLeaders(vis) {
+  try {
+    if (typeof map === 'undefined' || !map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    var feats = [];
+    (vis || []).forEach(function (v) {
+      var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
+      if (m < LEADER_MIN_PX || !v.ll) return;
+      var moved;
+      try { moved = map.unproject([v.x + v.dx, v.y + v.dy]); } catch (e) { return; }
+      feats.push({
+        type: 'Feature', properties: {},
+        geometry: { type: 'LineString', coordinates: [[v.ll[0], v.ll[1]], [moved.lng, moved.lat]] }
+      });
+    });
+    var data = { type: 'FeatureCollection', features: feats };
+    if (!map.getSource('marker-leaders')) {
+      map.addSource('marker-leaders', { type: 'geojson', data: data });
+      map.addLayer({
+        id: 'marker-leaders',
+        type: 'line',
+        source: 'marker-leaders',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 1.6,
+          'line-opacity': 0.55
+        }
+      });
+      // A small dot at the TRUE position, so the line points at something rather than
+      // trailing off into the grass.
+      map.addLayer({
+        id: 'marker-leader-anchors',
+        type: 'circle',
+        source: 'marker-leaders',
+        paint: {
+          'circle-radius': 2.6,
+          'circle-color': '#ffffff',
+          'circle-opacity': 0.75
+        }
+      });
+      return;
+    }
+    map.getSource('marker-leaders').setData(data);
+  } catch (e) {}
+}
 function _spreadOverlappingMarkers() {
   try {
     if (typeof map === 'undefined' || !map || window._spider) return;
@@ -3514,7 +3568,7 @@ function _spreadOverlappingMarkers() {
         if (!ll && mk.getLngLat) { try { var g = mk.getLngLat(); ll = [g.lng, g.lat]; } catch (e) { return; } }
         if (!ll) return;
         var p; try { p = map.project(ll); } catch (e) { return; }
-        vis.push({ u: u, mk: mk, el: el, x: p.x, y: p.y, dx: 0, dy: 0, dev: !!isDevice });
+        vis.push({ u: u, mk: mk, el: el, ll: ll, x: p.x, y: p.y, dx: 0, dy: 0, dev: !!isDevice });
       });
     };
     collect(userMarkers, false);
@@ -3523,10 +3577,10 @@ function _spreadOverlappingMarkers() {
       vis.forEach(function (v) {
         if (v.el.style.marginLeft) { v.el.style.marginLeft = ''; v.el.style.marginTop = ''; }
       });
+      _drawMarkerLeaders([]);
       return;
     }
-    // Two relaxation passes is plenty for the handful of dots a family map ever has.
-    for (var pass = 0; pass < 2; pass++) {
+    for (var pass = 0; pass < SPREAD_PASSES; pass++) {
       for (var i = 0; i < vis.length; i++) {
         for (var j = i + 1; j < vis.length; j++) {
           var a = vis[i], b = vis[j];
@@ -3555,6 +3609,7 @@ function _spreadOverlappingMarkers() {
       // so when anything is still overlapping it, it draws on top rather than underneath.
       if (v.dev) { var z = (ml || mt) ? '6' : '5'; if (v.el.style.zIndex !== z) v.el.style.zIndex = z; }
     });
+    _drawMarkerLeaders(vis);
   } catch (e) {}
 }
 function _layoutMarkerChips() {
@@ -10213,6 +10268,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 705, t: 'Everyone stays visible',
+    d: 'Nobody is hidden inside a merged blob any more. When people are packed together their dots move apart to stay readable, and a thin line points back to exactly where each one really is.' },
   { b: 704, t: 'No more tapping to split people apart',
     d: 'When people are close together their dots now separate on their own, so you can see everyone at a glance instead of tapping a merged blob to open it.' },
   { b: 694, t: 'Pick an icon instead of a photo',
