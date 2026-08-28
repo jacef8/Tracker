@@ -3024,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 692;
+var APP_BUILD = 693;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9938,6 +9938,10 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 692, t: 'Walking, moving, driving',
+    d: 'The map now shows HOW someone is moving, not just how fast. Walking and cycling used to look the same as standing still.' },
+  { b: 690, t: 'Fewer false "they are together"',
+    d: 'Zoomed out, people miles apart could be drawn as one merged dot. That now only happens when they really are close. A stale person also no longer greys out everyone standing with them.' },
   { b: 688, t: 'Add your photo',
     d: 'Open Account and tap your face at the top. Your picture replaces your initials on the map for everyone in your crews. Signed in with Google? Yours is used automatically.' },
   { b: 687, t: 'Updates wait until you are looking',
@@ -9954,11 +9958,16 @@ window._showWhatsNew = function (force) {
   try {
     if (document.getElementById('whatsnew')) return;
     var last = 0;
-    try { last = parseInt(localStorage.getItem('gl_lastSeenBuild') || '0', 10) || 0; } catch (e) {}
-    // First run on a device: show only what this build brought, not a wall of history.
-    if (!last) last = APP_BUILD - 1;
-    var items = CHANGELOG.filter(function (c) { return c.b > last; }).slice(0, 5);
-    if (force) items = CHANGELOG.slice(0, 5);
+    try { last = parseInt(localStorage.getItem('gl_wn_seen') || '0', 10) || 0; } catch (e) {}
+    var items;
+    if (force || !last) {
+      // Never seen it: show the three most recent entries. The old rule filtered against
+      // APP_BUILD-1, which resolved to nothing whenever the newest entry predated the current
+      // build -- so it rendered an empty card, marked itself seen, and never spoke again.
+      items = CHANGELOG.slice(0, force ? 5 : 3);
+    } else {
+      items = CHANGELOG.filter(function (c) { return c.b > last; }).slice(0, 5);
+    }
     if (!items.length) { _markWhatsNewSeen(); return; }
 
     var wrap = document.createElement('div');
@@ -9987,7 +9996,9 @@ window._showWhatsNew = function (force) {
   } catch (e) {}
 };
 function _markWhatsNewSeen() {
-  try { localStorage.setItem('gl_lastSeenBuild', String(APP_BUILD)); } catch (e) {}
+  // New key: the old one was already stamped on every device by the empty-card bug above, so
+  // reusing it would keep this permanently silent for exactly the people who never saw it.
+  try { localStorage.setItem('gl_wn_seen', String(APP_BUILD)); } catch (e) {}
 }
 
 // Show it once the app has settled, and never over a backgrounded page (it would be dismissed
