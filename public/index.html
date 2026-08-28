@@ -1482,6 +1482,20 @@
               <div id="account-sessions"></div>
             </div>
 
+            <!-- Profile photo — one per PERSON, shown on the map instead of initials. -->
+            <div id="account-photo-row" style="display:none;margin-top:14px">
+              <div class="field-label" style="margin-bottom:6px">Your photo</div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <div id="account-photo-preview" style="width:52px;height:52px;border-radius:50%;flex-shrink:0;background:var(--border);display:grid;place-items:center;font-weight:800;font-size:17px;color:var(--text);background-size:cover;background-position:center"></div>
+                <div style="display:flex;gap:7px;flex-wrap:wrap">
+                  <button onclick="document.getElementById('avatar-file-input').click()" style="padding:9px 14px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:13px;font-weight:800;cursor:pointer">Choose photo</button>
+                  <button id="account-photo-remove" onclick="window._removeAvatar && window._removeAvatar()" style="display:none;padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Remove</button>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:7px">Shown on the map for every device you are signed in on. Signed in with Google? Your Google picture is used automatically until you pick one.</div>
+              <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="window._pickAvatar && window._pickAvatar(this.files && this.files[0]); this.value='';" />
+            </div>
+
             <!-- My devices — private trackers (e.g. a kid's watch); yours + ones shared with you.
                  The whole block is gated in _renderMyDevices: full section only when you actually
                  have a device (or a pending share); otherwise it collapses to the compact
@@ -2983,7 +2997,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 671;
+var APP_BUILD = 672;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5146,7 +5160,7 @@ window._ensurePresenceSub = function (fb) {
 // opened Account could sit showing a nuked Crew/Favorite on its Home screen indefinitely. Firing
 // it here too — right after Firebase auth actually resolves, once per launch — means a nuke
 // self-heals on the very next cold start with no extra tap required.
-try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { _registerAllFavSubs(); } catch (e) {} try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
+try { if (typeof waitForFirebase === 'function') waitForFirebase(function (fb) { try { window._listenAvatars(); } catch (e) {} try { _registerAllFavSubs(); } catch (e) {} try { window._ensurePresenceSub(fb); } catch (e) {} try { window._listenDevices && window._listenDevices(); } catch (e) {} try { window._subMySessions && window._subMySessions(); } catch (e) {} try { window._listenCircles && window._listenCircles(); } catch (e) {} }); } catch (e) {}
 
 // ── ACCOUNT DEVICE SESSIONS ────────────────────────────────────────────────────────────────
 // Every device signed into YOUR account reports what it's doing to gl/_users/<acct>/sessions/<id>
@@ -5612,6 +5626,151 @@ function _isDeviceLabelName(s) { return /^(phone|tablet|pc)$/i.test(String(s || 
 // shared entry for every device on the account (2026-08-27: Jace's crew roster entry read "PC"
 // because his PC wrote last). Prefer the account's synced name whenever the local one is a bare
 // device label. The device label field still distinguishes phone / tablet / PC.
+
+// == PROFILE PHOTOS ==================================================================
+// A face is read off a map instantly; initials are not - and two Fords both reduced to "LF".
+// Photos belong to the PERSON (account), never the handset, so one photo covers your phone,
+// tablet and PC while the device label keeps them apart. Google sign-in publishes a photo we
+// can adopt for free; Apple never provides one, so those accounts upload or keep initials.
+// Stored at gl/_avatars/<accountUid> - a TOP-LEVEL node deliberately outside the room tree, so
+// a ~7 KB image can never bloat the live map snapshot the way history once did.
+window._avatars = {};
+try { window._avatars = JSON.parse(localStorage.getItem('gl_avatars_cache') || '{}') || {}; } catch (e) {}
+window._avatarSrc = function (uid) {
+  try {
+    if (!uid) return '';
+    var a = window._avatars[uid];
+    if (!a) { var pid = (typeof window._personId === 'function') ? window._personId(uid) : uid; if (pid && pid !== uid) a = window._avatars[pid]; }
+    if (!a) return '';
+    return a.img || a.url || '';
+  } catch (e) { return ''; }
+};
+// Paint every avatar chip carrying data-ava="<uid>" (People rows, sheets). Falls back to the
+// initials already in the element, so no-photo users look exactly as they do today.
+window._paintAvatars = function (root) {
+  try {
+    var scope = root || document;
+    scope.querySelectorAll('[data-ava]').forEach(function (el) {
+      var src = window._avatarSrc(el.getAttribute('data-ava'));
+      if (src) {
+        el.style.backgroundImage = 'url("' + src + '")';
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+        el.style.color = 'transparent';
+      } else {
+        el.style.backgroundImage = '';
+        el.style.color = '';
+      }
+    });
+  } catch (e) {}
+};
+// Map marker: the photo fills the dot, the member's colour stays as the ring so colour-coding
+// still works. No photo -> the initials path is untouched.
+window._applyMarkerAvatar = function (uid) {
+  try {
+    var mk = (typeof userMarkers !== 'undefined') && userMarkers[uid]; if (!mk) return;
+    var el = mk._el || (mk.getElement && mk.getElement()); if (!el) return;
+    var ini = el.querySelector('.mk-initials');
+    var merged = window._markerGroupMembers && window._markerGroupMembers[uid] && window._markerGroupMembers[uid].length > 1;
+    var src = merged ? '' : window._avatarSrc(uid);
+    if (src) {
+      el.style.backgroundImage = 'url("' + src + '")';
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+      if (ini) ini.style.display = 'none';
+    } else {
+      el.style.backgroundImage = '';
+      if (ini) ini.style.display = '';
+    }
+  } catch (e) {}
+};
+window._repaintAllAvatars = function () {
+  try { Object.keys((typeof userMarkers !== 'undefined' && userMarkers) || {}).forEach(window._applyMarkerAvatar); } catch (e) {}
+  try { window._paintAvatars(); } catch (e) {}
+  try { window._refreshAvatarPanel(); } catch (e) {}
+};
+window._listenAvatars = function () {
+  try {
+    if (window._avatarsUnsub || !db) return;
+    window._avatarsUnsub = fbOnValue(fbRef(db, 'gl/_avatars'), function (snap) {
+      window._avatars = snap.val() || {};
+      try { localStorage.setItem('gl_avatars_cache', JSON.stringify(window._avatars)); } catch (e) {}
+      window._repaintAllAvatars();
+    });
+  } catch (e) {}
+};
+// Adopt the provider photo (Google) at sign-in - free, no upload, no storage of our own. Never
+// clobbers a photo the person uploaded themselves (img outranks url).
+window._adoptProviderPhoto = function (user) {
+  try {
+    if (!user || user.isAnonymous || !db) return;
+    var url = user.photoURL || '';
+    try { (user.providerData || []).forEach(function (pd) { if (!url && pd && pd.photoURL) url = pd.photoURL; }); } catch (e) {}
+    if (!url) return;
+    var cur = window._avatars[user.uid];
+    if (cur && cur.img) return;
+    if (cur && cur.url === url) return;
+    fbSet(fbRef(db, 'gl/_avatars/' + user.uid), { url: url, ts: Date.now(), src: 'provider' });
+  } catch (e) {}
+};
+// Upload: downscale to a 160px square JPEG (~6-10 KB) entirely on-device, then store the data
+// URL. Small enough to live in the database and be cached on every phone.
+window._pickAvatar = function (file) {
+  try {
+    if (!file) return;
+    var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
+    if (!acct) { toast('Sign in first to set a photo'); return; }
+    if (!/^image\//.test(file.type || '')) { toast('Pick an image file'); return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      var im = new Image();
+      im.onload = function () {
+        try {
+          var S = 160, c = document.createElement('canvas'); c.width = c.height = S;
+          var x = c.getContext('2d');
+          var side = Math.min(im.width, im.height);
+          x.drawImage(im, (im.width - side) / 2, (im.height - side) / 2, side, side, 0, 0, S, S);
+          var out = c.toDataURL('image/jpeg', 0.72);
+          if (out.length > 60000) out = c.toDataURL('image/jpeg', 0.55);
+          if (out.length > 90000) { toast('That image is too large - try another'); return; }
+          fbSet(fbRef(db, 'gl/_avatars/' + acct), { img: out, ts: Date.now(), src: 'upload' });
+          toast('Photo updated');
+        } catch (e) { toast('Could not read that image'); }
+      };
+      im.onerror = function () { toast('Could not read that image'); };
+      im.src = rd.result;
+    };
+    rd.onerror = function () { toast('Could not read that file'); };
+    rd.readAsDataURL(file);
+  } catch (e) {}
+};
+window._removeAvatar = function () {
+  try {
+    var acct = (typeof _myAcct === 'function') ? _myAcct() : ''; if (!acct) return;
+    fbRemove(fbRef(db, 'gl/_avatars/' + acct));
+    toast('Photo removed');
+  } catch (e) {}
+};
+// Account panel: show the current photo (or initials) and reveal the row only when signed in,
+// since a photo is per-account and a guest has nowhere to store one.
+window._refreshAvatarPanel = function () {
+  try {
+    var row = document.getElementById('account-photo-row'); if (!row) return;
+    var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
+    row.style.display = acct ? 'block' : 'none';
+    if (!acct) return;
+    var pv = document.getElementById('account-photo-preview');
+    var rm = document.getElementById('account-photo-remove');
+    var a = window._avatars[acct] || null;
+    var src = a ? (a.img || a.url || '') : '';
+    if (pv) {
+      if (src) { pv.style.backgroundImage = 'url("' + src + '")'; pv.textContent = ''; }
+      else { pv.style.backgroundImage = ''; pv.textContent = (typeof initials === 'function' ? initials(userName || '?') : ''); }
+    }
+    if (rm) rm.style.display = (a && a.img) ? 'inline-block' : 'none';
+  } catch (e) {}
+};
+
 window._personDisplayName = function () {
   try {
     var local = (typeof userName !== 'undefined' && userName) || '';
@@ -13206,6 +13365,7 @@ function listenUsers() {
         _initEl.className = 'mk-initials';
         _initEl.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit';
         _initEl.textContent = _initialsFor(uid, data.name);
+        setTimeout(function () { try { window._applyMarkerAvatar(uid); } catch (e) {} }, 0);
         el.appendChild(_initEl);
         // MUST stay 'absolute'. Mapbox's own .mapboxgl-marker rule is position:absolute, and it
         // places every marker purely by transform from the container's origin. An inline
@@ -13283,6 +13443,7 @@ function listenUsers() {
           var _ie = el && el.querySelector('.mk-initials');
           var _merged = window._markerGroupMembers && window._markerGroupMembers[uid] && window._markerGroupMembers[uid].length > 1;
           if (_ie && !_merged && _ie.textContent !== userMarkers[uid]._initials) _ie.textContent = userMarkers[uid]._initials;
+          window._applyMarkerAvatar(uid);
         } catch (e) {}
         if (el) {
           el.style.background   = fillColor;
@@ -13466,7 +13627,7 @@ function listenUsers() {
       row.style.display = 'block';
       row.innerHTML =
         '<div style="display:flex;align-items:center;gap:9px;min-width:0">' +
-          '<div class="user-avatar" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + escapeHtmlJs(initials(data.name)) + '</div>' +
+          '<div class="user-avatar" data-ava="' + uid + '" data-ucolor="' + uid + '"' + (!isMine ? ' title="Tap to set this person\'s color"' : '') + ' style="background:' + fillColor + ';color:' + textColor + ';font-weight:800' + (!isMine ? ';cursor:pointer' : '') + '">' + escapeHtmlJs(initials(data.name)) + '</div>' +
           '<div class="uname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtmlJs(_withDev(data)) +
             // No "(you)" text here — the collapse pass appends a single "YOU" pill below, which
             // is the one identity marker on your own row.
@@ -20940,6 +21101,7 @@ try {
     // it is the one place that can't be bypassed by some future caller.
     if (!user || user.isAnonymous) return;
     var googleName = (user.displayName || '').trim();
+    try { window._adoptProviderPhoto(user); } catch (e) {}   // free avatar from Google (Apple gives none)
     ensureUid();                              // keep THIS device's own id (its own dot)
     LS.set('gl_account_uid', user.uid);   // account identity → profile sync key
     LS.set('gl_account', 'google');
