@@ -3034,7 +3034,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 697;
+var APP_BUILD = 698;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5619,6 +5619,42 @@ window._motionOf = function (uid, data) {
     return { icon: '🚗', label: 'Driving', spd: Math.round(m) };
   } catch (e) { return null; }
 };
+
+// ══ SPEED, CROSS-CHECKED AGAINST GROUND COVERED ═════════════════════════════
+// The reported speed is the phone's Doppler reading. It runs high, and nothing ever checked it
+// against the only independent evidence available: how far the dot actually moved. Measured
+// 2026-08-28 on I-10 -- 206-216 ft every 2 seconds, which is 70-73 mph, while the app showed
+// 94 and then 80.
+//
+// On a family map that is not a cosmetic error. "94 mph" starts a conversation that "70 mph"
+// does not, and it would be about something that never happened.
+//
+// Distance over time cannot be inflated by a bad sensor: it is two positions and a clock. It
+// has its own weakness -- position noise makes it useless at low speed, and a curving road
+// makes straight-line distance an UNDER-estimate -- so it is used only as a CEILING, at
+// highway speed, with generous headroom, never to raise a reading.
+var SPEED_CHECK_MIN_MPH = 25;    // below this, position noise dominates; leave the reading alone
+var SPEED_CHECK_TOLERANCE = 1.15; // allow 15% for a curving road before overriding
+window._spdCheck = window._spdCheck || {};
+window._displaySpeed = function (uid, data) {
+  try {
+    var rep = (data && data.spd) || 0;
+    if (!uid || !data || typeof data.lat !== 'number') return rep;
+    var ts = data.fixTs || data.ts || 0;
+    var prev = window._spdCheck[uid];
+    if (!prev || prev.ts !== ts) window._spdCheck[uid] = { lat: data.lat, lng: data.lng, ts: ts, prev: prev };
+    if (rep < SPEED_CHECK_MIN_MPH || !prev || prev.ts === ts) return rep;
+    var dtH = (ts - prev.ts) / 3600000;
+    if (dtH <= 0) return rep;
+    var dtS = dtH * 3600;
+    if (dtS < 1.5 || dtS > 60) return rep;            // too short to measure, or too long to trust
+    var miles = metersApart(prev.lat, prev.lng, data.lat, data.lng) / 1609.344;
+    var implied = miles / dtH;
+    if (implied < 5) return rep;                      // barely moved: believe the sensor, not this
+    var ceiling = implied * SPEED_CHECK_TOLERANCE;
+    return rep > ceiling ? Math.round(ceiling) : rep;
+  } catch (e) { return (data && data.spd) || 0; }
+};
 function _shouldShowSpeed(uid, data, eligibleOverride) {
   // Speed is an INSTANTANEOUS quantity — it has no meaning past the fix that measured it.
   // This gate had no freshness check, so a member whose phone stopped reporting mid-drive
@@ -5751,7 +5787,7 @@ function _updateMarkerSpeed(el, data, isLive, uid) {
   if (!s) return;
   var mv = (isLive !== false) ? window._motionOf(uid, data) : null;
   if (_shouldShowSpeed(uid, data, isLive)) {
-    s.textContent = (mv ? mv.icon + ' ' : '') + data.spd + ' mph';
+    s.textContent = (mv ? mv.icon + ' ' : '') + window._displaySpeed(uid, data) + ' mph';
     s.style.display = 'block';
     return;
   }
@@ -14376,7 +14412,7 @@ function listenUsers() {
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
-            '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>'
+            '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + window._displaySpeed(uid, data) + ' mph</span>'
               : (_motion ? ' · <span style="color:#7ee787">' + _motion.icon + ' ' + escapeHtmlJs(_motion.label) + '</span>' : '')) + '</div>' +
             '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
           '</div>' +
