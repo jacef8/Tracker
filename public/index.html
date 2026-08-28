@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 676;
+var APP_BUILD = 677;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5744,7 +5744,33 @@ window._listenAvatars = function () {
                 ' byDevice=' + (_dev ? 'yes' : 'no') +
                 ' homeEl=' + _el + ' devOwner=' + Object.keys(window._devOwnerAll || {}).length);
             } catch (e) {}
-          }, 3000);
+            // Element-level truth: does the style actually land, and does it survive?
+            try {
+              var out = [];
+              var hb = document.getElementById('home-avatar');
+              if (hb) {
+                var cs = getComputedStyle(hb);
+                out.push('home[disp=' + cs.display + ',bgImg=' + (hb.style.backgroundImage ? 'set' + hb.style.backgroundImage.length : 'EMPTY') +
+                         ',computed=' + (cs.backgroundImage || '').slice(0, 14) + ']');
+              } else { out.push('home[MISSING]'); }
+              var uid = (typeof userId !== 'undefined') ? userId : '';
+              var mk = (typeof userMarkers !== 'undefined') && userMarkers[uid];
+              if (mk) {
+                var mel = mk._el || (mk.getElement && mk.getElement());
+                if (mel) {
+                  var mcs = getComputedStyle(mel);
+                  out.push('mk[inline=' + (mel.style.backgroundImage ? 'set' + mel.style.backgroundImage.length : 'EMPTY') +
+                           ',computed=' + (mcs.backgroundImage || '').slice(0, 14) +
+                           ',w=' + mcs.width + ',ini=' + (mel.querySelector('.mk-initials') ? 'yes' : 'no') + ']');
+                } else { out.push('mk[NO-EL]'); }
+              } else { out.push('mk[NO-MARKER uid=' + String(uid).slice(0, 8) + ' keys=' + Object.keys((typeof userMarkers !== 'undefined' && userMarkers) || {}).length + ']'); }
+              var chips = document.querySelectorAll('[data-ava]');
+              var painted = 0;
+              chips.forEach(function (c) { if (c.style.backgroundImage) painted++; });
+              out.push('chips=' + chips.length + ' painted=' + painted);
+              window._evt('🔎 ' + out.join(' '));
+            } catch (e) { try { window._evt('🔎 diag error: ' + (e && e.message)); } catch (x) {} }
+          }, 4000);
         }
       } catch (e) {}
       // Adopt the provider photo HERE, not at sign-in: auth resolves before the database handle
