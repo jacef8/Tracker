@@ -3024,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 691;
+var APP_BUILD = 692;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5519,6 +5519,42 @@ window._speedShownState = window._speedShownState || {};
     }).catch(function () {});
   } catch (e) {}
 })();
+// ══ HOW SOMEONE IS MOVING ══════════════════════
+// Only driving was ever indicated (a car glyph above 25 mph), so someone on foot or on a bike
+// looked exactly like someone standing still.
+//
+// This reads SPEED, which is not the same as knowing the activity, and the design follows from
+// that limit. A car crawling through a parking lot moves at cycling speed; a runner and a slow
+// cyclist are indistinguishable. So judge on SUSTAINED speed rather than a single fix (one GPS
+// sample can be wildly wrong), keep the bands wide, and do not overclaim -- the middle band is
+// "Moving", not a guess between bike and run.
+//
+// A real classifier needs the phone's motion sensors (CMMotionActivity on iOS, Activity
+// Recognition on Android), which know the difference because they feel it. That needs a native
+// build; this does not, and it says only what speed can support.
+var MOTION_MIN_SAMPLES = 2;
+window._spdHist = window._spdHist || {};
+window._motionOf = function (uid, data) {
+  try {
+    if (!data || data.spdH || data.hidden || data.noGps) return null;
+    var now = Date.now();
+    if ((now - (data.fixTs || data.ts || 0)) >= LIVE_MS) return null;
+    var h = window._spdHist[uid] = (window._spdHist[uid] || []);
+    var stamp = data.fixTs || data.ts;
+    var last = h[h.length - 1];
+    if (!last || last.ts !== stamp) h.push({ ts: stamp, spd: data.spd || 0 });
+    while (h.length && (now - h[0].ts) > 120000) h.shift();   // right now, not five minutes ago
+    if (h.length > 8) h.splice(0, h.length - 8);
+    if (h.length < MOTION_MIN_SAMPLES) return null;
+    // Median, not average: one bogus 90 mph sample from a bad fix cannot promote a walk.
+    var v = h.map(function (x) { return x.spd || 0; }).sort(function (a, b) { return a - b; });
+    var m = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+    if (m < 1.5) return null;                                 // standing still
+    if (m < 5.5) return { icon: '🚶', label: 'Walking', spd: Math.round(m) };
+    if (m < 15)  return { icon: '🚲', label: 'Moving',  spd: Math.round(m) };
+    return { icon: '🚗', label: 'Driving', spd: Math.round(m) };
+  } catch (e) { return null; }
+};
 function _shouldShowSpeed(uid, data, eligibleOverride) {
   // Speed is an INSTANTANEOUS quantity — it has no meaning past the fix that measured it.
   // This gate had no freshness check, so a member whose phone stopped reporting mid-drive
@@ -5649,12 +5685,21 @@ function _updateMarkerDev(el, dev) {
 function _updateMarkerSpeed(el, data, isLive, uid) {
   var s = el && el.querySelector ? el.querySelector('.mk-speed') : null;
   if (!s) return;
+  var mv = (isLive !== false) ? window._motionOf(uid, data) : null;
   if (_shouldShowSpeed(uid, data, isLive)) {
-    s.textContent = data.spd + ' mph';
+    s.textContent = (mv ? mv.icon + ' ' : '') + data.spd + ' mph';
     s.style.display = 'block';
-  } else {
-    s.style.display = 'none';
+    return;
   }
+  // Below the driving threshold the chip vanished entirely, so walking read the same as
+  // standing still. Name it, without a number -- "3 mph" on foot is noise, and the number is
+  // what turned a rough reading into a claim.
+  if (mv && mv.label !== 'Driving') {
+    s.textContent = mv.icon + ' ' + mv.label;
+    s.style.display = 'block';
+    return;
+  }
+  s.style.display = 'none';
 }
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
@@ -14108,6 +14153,8 @@ function listenUsers() {
         const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#a9b4bf';
         var _safeName = data.name.replace(/'/g, '');
         var _driving = _shouldShowSpeed(uid, data);
+        // On-foot members get described in the card too, not just drivers.
+        var _motion = _driving ? null : window._motionOf(uid, data);
         var _meta = (isLive ? '±' + (data.accuracy||'?') + 'ft · ' : 'Last seen: ') + timeLabel;
         // A stale dot explains itself where the data allows: last-known battery + charging
         // state (Android/PC only; iOS never exposes battery, so nothing shows there).
@@ -14198,7 +14245,8 @@ function listenUsers() {
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
-            '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>' : '') + '</div>' +
+            '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + data.spd + ' mph</span>'
+              : (_motion ? ' · <span style="color:#7ee787">' + _motion.icon + ' ' + escapeHtmlJs(_motion.label) + '</span>' : '')) + '</div>' +
             '<button onclick="window._closeMemberSheet()" aria-label="Close" style="flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:50%;color:#e6edf3;font-size:19px;line-height:1;cursor:pointer">✕</button>' +
           '</div>' +
           // Info full-width, then the actions as a two-column grid. The old layout stacked all

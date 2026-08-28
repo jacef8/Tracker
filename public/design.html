@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0d1117">
+<!-- DESIGN STUDY — not the app. Served at /design.html so it can be opened on a phone.
+     Nothing here talks to Firebase, and no production file imports it. -->
+<style>html,body{margin:0;padding:0;background:#0d1117;-webkit-text-size-adjust:100%}</style>
+</head>
+<body>
+<title>GroundLink Instrument</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  color-scheme:dark;
+
+  /* elevation ladder — lighter = closer */
+  --e0:#0B0D13;
+  --e1:rgba(22,25,34,.82);
+  --e1-hi:rgba(30,34,46,.86);
+  --e2:rgba(32,37,51,.92);
+  --e2-hi:rgba(42,48,66,.95);
+  --recess:#07090D;
+
+  --ink:#FFFFFF;
+  --ink-2:rgba(255,255,255,.72);
+  --ink-3:rgba(255,255,255,.50);
+
+  --accent:#FFB020;      /* amber — GroundLink signal */
+  --accent-2:#FF6B4A;    /* coral */
+  --live:#00E676;        /* status only */
+  --rest:#2EC4B6;
+  --bad:#FF4257;
+
+  --r:22px; --r-s:14px;
+
+  --raise:
+    inset 0 1px 0 rgba(255,255,255,.10),
+    inset 0 -1px 0 rgba(0,0,0,.5),
+    0 1px 2px rgba(0,0,0,.6),
+    0 18px 34px -14px rgba(0,0,0,.92);
+
+  --well-sh:
+    inset 0 3px 8px rgba(0,0,0,.9),
+    inset 0 -1px 0 rgba(255,255,255,.05);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--e0);color:var(--ink);
+  overflow-x:hidden;overflow-y:auto;
+  font-family:"Inter Tight",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+/* study wrapper — each screen gets its own full-size frame so BOTH are visible,
+   no hidden tab to discover. Each frame still proves the one-screen fit rule. */
+.study{position:relative;z-index:2;display:grid;gap:clamp(18px,2.4vw,34px);
+  padding:clamp(14px,1.8vw,26px) 0 clamp(30px,4vw,56px)}
+.screen{display:grid;gap:10px}
+.cap{display:flex;align-items:center;gap:12px;padding:0 clamp(16px,2vw,30px)}
+.cap b{font:800 11px "JetBrains Mono",monospace;letter-spacing:.2em;color:#1A0E00;
+  padding:5px 10px;border-radius:999px;
+  background:linear-gradient(150deg,#FFD37A,var(--accent));
+  box-shadow:0 4px 12px rgba(255,176,32,.4),inset 0 1px 0 rgba(255,255,255,.6)}
+.cap span{font:600 12.5px "Inter Tight",sans-serif;color:var(--ink-2)}
+.cap i{font-style:normal;color:var(--ink-3)}
+
+/* ── ambient environment ─────────────────────────────────── */
+.amb{position:fixed;z-index:0;pointer-events:none;border-radius:50%;filter:blur(90px)}
+.a1{width:min(900px,95vw);height:min(900px,95vw);left:34%;top:46%;transform:translate(-50%,-50%);
+  background:radial-gradient(circle,rgba(255,176,32,.17),rgba(255,107,74,.08) 44%,transparent 70%);
+  animation:br 20s ease-in-out infinite alternate}
+.a2{width:min(700px,80vw);height:min(700px,80vw);right:-12%;top:8%;
+  background:radial-gradient(circle,rgba(46,196,182,.13),transparent 68%);
+  animation:br2 26s ease-in-out infinite alternate}
+@keyframes br{to{transform:translate(-50%,-54%) scale(1.12)}}
+@keyframes br2{to{transform:translate(-4%,6%) scale(1.08)}}
+.grain{position:fixed;inset:0;z-index:30;pointer-events:none;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* ── shell ───────────────────────────────────────────────── */
+.app{position:relative;z-index:2;height:clamp(600px,86dvh,920px);padding:clamp(11px,1.2vw,17px);
+  display:grid;gap:clamp(10px,1vw,14px);
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:auto minmax(0,1fr) auto}
+
+.card{
+  background:linear-gradient(158deg,var(--e1-hi),var(--e1) 70%);
+  backdrop-filter:blur(16px) saturate(150%);
+  -webkit-backdrop-filter:blur(16px) saturate(150%);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:var(--r);
+  box-shadow:var(--raise);
+  animation:rise .6s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}}
+.d1{animation-delay:.05s}.d2{animation-delay:.11s}.d3{animation-delay:.17s}.d4{animation-delay:.23s}
+
+.widget{
+  border-radius:var(--r-s);
+  background:linear-gradient(160deg,var(--e2-hi),var(--e2));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.13),
+    inset 0 -1px 0 rgba(0,0,0,.5),
+    0 10px 20px -8px rgba(0,0,0,.95);
+}
+
+/* ── top bar ─────────────────────────────────────────────── */
+.bar{display:flex;align-items:center;gap:14px;padding:10px 14px}
+.mark{font-family:Outfit,sans-serif;font-weight:800;font-size:15px;letter-spacing:.16em;
+  background:linear-gradient(96deg,var(--accent),var(--accent-2));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  white-space:nowrap}
+.crewsel{display:flex;align-items:center;gap:9px;padding:7px 14px;border-radius:999px;
+  background:linear-gradient(160deg,var(--e2-hi),var(--e2));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.13),0 8px 16px -8px #000;
+  font-weight:600;font-size:13.5px}
+.beacon{width:9px;height:9px;border-radius:50%;background:var(--live);
+  box-shadow:0 0 10px var(--live);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.spacer{flex:1}
+.pills{display:flex;padding:3px;border-radius:999px;background:var(--recess);box-shadow:var(--well-sh)}
+.pills button{padding:7px 17px;border:none;border-radius:999px;background:transparent;
+  color:var(--ink-3);cursor:pointer;transition:.18s;font:600 12.5px "Inter Tight",sans-serif;
+  letter-spacing:.02em}
+.pills button[aria-pressed="true"]{
+  color:#1A0E00;font-weight:700;
+  background:linear-gradient(150deg,#FFD37A,var(--accent));
+  box-shadow:0 4px 12px rgba(255,176,32,.5),inset 0 1px 0 rgba(255,255,255,.6)}
+.pills button:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+.you{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2)}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  font:800 12px Outfit,sans-serif;color:#1A0E00;
+  background:radial-gradient(circle at 34% 28%,#FFE0A8,var(--accent));
+  box-shadow:0 4px 10px rgba(0,0,0,.7),inset 0 -2px 4px rgba(0,0,0,.25)}
+
+/* ── stages ──────────────────────────────────────────────── */
+.stage{min-height:0;display:grid}
+
+/* HOME — flanking columns around the anchor */
+#home{gap:clamp(10px,1vw,14px);grid-template-columns:minmax(0,1fr)}
+@media(min-width:1080px){
+  #home{grid-template-columns:minmax(0,280px) minmax(0,1fr) minmax(0,300px)}
+}
+.col{display:grid;gap:clamp(10px,1vw,14px);min-height:0;grid-auto-rows:min-content}
+.pad{padding:15px}
+.lbl{font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.19em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 10px}
+
+/* identity */
+.idrow{display:flex;align-items:center;gap:12px}
+.av-lg{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;
+  font:800 17px Outfit,sans-serif;color:#1A0E00;
+  background:radial-gradient(circle at 34% 28%,#FFE0A8,var(--accent));
+  box-shadow:0 6px 16px rgba(0,0,0,.8),inset 0 -3px 6px rgba(0,0,0,.28)}
+.idname{font:800 19px Outfit,sans-serif;letter-spacing:-.01em}
+.idsub{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.devs{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.dchip{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+  background:var(--recess);box-shadow:var(--well-sh);font:600 10.5px "Inter Tight",sans-serif;
+  color:var(--ink-2)}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot.on{background:var(--live);box-shadow:0 0 7px var(--live)}
+.dot.rs{background:var(--rest);box-shadow:0 0 7px var(--rest)}
+.dot.off{background:rgba(255,255,255,.24)}
+
+/* action tiles */
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.act{display:grid;gap:7px;place-items:center;padding:15px 8px;border:none;cursor:pointer;
+  color:var(--ink);font:700 12px "Inter Tight",sans-serif;
+  border-radius:var(--r-s);
+  background:linear-gradient(160deg,var(--e2-hi),var(--e2));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.13),inset 0 -1px 0 rgba(0,0,0,.5),0 10px 20px -8px rgba(0,0,0,.95);
+  transition:transform .16s,box-shadow .16s}
+.act:hover{transform:translateY(-2px)}
+.act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.act.hot{background:linear-gradient(150deg,#FFD37A,var(--accent));color:#1A0E00;
+  box-shadow:0 8px 20px rgba(255,176,32,.42),inset 0 1px 0 rgba(255,255,255,.65)}
+.act svg{width:19px;height:19px}
+.act .n{font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.14em;opacity:.62}
+
+/* anchor */
+.anchor{display:grid;place-items:center;padding:8px;min-height:0;position:relative}
+.gwrap{position:relative;width:min(100%,clamp(280px,34vw,400px));aspect-ratio:1}
+.gwrap svg{width:100%;height:100%;display:block}
+.spin{transform-origin:170px 170px;animation:sp 46s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.gcenter{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:2px}
+.gcenter b{font-family:Outfit,sans-serif;font-weight:800;
+  font-size:clamp(58px,8.2vw,116px);line-height:.84;letter-spacing:-.055em;
+  font-variant-numeric:tabular-nums;text-shadow:0 0 46px rgba(255,176,32,.6)}
+.gcenter .of{font:700 11px "JetBrains Mono",monospace;letter-spacing:.17em;color:var(--ink-3);margin-top:9px}
+.gcenter .cap{font:700 10px "JetBrains Mono",monospace;letter-spacing:.2em;color:var(--accent);
+  text-shadow:0 0 14px rgba(255,176,32,.65)}
+.legend{display:flex;gap:16px;justify-content:center;margin-top:4px}
+.lg{display:flex;align-items:center;gap:7px;font:600 11px "Inter Tight",sans-serif;color:var(--ink-2)}
+.lg b{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink)}
+
+/* live rail */
+.rail{display:flex;gap:9px;overflow:hidden;padding:13px 15px}
+.pers{flex:1;min-width:0;display:grid;gap:6px;place-items:center;padding:11px 6px;border-radius:var(--r-s);
+  background:var(--recess);box-shadow:var(--well-sh)}
+.pav{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+  font:800 12px Outfit,sans-serif;color:#08110C}
+.pn{font:600 11px "Inter Tight",sans-serif;color:var(--ink-2);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:100%}
+.pm{font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.1em;color:var(--ink-3)}
+
+/* crew list */
+.crew{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--r-s);
+  background:linear-gradient(160deg,var(--e2-hi),var(--e2));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.13),inset 0 -1px 0 rgba(0,0,0,.5),0 10px 20px -8px rgba(0,0,0,.95);
+  margin-bottom:9px;transition:transform .16s}
+.crew:hover{transform:translateY(-2px)}
+.crew:last-child{margin-bottom:0}
+.cinfo{flex:1;min-width:0}
+.cname{font:700 13.5px "Inter Tight",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmeta{font:600 10.5px "JetBrains Mono",monospace;letter-spacing:.08em;color:var(--ink-3);margin-top:3px}
+.mini{width:44px;height:44px;flex:0 0 auto}
+.mini text{font:700 11px "JetBrains Mono",monospace;fill:var(--ink)}
+.talkbtn{width:36px;height:36px;flex:0 0 auto;border:none;border-radius:50%;cursor:pointer;
+  display:grid;place-items:center;color:#1A0E00;
+  background:radial-gradient(circle at 34% 28%,#FFD98A,var(--accent));
+  box-shadow:0 5px 13px rgba(255,176,32,.42),inset 0 -2px 4px rgba(0,0,0,.22)}
+.talkbtn:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+.talkbtn svg{width:15px;height:15px}
+
+/* MAP — full bleed + floating instruments */
+#map{position:relative;border-radius:var(--r);overflow:hidden;
+  box-shadow:var(--raise);border:1px solid rgba(255,255,255,.07)}
+#map svg.terrain{position:absolute;inset:0;width:100%;height:100%}
+.mapveil{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 40%,transparent 40%,rgba(4,6,10,.55) 100%)}
+.pin{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;
+  border-radius:50%;font:800 13px Outfit,sans-serif;color:#08110C;
+  border:3px solid #fff;box-shadow:0 8px 22px rgba(0,0,0,.85);cursor:pointer}
+.pin.lg{width:56px;height:56px;font-size:15px}
+.pin.sm{width:44px;height:44px}
+.pin .halo{position:absolute;inset:-9px;border-radius:50%;border:2px solid currentColor;opacity:.32}
+.pintag{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  padding:3px 9px;border-radius:999px;white-space:nowrap;
+  font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.1em;color:var(--ink);
+  background:rgba(7,9,13,.82);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12)}
+.float{position:absolute;padding:14px}
+.f-left{left:14px;top:14px;width:min(258px,32%)}
+.f-right{right:14px;top:14px;width:min(320px,36%)}
+.f-bottom{left:14px;bottom:14px;right:14px;display:flex;align-items:center;gap:13px;padding:11px 14px}
+.mrow{display:flex;align-items:center;gap:10px;padding:8px;border-radius:12px;margin-bottom:7px;
+  background:var(--recess);box-shadow:var(--well-sh)}
+.mrow:last-child{margin-bottom:0}
+.mrow .pav{width:31px;height:31px;font-size:10.5px}
+.mrow .t{flex:1;min-width:0}
+.mrow .t b{display:block;font:600 12px "Inter Tight",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrow .t i{font-style:normal;font:600 9.5px "JetBrains Mono",monospace;letter-spacing:.09em;color:var(--ink-3)}
+.mrow .v{font:700 11px "JetBrains Mono",monospace;color:var(--ink-2);white-space:nowrap}
+.sgwrap{position:relative;width:100%;aspect-ratio:1;max-width:236px;margin:2px auto 0}
+.sgwrap svg{width:100%;height:100%;display:block}
+.sgc{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+.sgc b{font-family:Outfit,sans-serif;font-weight:800;font-size:clamp(40px,5.2vw,66px);
+  line-height:.85;letter-spacing:-.05em;font-variant-numeric:tabular-nums;
+  text-shadow:0 0 34px rgba(255,176,32,.6)}
+.sgc span{font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.2em;color:var(--ink-3);display:block;margin-top:5px}
+.tri{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.cell{padding:9px 6px;border-radius:12px;text-align:center;background:var(--recess);box-shadow:var(--well-sh)}
+.cell b{display:block;font:700 14px "JetBrains Mono",monospace;letter-spacing:-.02em}
+.cell span{font:700 8.5px "JetBrains Mono",monospace;letter-spacing:.15em;color:var(--ink-3)}
+.hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:11px}
+.chip{padding:4px 10px;border-radius:999px;font:700 9.5px "JetBrains Mono",monospace;letter-spacing:.13em}
+.chip.live{color:#062E18;background:linear-gradient(150deg,#6BFFB0,var(--live));
+  box-shadow:0 4px 12px rgba(0,230,118,.42),inset 0 1px 0 rgba(255,255,255,.5)}
+.trail{display:flex;gap:9px;align-items:center;flex:1;min-width:0}
+.tstat{flex:1;min-width:0;padding:8px 10px;border-radius:12px;background:var(--recess);box-shadow:var(--well-sh)}
+.tstat b{display:block;font:700 13px "JetBrains Mono",monospace}
+.tstat span{font:700 8.5px "JetBrains Mono",monospace;letter-spacing:.14em;color:var(--ink-3)}
+
+/* dock */
+.dock{display:flex;align-items:center;justify-content:center;gap:11px;padding:10px}
+.ico{width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;display:grid;place-items:center;
+  color:var(--ink-2);
+  background:linear-gradient(160deg,var(--e2-hi),var(--e2));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.13),inset 0 -1px 0 rgba(0,0,0,.5),0 10px 20px -8px rgba(0,0,0,.95);
+  transition:transform .16s,color .16s}
+.ico:hover{transform:translateY(-2px);color:var(--ink)}
+.ico:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ico svg{width:19px;height:19px}
+.ico.on{color:#1A0E00;background:linear-gradient(150deg,#FFD37A,var(--accent));
+  box-shadow:0 8px 20px rgba(255,176,32,.45),inset 0 1px 0 rgba(255,255,255,.65)}
+.ico.sos{color:#FFB4BC}
+.ptt{width:62px;height:62px;border-radius:50%;border:none;cursor:pointer;display:grid;place-items:center;
+  color:#1A0E00;margin:0 6px;
+  background:radial-gradient(circle at 34% 26%,#FFDF9E,var(--accent) 62%,#F09000);
+  box-shadow:0 0 0 5px rgba(255,176,32,.12),0 10px 26px rgba(255,176,32,.45),
+    inset 0 2px 0 rgba(255,255,255,.6),inset 0 -3px 6px rgba(0,0,0,.3)}
+.ptt:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.ptt svg{width:25px;height:25px}
+.note{position:fixed;left:50%;bottom:6px;transform:translateX(-50%);z-index:31;
+  font:600 9.5px "JetBrains Mono",monospace;letter-spacing:.14em;color:rgba(255,255,255,.3)}
+
+@media(max-width:1079px){
+  .app{height:auto;min-height:100dvh;overflow-y:auto;grid-template-rows:none}
+  body{overflow:auto}
+  #map{min-height:74vh}
+  .f-left,.f-right{position:static;width:auto;margin-bottom:11px}
+  .f-bottom{position:static;flex-wrap:wrap}
+  .mapfloats{position:absolute;inset:0;display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .card,.a1,.a2,.spin,.beacon{animation:none!important}
+}
+</style>
+
+<div class="amb a1"></div>
+<div class="amb a2"></div>
+<div class="grain"></div>
+
+<div class="study">
+
+<!-- ════════ SCREEN 01 — HOME ════════ -->
+<section class="screen">
+  <div class="cap"><b>01</b><span>Home <i>— crew-presence anchor replaces the stack of equal buttons</i></span></div>
+  <div class="app">
+
+  <!-- ══ TOP BAR ══ -->
+  <header class="bar card d1">
+    <div class="mark">GROUNDLINK</div>
+    <div class="crewsel"><span class="beacon"></span>Our Crew</div>
+    <div class="spacer"></div>
+    <div class="you"><span class="av">J</span>Jace</div>
+  </header>
+
+  <!-- ══ HOME ══ -->
+  <main id="home" class="stage on">
+
+    <!-- left column -->
+    <div class="col">
+      <section class="card d2 pad">
+        <p class="lbl">Signed in</p>
+        <div class="idrow">
+          <span class="av-lg">J</span>
+          <div>
+            <div class="idname">Jace</div>
+            <div class="idsub">Synced across 3 devices</div>
+          </div>
+        </div>
+        <div class="devs">
+          <span class="dchip"><i class="dot on"></i>phone</span>
+          <span class="dchip"><i class="dot rs"></i>tablet</span>
+          <span class="dchip"><i class="dot off"></i>PC</span>
+        </div>
+      </section>
+
+      <section class="card d3 pad">
+        <p class="lbl">Quick actions</p>
+        <div class="acts">
+          <button class="act hot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            Talk<span class="n">CREW</span>
+          </button>
+          <button class="act">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.4 2.3V6.3L9 4m0 16l6-2.7M9 20V4m6 13.3l5.4 2.3V3.6L15 6m0 11.3V6M9 4l6 2"/></svg>
+            My Map<span class="n">SOLO</span>
+          </button>
+          <button class="act">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.6 20a6.6 6.6 0 0 1 12.8 0M17 11.2a3 3 0 0 0 0-5.9M18.2 20a5.6 5.6 0 0 0-2.4-4.3"/></svg>
+            People<span class="n">6</span>
+          </button>
+          <button class="act">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="6.6"/><path d="M20 20l-4.4-4.4"/></svg>
+            Rooms<span class="n">FIND</span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- center: anchor -->
+    <div class="col">
+      <section class="card d2 anchor">
+        <div class="gwrap">
+          <svg viewBox="0 0 340 340" role="img" aria-label="Four of six crew devices live, 67 percent">
+            <defs>
+              <linearGradient id="gg" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#FF6B4A"/>
+                <stop offset="52%" stop-color="#FFB020"/>
+                <stop offset="100%" stop-color="#FFE08A"/>
+              </linearGradient>
+              <filter id="gglow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="9" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <circle class="spin" cx="170" cy="170" r="163" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="1" stroke-dasharray="1.5 13"/>
+            <circle cx="170" cy="170" r="130" fill="none" stroke="rgba(0,0,0,.65)" stroke-width="24" stroke-linecap="round" stroke-dasharray="613 817" transform="rotate(135 170 170)"/>
+            <circle cx="170" cy="170" r="130" fill="none" stroke="url(#gg)" stroke-width="22" stroke-linecap="round" stroke-dasharray="409 817" transform="rotate(135 170 170)" filter="url(#gglow)"/>
+          </svg>
+          <div class="gcenter">
+            <span class="cap">CREW LIVE</span>
+            <b>4</b>
+            <span class="of">OF 6 DEVICES</span>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="lg"><i class="dot on"></i>Live <b>4</b></span>
+          <span class="lg"><i class="dot rs"></i>Resting <b>1</b></span>
+          <span class="lg"><i class="dot off"></i>Offline <b>1</b></span>
+        </div>
+      </section>
+
+      <section class="card d3 rail" aria-label="Live crew">
+        <div class="pers">
+          <span class="pav" style="background:radial-gradient(circle at 34% 28%,#8CFFC6,#00E676)">J</span>
+          <span class="pn">Jace</span><span class="pm">HERE</span>
+        </div>
+        <div class="pers">
+          <span class="pav" style="background:radial-gradient(circle at 34% 28%,#FFC9BE,#FF6B4A)">LaF</span>
+          <span class="pn">Laura</span><span class="pm">0.2 MI</span>
+        </div>
+        <div class="pers">
+          <span class="pav" style="background:radial-gradient(circle at 34% 28%,#FFE0A8,#FFB020)">LeF</span>
+          <span class="pn">Lexi</span><span class="pm">4.2 MI</span>
+        </div>
+        <div class="pers">
+          <span class="pav" style="background:radial-gradient(circle at 34% 28%,#A9F2EC,#2EC4B6)">⌚</span>
+          <span class="pn">Jax Watch</span><span class="pm">1.1 MI</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- right column -->
+    <div class="col">
+      <section class="card d3 pad">
+        <div class="hdr"><p class="lbl" style="margin:0">My crews</p><span class="chip live">3 ACTIVE</span></div>
+
+        <div class="crew">
+          <svg class="mini" viewBox="0 0 66 66" aria-hidden="true">
+            <circle cx="33" cy="33" r="26" fill="none" stroke="rgba(0,0,0,.6)" stroke-width="7"/>
+            <circle cx="33" cy="33" r="26" fill="none" stroke="#FFB020" stroke-width="6" stroke-linecap="round"
+                    stroke-dasharray="109 164" transform="rotate(-90 33 33)" style="filter:drop-shadow(0 0 5px #FFB020)"/>
+            <text x="33" y="37" text-anchor="middle">4/6</text>
+          </svg>
+          <div class="cinfo"><div class="cname">Our Crew</div><div class="cmeta">4 LIVE · 1 RESTING</div></div>
+          <button class="talkbtn" aria-label="Talk to Our Crew"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg></button>
+        </div>
+
+        <div class="crew">
+          <svg class="mini" viewBox="0 0 66 66" aria-hidden="true">
+            <circle cx="33" cy="33" r="26" fill="none" stroke="rgba(0,0,0,.6)" stroke-width="7"/>
+            <circle cx="33" cy="33" r="26" fill="none" stroke="#FF6B4A" stroke-width="6" stroke-linecap="round"
+                    stroke-dasharray="65 164" transform="rotate(-90 33 33)" style="filter:drop-shadow(0 0 5px #FF6B4A)"/>
+            <text x="33" y="37" text-anchor="middle">2/5</text>
+          </svg>
+          <div class="cinfo"><div class="cname">Family Men</div><div class="cmeta">2 LIVE · 3 OFFLINE</div></div>
+          <button class="talkbtn" aria-label="Talk to Family Men"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg></button>
+        </div>
+
+        <div class="crew">
+          <svg class="mini" viewBox="0 0 66 66" aria-hidden="true">
+            <circle cx="33" cy="33" r="26" fill="none" stroke="rgba(0,0,0,.6)" stroke-width="7"/>
+            <circle cx="33" cy="33" r="26" fill="none" stroke="#2EC4B6" stroke-width="6" stroke-linecap="round"
+                    stroke-dasharray="54 164" transform="rotate(-90 33 33)" style="filter:drop-shadow(0 0 5px #2EC4B6)"/>
+            <text x="33" y="37" text-anchor="middle">1/3</text>
+          </svg>
+          <div class="cinfo"><div class="cname">Jace Devices</div><div class="cmeta">1 LIVE · 2 OFFLINE</div></div>
+          <button class="talkbtn" aria-label="Talk to Jace Devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg></button>
+        </div>
+      </section>
+
+      <section class="card d4 pad">
+        <p class="lbl">Places</p>
+        <div class="mrow"><span class="pav" style="width:31px;height:31px;font-size:13px;background:radial-gradient(circle at 34% 28%,#FFE0A8,#FFB020)">⌂</span><div class="t"><b>Home</b><i>3 HERE NOW</i></div><span class="v">0.0 mi</span></div>
+        <div class="mrow"><span class="pav" style="width:31px;height:31px;font-size:13px;background:radial-gradient(circle at 34% 28%,#A9F2EC,#2EC4B6)">⚑</span><div class="t"><b>The Camp</b><i>LAST VISIT SAT</i></div><span class="v">12.4 mi</span></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- dock for screen 01 -->
+  <nav class="dock card d4" aria-label="Primary">
+    <button class="ico on" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5 12 3.5l8.5 7M5.5 9.5V20h13V9.5"/></svg></button>
+    <button class="ico" aria-label="Chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg></button>
+    <button class="ico" aria-label="People"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.6 20a6.6 6.6 0 0 1 12.8 0M17 11.2a3 3 0 0 0 0-5.9M18.2 20a5.6 5.6 0 0 0-2.4-4.3"/></svg></button>
+    <button class="ptt" aria-label="Push to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
+    <button class="ico" aria-label="Trails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M7 8.6v5.2M17 15.4v-5.2"/></svg></button>
+    <button class="ico" aria-label="Places"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg></button>
+    <button class="ico sos" aria-label="SOS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4M12 17h.01"/></svg></button>
+  </nav>
+  </div>
+</section>
+
+<!-- ════════ SCREEN 02 — MAP ════════ -->
+<section class="screen">
+  <div class="cap"><b>02</b><span>Map <i>— floating instruments; the member sheet no longer buries the map</i></span></div>
+  <div class="app">
+
+  <header class="bar card d1">
+    <div class="mark">GROUNDLINK</div>
+    <div class="crewsel"><span class="beacon"></span>Our Crew</div>
+    <div class="spacer"></div>
+    <span class="chip live">4 LIVE · 1 RESTING</span>
+    <div class="you"><span class="av">J</span>Jace</div>
+  </header>
+
+  <main id="map" class="stage">
+    <svg class="terrain" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-label="Crew map">
+      <defs>
+        <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#16241A"/><stop offset="55%" stop-color="#101C15"/><stop offset="100%" stop-color="#0C1610"/>
+        </linearGradient>
+        <linearGradient id="tr" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FFB020"/><stop offset="100%" stop-color="#FF6B4A"/>
+        </linearGradient>
+        <filter id="trglow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <rect width="1200" height="800" fill="url(#ground)"/>
+      <!-- fields -->
+      <g opacity=".5">
+        <path d="M60 90 L430 60 L470 250 L90 290Z" fill="#1C3020"/>
+        <path d="M520 70 L900 100 L880 270 L500 245Z" fill="#182A1D"/>
+        <path d="M120 360 L470 340 L500 560 L150 590Z" fill="#1A2E1E"/>
+        <path d="M950 140 L1160 170 L1140 400 L930 370Z" fill="#16281B"/>
+        <path d="M560 600 L940 620 L920 780 L540 760Z" fill="#182B1C"/>
+      </g>
+      <!-- tree masses -->
+      <g fill="#0D1A11" opacity=".85">
+        <ellipse cx="300" cy="640" rx="190" ry="105"/><ellipse cx="760" cy="420" rx="150" ry="92"/>
+        <ellipse cx="1080" cy="620" rx="130" ry="86"/><ellipse cx="620" cy="150" rx="105" ry="62"/>
+      </g>
+      <!-- river -->
+      <path d="M-20 470 C 180 440, 300 540, 470 520 C 640 500, 700 590, 900 566 C 1040 549, 1120 600, 1220 585"
+            fill="none" stroke="#0E2436" stroke-width="26" opacity=".9"/>
+      <!-- roads -->
+      <g stroke="#3A4148" stroke-linecap="round" fill="none">
+        <path d="M-20 300 L1220 250" stroke-width="9"/>
+        <path d="M420 -20 L470 820" stroke-width="9"/>
+        <path d="M-20 690 L1220 640" stroke-width="6" opacity=".8"/>
+        <path d="M860 -20 L900 820" stroke-width="6" opacity=".8"/>
+      </g>
+      <g stroke="#59626B" stroke-linecap="round" fill="none" opacity=".55">
+        <path d="M-20 300 L1220 250" stroke-width="2.4"/><path d="M420 -20 L470 820" stroke-width="2.4"/>
+      </g>
+      <!-- trail -->
+      <path d="M1130 210 C 980 250, 900 300, 800 330 C 700 360, 620 330, 520 360 C 430 388, 380 430, 300 452"
+            fill="none" stroke="url(#tr)" stroke-width="5.5" stroke-linecap="round" filter="url(#trglow)"/>
+      <!-- stop markers on the trail -->
+      <g fill="#FF6B4A" stroke="#0B0D13" stroke-width="2">
+        <rect x="794" y="324" width="13" height="13" rx="2.5"/>
+        <rect x="514" y="354" width="13" height="13" rx="2.5"/>
+      </g>
+    </svg>
+    <div class="mapveil"></div>
+
+    <!-- pins -->
+    <div class="pin lg" style="left:25%;top:56.5%;background:radial-gradient(circle at 34% 28%,#FFE0A8,#FFB020);color:#FFB020">
+      <span class="halo"></span>LeF<span class="pintag">62 MPH · NW</span>
+    </div>
+    <div class="pin sm" style="left:63%;top:35%;background:radial-gradient(circle at 34% 28%,#8CFFC6,#00E676);color:#00E676">
+      J<span class="pintag">YOU</span>
+    </div>
+    <div class="pin sm" style="left:71.5%;top:47%;background:radial-gradient(circle at 34% 28%,#FFC9BE,#FF6B4A);color:#FF6B4A">
+      LaF<span class="pintag">RESTING</span>
+    </div>
+    <div class="pin sm" style="left:47%;top:71%;background:radial-gradient(circle at 34% 28%,#A9F2EC,#2EC4B6);color:#2EC4B6">
+      ⌚<span class="pintag">JAX · ±18FT</span>
+    </div>
+
+    <div class="mapfloats">
+      <!-- crew rail -->
+      <section class="float f-left card d2">
+        <div class="hdr"><p class="lbl" style="margin:0">Crew</p><span class="chip live">4 LIVE</span></div>
+        <div class="mrow"><span class="pav" style="background:radial-gradient(circle at 34% 28%,#FFE0A8,#FFB020)">LeF</span><div class="t"><b>Lexi Ford</b><i>MOVING · NW</i></div><span class="v">4.23 mi</span></div>
+        <div class="mrow"><span class="pav" style="background:radial-gradient(circle at 34% 28%,#FFC9BE,#FF6B4A)">LaF</span><div class="t"><b>Laura Ford</b><i>RESTING 1H 46M</i></div><span class="v">0.02 mi</span></div>
+        <div class="mrow"><span class="pav" style="background:radial-gradient(circle at 34% 28%,#A9F2EC,#2EC4B6)">⌚</span><div class="t"><b>Jax Watch</b><i>LIVE · ±18 FT</i></div><span class="v">1.14 mi</span></div>
+        <div class="mrow"><span class="pav" style="background:radial-gradient(circle at 34% 28%,#8CFFC6,#00E676)">J</span><div class="t"><b>Jace</b><i>YOU · HERE</i></div><span class="v">0.00 mi</span></div>
+      </section>
+
+      <!-- focused member instrument -->
+      <section class="float f-right card d3">
+        <div class="hdr"><p class="lbl" style="margin:0">Lexi Ford · phone</p><span class="chip live">LIVE</span></div>
+        <div class="sgwrap">
+          <svg viewBox="0 0 340 340" role="img" aria-label="Speed 62 miles per hour">
+            <circle class="spin" cx="170" cy="170" r="163" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1" stroke-dasharray="1.5 13"/>
+            <circle cx="170" cy="170" r="130" fill="none" stroke="rgba(0,0,0,.65)" stroke-width="24" stroke-linecap="round" stroke-dasharray="613 817" transform="rotate(135 170 170)"/>
+            <circle cx="170" cy="170" r="130" fill="none" stroke="url(#gg2)" stroke-width="22" stroke-linecap="round" stroke-dasharray="475 817" transform="rotate(135 170 170)" filter="url(#gglow2)"/>
+            <defs>
+              <linearGradient id="gg2" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#FF6B4A"/><stop offset="52%" stop-color="#FFB020"/><stop offset="100%" stop-color="#FFE08A"/>
+              </linearGradient>
+              <filter id="gglow2" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+          </svg>
+          <div class="sgc"><b>62</b><span>MPH · 80 MAX</span></div>
+        </div>
+        <div class="tri">
+          <div class="cell"><b>4.23</b><span>MILES</span></div>
+          <div class="cell"><b>±12</b><span>FEET</span></div>
+          <div class="cell"><b>32%</b><span>BATTERY</span></div>
+        </div>
+      </section>
+
+      <!-- trail readout -->
+      <section class="float f-bottom card d4">
+        <span class="chip live" style="background:linear-gradient(150deg,#FFD37A,#FFB020);color:#1A0E00;box-shadow:0 4px 12px rgba(255,176,32,.42),inset 0 1px 0 rgba(255,255,255,.55)">TRAIL · LAST 6H</span>
+        <div class="trail">
+          <div class="tstat"><b>95.40 mi</b><span>DISTANCE</span></div>
+          <div class="tstat"><b>4:32:52</b><span>SPAN</span></div>
+          <div class="tstat"><b>40.1 mph</b><span>AVG</span></div>
+          <div class="tstat"><b>3</b><span>STOPS</span></div>
+          <div class="tstat"><b>2:15:00</b><span>PARKED</span></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ══ DOCK ══ -->
+  <nav class="dock card d4" aria-label="Primary">
+    <button class="ico on" aria-label="Map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.4 2.3V6.3L9 4m0 16l6-2.7M9 20V4m6 13.3l5.4 2.3V3.6L15 6m0 11.3V6M9 4l6 2"/></svg></button>
+    <button class="ico" aria-label="Chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg></button>
+    <button class="ico" aria-label="People"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.6 20a6.6 6.6 0 0 1 12.8 0M17 11.2a3 3 0 0 0 0-5.9M18.2 20a5.6 5.6 0 0 0-2.4-4.3"/></svg></button>
+    <button class="ptt" aria-label="Push to talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
+    <button class="ico" aria-label="Trails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M7 8.6v5.2M17 15.4v-5.2"/></svg></button>
+    <button class="ico" aria-label="Places"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg></button>
+    <button class="ico sos" aria-label="SOS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4M12 17h.01"/></svg></button>
+  </nav>
+  </div>
+</section>
+
+</div>
+
+<div class="note">SAMPLE DATA · DESIGN STUDY · NOT CONNECTED TO LIVE GROUNDLINK</div>
+
+
+</body>
+</html>
