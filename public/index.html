@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 680;
+var APP_BUILD = 681;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5912,6 +5912,26 @@ window._refreshAvatarPanel = function () {
 try {
   if (window.GLAudioRouter && window.GLAudioRouter.stopVoiceService && !/Android/i.test(navigator.userAgent || '')) {
     window.GLAudioRouter.stopVoiceService();
+  }
+} catch (e) {}
+
+
+// Apple's PTT framework restores its channel by itself on launch, so a phone that was
+// auto-joined by the old default keeps holding the mic across restarts with nothing in the web
+// layer aware of it. Leave any restored channel unless the member actually opened one, and
+// clear the flag the old auto-join set on their behalf (once — a deliberate later "Open
+// channel" must stick).
+try {
+  if (window.GLPushToTalk && window.GLPushToTalk.available) {
+    try {
+      if (localStorage.getItem('gl_ptt_optin_migrated') !== '1') {
+        localStorage.setItem('gl_ptt_optin_migrated', '1');
+        localStorage.removeItem('gl_open_channel');
+      }
+    } catch (e) {}
+    if (localStorage.getItem('gl_open_channel') !== '1' && window.GLPushToTalk.leave) {
+      window.GLPushToTalk.leave();
+    }
   }
 } catch (e) {}
 
@@ -13346,6 +13366,22 @@ function listenUsers() {
     // GPS users: keep for 8 hours (STALE_MS)
     // No-GPS users: keep for 3 minutes (if heartbeat stops, they're gone)
     const NO_GPS_MS = 3 * 60 * 1000;
+    try {
+      var _best = {};
+      Object.keys(allUsers).forEach(function (k) {
+        var d = allUsers[k]; if (!d || !d.name) return;
+        var acct = (window._devOwnerAll && window._devOwnerAll[k] && window._devOwnerAll[k].acct) || k;
+        var sig = acct + '|' + (d.dev || '');
+        var ts = d.ts || d.fixTs || 0;
+        if (!_best[sig] || ts > _best[sig].ts) _best[sig] = { k: k, ts: ts };
+      });
+      var _keep = {};
+      Object.keys(_best).forEach(function (sig) { _keep[_best[sig].k] = 1; });
+      Object.keys(allUsers).forEach(function (k) {
+        if (!_keep[k] && allUsers[k] && allUsers[k].name) delete allUsers[k];
+      });
+    } catch (e) {}
+
     const users = Object.fromEntries(
       Object.entries(allUsers).filter(([, d]) =>
         d.name && !d.claiming &&
@@ -21879,6 +21915,11 @@ window._maybeRejoinChannel = function () {
     // still open the channel manually with the Talk/Open-channel button.
     if (typeof _isNativeApp === 'function' && !_isNativeApp()) return;
     if (!(typeof _isCircleMember === 'function' && _isCircleMember(groupName))) return; // crews only
+    // On iOS 16+ the channel is served by Apple's Push to Talk framework, which holds an audio
+    // session the whole time you are joined — the phone shows the microphone indicator
+    // permanently, with nobody transmitting. That is a fair trade only if the member ASKED for
+    // an always-open channel, so here it stays opt-in: the Talk button still opens it manually.
+    if (window._hasNativePtt && window._hasNativePtt()) return;
     try { localStorage.setItem('gl_open_channel', '1'); } catch (e) {}
   }
   _updateChannelBtn();
