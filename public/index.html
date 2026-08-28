@@ -1404,19 +1404,20 @@
           <!-- My Map moved to the home hub (its own button) — one entry point, not two. -->
 
           <!-- Your stats -->
+          <!-- Tappable: each box opens the thing it counts, instead of being a dead number. -->
           <div style="display:flex;gap:8px">
-            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+            <button type="button" onclick="window._statGo && window._statGo('groups')" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
               <div id="acct-stat-groups" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
               <div style="font-size:10px;color:var(--muted);margin-top:2px">Groups</div>
-            </div>
-            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+            </button>
+            <button type="button" onclick="window._statGo && window._statGo('pins')" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
               <div id="acct-stat-pins" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
               <div style="font-size:10px;color:var(--muted);margin-top:2px">Pins dropped</div>
-            </div>
-            <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center">
+            </button>
+            <button type="button" onclick="window._statGo && window._statGo('saved')" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 4px;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
               <div id="acct-stat-saved" style="font-size:18px;font-weight:800;color:var(--accent);line-height:1.1">0</div>
               <div style="font-size:10px;color:var(--muted);margin-top:2px">Saved spots</div>
-            </div>
+            </button>
           </div>
 
           <!-- Your name — moved here from the home screen (build 393+) to declutter it for
@@ -3005,7 +3006,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 673;
+var APP_BUILD = 674;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5799,6 +5800,23 @@ window._refreshAvatarPanel = function () {
       else { pv.style.backgroundImage = ''; pv.textContent = (typeof initials === 'function' ? initials(userName || '?') : ''); }
     }
     if (rm) rm.style.display = (a && a.img) ? 'inline-block' : 'none';
+  } catch (e) {}
+};
+
+
+// The Account stat boxes are navigation, not decoration: each opens what it counts.
+// Groups -> the Crews hub. Pins / Saved spots -> My Map with the Pins drawer open (that
+// drawer holds BOTH the room's live pins and your personal saved library, so the same
+// destination serves both, and the map is what makes a location mean anything).
+window._statGo = function (which) {
+  try {
+    if (which === 'groups') { if (window._homeGo) window._homeGo('crews'); return; }
+    // Pins and saved spots both live on the map — open My Map first if we're not in a room.
+    var inRoom = (typeof groupName !== 'undefined' && groupName);
+    if (!inRoom && window._homeGo) window._homeGo('mymap');
+    setTimeout(function () {
+      try { if (typeof openSavedPins === 'function') openSavedPins(); } catch (e) {}
+    }, inRoom ? 0 : 650);
   } catch (e) {}
 };
 
@@ -21901,6 +21919,30 @@ window._listenVoiceInvites = function () {
     });
   } catch (e) {}
 };
+
+
+// The boot call above runs before these functions are defined (waitForFirebase can fire
+// synchronously), so it silently no-ops. Retry until the listener is genuinely attached —
+// this is what actually makes photos appear.
+try {
+  (function () {
+    var n = 0;
+    var iv = setInterval(function () {
+      n++;
+      try {
+        if (typeof window._listenAvatars === 'function') {
+          window._listenAvatars();
+          if (window._avatarsUnsub) {
+            clearInterval(iv);
+            try { window._maybeAdoptPhoto(); } catch (e) {}
+            try { window._repaintAllAvatars(); } catch (e) {}
+          }
+        }
+      } catch (e) {}
+      if (n > 60) clearInterval(iv);
+    }, 500);
+  })();
+} catch (e) {}
 
 // Clear our outgoing ping when we leave voice, so it doesn't linger.
 window._voiceMod().then(function (m) {
