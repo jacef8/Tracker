@@ -3024,7 +3024,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 690;
+var APP_BUILD = 691;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14056,7 +14056,22 @@ function listenUsers() {
         try {
           var _ie = el && el.querySelector('.mk-initials');
           var _merged = window._markerGroupMembers && window._markerGroupMembers[uid] && window._markerGroupMembers[uid].length > 1;
-          if (_ie && !_merged && _ie.textContent !== userMarkers[uid]._initials) _ie.textContent = userMarkers[uid]._initials;
+          if (_ie && !_merged) {
+            // Undo the merged-oval GEOMETRY too, not just the text. A merged oval is 68-84px
+            // wide and splits its initials into two half-width cells, so a marker left in that
+            // state after the group broke up draws its letters in the LEFT half — reported as
+            // "why is the icon text off-centered". The only reset lived in _applyMarkerSolo,
+            // which the grouping pass skips while a spiderfy is open or inside its 5s debounce,
+            // so a marker could stay stranded indefinitely. This path runs on every position
+            // update, so it cannot.
+            if (el.style.width !== '44px') el.style.width = '44px';
+            if (el.style.borderRadius !== '50%') el.style.borderRadius = '50%';
+            if (_ie.style.fontSize) _ie.style.fontSize = '';
+            // textContent also clears the two <span> halves the merged layout left behind.
+            if (_ie.textContent !== userMarkers[uid]._initials || _ie.children.length) {
+              _ie.textContent = userMarkers[uid]._initials;
+            }
+          }
           window._applyMarkerAvatar(uid);
         } catch (e) {}
         if (el) {
