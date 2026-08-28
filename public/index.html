@@ -3019,7 +3019,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 677;
+var APP_BUILD = 678;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3394,6 +3394,7 @@ function _applyMarkerMerged(primary, members) {
   el.style.background = 'transparent';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
+    initEl.style.display = 'flex';   // the solo avatar path hides this; a merge must bring it back
     // "J | J" is unreadable, and it happens constantly — Jace/Jared/Justin all reduce to "J",
     // and one person's phone and tablet reduce to the same thing no matter how far you go.
     // Ask for the shortest labels that actually tell these two apart.
@@ -3413,6 +3414,15 @@ function _applyMarkerMerged(primary, members) {
       var txt = escapeHtmlJs(labels[i].txt);
       if (labels[i].sub) {
         txt += '<span style="font-size:.6em;font-weight:800;opacity:.92;margin-left:1px">' + escapeHtmlJs(labels[i].sub) + '</span>';
+      }
+      // A merged oval used to force letters on BOTH halves, so standing next to someone
+      // replaced two profile photos with two initials — which is when you most want faces.
+      // Each half now carries that member's own photo, and only falls back to letters.
+      var ava = '';
+      try { ava = window._avatarSrc(u) || ''; } catch (e) {}
+      if (ava) {
+        return '<span style="flex:1;height:100%;background-image:url(&quot;' + ava +
+          '&quot;);background-size:cover;background-position:center"></span>';
       }
       return '<span style="flex:1;height:100%;display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
     }).join('');
@@ -5717,6 +5727,14 @@ window._applyMarkerAvatar = function (uid) {
 };
 window._repaintAllAvatars = function () {
   try { Object.keys((typeof userMarkers !== 'undefined' && userMarkers) || {}).forEach(window._applyMarkerAvatar); } catch (e) {}
+  // Merged ovals paint their halves from _avatarSrc at merge time, so a photo that loads
+  // afterwards leaves the oval showing letters until the next merge pass. Redraw them here.
+  try {
+    var g = window._markerGroupMembers || {};
+    Object.keys(g).forEach(function (u) {
+      if (g[u] && g[u].length > 1 && typeof _applyMarkerMerged === 'function') _applyMarkerMerged(u, g[u]);
+    });
+  } catch (e) {}
   try { window._paintAvatars(); } catch (e) {}
   try { window._refreshAvatarPanel(); } catch (e) {}
 };
