@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 708;
+var APP_BUILD = 709;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3646,9 +3646,11 @@ function _layoutMarkerChips() {
 // a deliberate user action, and making dots take 5s to separate after pinching reads as the
 // map being broken.
 function _updateMarkerGrouping(immediate) {
-  // While a cluster is fanned out its markers are deliberately at false positions; regrouping
-  // would immediately re-merge them and undo the fan.
-  if (window._spider) return;
+  // A fan-out used to hold markers at deliberately false positions, so the pass stood aside for
+  // it. Nothing merges any more (705), so a cluster to fan out cannot be formed and any _spider
+  // value is stale by definition -- and standing aside for a stale one froze every marker in
+  // place: no solo-layout reset, no spread, for the rest of the session.
+  if (window._spider) { try { window._collapseSpider(); } catch (e) {} }
   // Hidden members can never be part of a cluster or its +N badge — belt to the immediate
   // teardown's suspenders, covering any path where a hidden marker still lingers.
   var uids = Object.keys(userMarkers).filter(function (u) {
@@ -14483,6 +14485,8 @@ function listenUsers() {
         try {
           var _ie = el && el.querySelector('.mk-initials');
           var _merged = window._markerGroupMembers && window._markerGroupMembers[uid] && window._markerGroupMembers[uid].length > 1;
+          // Do NOT trust _merged alone here: it reads window._markerGroupMembers, which only the
+          // grouping pass maintains. When that pass was frozen this fix could never fire either.
           if (_ie && !_merged) {
             // Undo the merged-oval GEOMETRY too, not just the text. A merged oval is 68-84px
             // wide and splits its initials into two half-width cells, so a marker left in that
