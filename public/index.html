@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 712;
+var APP_BUILD = 713;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6247,6 +6247,36 @@ var AVATAR_PRESETS = [
   { e: '\uD83C\uDFE0', bg: '#3a3a5c' },
   { e: '\uD83D\uDD25', bg: '#5c3312' }
 ];
+
+// Icons for a DEVICE rather than a person. A tablet on the shelf wearing its owner's face reads
+// as a second copy of that person -- which is exactly how it was reported ("lexis phone is
+// showing two Jace"). Avatars are already looked up by device id before falling back to the
+// account, so a device entry simply wins; this is the way to write one.
+var DEVICE_PRESETS = [
+  { e: '\uD83D\uDCF1', bg: '#26364a', label: 'Phone' },
+  { e: '\uD83D\uDCDF', bg: '#3a3a5c', label: 'Tablet' },
+  { e: '\uD83D\uDCBB', bg: '#2f3b2f', label: 'Computer' },
+  { e: '\u231A', bg: '#4a2f3a', label: 'Watch' },
+  { e: '\uD83D\uDE97', bg: '#4a3b2a', label: 'Vehicle' },
+  { e: '\uD83C\uDFE0', bg: '#3a3a5c', label: 'Home' }
+];
+window._setDeviceIcon = function (devUid, i) {
+  try {
+    var pre = DEVICE_PRESETS[i]; if (!pre || !devUid) return;
+    var S = 160, c = document.createElement('canvas'); c.width = c.height = S;
+    var x = c.getContext('2d');
+    x.fillStyle = pre.bg; x.fillRect(0, 0, S, S);
+    x.font = '96px "Apple Color Emoji","Noto Color Emoji","Segoe UI Emoji",sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText(pre.e, S / 2, S / 2 + 6);
+    fbSet(fbRef(db, 'gl/_avatars/' + devUid), { img: c.toDataURL('image/jpeg', 0.82), ts: Date.now(), src: 'device' });
+    toast(pre.label + ' icon set');
+    try { window._repaintAllAvatars(); } catch (e) {}
+  } catch (e) { toast('Could not set that icon'); }
+};
+window._clearDeviceIcon = function (devUid) {
+  try { fbRemove(fbRef(db, 'gl/_avatars/' + devUid)); toast('Device icon removed'); window._repaintAllAvatars(); } catch (e) {}
+};
 window._setPresetAvatar = function (i) {
   try {
     var pre = AVATAR_PRESETS[i]; if (!pre) return;
