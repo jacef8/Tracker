@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 711;
+var APP_BUILD = 712;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3854,6 +3854,35 @@ window._spiderfy = function (primary, members) {
   try { toast('Tap the map to close', 1800); } catch (e) {}
   return true;
 };
+
+// Accounts with more than one device currently on the map. Their rows MUST carry the device
+// label -- it is the only thing separating "Jace" in the car from "Jace" at the house. Returns
+// a set of uids, not accounts, so callers can ask about a row directly.
+window._needsDevLabel = function () {
+  var out = {};
+  try {
+    var byAcct = {};
+    Object.keys((typeof userMarkers !== 'undefined' && userMarkers) || {}).forEach(function (u) {
+      var acct = (window._devOwnerAll && window._devOwnerAll[u] && window._devOwnerAll[u].acct) || u;
+      (byAcct[acct] = byAcct[acct] || []).push(u);
+    });
+    Object.keys(byAcct).forEach(function (a) {
+      if (byAcct[a].length > 1) byAcct[a].forEach(function (u) { out[u] = 1; });
+    });
+  } catch (e) {}
+  return out;
+};
+// The label for a row, appended only when it is doing work.
+window._labelFor = function (uid, name) {
+  try {
+    if (!window._needsDevLabel()[uid]) return name;
+    var mk = (typeof userMarkers !== 'undefined') && userMarkers[uid];
+    var dev = (mk && mk._el && mk._el.dataset && mk._el.dataset.dev) || '';
+    if (!dev) return name;
+    if (String(name || '').toLowerCase().indexOf(String(dev).toLowerCase()) !== -1) return name;
+    return name + ' \u00b7 ' + dev;
+  } catch (e) { return name; }
+};
 window._showGroupedMemberSheet = function (uids) {
   window._openMemberUid = null;
   var sheet = document.getElementById('member-sheet');
@@ -3862,7 +3891,7 @@ window._showGroupedMemberSheet = function (uids) {
     var rows = uids.map(function (u) {
       var mk = userMarkers[u]; if (!mk) return '';
       var isMine = u === userId;
-      var nm = isMine ? (userName + ' (you)') : (knownUsers[u] || 'Member');
+      var nm = isMine ? (userName + ' (you)') : window._labelFor(u, knownUsers[u] || 'Member');
       // Device label, ALWAYS shown here. This sheet exists precisely because several dots are
       // standing on one spot — and same-account devices share a display name, so it kept
       // presenting "Jace / Jace", indistinguishable, which read as the duplicate bug it had
