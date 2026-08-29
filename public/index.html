@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 709;
+var APP_BUILD = 710;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3389,10 +3389,8 @@ var MERGE_PX_MAX_M = 400;   // ~a quarter mile: same yard, same lot, same buildi
 // Below this many markers on one spot, spread them apart rather than merging them into an oval
 // that has to be tapped open. Two or three faces side by side is more useful than one shape
 // plus an interaction, and it never hides anyone.
-// Set beyond any real crew: markers are never merged now. Everyone and everything on the map
-// stays its own visible dot, however tight the group -- see the leader lines below, which are
-// what make that honest rather than just crowded.
-var MERGE_MIN_PILEUP = 999;
+// A merged oval renders two halves, so two is the most it can show without hiding anyone.
+var MERGE_MAX_IN_OVAL = 2;
 var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
 var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
@@ -3680,24 +3678,21 @@ function _updateMarkerGrouping(immediate) {
       // 44px, so anything closer than ~54px on screen is overlapping — group those too and
       // let the existing merged-oval + "+N" badge present them cleanly. Zoom in and they
       // separate on their own, because this is recomputed on every zoom.
-      try {
-        var sa = map.project(pa), sb = map.project(pb);
-        var dx = sa.x - sb.x, dy = sa.y - sb.y;
-        var px = Math.sqrt(dx * dx + dy * dy);
-        if (px < (wasTogether ? MERGE_SPLIT_PX : MERGE_JOIN_PX) && d < MERGE_PX_MAX_M) union(a, b);
-      } catch (e) {}
+      // No screen-overlap merging. Two dots colliding says something about the zoom level, not
+      // about where the people are; _spreadOverlappingMarkers handles that without claiming
+      // they are together. Only the real-distance test above may make that claim.
     }
   }
 
   var rawGroups = {};
   uids.forEach(function (u) { var r = find(u); (rawGroups[r] = rawGroups[r] || []).push(u); });
-  // Small clusters are handled by nudging the dots apart instead of collapsing them into one
-  // tappable oval, so nobody has to open a shape to find out who is inside it. Only a genuine
-  // pile-up still merges, where spreading alone would leave an unreadable scrum.
+  // A merged oval has room for exactly two faces. Two people in one car is what it is for, and
+  // both of them stay visible in it. Three or more would mean two faces and a "+N" badge hiding
+  // the rest, so those spread apart instead -- nobody is ever behind a shape they have to tap.
   try {
     Object.keys(rawGroups).forEach(function (r) {
       var g = rawGroups[r];
-      if (g.length > 1 && g.length < MERGE_MIN_PILEUP) {
+      if (g.length > MERGE_MAX_IN_OVAL) {
         delete rawGroups[r];
         g.forEach(function (u) { rawGroups['solo:' + u] = [u]; });
       }
@@ -10303,6 +10298,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 710, t: 'Riding together shows as one dot again',
+    d: 'Two people in the same vehicle merge into a single marker with both faces on it. Anyone else close by stays a separate dot, and people who are merely near each other on a zoomed-out map are never shown as together.' },
   { b: 706, t: 'Live breadcrumbs are back',
     d: 'Tap someone on the map and choose Show trail to draw a live line behind them as they move. History, beside it, still opens a recorded day.' },
   { b: 705, t: 'Everyone stays visible',
