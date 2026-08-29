@@ -1553,6 +1553,15 @@
 
             <!-- Admin-only: who's opened the app today. Gated on the signed-in email, not a role
                  system — this is a one-person family app, not worth building real RBAC for. -->
+            <div id="admin-design-section" style="margin-top:14px;display:none">
+              <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">🧪 Design preview</div>
+              <div style="font-size:10px;color:var(--muted);margin:1px 0 6px">Concept screens — not the live app, and nothing here changes your data</div>
+              <button type="button" onclick="window._openDesignPreview && window._openDesignPreview()"
+                      style="width:100%;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:800;cursor:pointer">
+                Open design preview
+              </button>
+            </div>
+
             <div id="admin-activity-section" style="margin-top:14px;display:none">
               <div class="field-label" style="margin-bottom:0;display:flex;align-items:center;gap:6px">🛠️ Today's activity</div>
               <div style="font-size:10px;color:var(--muted);margin:1px 0 4px">Admin only</div>
@@ -3034,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 707;
+var APP_BUILD = 708;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3950,8 +3959,32 @@ window._logActivity = function (uid, nm) {
 function _isAdmin() {
   try { return (localStorage.getItem('gl_email') || '').toLowerCase() === 'jaceford08@gmail.com'; } catch (e) { return false; }
 }
+
+// The design study, opened INSIDE the app. A plain link would navigate the WebView away from
+// GroundLink with no way back; an overlay keeps the app running underneath and closes cleanly.
+window._openDesignPreview = function () {
+  try {
+    if (document.getElementById('design-preview')) return;
+    var w = document.createElement('div');
+    w.id = 'design-preview';
+    w.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#0d1117;display:flex;flex-direction:column';
+    w.innerHTML =
+      '<div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px 10px;background:var(--card,#0d1117);border-bottom:1px solid var(--border)">' +
+        '<div style="flex:1;min-width:0;font-size:14px;font-weight:800;color:var(--accent)">Design preview</div>' +
+        '<button type="button" id="design-preview-x" style="flex-shrink:0;padding:8px 14px;border:1px solid var(--border);border-radius:9px;background:transparent;color:var(--text);font-size:13px;font-weight:800;cursor:pointer">Close</button>' +
+      '</div>' +
+      '<iframe src="/design.html?v=' + APP_BUILD + '" title="Design preview" ' +
+        'style="flex:1 1 auto;width:100%;border:0;background:#0d1117"></iframe>';
+    document.body.appendChild(w);
+    w.querySelector('#design-preview-x').onclick = function () { try { w.remove(); } catch (e) {} };
+  } catch (e) {}
+};
 window._renderAdminActivity = function () {
   try {
+    try {
+      var dsec = document.getElementById('admin-design-section');
+      if (dsec) dsec.style.display = _isAdmin() ? 'block' : 'none';
+    } catch (e) {}
     var sec = document.getElementById('admin-activity-section'); if (!sec) return;
     if (!_isAdmin()) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
