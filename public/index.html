@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 713;
+var APP_BUILD = 714;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10365,6 +10365,8 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 714, t: 'iPhones: no more tapping a banner to hear the channel',
+    d: 'The channel now connects on its own the first time you touch the app, instead of asking you to tap a yellow bar for something you had already turned on.' },
   { b: 711, t: 'A carful merges, not just a pair',
     d: 'Up to four people travelling together now share one marker with everybody\u2019s face on it, instead of only two.' },
   { b: 710, t: 'Riding together shows as one dot again',
@@ -15124,6 +15126,21 @@ function _glAudio() {
         var b = ctx.createBuffer(1, 1, 22050);
         var s = ctx.createBufferSource();
         s.buffer = b; s.connect(ctx.destination); s.start(0);
+      }
+    } catch (e) {}
+    // Unlock the WebRTC side too, SYNCHRONOUSLY -- iOS only honours this while the gesture is
+    // still live, so it cannot wait on a dynamic import. The module handle is used if it is
+    // already loaded; if it is not, there is no room playing yet and the next tap will do it.
+    try {
+      var m = window._voiceModSync;
+      if (m && m.unlockAudio) { m.unlockAudio(); window._audioUnlocked = 1; }
+    } catch (e) {}
+    // A channel the member already opted into and could not hear without tapping a banner:
+    // join it now that audio is permitted.
+    try {
+      if (window._audioUnlocked && window._pendingChannelJoin) {
+        window._pendingChannelJoin = 0;
+        if (typeof _joinOpenChannel === 'function') _joinOpenChannel();
       }
     } catch (e) {}
   }
@@ -22840,8 +22857,14 @@ window._maybeRejoinChannel = function () {
     try { window._pttJoin(_channelRoomId()); } catch (e) {}
     return;
   }
-  if (_isIOSVoice()) { window._showIncomingVoice(_channelRoomId(), '📻 Group channel', true); }
-  else { _joinOpenChannel(); }
+  if (_isIOSVoice() && !window._audioUnlocked) {
+    // Not yet permitted to play audio. Do NOT put a banner up asking for a tap: arm the join so
+    // the member's next touch anywhere -- opening a sheet, panning the map -- satisfies iOS and
+    // connects the channel without them being asked for anything.
+    window._pendingChannelJoin = 1;
+    return;
+  }
+  _joinOpenChannel();
 };
 
 // ── CallKit / VoIP bridge (iOS) ──────────────────────────────────────────────
