@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 714;
+var APP_BUILD = 715;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15131,6 +15131,9 @@ function _glAudio() {
     // Unlock the WebRTC side too, SYNCHRONOUSLY -- iOS only honours this while the gesture is
     // still live, so it cannot wait on a dynamic import. The module handle is used if it is
     // already loaded; if it is not, there is no room playing yet and the next tap will do it.
+    // The member has now touched the app: that is the consent iOS asks for, and it does not
+    // expire because a module had not finished loading yet.
+    window._userGestured = 1;
     try {
       var m = window._voiceModSync;
       if (m && m.unlockAudio) { m.unlockAudio(); window._audioUnlocked = 1; }
@@ -15138,7 +15141,7 @@ function _glAudio() {
     // A channel the member already opted into and could not hear without tapping a banner:
     // join it now that audio is permitted.
     try {
-      if (window._audioUnlocked && window._pendingChannelJoin) {
+      if ((window._audioUnlocked || window._userGestured) && window._pendingChannelJoin) {
         window._pendingChannelJoin = 0;
         if (typeof _joinOpenChannel === 'function') _joinOpenChannel();
       }
@@ -22857,7 +22860,7 @@ window._maybeRejoinChannel = function () {
     try { window._pttJoin(_channelRoomId()); } catch (e) {}
     return;
   }
-  if (_isIOSVoice() && !window._audioUnlocked) {
+  if (_isIOSVoice() && !window._audioUnlocked && !window._userGestured) {
     // Not yet permitted to play audio. Do NOT put a banner up asking for a tap: arm the join so
     // the member's next touch anywhere -- opening a sheet, panning the map -- satisfies iOS and
     // connects the channel without them being asked for anything.
@@ -22994,7 +22997,18 @@ window._acceptIncomingVoice = async function () {
 // If it FAILS (e.g. the LiveKit library can't load on this device — common on older iOS or an
 // in-app browser), say so plainly: live voice won't work, only the recorded clips will.
 try {
-  window._voiceMod().then(function (m) { window._voiceModSync = m; window._voiceLoadErr = ''; }).catch(function (e) {
+  window._voiceMod().then(function (m) {
+    window._voiceModSync = m; window._voiceLoadErr = '';
+    // The tap that opened the map may have happened before this module existed. Honour it now
+    // rather than asking the member for a second one.
+    try {
+      if (window._userGestured && m.unlockAudio) { m.unlockAudio(); window._audioUnlocked = 1; }
+      if (window._audioUnlocked && window._pendingChannelJoin) {
+        window._pendingChannelJoin = 0;
+        if (typeof _joinOpenChannel === 'function') _joinOpenChannel();
+      }
+    } catch (e) {}
+  }).catch(function (e) {
     window._voiceLoadErr = (e && e.message) || 'load failed';
     try { setTimeout(function () { if (!window._voiceModSync && typeof toast === 'function') toast('⚠ Live voice engine didn’t load on this device — you’ll still get the recordings. For live, open GroundLink in Safari (not an in-app browser).', 7000); }, 1800); } catch (_) {}
   });
