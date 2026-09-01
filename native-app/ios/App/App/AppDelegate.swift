@@ -37,6 +37,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // enough. This CLLocationManager instance must be created unconditionally on every launch
     // (including that relaunch) for the delegate callback below to actually fire.
     private var bgLocationManager: CLLocationManager?
+    // The "you are here" region — deliberately NOT prefixed "GL-", so syncMonitoredRegions()
+    // (which clears and rebuilds every GL- region from the saved-places cache) cannot delete it.
+    private let hereRegionId = "GLHERE"
+    private let hereRegionRadius: CLLocationDistance = 120   // tight enough that leaving is a real departure
+    private var hereRegionCenter: CLLocationCoordinate2D?
 
     // Kept alive for the ENTIRE process lifetime, not recreated per fix (see reportFixInBackground
     // for why this changed 2026-07-22).
@@ -111,6 +116,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
         bgLocationManager = mgr
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
+        restoreHereRegion()      // and the anchor on the last known position, before any fix lands
         setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
         setupPushToTalk()        // iOS 16+ Push to Talk framework (ringless walkie-talkie)
         // A stationary device (moved less than distanceFilter) never gets another
@@ -179,6 +185,36 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // hysteresis and pushes stay in headless.html's checkPlaceGeofences, which runs on the fix
     // this report generates. Place list arrives via __nativeSync (see below), cached in
     // UserDefaults so region monitoring survives relaunches where the web app never loads.
+
+    /// Keep a small monitored region anchored on the device's current position, so that LEAVING
+    /// wakes the app even when it has been terminated (battery death, a reboot, an OS eviction).
+    /// Regions persist across launches at the system level; re-registering is cheap insurance for
+    /// the cases where they did not.
+    private func updateHereRegion(_ loc: CLLocation) {
+        guard let mgr = bgLocationManager,
+              CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+        // Still comfortably inside the current one — moving the anchor on every fix would churn
+        // system state and could miss the exit we are waiting for.
+        if let c = hereRegionCenter {
+            let moved = CLLocation(latitude: c.latitude, longitude: c.longitude).distance(from: loc)
+            if moved < hereRegionRadius * 0.6 { return }
+        }
+        for r in mgr.monitoredRegions where r.identifier == hereRegionId { mgr.stopMonitoring(for: r) }
+        let region = CLCircularRegion(center: loc.coordinate, radius: hereRegionRadius, identifier: hereRegionId)
+        region.notifyOnEntry = false     // arriving here is not news; leaving is
+        region.notifyOnExit = true
+        mgr.startMonitoring(for: region)
+        hereRegionCenter = loc.coordinate
+        UserDefaults.standard.set([loc.coordinate.latitude, loc.coordinate.longitude], forKey: "gl_here_region")
+    }
+
+    /// Re-arm the anchor from the last known position at launch, before any fix has arrived --
+    /// the case that matters most, since a relaunch after a reboot may not get a fix for a while.
+    private func restoreHereRegion() {
+        guard let arr = UserDefaults.standard.array(forKey: "gl_here_region") as? [Double], arr.count == 2 else { return }
+        updateHereRegion(CLLocation(latitude: arr[0], longitude: arr[1]))
+    }
+
     private func syncMonitoredRegions() {
         guard let mgr = bgLocationManager else { return }
         guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
@@ -206,7 +242,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         if let loc = manager.location { reportFixInBackground(loc) }
     }
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
-        if let loc = manager.location { reportFixInBackground(loc) }
+        if let loc = manager.location {
+            reportFixInBackground(loc)
+            // Leaving the anchor is exactly when a new one is needed: re-anchor here so the next
+            // departure wakes us too. Without this the phone gets one relaunch and no more.
+            if region.identifier == hereRegionId { updateHereRegion(loc) }
+        }
     }
 
     // Pull identity + places out of the LIVE web app whenever it comes to the foreground —
@@ -308,6 +349,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // write — confirmed 2026-07-22 as the cause of choppy/jumpy movement on iOS specifically
         // (Android has no equivalent competing native path). Only report from here when actually
         // backgrounded; the foreground path already has this covered.
+        // Move the anchor with the device even while foregrounded: the point is to have a live
+        // region in place BEFORE the app is terminated, and termination can happen at any time.
+        updateHereRegion(loc)
         if UIApplication.shared.applicationState == .active { return }
         reportFixInBackground(loc)
     }
