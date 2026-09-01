@@ -3043,7 +3043,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 715;
+var APP_BUILD = 716;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3422,12 +3422,17 @@ function _applyMarkerSolo(mk) {
   el.style.width = '44px';
   el.style.borderRadius = '50%';
   el.style.border = mk._borderShorthand || '3px solid #a9b4bf';
-  el.style.background = '';                                  // merged ovals set this transparent
+  // Merged ovals set background:transparent. Clearing the shorthand alone also drops the fill
+  // colour and leaves a white circle, so put the member's colour back explicitly.
+  el.style.background = '';
+  if (mk._fillColor) el.style.backgroundColor = mk._fillColor;
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
+    // Rewrite the whole inline style rather than clearing the specific leftovers I happen to
+    // know about -- the merged layout has grown new ones twice and each partial reset missed
+    // the next. This is the exact string the create path uses.
+    initEl.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit';
     initEl.textContent = mk._initials || '';                 // also drops the merged cells
-    initEl.style.fontSize = '';
-    initEl.style.display = 'flex';                           // the avatar path can hide this
   }
   try { window._applyMarkerAvatar(mk._uid); } catch (e) {}   // un-merged: the photo comes back
   _updateMarkerDev(el, el.dataset ? el.dataset.dev : '');   // merging hid it; bring it back
