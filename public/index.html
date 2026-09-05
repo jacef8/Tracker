@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 728;
+var APP_BUILD = 729;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21663,14 +21663,18 @@ function _groupFollowTick(force) {
   // map shows ("even if a device is resting, it should still show in follow group"). 6h matches
   // the app's own "present today" semantics; the 14-hours-ago member stays excluded.
   var GROUP_FIT_REST_MS = 6 * 60 * 60 * 1000;
-  var pts = [], ptsStale = [];
+  var pts = [], ptsStale = [], ptsUids = [];
   var _seen = {};
   var _add = function (uid, lng, lat, active) {
     if (uid && _seen[uid]) return;                       // no duplicates — see below
     if (!isFinite(lng) || !isFinite(lat)) return;
     if (!lng && !lat) return;                            // 0,0 = no position (no-GPS members)
     if (uid) _seen[uid] = 1;
+    // Keep the uid beside the point. Matching a member back to a point by comparing coordinates
+    // cannot work: these come from the room data, while a marker sits wherever its glide has
+    // reached. That mismatch is why the single-member camera lock never engaged.
     (active === false ? ptsStale : pts).push([lng, lat]);
+    if (active !== false) ptsUids.push(uid || null);
   };
   // Build from the ROOM DATA, not from whichever markers happen to exist yet.
   //
@@ -21785,13 +21789,9 @@ function _groupFollowTick(force) {
     // A crew of one is not a group. Hand the camera to that marker's own animation frame, the
     // way following a person has done since 725, and stand down while it holds -- two things
     // easing toward the same point is the fight that caused this in the first place.
-    var _solo = null;
-    try {
-      Object.keys(userMarkers || {}).forEach(function (u) {
-        var mk = userMarkers[u];
-        if (mk && mk._ll && Math.abs(mk._ll[0] - pts[0][0]) < 1e-9 && Math.abs(mk._ll[1] - pts[0][1]) < 1e-9) _solo = u;
-      });
-    } catch (e) {}
+    // The uid of the only member being framed, carried alongside its point rather than
+    // reverse-engineered from coordinates.
+    var _solo = (ptsUids.length === 1 && ptsUids[0] && userMarkers[ptsUids[0]]) ? ptsUids[0] : null;
     window._camLockUid = _solo;
     if (_solo && !force) return true;                     // the frame loop has it
     _gfEase({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(),
