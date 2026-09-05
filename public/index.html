@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 733;
+var APP_BUILD = 734;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20362,8 +20362,13 @@ window._shareTracksOpen = function () {
   if (!tks.length) { toast('No tracks in your library yet'); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var rows = '';
+  // The room you are in, then favourites, then people -- the same destinations pins offer.
+  // Sharing a trail with the crew is the obvious case and was the one thing missing.
+  var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
+  if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + escapeHtmlJs(groupName.replace(/_/g, ' ')) + ' — current room');
+  favs.forEach(function (k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + escapeHtmlJs(String(k).replace(/^test_/, '').replace(/_/g, ' '))); });
   Object.keys(friends).forEach(function (uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend')); });
-  if (!rows) { toast('Star people inside a room first — that\'s who you can share to', 3200); return; }
+  if (!rows) { toast('Join a crew or star someone first — that\'s who you can share to', 3200); return; }
   var ov = document.createElement('div');
   ov.id = '_trk-share-modal';
   ov.style.cssText = 'position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
@@ -20384,11 +20389,26 @@ window._shareTracksOpen = function () {
 window._trkSendTracks = function () {
   var tks = getSavedTracks();
   var targets = Array.prototype.slice.call(document.querySelectorAll('#_trk-share-modal ._sv-target:checked')).map(function (c) { return c.value; });
-  if (!tks.length || !targets.length) { toast('Pick at least one person'); return; }
+  if (!tks.length || !targets.length) { toast('Pick somewhere to send them'); return; }
   var fb = window._fb, dest = 0;
   var rec = { type: 'tracks', fromName: userName || 'A friend', ts: Date.now(),
     tracks: tks.map(function (t) { return { name: t.name || 'Track', ts: t.ts || Date.now(), pts: t.pts || [], stats: t.stats || null }; }) };
+  var rooms = 0;
   targets.forEach(function (t) {
+    // A room gets the tracks written straight into it, the way a shared pin is; everyone in the
+    // crew then sees the trail without each person having to accept an invite.
+    if (t.indexOf('room:') === 0) {
+      var rk = t.slice(5);
+      try {
+        tks.forEach(function (tk) {
+          var tr = fb.push(fb.ref(fb.db, 'gl/' + rk + '/tracks'));
+          fb.set(tr, { name: tk.name || 'Track', ts: tk.ts || Date.now(), pts: tk.pts || [],
+                       stats: tk.stats || null, by: userId, byName: userName || '' });
+        });
+        rooms++;
+      } catch (e) {}
+      return;
+    }
     if (t.indexOf('person:') !== 0) return;
     var uid = t.slice(7);
     try {
@@ -20401,7 +20421,10 @@ window._trkSendTracks = function () {
     } catch (e) {}
   });
   var m = document.getElementById('_trk-share-modal'); if (m) m.remove();
-  toast('Shared ' + tks.length + ' track' + (tks.length > 1 ? 's' : '') + ' to ' + dest + ' ' + (dest === 1 ? 'person' : 'people'), 3000);
+  var _who = [];
+  if (rooms) _who.push(rooms + (rooms === 1 ? ' crew' : ' crews'));
+  if (dest) _who.push(dest + (dest === 1 ? ' person' : ' people'));
+  toast('Shared ' + tks.length + ' track' + (tks.length > 1 ? 's' : '') + ' to ' + (_who.join(' and ') || 'nobody'), 3000);
 };
 // Accept a track-library share: content-identity dedupe (same rule as GPX re-import), fresh
 // savedAt so tombstones from an OLD deletion don't eat a deliberately re-shared track.
@@ -20694,7 +20717,28 @@ try {
   window.addEventListener('online', function () {
     try { window._flushOutbox(); } catch (e) {}
     try { window._resyncLibrary(); } catch (e) {}     // tracks + saved pins, not just queued drops
+    try { window._pullLibrary(); } catch (e) {}
   });
+  // Merge the cloud library DOWN when the app comes to the foreground. It was only ever pulled
+  // at sign-in, so a pin added on another device (or added for you) never reached a phone that
+  // simply stayed signed in.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { try { window._pullLibrary(); } catch (e) {} }
+  });
+  window._pullLibrary = function () {
+    try {
+      var u = (typeof _myAcct === 'function') ? _myAcct() : '';
+      var f = window._fb;
+      if (!u || !f || !f.get) return;
+      if (window._pullBusy || (Date.now() - (window._lastPull || 0) < 20000)) return;
+      window._pullBusy = 1; window._lastPull = Date.now();
+      f.get(f.ref(f.db, 'gl/_users/' + u)).then(function (snap) {
+        window._pullBusy = 0;
+        var v = snap && snap.val && snap.val();
+        if (v && window._applyProfilePublic) window._applyProfilePublic(v);
+      }).catch(function () { window._pullBusy = 0; });
+    } catch (e) { window._pullBusy = 0; }
+  };
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') { try { window._flushOutbox(); } catch (e) {} }
   });
@@ -21196,6 +21240,26 @@ window._followUser = function(uid, name) {
 
 
 // Hide/show locate-me button when panels open/close
+
+// The locate/follow button is hidden while a panel covers the map and restored by whichever
+// close path runs. That makes every close path responsible for it, and one that forgets leaves
+// the button gone until the next panel opens and closes cleanly -- reported as it sometimes
+// being there and sometimes not. Recompute it from what is actually open instead of trusting
+// anyone to remember.
+window._reconcileLocateBtn = function () {
+  try {
+    var btn = document.getElementById('locate-me');
+    if (!btn || typeof groupName === 'undefined' || !groupName) return;
+    if (document.getElementById('member-sheet') && document.getElementById('member-sheet').style.display === 'block') return;
+    var openPanel = ['chat-panel', 'user-drawer', 'saved-pins-drawer', 'tracks-drawer', 'track-detail-drawer', 'places-drawer']
+      .some(function (id) { var el = document.getElementById(id); return el && el.classList.contains('open'); });
+    var hub = document.getElementById('pin-hub-sheet');
+    if (hub && hub.style.display === 'block') openPanel = true;
+    var want = openPanel ? 'none' : 'flex';
+    if (btn.style.display !== want) btn.style.display = want;
+  } catch (e) {}
+};
+try { setInterval(function () { window._reconcileLocateBtn(); }, 1200); } catch (e) {}
 function setLocateMeVisible(visible) {
   var btn = document.getElementById('locate-me');
   if (!btn) return;
@@ -22559,6 +22623,8 @@ try {
     } catch (e) {}
   }
   window._watchProfile = _watchProfile;
+  // Exposed so the foreground pull above can run the same merge sign-in does.
+  window._applyProfilePublic = applyProfile;
   // Let other parts of the app push prefs up after a change.
   window._glSync = pushProfile;
 
