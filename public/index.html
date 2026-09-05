@@ -3064,7 +3064,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 718;
+var APP_BUILD = 719;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10409,6 +10409,10 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 719, t: 'Share a pin to one person in one tap',
+    d: 'The Share button on a saved pin now asks who to send it to \u2014 a crew or a starred person \u2014 instead of only dropping it into whatever room you are in.' },
+  { b: 718, t: 'Pins survive no service',
+    d: 'Pins saved out of range are held on your phone and upload themselves once you get signal, instead of quietly vanishing. The Pins list is also taller and scrolls properly now.' },
   { b: 714, t: 'iPhones: no more tapping a banner to hear the channel',
     d: 'The channel now connects on its own the first time you touch the app, instead of asking you to tap a yellow bar for something you had already turned on.' },
   { b: 711, t: 'A carful merges, not just a pair',
@@ -20055,8 +20059,17 @@ window._svToggleSelect = function() {
   renderSavedPins();
 };
 window._svSelectedPins = function() {
+  // A single pin shared straight from its row borrows this whole flow rather than duplicating
+  // it -- same destinations, same send, same offline queue.
+  if (window._svShareOne && window._svShareOne.length) return window._svShareOne;
   var all = getSavedPins();
   return Object.keys(window._svSel).map(function(i) { return all[+i]; }).filter(Boolean);
+};
+// Closing the picker must forget a one-off share, or the next multi-select send would silently
+// send that pin instead of the ticked ones.
+window._svCloseShare = function () {
+  window._svShareOne = null;
+  var m = document.getElementById('_sv-share-modal'); if (m) m.remove();
 };
 // Select every pin currently shown (respects the active type/collection filter) — handy for
 // grabbing a whole collection to share at once. Enters select mode on its own so it works as
@@ -20117,12 +20130,12 @@ window._svOpenShareTargets = function() {
   var ov = document.createElement('div');
   ov.id = '_sv-share-modal';
   ov.style.cssText = 'position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
-  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+  ov.addEventListener('click', function(e) { if (e.target === ov) window._svCloseShare(); });
   ov.innerHTML =
     '<div style="width:100%;max-width:480px;background:#0d1117;border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:78vh;display:flex;flex-direction:column">' +
       '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
         '<span style="font-weight:800;font-size:15px;color:var(--accent)">Share ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to…</span>' +
-        '<button onclick="var m=document.getElementById(\'_sv-share-modal\');if(m)m.remove();" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
+        '<button onclick="window._svCloseShare()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
       '</div>' +
       '<div style="overflow-y:auto;padding:6px 14px;flex:1">' + rows + '</div>' +
       '<div style="padding:12px 16px;border-top:1px solid var(--border)">' +
@@ -20486,8 +20499,18 @@ window._flushOutbox = function () {
   setTimeout(function () { _flushing = false; }, 4000);
 };
 window._outboxPending = function () { try { return _outbox().length; } catch (e) { return 0; } };
+// Saved pins and TRACKS live in localStorage and are pushed to the account profile by _glSync,
+// which only runs at the moment they change. Offline that push fails and is never retried, so
+// the library sits on the phone and reaches no other device. Re-push whenever we reconnect --
+// the same trigger the pin outbox uses.
+window._resyncLibrary = function () {
+  try { if (window._glSync) window._glSync(); } catch (e) {}
+};
 try {
-  window.addEventListener('online', function () { try { window._flushOutbox(); } catch (e) {} });
+  window.addEventListener('online', function () {
+    try { window._flushOutbox(); } catch (e) {}
+    try { window._resyncLibrary(); } catch (e) {}     // tracks + saved pins, not just queued drops
+  });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') { try { window._flushOutbox(); } catch (e) {} }
   });
@@ -20496,11 +20519,10 @@ try {
 window.shareSavedPin = function(idx) {
   var pin = getSavedPins()[idx];
   if (!pin) return;
-  if (!groupName || !db) { toast('Join a group first'); return; }
-  window._queuePin(groupName, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || 'Shared pin',
-    name:userName, droppedBy:userId, ts:Date.now() });
-  toast(navigator.onLine === false ? 'Pin queued — it will share when you have service' : 'Pin shared into ' + groupName);
-  document.getElementById('saved-pins-drawer').classList.remove('open');
+  // Ask WHO, the same way the multi-select flow does. Sending it to whatever room you are
+  // standing in was the only option before, which is not usually what "share this pin" means.
+  window._svShareOne = [pin];
+  try { window._svOpenShareTargets(); } catch (e) { window._svShareOne = null; }
 };
 var _savedFilter = 'all';
 window.setSavedFilter = function(cat) { _savedFilter = cat; renderSavedPins(); };
