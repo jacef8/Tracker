@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 726;
+var APP_BUILD = 727;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21748,9 +21748,29 @@ function _groupFollowTick(force) {
     // Record here too — this branch used to return before the debug string was built, so a
     // group of one logged nothing at all and looked identical to the tick never running.
     try { window._gfDbg = 'single member, centred (z=' + map.getZoom().toFixed(2) + ')'; } catch (e) {}
-    _gfEase({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(), duration: force ? 700 : 1200, easing: _linEase });
+    // 726 fixed the cadence for a real group and left THIS branch alone -- and this is the one
+    // that runs for follow-me in a crew of one, which is the case actually being used. It eased
+    // 1200ms against a 1000ms tick, so every other tick landed mid-animation, was skipped by the
+    // guard, and the camera stood still until the tick after: the reported stop-start.
+    //
+    // A crew of one is not a group. Hand the camera to that marker's own animation frame, the
+    // way following a person has done since 725, and stand down while it holds -- two things
+    // easing toward the same point is the fight that caused this in the first place.
+    var _solo = null;
+    try {
+      Object.keys(userMarkers || {}).forEach(function (u) {
+        var mk = userMarkers[u];
+        if (mk && mk._ll && Math.abs(mk._ll[0] - pts[0][0]) < 1e-9 && Math.abs(mk._ll[1] - pts[0][1]) < 1e-9) _solo = u;
+      });
+    } catch (e) {}
+    window._camLockUid = _solo;
+    if (_solo && !force) return true;                     // the frame loop has it
+    _gfEase({ center: pts[0], zoom: force ? Math.max(map.getZoom(), 15) : map.getZoom(),
+              duration: force ? 700 : GROUP_TICK_MS, easing: _linEase });
     return true;
   }
+  // More than one member: the fit owns the camera again, so release any single-member lock.
+  if (window._camLockUid) window._camLockUid = null;
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
   var cam;
