@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 732;
+var APP_BUILD = 733;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6555,9 +6555,11 @@ try {
         localStorage.removeItem('gl_open_channel');
       }
     } catch (e) {}
-    if (localStorage.getItem('gl_open_channel') !== '1' && window.GLPushToTalk.leave) {
-      window.GLPushToTalk.leave();
-    }
+    // Leave unconditionally, not just when the channel was never opted into. Reported
+    // 2026-09-05: an iPhone could not answer or hang up ordinary calls while joined.
+    if (window.GLPushToTalk.leave) window.GLPushToTalk.leave();
+    // And stop it re-joining on the next room entry until this is understood.
+    try { localStorage.removeItem('gl_open_channel'); } catch (e) {}
   }
 } catch (e) {}
 
@@ -23259,6 +23261,14 @@ window._maybeRejoinChannel = function () {
   // iOS 16+ native Push to Talk: join the ringless framework channel (it owns the audio session +
   // system UI, so NO tap-to-join banner), register the ephemeral token, and join LiveKit to hear.
   if (window._hasNativePtt && window._hasNativePtt()) {
+    // Apple's PTT channel is suspended: while joined it holds a system audio session, and an
+    // iPhone in that state could not answer or hang up ordinary phone calls. Voice still works
+    // through the normal path below; only the locked-phone, ringless channel is off.
+    if (!window._pttChannelAllowed) {
+      try { if (window.GLPushToTalk && window.GLPushToTalk.leave) window.GLPushToTalk.leave(); } catch (e) {}
+      try { window._pttJoin(_channelRoomId()); } catch (e) {}
+      return;
+    }
     try { if (window.GLPushToTalk) window.GLPushToTalk.joinChannel(typeof _prettyGroup === 'function' ? _prettyGroup(groupName) : groupName); } catch (e) {}
     try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}
     try { window._pttJoin(_channelRoomId()); } catch (e) {}
