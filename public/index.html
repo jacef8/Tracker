@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 731;
+var APP_BUILD = 732;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21151,9 +21151,12 @@ window._followUser = function(uid, name) {
   followUid = uid;
   clearInterval(followInterval);
   var isSelf = uid === userId;
-  // Hand the camera to the marker's own animation frame. Not for your own dot: that path also
-  // rotates the map for Heading Up, and a bare setCenter would undo the rotation every frame.
-  window._camLockUid = isSelf ? null : uid;
+  // Hand the camera to the marker's own animation frame -- for your own dot too, which is the
+  // common case and was left on the older, steppier path. The exception is Heading Up, where the
+  // camera must also rotate: a bare setCenter would fight the rotation every frame, so that
+  // configuration keeps the easeTo path.
+  var _headingUp = (typeof headingUpOn !== 'undefined') && headingUpOn;
+  window._camLockUid = _headingUp ? null : uid;
   var btn = document.getElementById('locate-me');
   btn.style.background  = isSelf ? 'var(--accent)' : '#00e676';
   btn.style.color       = '#000';
@@ -21180,7 +21183,9 @@ window._followUser = function(uid, name) {
     // only recenter if they've panned off-center (the on-fix recenter handles the rest,
     // so this avoids a jump every few seconds while already centered).
     if (!target) return;
-    if (initial) map.easeTo({ center: target, zoom: Math.max(map.getZoom(), 15), duration: 800 });
+    // Turning follow on from a wide view should bring you in. Only ever zooms IN -- someone who
+    // has deliberately zoomed further in keeps their view.
+    if (initial) map.easeTo({ center: target, zoom: Math.max(map.getZoom(), 16), duration: 800 });
     else if (_isOffCenter(target)) map.easeTo({ center: target, duration: 800 });
   }
   doFollow(true);
@@ -21429,6 +21434,9 @@ var fitAllInterval = null;
 function _stopFitAll() {
   window._groupFollowUserZoomed = false;
   window._groupFollowOutOfViewSince = null;
+  // Release the camera. The single-member branch hands it to the marker's animation frame; if
+  // that outlives group-follow, the camera keeps tracking with nothing owning the zoom.
+  window._camLockUid = null;
   if (fitAllInterval) { clearInterval(fitAllInterval); fitAllInterval = null; }
   // Group-view shares the locate button's active glow; clear it unless follow is on.
   var b = document.getElementById('locate-me');
