@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 727;
+var APP_BUILD = 728;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10602,6 +10602,23 @@ function writeDebugLog(grp, msg) {
 }
 // Convenience: log a timeline event for the current room, attributed to this user. Used
 // throughout to feed the admin Event Log so trouble can be isolated chronologically.
+
+// ══ SMOOTHNESS PROBE ════════════════════════════════════════════
+// Worst gap between animation frames, and how long the presence-snapshot handler takes. If the
+// frame gap is large, the main thread is stalling and the camera logic is irrelevant.
+window._maxFrameGap = 0; window._snapMs = 0; window._snapMax = 0;
+(function () {
+  var last = performance.now();
+  function tick(t) {
+    var gap = t - last; last = t;
+    if (gap > window._maxFrameGap) window._maxFrameGap = Math.round(gap);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  // Report the WORST since the last diagnostic write, not since page load, so a single hitch at
+  // startup does not mask the steady state.
+  setInterval(function () { window._maxFrameGap = 0; }, 30000);
+})();
 window._evt = function(msg) {
   try {
     if (typeof groupName !== 'undefined' && groupName) {
@@ -13952,6 +13969,10 @@ function startLocationSharing() {
         vis: document.visibilityState,
         hidden: !!locationHidden,
         build: APP_BUILD,
+        frameGap: window._maxFrameGap || 0,     // worst ms between frames — >50 means the page froze
+        snapMs: window._snapMs || 0,            // last presence-snapshot handler duration
+        snapMax: window._snapMax || 0,
+        camLock: window._camLockUid ? 1 : 0,
         // Group-follow state, so "it only zoomed to me" can be diagnosed from the data instead
         // of reasoned about: gfOn = the 1s tick is running, gfPts = how many members that tick
         // actually found (1 means it correctly centred on a group of one), gfFail = why the
@@ -14313,6 +14334,14 @@ function listenUsers() {
   // LATEST snapshot by the time it runs.
   var _USERS_RENDER_DEBOUNCE_MS = 400;
   function _processUsersSnap(snap) {
+    var _t0 = performance.now();
+    try { _processUsersSnapInner(snap); } finally {
+      var _d = Math.round(performance.now() - _t0);
+      window._snapMs = _d;
+      if (_d > window._snapMax) window._snapMax = _d;
+    }
+  }
+  function _processUsersSnapInner(snap) {
     const allUsers = snap.val() || {};
     const now = Date.now();
     // Feed the room-index writer: this is the freshest read of the current room's presence,
