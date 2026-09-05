@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 725;
+var APP_BUILD = 726;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21401,6 +21401,9 @@ function _stopFitAll() {
 // enough — keeping the view steady the rest of the time. `force` does a full re-fit (used
 // on start). Linear easing matches the marker glide so the map and dots move together.
 var _linEase = function(t) { return t; };
+// How often group-follow recomputes the framing. The camera animation is given exactly this
+// long, so one move ends as the next begins and the motion is continuous rather than stepped.
+var GROUP_TICK_MS = 1000;
 // Follow modes yield to the user: any gesture or marker tap pauses auto-recenter for a
 // few seconds so it stops fighting a pinch-zoom or closing an open popup, then resumes.
 window._followPausedUntil = 0;
@@ -21830,7 +21833,9 @@ function _groupFollowTick(force) {
   var c = map.getCenter();
   var moved = Math.abs(cam.center.lng - c.lng) + Math.abs(cam.center.lat - c.lat);
   if (!force && zoom === curZoom && moved < 0.00004) return true;
-  _gfEase({ center: cam.center, zoom: zoom, duration: force ? 900 : 1300, easing: _linEase });
+  // Duration == the tick interval: the next update begins exactly as this one ends, so the
+  // camera is always moving instead of easing, waiting, easing.
+  _gfEase({ center: cam.center, zoom: zoom, duration: force ? 900 : GROUP_TICK_MS, easing: _linEase });
   return true;
 }
 // Group-follow owns the camera in one motion. Track when its own animation ends so a routine
@@ -21840,7 +21845,9 @@ function _groupFollowTick(force) {
 window._gfAnimUntil = 0;
 function _gfEase(opts) {
   try {
-    window._gfAnimUntil = Date.now() + (opts.duration || 0) + 120;   // small settle margin
+    // No settle margin. A margin means the next tick is skipped and the camera stands still
+    // until the one after it -- which is the stutter this guard was meant to prevent.
+    window._gfAnimUntil = Date.now() + (opts.duration || 0);
     map.easeTo(opts);
   } catch (e) {}
 }
@@ -21869,7 +21876,7 @@ window._fitAllTapped = function() {
   if (_groupFollowTick(true) === false) { toast('No members with a location yet'); return; }
   if (btn) { btn.style.background = '#1f6feb'; btn.style.color = '#fff'; btn.style.borderColor = '#1f6feb'; btn.style.boxShadow = '0 0 15px rgba(31,111,235,0.6)'; }
   // Tick often + ease smoothly so the group view glides instead of lurching every few seconds.
-  fitAllInterval = setInterval(function() { _groupFollowTick(false); }, 1000);
+  fitAllInterval = setInterval(function() { _groupFollowTick(false); }, GROUP_TICK_MS);
   toast('Following the group — tap locate to stop', 2800);
 };
 
