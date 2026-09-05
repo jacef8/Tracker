@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 722;
+var APP_BUILD = 723;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3583,6 +3583,15 @@ function _drawMarkerLeaders(vis) {
       });
     });
     var data = { type: 'FeatureCollection', features: feats };
+    // Only touch the source when the lines actually changed. setData re-uploads the layer to the
+    // GPU on every call, and this runs about once a second -- usually to re-send the same empty
+    // collection, which showed up as a periodic stutter on the map.
+    var sig = feats.map(function (f) {
+      var c = f.geometry.coordinates;
+      return c[0][0].toFixed(5) + ',' + c[0][1].toFixed(5) + '>' + c[1][0].toFixed(5) + ',' + c[1][1].toFixed(5);
+    }).join('|');
+    if (sig === window._leaderSig && map.getSource('marker-leaders')) return;
+    window._leaderSig = sig;
     if (!map.getSource('marker-leaders')) {
       map.addSource('marker-leaders', { type: 'geojson', data: data });
       map.addLayer({
@@ -3801,6 +3810,25 @@ function _updateMarkerGrouping(immediate) {
     _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
   });
+  // Belt and braces: any marker NOT in a merged group gets the canonical solo layout, every
+  // pass. Earlier fixes each depended on a particular call site running -- the grouping pass,
+  // then the per-fix update path -- and a marker left in the merged two-cell layout survived
+  // all of them because the path that would have healed it never ran for a person who had
+  // stopped reporting. This does not care.
+  try {
+    Object.keys(userMarkers || {}).forEach(function (u) {
+      var g = window._markerGroupMembers && window._markerGroupMembers[u];
+      if (g && g.length > 1) return;                       // merged: that path owns the layout
+      var mk = userMarkers[u], el = mk && mk._el;
+      if (!el) return;
+      var ie = el.querySelector('.mk-initials');
+      // Only touch a marker that is actually wrong, so this stays free in the common case.
+      if (!ie) return;
+      if (ie.children.length || el.style.width !== '44px' || el.style.borderRadius !== '50%') {
+        _applyMarkerSolo(mk);
+      }
+    });
+  } catch (e) {}
   // Separate the dots that would otherwise hide each other, THEN place the chips (which key
   // off where the markers actually ended up).
   _spreadOverlappingMarkers();
