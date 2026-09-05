@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 737;
+var APP_BUILD = 738;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20635,8 +20635,9 @@ window._deleteSavedFromMap = function (key) {
       if (window._pinKey(pins[i]) === key) { idx = i; break; }
     }
     if (idx < 0) { toast('That pin is already gone', 2200); return; }
+    try { _recycleAdd(pins[idx]); } catch (e) {}   // recoverable from Recently deleted
     var nm = pins[idx].label || pins[idx].cat || 'this pin';
-    _confirm('Delete this pin from your saved pins? This removes your copy only and cannot be undone.', function () {
+    _confirm('Delete this pin from your saved pins? You can get it back from Recently deleted for 30 days.', function () {
       try { window.removeSavedPin(idx); } catch (e) {}
       // Drop the marker (and its open popup) immediately rather than leaving a live pin on
       // screen for something that no longer exists.
@@ -20834,7 +20835,17 @@ try {
       f.get(f.ref(f.db, 'gl/_users/' + u)).then(function (snap) {
         window._pullBusy = 0;
         var v = snap && snap.val && snap.val();
-        if (v && window._applyProfilePublic) window._applyProfilePublic(v);
+        if (!v || !window._applyProfilePublic) return;
+        var before = '';
+        try { before = localStorage.getItem('gl_saved_pins') || ''; } catch (e) {}
+        window._applyProfilePublic(v);
+        // Merging into storage is not the same as showing it: the list kept rendering the copy
+        // it held before the merge, so a pin that HAD arrived stayed invisible (65 of 66).
+        try {
+          if ((localStorage.getItem('gl_saved_pins') || '') !== before) {
+            try { renderSavedPins(); } catch (e) {}
+          }
+        } catch (e) {}
       }).catch(function () { window._pullBusy = 0; });
     } catch (e) { window._pullBusy = 0; }
   };
