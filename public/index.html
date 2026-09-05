@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 723;
+var APP_BUILD = 724;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22238,8 +22238,53 @@ try {
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
       try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
-      if (f.update) f.update(f.ref(f.db, 'gl/_users/' + u), prof);
-      else f.set(f.ref(f.db, 'gl/_users/' + u), prof);
+      // Union the pin/track libraries with whatever the cloud already holds before writing, so
+      // this device cannot delete entries it has simply never seen. Everything else in the
+      // profile is last-writer-wins by design; these two are cumulative collections.
+      var _writeProf = function (extra) {
+        var out = extra ? Object.assign({}, prof, extra) : prof;
+        if (f.update) f.update(f.ref(f.db, 'gl/_users/' + u), out);
+        else f.set(f.ref(f.db, 'gl/_users/' + u), out);
+      };
+      var _unionList = function (localJson, cloudJson, keyFn, tsFn) {
+        var loc = [], cld = [];
+        try { loc = JSON.parse(localJson || '[]') || []; } catch (e) {}
+        try { cld = JSON.parse(cloudJson || '[]') || []; } catch (e) {}
+        if (!cld.length) return null;                       // nothing to protect
+        var seen = {}, out = [];
+        loc.concat(cld).forEach(function (it) {
+          if (!it) return;
+          var k; try { k = keyFn(it); } catch (e) { k = null; }
+          if (!k) { out.push(it); return; }
+          var prev = seen[k];
+          if (prev === undefined) { seen[k] = out.length; out.push(it); return; }
+          // Same entry from both sides: keep whichever was saved later.
+          try { if ((tsFn(it) || 0) > (tsFn(out[prev]) || 0)) out[prev] = it; } catch (e) {}
+        });
+        return out;
+      };
+      if (f.get && (prof.pins || prof.tracks)) {
+        f.get(f.ref(f.db, 'gl/_users/' + u)).then(function (snap) {
+          var cur = (snap && snap.val && snap.val()) || {};
+          var extra = {};
+          try {
+            var mp = prof.pins ? _unionList(prof.pins, typeof cur.pins === 'string' ? cur.pins : JSON.stringify(cur.pins || []), window._pinKey, window._pinTs) : null;
+            if (mp) { if (window._tombFilter) mp = window._tombFilter(mp, 'gl_pins_del', window._pinKey, window._pinTs); extra.pins = JSON.stringify(mp); }
+          } catch (e) {}
+          try {
+            var mt = prof.tracks ? _unionList(prof.tracks, typeof cur.tracks === 'string' ? cur.tracks : JSON.stringify(cur.tracks || []), window._trackKey, window._trkTs) : null;
+            if (mt) { if (window._tombFilter) mt = window._tombFilter(mt, 'gl_tracks_del', window._trackKey, window._trkTs); extra.tracks = JSON.stringify(mt); }
+          } catch (e) {}
+          _writeProf(extra);
+          // Take the union locally too, or this device keeps re-pushing its shorter list.
+          try {
+            if (extra.pins) LS.set('gl_saved_pins', extra.pins);
+            if (extra.tracks) LS.set('gl_saved_tracks', extra.tracks);
+          } catch (e) {}
+        }).catch(function () { _writeProf(); });   // offline or denied: the old behaviour
+      } else {
+        _writeProf();
+      }
       // Lightweight, name-only PUBLIC directory so the people search can find this account even
       // when offline. Signed-in accounts only; keyed by account uid; `dev` = this device (the
       // target for friend/invite, which are device-id based). No email/pins/tracks → minimal exposure.
