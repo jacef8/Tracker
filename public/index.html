@@ -2949,10 +2949,24 @@
     <!-- Room drops only (hidden on My Map, where private is the only mode, and when editing
          an existing room pin). Checked -> the pin goes to YOUR saved library and renders only
          on your own map, exactly like a My Map drop — the room never sees it. -->
-    <label id="pin-private-row" style="display:none;align-items:center;gap:9px;margin-top:8px;padding:9px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12.5px;color:var(--text)">
-      <input type="checkbox" id="pin-private-chk" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0" />
-      <span><b>Private pin</b> — saves to My Pins, only you see it. Unchecked, the whole room sees it.</span>
-    </label>
+    <!-- What KIND of pin: a message that expires, or a place you keep. Hidden on My Map, where
+         there is no crew to send anything to and every pin is a kept place. -->
+    <div id="pin-kind-row" style="display:none;flex-direction:column;gap:7px;margin-top:9px">
+      <button type="button" id="pin-kind-meet" onclick="window._setPinKind('meet')"
+              style="width:100%;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
+        <div style="font-size:13px;font-weight:800">📍 Meet here</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">The crew sees it now. Clears itself after 12 hours.</div>
+      </button>
+      <button type="button" id="pin-kind-save" onclick="window._setPinKind('save')"
+              style="width:100%;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
+        <div style="font-size:13px;font-weight:800">⭐ Save a place</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Kept in My Pins for good, on every map you open.</div>
+      </button>
+      <label id="pin-kind-share-row" style="display:none;align-items:center;gap:9px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12.5px;color:var(--text)">
+        <input type="checkbox" id="pin-share-chk" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0" />
+        <span>Show it to the crew as well</span>
+      </label>
+    </div>
     <div class="pin-actions">
       <button class="btn-cancel" id="pin-cancel">Cancel</button>
       <button class="btn-drop" id="pin-confirm">Drop Pin</button>
@@ -3064,7 +3078,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 719;
+var APP_BUILD = 721;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12401,6 +12415,17 @@ const PIN_COLORS = {
 };
 
 function updatePinSource(pins) {
+  // A "meet here" pin carries an expiry. Drop the dead ones before drawing, so the promise that
+  // it clears itself is kept even if nothing has cleaned the database yet.
+  try {
+    var _now = Date.now(), _live = {};
+    Object.keys(pins || {}).forEach(function (k) {
+      var p = pins[k];
+      if (p && p.exp && p.exp < _now) return;
+      _live[k] = p;
+    });
+    pins = _live;
+  } catch (e) {}
   if (!window._mapReady || !map.getSource('pins')) {
     window._queuedPins = pins; // will be applied once map is ready
     return;
@@ -15632,6 +15657,13 @@ function _closePinModal() {
   pendingCoords = null;
   _editingPid = null;
   var title = document.querySelector('#pin-modal .pin-sheet-title'); if (title) title.textContent = 'Drop a Pin';
+  try {
+    var kindRow = document.getElementById('pin-kind-row');
+    var inRoom = !window._soloMode && typeof groupName !== 'undefined' && groupName;
+    if (kindRow) kindRow.style.display = inRoom ? 'flex' : 'none';
+    window._setPinKind(inRoom ? 'meet' : 'save');
+    var shChk = document.getElementById('pin-share-chk'); if (shChk) shChk.checked = false;
+  } catch (e) {}
   document.getElementById('pin-confirm').textContent = 'Drop Pin';
 }
 // Provisional marker the instant you start a pin, so you can see the spot before naming it.
@@ -16248,6 +16280,24 @@ document.getElementById('pin-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('pin-modal')) _closePinModal();
 });
 
+
+// Which kind of pin is being dropped. 'meet' is a message to the crew that expires; 'save' is a
+// place kept in the personal library. Default is 'meet' in a room (you are usually telling
+// someone where you are) and 'save' on My Map (there is nobody to tell).
+window._pinKind = 'meet';
+window._setPinKind = function (k) {
+  window._pinKind = k;
+  var m = document.getElementById('pin-kind-meet');
+  var sv = document.getElementById('pin-kind-save');
+  var shareRow = document.getElementById('pin-kind-share-row');
+  [[m, k === 'meet'], [sv, k === 'save']].forEach(function (pair) {
+    var el = pair[0]; if (!el) return;
+    el.style.borderColor = pair[1] ? 'var(--accent)' : 'var(--border)';
+    el.style.background = pair[1] ? 'rgba(240,165,0,.10)' : 'var(--bg)';
+  });
+  // "Also show the crew" only means something for a kept place -- a meet pin is already shared.
+  if (shareRow) shareRow.style.display = (k === 'save') ? 'flex' : 'none';
+};
 document.getElementById('pin-confirm').addEventListener('click', () => {
   const label = document.getElementById('pin-label-input').value.trim();
   const customCatEl = document.getElementById('pin-custom-cat-input');
@@ -16276,9 +16326,19 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   if (!pendingCoords) return;
   // Private path: My Map drops always; room drops when the "Private pin" box is checked.
   // Either way the pin goes to YOUR saved library and never touches the room's pins node.
-  var _wantPrivate = false;
-  try { _wantPrivate = !!(document.getElementById('pin-private-chk') || {}).checked; } catch (_e) {}
-  if (window._soloMode || _wantPrivate) {
+  var _kind = window._soloMode ? 'save' : (window._pinKind || 'meet');
+  var _alsoShare = false;
+  try { _alsoShare = !!(document.getElementById('pin-share-chk') || {}).checked; } catch (_e) {}
+  // A kept place goes to the library; it reaches the crew too only if asked.
+  if (_kind === 'save') {
+    if (_alsoShare && groupName && db) {
+      try {
+        window._queuePin(groupName, { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat,
+          label: label, name: userName, droppedBy: userId, ts: Date.now(), _noKeep: 1 });
+      } catch (e) {}
+    }
+  }
+  if (window._soloMode || _kind === 'save') {
     try {
       var _arr = getSavedPins();
       var _pid = 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
@@ -16287,16 +16347,18 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       lastPins[_pid] = { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, name: userName || 'Me', droppedBy: userId, ts: Date.now() };
       updatePinSource(lastPins);
       try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {}
-      toast(window._soloMode ? 'Saved to your map' : 'Saved privately to My Pins — the room can\'t see it');
+      toast(window._soloMode ? 'Saved to your map'
+        : (_alsoShare ? 'Saved to My Pins and shared with the crew' : 'Saved to My Pins — only you see it'));
     } catch (e) {}
     _closePinModal();
     return;
   }
-  const pinRef = fbPush(fbRef(db, `gl/${groupName}/pins`));
-  fbSet(pinRef, {
+  window._queuePin(groupName, {
     lat: pendingCoords.lat, lng: pendingCoords.lng,
-    cat: finalCat, label, name: userName,
-    droppedBy: userId, ts: Date.now()
+    cat: finalCat, label: label, name: userName,
+    droppedBy: userId, ts: Date.now(),
+    exp: Date.now() + 12 * 3600 * 1000,   // a message, not a place: it clears itself
+    _noKeep: 1                            // and it does not clutter the permanent library
   });
   toast('Pin dropped');
   try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {} // lifetime "pins dropped" stat
@@ -20469,6 +20531,11 @@ window._keepOwnPin = function (pin) {
   } catch (e) {}
 };
 window._queuePin = function (room, pin) {
+  // A pin you put on a room map is also YOURS. Keep a copy in the personal library so it shows
+  // on My Map and travels with you rather than living only in the room you were standing in.
+  // (718 defined this and never called it -- the copy was never actually made.)
+  try { if (pin && pin.droppedBy === userId && !pin._noKeep) window._keepOwnPin(pin); } catch (e) {}
+  try { if (pin && pin._noKeep) { pin = Object.assign({}, pin); delete pin._noKeep; } } catch (e) {}
   var item = { id: 'p' + Date.now() + Math.random().toString(36).slice(2, 7), room: room, pin: pin, ts: Date.now() };
   var q = _outbox(); q.push(item); _setOutbox(q);
   _flushOutbox();
