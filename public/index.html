@@ -698,6 +698,22 @@
      CHILD instead, which is what the .panel-header comment already assumes. Do the same here:
      the sheet itself stops scrolling, the header stays put, and #user-drawer-body scrolls. */
   #user-drawer { padding: 0 !important; overflow: hidden !important; gap: 0 !important; }
+
+  /* Pins and Trails are LISTS you pick from -- half a screen is not enough to compare items in,
+     and choosing what to share means seeing several at once. Give them most of the screen. */
+  #saved-pins-drawer, #tracks-drawer, #places-drawer {
+    height: 86vh !important; max-height: 86vh !important;
+  }
+  /* min-height:0 is what actually lets a flex child scroll: without it the list refuses to
+     shrink below its content, overflows the parent that clips it, and only a strip is usable. */
+  #saved-pins-list, #pin-feed-items, #tracks-list, #places-list {
+    flex: 1 1 auto !important; min-height: 0 !important;
+    overflow-y: auto !important; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  /* The tab panels are the scroll containers' parents; they need the same treatment or the
+     min-height:0 above has nothing to shrink within. */
+  #pins-tab-room, #pins-tab-saved { min-height: 0 !important; }
   #user-drawer-body {
     flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain; padding: 10px 0 14px;
@@ -1328,6 +1344,11 @@
         <div id="crews-section" class="join-section" style="display:none">
           <div class="join-section-title"><svg class="licon licon-sm" style="color:#a78bfa"><use href="#ic-users"/></svg>My Crews</div>
           <div id="crews-list" style="display:flex;flex-direction:column;gap:7px;max-height:200px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none"></div>
+          <!-- The section said to "start one under Rooms" and gave nothing to press. -->
+          <button type="button" onclick="window._startNewCrew && window._startNewCrew()"
+                  style="margin-top:8px;width:100%;padding:11px;background:rgba(167,139,250,.10);border:1px solid rgba(167,139,250,.45);border-radius:10px;color:#a78bfa;font-size:13px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px">
+            <svg class="licon licon-sm"><use href="#ic-users"/></svg>New Crew
+          </button>
         </div>
 
         <div id="room-list-section" class="join-section">
@@ -3043,7 +3064,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 716;
+var APP_BUILD = 718;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5195,6 +5216,24 @@ window._showAddDeviceBox = function () {
 };
 // Home screen: expand the collapsed "Start a new group" block (keeps the card short + the Crew
 // checkbox out of the way until you actually want to create a group).
+
+// Straight to naming a Crew. The pieces all existed -- the Rooms card, the collapsed "start a
+// new group" block, the room-type dialog -- but only in that order, and only if you knew it.
+window._startNewCrew = function () {
+  try {
+    window._newCrewIntent = 1;               // the type dialog is answered for them below
+    if (window._homeGo) window._homeGo('rooms');
+    setTimeout(function () {
+      try {
+        var b = document.getElementById('new-group-body');
+        if (b && (b.style.display === 'none' || !b.style.display)) window._toggleNewGroup();
+        var i = document.getElementById('inp-group');
+        if (i) { i.focus(); i.select && i.select(); }
+        if (typeof toast === 'function') toast('Name your new Crew, then tap Create', 3200);
+      } catch (e) {}
+    }, 350);
+  } catch (e) {}
+};
 window._toggleNewGroup = function () {
   var b = document.getElementById('new-group-body'); if (!b) return;
   var show = (b.style.display === 'none' || !b.style.display);
@@ -11647,6 +11686,7 @@ function _askRoomType(group, cb) {
 window._pickRoomType = function (t) {
   document.getElementById('roomtype-modal').style.display = 'none';
   var cb = _roomTypeCb; _roomTypeCb = null;
+  window._newCrewIntent = 0;
   if (cb) cb(t);
 };
 // Abort without calling the callback — same reasoning as _cancelVisibility below.
@@ -20100,7 +20140,7 @@ window._svSendPins = function() {
     if (t.indexOf('room:') === 0) {
       var rk = t.slice(5);
       pins.forEach(function(p) {
-        try { var r = fbPush(fbRef(db, 'gl/' + rk + '/pins')); fbSet(r, { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || (p.cat + ' pin'), name: userName, droppedBy: userId, ts: Date.now() }); } catch (e) {}
+        try { window._queuePin(rk, { lat: p.lat, lng: p.lng, cat: p.cat, label: p.label || (p.cat + ' pin'), name: userName, droppedBy: userId, ts: Date.now() }); } catch (e) {}
       });
       dest++;
     } else if (t.indexOf('person:') === 0) {
@@ -20385,14 +20425,81 @@ window.removeSavedPin = function(idx) {
   if (pins[idx]) window._addTomb('gl_pins_del', window._pinKey(pins[idx]));
   pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
 };
+
+// ══ OFFLINE OUTBOX ══════════════════════════════════════════════════════════
+// Firebase's own offline queue lives in memory: close the app before signal returns and the
+// write is lost. Out of service, that is exactly what happens -- you drop a pin, put the phone
+// away, and it never existed. So a pin is written to localStorage FIRST and only cleared once
+// the server has actually taken it. Anything still queued is retried at launch and whenever the
+// connection comes back.
+function _outbox() { try { return JSON.parse(localStorage.getItem('gl_outbox') || '[]'); } catch (e) { return []; } }
+function _setOutbox(a) { try { localStorage.setItem('gl_outbox', JSON.stringify(a.slice(-200))); } catch (e) {} }
+
+// A pin you dropped belongs to you, not only to the room you were standing in. Room pins live
+// under gl/<room>/pins and stay there; the saved library is per-person, offline-first, and is
+// what My Map draws. Keeping a copy is what makes a pin dropped in the woods still yours
+// afterwards -- two dropped in Illinois on 2026-09-04 reached the crew and were nowhere in the
+// library, so they could not be found later from the phone that made them.
+window._keepOwnPin = function (pin) {
+  try {
+    if (!pin || typeof pin.lat !== 'number') return;
+    var arr = getSavedPins() || [];
+    var key = (typeof window._pinKey === 'function') ? window._pinKey(pin) : null;
+    if (key) {
+      for (var i = 0; i < arr.length; i++) {
+        try { if (window._pinKey(arr[i]) === key) return; } catch (e) {}   // already have it
+      }
+    }
+    arr.push({ lat: pin.lat, lng: pin.lng, cat: pin.cat, label: pin.label || '', ts: pin.ts || Date.now() });
+    setSavedPins(arr);
+    try { renderSavedPins(); } catch (e) {}
+  } catch (e) {}
+};
+window._queuePin = function (room, pin) {
+  var item = { id: 'p' + Date.now() + Math.random().toString(36).slice(2, 7), room: room, pin: pin, ts: Date.now() };
+  var q = _outbox(); q.push(item); _setOutbox(q);
+  _flushOutbox();
+  return item.id;
+};
+function _outboxDrop(id) { _setOutbox(_outbox().filter(function (x) { return x.id !== id; })); }
+var _flushing = false;
+window._flushOutbox = function () {
+  if (_flushing) return;
+  var q = _outbox(); if (!q.length) return;
+  if (!db || !fbPush || !fbSet) return;
+  _flushing = true;
+  var done = 0;
+  q.forEach(function (item) {
+    try {
+      var ref = fbPush(fbRef(db, 'gl/' + item.room + '/pins'));
+      // Only drop it from the outbox once the server has ACKNOWLEDGED the write. fbSet's promise
+      // settles on the server round-trip, not on the local echo, which is the whole point.
+      Promise.resolve(fbSet(ref, item.pin)).then(function () {
+        _outboxDrop(item.id);
+        done++;
+        if (done === q.length && typeof toast === 'function' && q.length) {
+          toast(q.length + ' saved pin' + (q.length > 1 ? 's' : '') + ' uploaded', 2600);
+        }
+      }).catch(function () { /* stays queued for the next attempt */ });
+    } catch (e) {}
+  });
+  setTimeout(function () { _flushing = false; }, 4000);
+};
+window._outboxPending = function () { try { return _outbox().length; } catch (e) { return 0; } };
+try {
+  window.addEventListener('online', function () { try { window._flushOutbox(); } catch (e) {} });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { try { window._flushOutbox(); } catch (e) {} }
+  });
+  setInterval(function () { try { window._flushOutbox(); } catch (e) {} }, 60000);
+} catch (e) {}
 window.shareSavedPin = function(idx) {
   var pin = getSavedPins()[idx];
   if (!pin) return;
   if (!groupName || !db) { toast('Join a group first'); return; }
-  var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
-  fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || 'Shared pin',
+  window._queuePin(groupName, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || 'Shared pin',
     name:userName, droppedBy:userId, ts:Date.now() });
-  toast('Pin shared into ' + groupName);
+  toast(navigator.onLine === false ? 'Pin queued — it will share when you have service' : 'Pin shared into ' + groupName);
   document.getElementById('saved-pins-drawer').classList.remove('open');
 };
 var _savedFilter = 'all';
@@ -20646,8 +20753,7 @@ window.addAllShownToRoom = function() {
   var pins = getSavedPins().filter(_savedMatch);
   if (!pins.length) { toast('Nothing to add'); return; }
   pins.forEach(function(pin) {
-    var ref = fbPush(fbRef(db, 'gl/' + groupName + '/pins'));
-    fbSet(ref, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || (pin.cat + ' pin'),
+    window._queuePin(groupName, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || (pin.cat + ' pin'),
       name:userName, droppedBy:userId, ts:Date.now() });
   });
   toast('Added ' + pins.length + ' pin' + (pins.length > 1 ? 's' : '') + ' to ' + groupName);
