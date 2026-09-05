@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 730;
+var APP_BUILD = 731;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3359,9 +3359,10 @@ function _animateMarker(marker, toLng, toLat) {
     var t = Math.min(1, (t2 - start) / dur);
     var lng = fromLng + (toLng - fromLng) * t;
     var lat = fromLat + (toLat - fromLat) * t;
-    marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
-    // Camera rides the marker, in the same frame, from the same value -- the only way the two
-    // can be guaranteed not to lag one another.
+    // Camera FIRST, then the marker into it. A marker computes its screen position from the
+    // camera transform as it stands when setLngLat runs, so placing the marker and then moving
+    // the camera leaves the icon one frame behind, every frame -- a dot twitching against a map
+    // that slides perfectly. Same value, same frame, correct order.
     try {
       if (marker._uid && marker._uid === window._camLockUid
           && Date.now() >= (window._followPausedUntil || 0)
@@ -3369,6 +3370,7 @@ function _animateMarker(marker, toLng, toLat) {
         map.setCenter([lng, lat]);
       }
     } catch (e) {}
+    marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
     // Drag the breadcrumb line's tip along with the marker. The line is drawn from recorded
     // points and setData lands instantly, but the marker takes ~1.4s to glide there — so
     // without this the trail visibly arrives first and the pin chases it, which reads as the
