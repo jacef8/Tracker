@@ -2246,16 +2246,16 @@
 <!-- ══ MY TRACKS DRAWER ══════════════════════════════════════════════ -->
 <div id="tracks-drawer">
   <div class="panel-header">
-    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-compass"/></svg>Trails &amp; Routes</span>
+    <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-compass"/></svg>Tracks</span>
     <button class="panel-close" onclick="document.getElementById('tracks-drawer').classList.remove('open')"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
   </div>
   <div style="display:flex;gap:6px;padding:8px 12px 0">
-    <button id="trk-tab-tracks" onclick="window._showTracksTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:var(--bg);color:var(--accent);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid var(--accent)">Routes</button>
-    <button id="trk-tab-history" onclick="window._showHistoryTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:transparent;color:var(--muted);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid transparent">Trail</button>
+    <button id="trk-tab-tracks" onclick="window._showTracksTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:var(--bg);color:var(--accent);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid var(--accent)">My Tracks</button>
+    <button id="trk-tab-history" onclick="window._showHistoryTab()" style="flex:1;padding:9px;border:none;border-radius:9px 9px 0 0;background:transparent;color:var(--muted);font-size:13px;font-weight:800;cursor:pointer;border-bottom:2px solid transparent">Where someone went</button>
   </div>
   <div id="trk-tracks-pane">
     <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:8px">
-      <span>Recorded routes, saved across all groups. Tap one for stats &amp; to show it on the map.</span>
+      <span>Tracks you have recorded, kept across every crew. Tap one for stats and to show it on the map.</span>
       <button onclick="window._shareTracksOpen()" style="flex-shrink:0;background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;padding:5px 11px;cursor:pointer">Share all</button>
     </div>
     <div id="tracks-list" style="overflow-y:auto;flex:1"></div>
@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 738;
+var APP_BUILD = 739;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19446,7 +19446,15 @@ function _drawSavedTrack(t, fit){
 function _clearSavedTrack(){ try { ['saved-track','saved-track-glow','saved-track-stops','saved-track-ends'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); ['saved-track','saved-track-stops','saved-track-ends'].forEach(function(id){ if (map.getSource(id)) map.removeSource(id); }); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
 
 // — tracks library list —
-function openTracks(){ document.getElementById('tracks-drawer').classList.add('open'); try { setLocateMeVisible(false); } catch(e){} renderTracks(); }
+function openTracks(){
+  // Close any track detail left open from last time: the list is the first thing you should
+  // see, not the stats of whichever track you last tapped.
+  try { document.getElementById('track-detail-drawer').classList.remove('open'); } catch(e){}
+  document.getElementById('tracks-drawer').classList.add('open');
+  try { setLocateMeVisible(false); } catch(e){}
+  try { window._showTracksTab(); } catch(e){}
+  renderTracks();
+}
 
 // ── History tab (view a Circle member's day, without touching the Tracks library) ──
 window._showTracksTab = function () {
@@ -20085,7 +20093,14 @@ function renderTracks(){
     row.innerHTML='<svg class="licon" style="color:#00b0ff;flex-shrink:0"><use href="#ic-compass"/></svg>'+
       '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_escHtml(t.name)+'</div>'+
       '<div style="font-size:11px;color:var(--muted)">'+_trkFmtDate(t.ts)+' · '+_trkFmtDist(st.distM)+' · '+_trkFmtDur(st.durMs)+'</div></div>'+
-      '<svg class="licon licon-sm" style="color:var(--muted);flex-shrink:0"><use href="#ic-play"/></svg>';
+      '<button class="trk-share-one" title="Share this track" style="flex-shrink:0;margin-left:8px;padding:6px 10px;background:transparent;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:11px;font-weight:800;cursor:pointer">Share</button>' +
+      '<svg class="licon licon-sm" style="color:var(--muted);flex-shrink:0;margin-left:6px"><use href="#ic-play"/></svg>';
+    // Share without having to open the track first -- the only per-track share used to live
+    // inside the detail view, and it was a stub anyway.
+    try {
+      var sb = row.querySelector('.trk-share-one');
+      if (sb) sb.onclick = function (ev) { ev.stopPropagation(); window._shareTrack(t.id); };
+    } catch (e) {}
     row.onclick=function(){ _openTrackDetail(t.id); };
     list.appendChild(row);
   });
@@ -20163,7 +20178,21 @@ window._deleteTrack = function(id){
   }, { danger: true, yes: 'Delete' });
 };
 window._closeTrackDetail = function(){ document.getElementById('track-detail-drawer').classList.remove('open'); };
-window._shareTrack = function(id){ try { toast('Track sharing is coming in the next update'); } catch(e){} };
+window._shareTrack = function (id) {
+  try {
+    var arr = getSavedTracks(), t = null;
+    for (var i = 0; i < arr.length; i++) { if (arr[i].id === id) { t = arr[i]; break; } }
+    if (!t) return;
+    // Borrow the library-share picker with just this one, rather than a second implementation.
+    window._trkShareOne = [t];
+    window._shareTracksOpen();
+  } catch (e) { window._trkShareOne = null; }
+};
+// Closing the picker must forget a one-off, or the next "Share all" would send just that track.
+window._trkCloseShare = function () {
+  window._trkShareOne = null;
+  var m = document.getElementById('_trk-share-modal'); if (m) m.remove();
+};
 // Bottom-right record light: tap = stop & save (matches the Pin Hub's "Stop Recording" tile,
 // which also ends on a single tap), hold = pause/resume (secondary action, kept off the primary
 // tap gesture so both controls require the same gesture for the same end-track action).
@@ -20365,7 +20394,7 @@ window._svSendPins = function() {
 // only (a room has no saved-track surface to land on): each recipient gets an invite;
 // accepting copies the tracks into THEIR library, deduped by content identity.
 window._shareTracksOpen = function () {
-  var tks = getSavedTracks();
+  var tks = (window._trkShareOne && window._trkShareOne.length) ? window._trkShareOne : getSavedTracks();
   if (!tks.length) { toast('No tracks in your library yet'); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var rows = '';
@@ -20387,7 +20416,7 @@ window._shareTracksOpen = function () {
     '<div style="width:100%;max-width:480px;background:#0d1117;border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:78vh;display:flex;flex-direction:column">' +
       '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
         '<span style="font-weight:800;font-size:15px;color:var(--accent)">Share all ' + tks.length + ' track' + (tks.length > 1 ? 's' : '') + '/areas to…</span>' +
-        '<button onclick="var m=document.getElementById(\'_trk-share-modal\');if(m)m.remove();" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
+        '<button onclick="window._trkCloseShare()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
       '</div>' +
       '<div style="overflow-y:auto;padding:6px 14px;flex:1">' + rows + '</div>' +
       '<div style="padding:12px 16px;border-top:1px solid var(--border)">' +
@@ -20397,7 +20426,7 @@ window._shareTracksOpen = function () {
   document.body.appendChild(ov);
 };
 window._trkSendTracks = function () {
-  var tks = getSavedTracks();
+  var tks = (window._trkShareOne && window._trkShareOne.length) ? window._trkShareOne : getSavedTracks();
   var targets = Array.prototype.slice.call(document.querySelectorAll('#_trk-share-modal ._sv-target:checked')).map(function (c) { return c.value; });
   if (!tks.length || !targets.length) { toast('Pick somewhere to send them'); return; }
   var fb = window._fb, dest = 0;
@@ -20430,6 +20459,7 @@ window._trkSendTracks = function () {
       dest++;
     } catch (e) {}
   });
+  window._trkShareOne = null;
   var m = document.getElementById('_trk-share-modal'); if (m) m.remove();
   var _who = [];
   if (rooms) _who.push(rooms + (rooms === 1 ? ' crew' : ' crews'));
