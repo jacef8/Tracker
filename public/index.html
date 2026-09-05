@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 724;
+var APP_BUILD = 725;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3351,6 +3351,15 @@ function _animateMarker(marker, toLng, toLat) {
     var lng = fromLng + (toLng - fromLng) * t;
     var lat = fromLat + (toLat - fromLat) * t;
     marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
+    // Camera rides the marker, in the same frame, from the same value -- the only way the two
+    // can be guaranteed not to lag one another.
+    try {
+      if (marker._uid && marker._uid === window._camLockUid
+          && Date.now() >= (window._followPausedUntil || 0)
+          && document.visibilityState === 'visible') {
+        map.setCenter([lng, lat]);
+      }
+    } catch (e) {}
     // Drag the breadcrumb line's tip along with the marker. The line is drawn from recorded
     // points and setData lands instantly, but the marker takes ~1.4s to glide there — so
     // without this the trail visibly arrives first and the pin chases it, which reads as the
@@ -3382,6 +3391,9 @@ function _followRecenter(lng, lat) {
   // recenter ignored it ("can't hardly move the map at all before it snaps back"). The follow
   // tick resumes centering a few seconds after the user stops touching the map.
   if (Date.now() < (window._followPausedUntil || 0)) return;
+  // The frame loop is already carrying the camera for this person (see _animateMarker); a
+  // second easeTo aimed at the same target is exactly the fight that produced the stutter.
+  if (window._camLockUid && followUid === window._camLockUid) return;
   try {
     var _o = { center: [lng, lat], duration: 1400, easing: function (t) { return t; } };
     var _p = _camPad(); if (_p) _o.padding = _p;
@@ -21099,6 +21111,9 @@ window._followUser = function(uid, name) {
   followUid = uid;
   clearInterval(followInterval);
   var isSelf = uid === userId;
+  // Hand the camera to the marker's own animation frame. Not for your own dot: that path also
+  // rotates the map for Heading Up, and a bare setCenter would undo the rotation every frame.
+  window._camLockUid = isSelf ? null : uid;
   var btn = document.getElementById('locate-me');
   btn.style.background  = isSelf ? 'var(--accent)' : '#00e676';
   btn.style.color       = '#000';
@@ -21305,6 +21320,7 @@ window._releaseCamera = function(){
 };
 function stopFollowing() {
   followUid = null;
+  window._camLockUid = null;
   clearInterval(followInterval);
   followInterval = null;
   var btn = document.getElementById('locate-me');
@@ -21426,7 +21442,11 @@ window._showMemberSheet = function(uid) {
   if (sheet) sheet.style.display = 'block';
   document.body.classList.add('member-open');   // hides the bottom toolbar while open
   if (mk._ll) {
-    try { map.flyTo({ center: mk._ll, zoom: Math.max(map.getZoom(), 16), duration: 700, padding: _sheetPad() }); } catch (e) {}
+    // setPadding, not a per-call padding option: the camera is now moved frame-by-frame by
+    // setCenter (see _animateMarker), which respects the map's standing padding and knows
+    // nothing about options passed to a one-off flyTo.
+    try { map.setPadding(_sheetPad()); } catch (e) {}
+    try { map.flyTo({ center: mk._ll, zoom: Math.max(map.getZoom(), 16), duration: 700 }); } catch (e) {}
   }
   if (mk._isLive) { try { window._followUser(uid, ''); } catch (e) {} }
   else {
@@ -21442,7 +21462,7 @@ window._closeMemberSheet = function() {
   window._openMemberUid = null;
   var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
   document.body.classList.remove('member-open');
-  try { map.flyTo({ padding: { top: 0, left: 0, right: 0, bottom: 0 }, duration: 400 }); } catch (e) {}
+  try { map.setPadding({ top: 0, left: 0, right: 0, bottom: 0 }); } catch (e) {}
 };
 // ── Consolidation (Stage 2): ONE person sheet, reachable from every entry point ──
 // The rich member sheet above is built per-marker inside listenUsers and only exists for
@@ -21839,6 +21859,7 @@ function _allPointsVisible(pts, pad) {
   } catch (e) { return false; }
 }
 window._fitAllTapped = function() {
+  window._camLockUid = null;          // group-follow owns the camera; one driver at a time
   var btn = document.getElementById('locate-me');
   if (fitAllInterval) { _stopFitAll(); toast('Group follow off', 1400); return; }
   // Follow-me and follow-group are mutually exclusive.
