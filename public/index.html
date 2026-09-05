@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 736;
+var APP_BUILD = 737;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20645,9 +20645,98 @@ window._deleteSavedFromMap = function (key) {
     }, { yes: 'Delete', danger: true });
   } catch (e) {}
 };
+
+// ══ RECENTLY DELETED ════════════════════════════════════════════
+// Deleted pins are kept for a while instead of vanishing. Local to this device on purpose: the
+// bin is a safety net for the tap you just made, not another thing to sync and reconcile.
+var RECYCLE_DAYS = 30;
+function _recycle() {
+  try {
+    var a = JSON.parse(localStorage.getItem('gl_pins_recycle') || '[]') || [];
+    var cut = Date.now() - RECYCLE_DAYS * 86400000;
+    var live = a.filter(function (x) { return x && (x.deletedAt || 0) > cut; });
+    if (live.length !== a.length) localStorage.setItem('gl_pins_recycle', JSON.stringify(live));
+    return live;
+  } catch (e) { return []; }
+}
+function _recycleAdd(pin) {
+  try {
+    if (!pin) return;
+    var a = _recycle();
+    a.unshift({ pin: pin, deletedAt: Date.now() });
+    localStorage.setItem('gl_pins_recycle', JSON.stringify(a.slice(0, 200)));
+  } catch (e) {}
+}
+window._recycleCount = function () { try { return _recycle().length; } catch (e) { return 0; } };
+window._restoreDeletedPin = function (i) {
+  try {
+    var a = _recycle(), ent = a[i];
+    if (!ent || !ent.pin) return;
+    var pins = getSavedPins();
+    // A FRESH savedAt is what makes this a real restore: the deletion tombstone is still there,
+    // and an entry only survives it by being newer than the delete.
+    var pin = Object.assign({}, ent.pin, { savedAt: Date.now(), ts: Date.now() });
+    pins.push(pin);
+    setSavedPins(pins);
+    a.splice(i, 1);
+    try { localStorage.setItem('gl_pins_recycle', JSON.stringify(a)); } catch (e) {}
+    try { renderSavedPins(); } catch (e) {}
+    try { window._openRecycle(); } catch (e) {}
+    toast('Restored ' + (pin.label || pin.cat || 'pin'), 2400);
+  } catch (e) {}
+};
+window._purgeDeletedPin = function (i) {
+  try {
+    var a = _recycle(), ent = a[i]; if (!ent) return;
+    _confirm('Remove this from Recently deleted for good?', function () {
+      var b = _recycle(); b.splice(i, 1);
+      try { localStorage.setItem('gl_pins_recycle', JSON.stringify(b)); } catch (e) {}
+      try { window._openRecycle(); } catch (e) {}
+    }, { yes: 'Remove' });
+  } catch (e) {}
+};
+window._openRecycle = function () {
+  try {
+    var old = document.getElementById('_recycle-modal'); if (old) old.remove();
+    var a = _recycle();
+    var rows = a.map(function (ent, i) {
+      var p = ent.pin || {};
+      var when = new Date(ent.deletedAt || 0);
+      var days = Math.max(0, RECYCLE_DAYS - Math.floor((Date.now() - (ent.deletedAt || 0)) / 86400000));
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,.07)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+            escapeHtmlJs(p.label || p.cat || 'Pin') + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + escapeHtmlJs(p.cat || '') +
+            ' · deleted ' + when.toLocaleDateString() + ' · kept ' + days + ' more day' + (days === 1 ? '' : 's') + '</div>' +
+        '</div>' +
+        '<button onclick="window._restoreDeletedPin(' + i + ')" style="flex-shrink:0;padding:8px 12px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:12px;font-weight:800;cursor:pointer">Restore</button>' +
+        '<button onclick="window._purgeDeletedPin(' + i + ')" title="Remove for good" style="flex-shrink:0;padding:8px 10px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:12px;cursor:pointer">✕</button>' +
+      '</div>';
+    }).join('');
+    if (!rows) rows = '<div style="padding:26px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5">Nothing deleted recently.<br>Pins you delete are kept here for ' + RECYCLE_DAYS + ' days.</div>';
+    var ov = document.createElement('div');
+    ov.id = '_recycle-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9300;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center';
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+    ov.innerHTML =
+      '<div style="width:100%;max-width:520px;background:var(--card,#0d1117);border:1px solid var(--border);border-radius:16px 16px 0 0;max-height:80vh;display:flex;flex-direction:column">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
+          '<div><div style="font-weight:800;font-size:15px;color:var(--accent)">Recently deleted</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">Kept ' + RECYCLE_DAYS + ' days on this device</div></div>' +
+          '<button onclick="var m=document.getElementById(\'_recycle-modal\');if(m)m.remove();" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">&times;</button>' +
+        '</div>' +
+        '<div style="overflow-y:auto;padding:4px 14px 14px;flex:1">' + rows + '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+  } catch (e) {}
+};
 window.removeSavedPin = function(idx) {
   var pins = getSavedPins();
-  if (pins[idx]) window._addTomb('gl_pins_del', window._pinKey(pins[idx]));
+  if (pins[idx]) {
+    _recycleAdd(pins[idx]);                       // recoverable for 30 days
+    window._addTomb('gl_pins_del', window._pinKey(pins[idx]));
+  }
   pins.splice(idx,1); setSavedPins(pins); renderSavedPins();
 };
 
@@ -21000,6 +21089,22 @@ function _updateSavedFoot(shownCount) {
   var foot = document.getElementById('saved-pins-foot');
   var btn = document.getElementById('saved-pins-add-all');
   if (!foot || !btn) return;
+  // A way back to anything deleted, shown only when there IS something to get back.
+  try {
+    var n = window._recycleCount();
+    var rb = document.getElementById('saved-recycle-btn');
+    if (!rb && n) {
+      rb = document.createElement('button');
+      rb.id = 'saved-recycle-btn';
+      rb.onclick = function () { window._openRecycle(); };
+      rb.style.cssText = 'width:100%;margin-top:8px;padding:9px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer';
+      foot.appendChild(rb);
+    }
+    if (rb) {
+      rb.style.display = n ? 'block' : 'none';
+      rb.textContent = 'Recently deleted (' + n + ')';
+    }
+  } catch (e) {}
   var collectBtn = document.getElementById('saved-pins-collect');
   // Selection mode: the footer becomes "Add to collection" + "Share N selected".
   if (window._svSelect) {
