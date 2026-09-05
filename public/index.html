@@ -3083,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 735;
+var APP_BUILD = 736;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20306,7 +20306,12 @@ window._svOpenShareTargets = function() {
   var rows = '';
   if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + escapeHtmlJs(groupName.replace(/_/g, ' ')) + ' — current room');
   favs.forEach(function(k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + escapeHtmlJs(k.replace(/^test_/, '').replace(/_/g, ' '))); });
-  Object.keys(friends).forEach(function(uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend')); });
+  Object.keys(friends).forEach(function(uid) {
+    // Not yourself, and not another device of yours: sharing to your own phone is not a thing
+    // anyone means to do, and it was offered alongside real people.
+    try { if (uid === userId || (window._isMyOwnUid && window._isMyOwnUid(uid))) return; } catch (e) {}
+    rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend'));
+  });
   if (!rows) rows = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;line-height:1.5">No destinations yet.<br>Favorite a group, or star people inside a room, to share to them.</div>';
   var ov = document.createElement('div');
   ov.id = '_sv-share-modal';
@@ -20369,7 +20374,10 @@ window._shareTracksOpen = function () {
   var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
   if (groupName && db) rows += _svTargetRow('room:' + groupName, '&#127968; ' + escapeHtmlJs(groupName.replace(/_/g, ' ')) + ' — current room');
   favs.forEach(function (k) { if (k !== groupName) rows += _svTargetRow('room:' + k, '&#128205; ' + escapeHtmlJs(String(k).replace(/^test_/, '').replace(/_/g, ' '))); });
-  Object.keys(friends).forEach(function (uid) { rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend')); });
+  Object.keys(friends).forEach(function (uid) {
+    try { if (uid === userId || (window._isMyOwnUid && window._isMyOwnUid(uid))) return; } catch (e) {}
+    rows += _svTargetRow('person:' + uid, '&#128100; ' + escapeHtmlJs(friends[uid] || 'Friend'));
+  });
   if (!rows) { toast('Join a crew or star someone first — that\'s who you can share to', 3200); return; }
   var ov = document.createElement('div');
   ov.id = '_trk-share-modal';
@@ -20746,6 +20754,28 @@ try {
   });
   setInterval(function () { try { window._flushOutbox(); } catch (e) {} }, 60000);
 } catch (e) {}
+
+// Ask before deleting a saved place. It sits next to Share, it used to act on the first tap,
+// and there is no undo -- a pin can be somewhere you cannot find again from memory.
+
+// Same guard for the delete on a pin's map bubble.
+window._confirmDeleteSavedFromMap = function (key) {
+  try {
+    _confirm('Delete this pin from My Pins?\n\nThis cannot be undone.', function () {
+      try { window._deleteSavedFromMap(key); } catch (e) {}
+    }, { yes: 'Delete' });
+  } catch (e) {}
+};
+window._confirmRemoveSavedPin = function (idx) {
+  try {
+    var pin = getSavedPins()[idx];
+    if (!pin) return;
+    var what = pin.label ? ('"' + pin.label + '"') : (pin.cat || 'this pin');
+    _confirm('Delete ' + what + ' from My Pins?\n\nThis cannot be undone.', function () {
+      window.removeSavedPin(idx);
+    }, { yes: 'Delete' });
+  } catch (e) {}
+};
 window.shareSavedPin = function(idx) {
   var pin = getSavedPins()[idx];
   if (!pin) return;
@@ -20840,7 +20870,7 @@ function _renderSavedOnMap() {
           (pin.coll ? '<div style="font-size:11px;color:#a9b4bf;margin-top:2px">' + escapeHtmlJs(pin.coll) + '</div>' : '') +
           // Tapping the thing you want gone is the obvious gesture; before this the popup was
           // read-only and the only way to delete was hunting the pin down in the Pins drawer.
-          '<button onclick="window._deleteSavedFromMap(\'' + escapeHtmlJs(window._pinKey(pin)) + '\')" style="margin-top:8px;width:100%;background:rgba(248,81,73,.16);border:1px solid rgba(248,81,73,.55);border-radius:8px;color:#f85149;font-size:12px;font-weight:800;padding:6px 10px;cursor:pointer">Delete pin</button>'));
+          '<button onclick="window._confirmDeleteSavedFromMap(\'' + escapeHtmlJs(window._pinKey(pin)) + '\')" style="margin-top:8px;width:100%;background:rgba(248,81,73,.16);border:1px solid rgba(248,81,73,.55);border-radius:8px;color:#f85149;font-size:12px;font-weight:800;padding:6px 10px;cursor:pointer">Delete pin</button>'));
       }
       window._savedMapMarkers.push(m);
     } catch(e){}
@@ -21053,7 +21083,9 @@ function renderSavedPins() {
       (selMode ? '' :
       '<div class="sv-btns">' +
         '<button class="sv-share" onclick="window.shareSavedPin(' + idx + ')">Share</button>' +
-        '<button class="sv-del" onclick="window.removeSavedPin(' + idx + ')" style="display:flex;align-items:center;justify-content:center"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
+        // Pushed away from Share with a gap, and it asks first. These two were adjacent and one
+        // of them is irreversible.
+        '<button class="sv-del" onclick="window._confirmRemoveSavedPin(' + idx + ')" title="Delete this pin" style="display:flex;align-items:center;justify-content:center;margin-left:10px"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>' +
       '</div>');
     card.addEventListener('click', function(e) {
       if (e.target.tagName === 'BUTTON') return;
