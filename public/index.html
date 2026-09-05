@@ -2631,7 +2631,12 @@
 <div id="user-drawer">
   <div class="panel-header">
     <span class="panel-title" style="display:flex;align-items:center;gap:8px"><svg class="licon"><use href="#ic-users"/></svg>People</span>
-    <div style="display:flex;align-items:center;gap:4px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <!-- You notice someone is missing while looking at who is here. Add them from here. -->
+      <button id="people-add-btn" onclick="window._addPeopleHere()" title="Add someone to this crew"
+              style="background:rgba(63,185,80,.10);border:1px solid rgba(63,185,80,.45);border-radius:9px;color:#3fb950;font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer;display:flex;align-items:center;gap:5px">
+        <svg class="licon licon-sm"><use href="#ic-users"/></svg>Add
+      </button>
       <button onclick="window._showStatusLegend()" title="What do the status colors mean?" style="background:none;border:1px solid var(--border);border-radius:50%;color:var(--muted);cursor:pointer;line-height:1;display:flex;padding:0;font-size:13px;font-weight:800;width:22px;height:22px;align-items:center;justify-content:center">?</button>
       <button class="panel-close" id="close-user-drawer"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
@@ -3078,7 +3083,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 721;
+var APP_BUILD = 722;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10423,6 +10428,10 @@ window._applyUpdate = function () {
 // Keep this list honest: user-visible changes only. Bug fixes belong here when someone noticed
 // the bug; internals never do. Newest first, and prune entries older than a few weeks.
 var CHANGELOG = [
+  { b: 722, t: 'Add people from the People list',
+    d: 'The People sheet has an Add button now. Search anyone by name \u2014 including people from your other crews \u2014 and invite them straight in.' },
+  { b: 721, t: 'Meet-here pins vs saved places',
+    d: 'Dropping a pin now asks which you mean: Meet here, which the crew sees and which clears itself after 12 hours, or Save a place, kept in My Pins on every map. Pins dropped with no service upload themselves when you get signal.' },
   { b: 719, t: 'Share a pin to one person in one tap',
     d: 'The Share button on a saved pin now asks who to send it to \u2014 a crew or a starred person \u2014 instead of only dropping it into whatever room you are in.' },
   { b: 718, t: 'Pins survive no service',
@@ -17069,6 +17078,23 @@ window._confirmDeleteRoom = function() {
 // ══ INVITE A FAVORITE DIRECTLY (in-app delivery via Firebase) ════════════
 function _escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); }
 
+
+// Open the invite picker from the People sheet, aimed at the crew you are looking at.
+// _openInvitePicker assumes it was opened from Room Info and puts a back-arrow there; coming
+// from here, back should return to the People sheet instead of somewhere you were never in.
+window._addPeopleHere = function () {
+  try {
+    if (!groupName) { toast('Open a crew first'); return; }
+    var d = document.getElementById('user-drawer');
+    if (d) d.classList.remove('open');
+    window._openInvitePicker();
+    window._invitePickerBackTo = 'people';
+    var t = document.getElementById('invite-picker-title');
+    if (t) t.textContent = 'Add to ' + ((typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName);
+    var sub = document.getElementById('invite-picker-sub');
+    if (sub) sub.textContent = 'Search anyone by name \u2014 including people from your other crews \u2014 or send a link.';
+  } catch (e) {}
+};
 window._openInvitePicker = function() {
   window._invitePickerMode = 'room';
   window._circleInviteTarget = null;
@@ -17088,6 +17114,15 @@ window._openInvitePicker = function() {
 // already showing underneath — never reopens Room Info even if that's where we came from, since
 // Close is a deliberate "I'm done" action, not "take me back".
 window._closeInvitePicker = function (goBack) {
+  // Opened from the People sheet: going back means back to that list, not to Room Info.
+  try {
+    if (goBack && window._invitePickerBackTo === 'people') {
+      document.getElementById('invite-picker-modal').style.display = 'none';
+      window._invitePickerBackTo = null;
+      var d = document.getElementById('user-drawer'); if (d) d.classList.add('open');
+      return;
+    }
+  } catch (e) {}
   document.getElementById('invite-picker-modal').style.display = 'none';
   if (goBack && window._invitePickerBackTo === 'roomInfo') {
     try { openRoomInfo(); } catch (e) {}
