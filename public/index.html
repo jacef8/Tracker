@@ -816,6 +816,9 @@
     box-shadow: 0 4px 20px rgba(240,165,0,.45); white-space: nowrap;
   }
   #pin-mode-bar.active { display: flex; }
+  /* The whole bar cancels, not just the small chip on the end of it: someone trying to get out
+     of this mode aims at the thing telling them they are in it. */
+  #pin-mode-bar { cursor: pointer; }
   .cancel-mode {
     background: rgba(0,0,0,.2); border: none; border-radius: 12px;
     padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
@@ -3382,7 +3385,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 746;
+var APP_BUILD = 747;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16858,6 +16861,17 @@ window._disablePlaceMode = function () {
 
 // pin-hub-btn handled by openPinHub() wired below
 document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
+// Tapping anywhere on the bar cancels too. The bar is the thing that says you are in this mode,
+// so it is what people aim at to leave it -- not the small chip on its end.
+try { document.getElementById('pin-mode-bar').addEventListener('click', disablePinMode); } catch (e) {}
+// Escape, for the desktop app.
+try {
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); }
+    else if (typeof placeMode !== 'undefined' && placeMode && window._disablePlaceMode) { window._disablePlaceMode(); }
+  });
+} catch (e) {}
 
 buildPinCats(); // populate the themed category library
 document.getElementById('pin-cats').addEventListener('click', e => {
@@ -24377,6 +24391,16 @@ window._voiceMod().then(function (m) {
     return best;
   }
   function handleBack() {
+    // MODES first. Dropping a pin, placing a Place, moving a pin: these arm the map and are not
+    // overlays, so the overlay walk below never saw them and Back appeared dead -- with no way
+    // out except a small Cancel chip at the top of the screen. Backing out of a mode is exactly
+    // what Back is for.
+    try {
+      if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); return true; }
+      if (typeof placeMode !== 'undefined' && placeMode && window._disablePlaceMode) { window._disablePlaceMode(); return true; }
+      var mv = document.getElementById('pin-move-bar');
+      if (mv && mv.style.display !== 'none' && window._cancelPinMove) { window._cancelPinMove(); return true; }
+    } catch (e) {}
     var id = topOpen();
     if (id) { try { (SPECIAL[id] || function () { hide(id); })(); } catch (e) { hide(id); } return true; }
     return false;   // nothing open → we're on the map; do nothing (don't leave the app)
