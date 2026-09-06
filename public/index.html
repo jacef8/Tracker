@@ -819,6 +819,11 @@
   /* The whole bar cancels, not just the small chip on the end of it: someone trying to get out
      of this mode aims at the thing telling them they are in it. */
   #pin-mode-bar { cursor: pointer; }
+
+  .pin-mode-act {
+    background: rgba(0,0,0,.22); border: none; border-radius: 12px;
+    padding: 5px 11px; color: #fff; cursor: pointer; font-size: 12px; font-weight: 800;
+  }
   .cancel-mode {
     background: rgba(0,0,0,.2); border: none; border-radius: 12px;
     padding: 4px 12px; color: #fff; cursor: pointer; font-size: 12px;
@@ -2029,9 +2034,28 @@
   <div id="member-sheet-body"></div>
 </div>
 
+
+<!-- ══ CROSSHAIR PLACEMENT ══ A fixed sight at the centre of the screen. You move the MAP under
+     it, so nothing is hidden beneath your finger and you can zoom all the way in first. -->
+<div id="pin-crosshair" style="display:none;position:fixed;inset:0;z-index:395;pointer-events:none">
+  <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%);overflow:visible">
+    <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="7"/>
+    <circle cx="50" cy="50" r="26" fill="none" stroke="#f0a500" stroke-width="3"/>
+    <line x1="50" y1="8"  x2="50" y2="30" stroke="#f0a500" stroke-width="3"/>
+    <line x1="50" y1="70" x2="50" y2="92" stroke="#f0a500" stroke-width="3"/>
+    <line x1="8"  y1="50" x2="30" y2="50" stroke="#f0a500" stroke-width="3"/>
+    <line x1="70" y1="50" x2="92" y2="50" stroke="#f0a500" stroke-width="3"/>
+    <circle cx="50" cy="50" r="2.5" fill="#fff"/>
+  </svg>
+  <div id="pin-cross-readout" style="position:absolute;left:50%;top:calc(50% + 52px);transform:translateX(-50%);font-family:ui-monospace,monospace;font-size:11px;color:#fff;background:rgba(0,0,0,.6);padding:3px 9px;border-radius:8px;white-space:nowrap"></div>
+  <button type="button" id="pin-cross-place" style="pointer-events:auto;position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);transform:translateX(-50%);padding:13px 26px;background:var(--accent);border:none;border-radius:12px;color:#1a1200;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)">Place pin here</button>
+</div>
+
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
 <div id="pin-mode-bar">
-  <svg class="licon licon-sm"><use href="#ic-pin"/></svg>Tap the map to place a pin
+  <svg class="licon licon-sm"><use href="#ic-pin"/></svg><span id="pin-mode-text">Tap the map, or</span>
+  <button class="pin-mode-act" id="pin-here-btn">Here (GPS)</button>
+  <button class="pin-mode-act" id="pin-cross-btn">Crosshair</button>
   <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
 </div>
 
@@ -3393,7 +3417,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 748;
+var APP_BUILD = 749;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16843,6 +16867,63 @@ document.getElementById('chat-input').addEventListener('keydown', e => {
 });
 
 // ══ PIN FLOW ═════════════════════════════════════════════════════
+
+// ── Placing a pin without aiming at the map ─────────────────────────────────────────────────
+// Opens the pin sheet at a known point, bypassing the fingertip entirely.
+window._openPinAt = function (lng, lat, note) {
+  try {
+    pendingCoords = { lng: lng, lat: lat };
+    var lbl = document.getElementById('pin-coords-label');
+    if (lbl) lbl.textContent = (+lat).toFixed(5) + ', ' + (+lng).toFixed(5) + (note ? ('  ·  ' + note) : '');
+    try { window._releaseCamera(); } catch (e) {}
+    _showPendingMarker(pendingCoords);
+    var m = document.getElementById('pin-modal');
+    m.classList.add('show'); m.classList.add('placing');
+    try { _syncPinPrivateRow(); } catch (e) {}
+    disablePinMode();
+    window._hidePinCrosshair();
+  } catch (e) {}
+};
+// "Here": the phone already knows where it is to within a few feet, which is better than anyone
+// can point at -- and your hand is not covering the spot.
+window._dropPinHere = function () {
+  try {
+    var g = window._lastGPS;
+    if (!g) { toast('No GPS fix yet — try again in a moment', 2600); return; }
+    var accFt = (window._lastAccM != null) ? Math.round(window._lastAccM * 3.28084) : null;
+    window._openPinAt(g.lng, g.lat, accFt != null ? ('\u00b1' + accFt + ' ft') : '');
+    if (navigator.vibrate) navigator.vibrate(30);
+  } catch (e) {}
+};
+// Crosshair: a fixed sight, and you move the map under it. Nothing hidden under a finger, and
+// you can zoom all the way in before committing.
+window._showPinCrosshair = function () {
+  try {
+    var el = document.getElementById('pin-crosshair'); if (!el) return;
+    el.style.display = 'block';
+    document.getElementById('pin-mode-bar').classList.remove('active');
+    window._crossUpdate();
+    if (!window._crossBound) {
+      window._crossBound = 1;
+      map.on('move', window._crossUpdate);
+      document.getElementById('pin-cross-place').addEventListener('click', function () {
+        var c = map.getCenter();
+        window._openPinAt(c.lng, c.lat, 'crosshair');
+      });
+    }
+  } catch (e) {}
+};
+window._hidePinCrosshair = function () {
+  try { var el = document.getElementById('pin-crosshair'); if (el) el.style.display = 'none'; } catch (e) {}
+};
+window._crossUpdate = function () {
+  try {
+    var el = document.getElementById('pin-crosshair');
+    if (!el || el.style.display === 'none') return;
+    var c = map.getCenter(), r = document.getElementById('pin-cross-readout');
+    if (r) r.textContent = c.lat.toFixed(5) + ', ' + c.lng.toFixed(5);
+  } catch (e) {}
+};
 function enablePinMode() {
   pinMode = true;
   document.getElementById('pin-mode-bar').classList.add('active');
@@ -16851,6 +16932,7 @@ function enablePinMode() {
 function disablePinMode() {
   pinMode = false;
   document.getElementById('pin-mode-bar').classList.remove('active');
+  try { window._hidePinCrosshair(); } catch (e) {}
   map.getCanvas().style.cursor = '';
 }
 window._enablePlaceMode = function () {
@@ -16869,6 +16951,10 @@ window._disablePlaceMode = function () {
 
 // pin-hub-btn handled by openPinHub() wired below
 document.getElementById('cancel-pin-mode').addEventListener('click', disablePinMode);
+try {
+  document.getElementById('pin-here-btn').addEventListener('click', function (e) { e.stopPropagation(); window._dropPinHere(); });
+  document.getElementById('pin-cross-btn').addEventListener('click', function (e) { e.stopPropagation(); window._showPinCrosshair(); });
+} catch (e) {}
 // Tapping anywhere on the bar cancels too. The bar is the thing that says you are in this mode,
 // so it is what people aim at to leave it -- not the small chip on its end.
 try { document.getElementById('pin-mode-bar').addEventListener('click', disablePinMode); } catch (e) {}
@@ -24408,6 +24494,8 @@ window._voiceMod().then(function (m) {
     // out except a small Cancel chip at the top of the screen. Backing out of a mode is exactly
     // what Back is for.
     try {
+      var xh = document.getElementById('pin-crosshair');
+      if (xh && xh.style.display === 'block') { window._hidePinCrosshair(); disablePinMode(); return true; }
       if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); return true; }
       if (typeof placeMode !== 'undefined' && placeMode && window._disablePlaceMode) { window._disablePlaceMode(); return true; }
       var mv = document.getElementById('pin-move-bar');
