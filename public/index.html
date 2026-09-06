@@ -3174,7 +3174,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 741;
+var APP_BUILD = 742;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3696,6 +3696,9 @@ function _drawMarkerLeaders(vis) {
         geometry: { type: 'LineString', coordinates: [[v.ll[0], v.ll[1]], [moved.lng, moved.lat]] }
       });
     });
+    // Pins nudged clear of a marker get the same line back to their true spot, so there is one
+    // visual language for "this was moved aside, here is where it really is".
+    try { if (window._pinLeaderFeats && window._pinLeaderFeats.length) feats = feats.concat(window._pinLeaderFeats); } catch (e) {}
     var data = { type: 'FeatureCollection', features: feats };
     // Only touch the source when the lines actually changed. setData re-uploads the layer to the
     // GPU on every call, and this runs about once a second -- usually to re-send the same empty
@@ -3792,6 +3795,7 @@ function _spreadOverlappingMarkers() {
       // so when anything is still overlapping it, it draws on top rather than underneath.
       if (v.dev) { var z = (ml || mt) ? '6' : '5'; if (v.el.style.zIndex !== z) v.el.style.zIndex = z; }
     });
+    try { window._offsetCollidingPins(); } catch (e) {}
     _drawMarkerLeaders(vis);
   } catch (e) {}
 }
@@ -12615,7 +12619,102 @@ const PIN_COLORS = {
   'Urgent':      '#ff0000',
 };
 
+
+// ══ A DROPPED PIN APPEARS AT ONCE ═══════════════════════════════════════════
+// The drop has been queued durably since 718 and retried until the server takes it -- but the
+// pin was only DRAWN when Firebase echoed it back through the room listener. With no service
+// there is no echo, so nothing appeared, and a pin you cannot see is indistinguishable from one
+// that was never saved. The save survived; the feedback did not. Draw it here, immediately, and
+// let the server's copy take over when it arrives.
+window._pendingPins = window._pendingPins || {};
+window._pinContentKey = function (p) {
+  try { return (+p.lat).toFixed(5) + ',' + (+p.lng).toFixed(5) + '|' + (p.label || '') + '|' + (p.cat || ''); }
+  catch (e) { return String(Math.random()); }
+};
+window._addPendingPin = function (pin) {
+  try {
+    var id = 'pending_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    window._pendingPins[id] = pin;
+    try { updatePinSource(lastPins); } catch (e) {}
+    return id;
+  } catch (e) { return null; }
+};
+// Merge the unconfirmed drops into whatever the room gave us, retiring any whose real copy has
+// arrived -- matched on CONTENT, since the server assigns its own id and we cannot match on that.
+window._withPendingPins = function (pins) {
+  try {
+    var out = {}, k;
+    for (k in (pins || {})) out[k] = pins[k];
+    var have = {};
+    for (k in out) { try { have[window._pinContentKey(out[k])] = 1; } catch (e) {} }
+    for (k in window._pendingPins) {
+      var pp = window._pendingPins[k];
+      if (!pp) continue;
+      if (have[window._pinContentKey(pp)]) { delete window._pendingPins[k]; continue; }
+      out[k] = pp;
+    }
+    return out;
+  } catch (e) { return pins || {}; }
+};
+
+// A pin underneath a marker is invisible: pins are drawn in a symbol layer, markers are DOM
+// elements, and the spread that separates markers never knew pins existed. Nudge a colliding
+// pin clear and leave a leader line to its true position -- the same treatment, and the same
+// promise, markers already get.
+var PIN_HIT_PX = 34;
+window._offsetCollidingPins = function () {
+  try {
+    if (typeof map === 'undefined' || !map || !map.getSource || !window._mapReady) return;
+    var src = map.getSource('pins'); if (!src || !src._data) return;
+    var data = src._data;
+    if (!data.features || !data.features.length) { window._pinLeaderFeats = []; return; }
+    var pts = [];
+    var collect = function (store) {
+      Object.keys(store || {}).forEach(function (u) {
+        var mk = store[u], el = mk && (mk._el || (mk.getElement && mk.getElement()));
+        if (!el || el.style.display === 'none') return;
+        var ll = mk._ll;
+        if (!ll && mk.getLngLat) { try { var g = mk.getLngLat(); ll = [g.lng, g.lat]; } catch (e) { return; } }
+        if (!ll) return;
+        try { pts.push(map.project(ll)); } catch (e) {}
+      });
+    };
+    collect(typeof userMarkers !== 'undefined' ? userMarkers : null);
+    collect(window._deviceMarkers);
+    if (!pts.length) { window._pinLeaderFeats = []; return; }
+    var leaders = [], changed = false;
+    data.features.forEach(function (f) {
+      var c = f.geometry && f.geometry.coordinates; if (!c) return;
+      var sp; try { sp = map.project(c); } catch (e) { return; }
+      var hit = null;
+      for (var i = 0; i < pts.length; i++) {
+        var dx = sp.x - pts[i].x, dy = sp.y - pts[i].y;
+        if (Math.sqrt(dx * dx + dy * dy) < PIN_HIT_PX) { hit = pts[i]; break; }
+      }
+      if (!hit) return;
+      // Push away from the dot; straight down when they sit exactly on each other, so the pin
+      // clears the icon rather than hiding behind its label.
+      var vx = sp.x - hit.x, vy = sp.y - hit.y, m = Math.sqrt(vx * vx + vy * vy);
+      if (m < 0.5) { vx = 0; vy = 1; m = 1; }
+      var ox = (vx / m) * 40, oy = (vy / m) * 40;
+      try {
+        var np = map.unproject([sp.x + ox, sp.y + oy]);
+        leaders.push({ type: 'Feature', properties: {},
+          geometry: { type: 'LineString', coordinates: [[c[0], c[1]], [np.lng, np.lat]] } });
+        // Move the DRAWN position. updatePinSource rebuilds features from the truth on every
+        // pass, so this recomputes cleanly and can never accumulate.
+        f.geometry.coordinates = [np.lng, np.lat];
+        changed = true;
+      } catch (e) {}
+    });
+    window._pinLeaderFeats = leaders;
+    if (changed) { try { src.setData(data); } catch (e) {} }
+  } catch (e) {}
+};
 function updatePinSource(pins) {
+  // Drops made here that the server has not echoed back yet are drawn too, so a pin shows up
+  // the moment it is dropped instead of when the network gets round to it.
+  try { pins = window._withPendingPins(pins); } catch (e) {}
   // A "meet here" pin carries an expiry. Drop the dead ones before drawing, so the promise that
   // it clears itself is kept even if nothing has cleaned the database yet.
   try {
@@ -20925,6 +21024,9 @@ window._queuePin = function (room, pin) {
   // on My Map and travels with you rather than living only in the room you were standing in.
   // (718 defined this and never called it -- the copy was never actually made.)
   try { if (pin && pin.droppedBy === userId && !pin._noKeep) window._keepOwnPin(pin); } catch (e) {}
+  // Show it NOW. The outbox guarantees it reaches the server eventually; this guarantees the
+  // person who dropped it can see it in the meantime.
+  try { window._addPendingPin(pin); } catch (e) {}
   try { if (pin && pin._noKeep) { pin = Object.assign({}, pin); delete pin._noKeep; } } catch (e) {}
   var item = { id: 'p' + Date.now() + Math.random().toString(36).slice(2, 7), room: room, pin: pin, ts: Date.now() };
   var q = _outbox(); q.push(item); _setOutbox(q);
