@@ -188,6 +188,93 @@
     font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
     font-size: 14px; color: var(--text);
   }
+
+  /* ══ NEW LOOK (ui-v2) — opt-in, per device ══════════════════════════════════════════════
+     A skin over the existing markup, not a second UI. Everything below is scoped to
+     body.ui-v2, so with the switch off not one rule applies and the app is byte-identical to
+     what it was. The design system is the one from the study: an elevation ladder where
+     lighter reads as closer, a single amber signal colour, status colours reserved for status,
+     and raised surfaces that catch a highlight along their top edge. */
+  body.ui-v2 {
+    --bg:      #0B0D13;
+    --surface: #1A1E29;
+    --border:  rgba(255,255,255,.10);
+    --accent:  #FFB020;
+    --accent2: #FF6B4A;
+    --text:    #FFFFFF;
+    --muted:   rgba(255,255,255,.62);
+    --danger:  #FF4257;
+    --radius:  16px;
+    /* Depth, expressed once and reused: a highlight along the top edge, a dark lip along the
+       bottom, and a long soft shadow beneath. This is what makes a surface read as a physical
+       thing sitting above the one behind it. */
+    --v2-raise:
+      inset 0 1px 0 rgba(255,255,255,.10),
+      inset 0 -1px 0 rgba(0,0,0,.5),
+      0 1px 2px rgba(0,0,0,.6),
+      0 18px 34px -14px rgba(0,0,0,.92);
+    --v2-well:
+      inset 0 3px 8px rgba(0,0,0,.9),
+      inset 0 -1px 0 rgba(255,255,255,.05);
+    font-family: 'Inter Tight', 'SF Pro Text', system-ui, sans-serif;
+  }
+  /* The home background stops being a photograph behind everything and becomes a quiet ground
+     for the panels to sit on. */
+  body.ui-v2, body.ui-v2 html { background: var(--bg) !important; background-blend-mode: normal !important; }
+
+  /* Raised surfaces. Deliberately a short list: the pieces you actually touch or read from. */
+  body.ui-v2 .join-card,
+  body.ui-v2 #topbar,
+  body.ui-v2 #user-drawer, body.ui-v2 #saved-pins-drawer, body.ui-v2 #tracks-drawer,
+  body.ui-v2 #track-detail-drawer, body.ui-v2 #places-drawer,
+  body.ui-v2 #member-sheet, body.ui-v2 #settings-sheet, body.ui-v2 #pin-hub-sheet {
+    background: linear-gradient(180deg, rgba(42,48,66,.95), rgba(26,30,41,.96)) !important;
+    box-shadow: var(--v2-raise) !important;
+    border-color: rgba(255,255,255,.10) !important;
+  }
+  /* Panel headers sit ON their panel, so they take the lighter step of the ladder. */
+  body.ui-v2 .panel-header {
+    background: linear-gradient(180deg, rgba(52,59,80,.96), rgba(38,44,60,.96)) !important;
+    border-bottom: 1px solid rgba(255,255,255,.10) !important;
+  }
+  body.ui-v2 .panel-title { font-family: 'Outfit', system-ui, sans-serif; font-weight: 800; letter-spacing: .01em; }
+
+  /* Inputs and lists are RECESSED — the opposite treatment, so a field reads as somewhere to
+     put something rather than something to press. */
+  body.ui-v2 input[type=text], body.ui-v2 input[type=search], body.ui-v2 input[type=number],
+  body.ui-v2 .pin-input, body.ui-v2 select, body.ui-v2 #inp-group, body.ui-v2 #inp-name {
+    background: #07090D !important;
+    box-shadow: var(--v2-well) !important;
+    border: 1px solid rgba(255,255,255,.07) !important;
+  }
+
+  /* The one signal colour, used for the one primary action on a screen. */
+  body.ui-v2 .btn-primary, body.ui-v2 #btn-join, body.ui-v2 .btn-drop {
+    background: linear-gradient(150deg, #FFD37A, var(--accent)) !important;
+    color: #1A0E00 !important;
+    box-shadow: 0 4px 14px rgba(255,176,32,.35), inset 0 1px 0 rgba(255,255,255,.55) !important;
+    border: none !important;
+  }
+  /* Numbers read as instrument readouts rather than prose. */
+  body.ui-v2 .trk-stat .v, body.ui-v2 #acct-stat-groups, body.ui-v2 #acct-stat-pins,
+  body.ui-v2 #acct-stat-saved, body.ui-v2 .mk-speed, body.ui-v2 .mk-age {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 700;
+  }
+  /* Status colours stay status-only: never decoration, so green always means live. */
+  body.ui-v2 .status-live { color: #00E676 !important; }
+  body.ui-v2 .status-rest { color: #2EC4B6 !important; }
+
+  /* A quiet ambient wash behind the home screen only — never behind the map, which has to stay
+     legible against satellite imagery. */
+  body.ui-v2 #join-screen::before {
+    content: ''; position: fixed; inset: -20%; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(closest-side, rgba(255,176,32,.15), transparent 70%) 34% 46%/70% 70% no-repeat,
+      radial-gradient(closest-side, rgba(46,196,182,.11), transparent 68%) 88% 8%/55% 55% no-repeat;
+    filter: blur(60px);
+  }
+  body.ui-v2 #join-screen > * { position: relative; z-index: 1; }
+
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg) url('/icons/splash.png') center/cover fixed no-repeat; background-blend-mode: overlay; }
   /* TEXT SHARPNESS. The panels were translucent (`background: rgba(22,27,34,.62)`) with a
      `backdrop-filter: blur()`. Both of those force the browser to composite the panel into
@@ -2902,6 +2989,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep car radio on (voice)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stops a vehicle&apos;s Bluetooth from treating push-to-talk as a phone call &amp; muting the radio. Turn off if voice audio sounds wrong.</div></div></div>
       <span id="set-caraudio-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
+    <div id="set-uiv2-row" onclick="window._setToggleUiV2 && window._setToggleUiV2()" style="align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent;display:flex">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-map"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">New look (beta)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Try the redesigned styling on this device only — nobody else in your crews sees any change. Turn it off any time to go straight back.</div></div></div>
+      <span id="set-uiv2-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div id="set-autochannel-row" onclick="window._setToggleAutoChannel && window._setToggleAutoChannel()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Live voice with my crew</div><div style="font-size:11px;color:var(--muted);margin-top:2px">On = hear &amp; talk to your crew live, automatically, like a walkie-talkie. Off = you just get a notification when someone talks.</div></div></div>
       <span id="set-autochannel-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -3083,7 +3174,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 740;
+var APP_BUILD = 741;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7556,6 +7647,34 @@ window._copyCoords = function (str) {
   if (navigator.clipboard) { navigator.clipboard.writeText(str).then(function(){ toast('Coordinates copied'); }).catch(function(){ toast(str, 4000); }); }
   else { toast(str, 4000); }
 };
+
+// ── NEW LOOK (ui-v2) ────────────────────────────────────────────────────────────────────────
+// Per DEVICE, not per account: this is someone trying a look, not a preference to propagate to
+// every phone they own. Off unless explicitly turned on, so nobody in the family meets a
+// redesign they did not ask for.
+window._uiV2On = function () { try { return localStorage.getItem('gl_ui_v2') === '1'; } catch (e) { return false; } };
+window._applyUiV2 = function () {
+  try {
+    var on = window._uiV2On();
+    document.body.classList.toggle('ui-v2', on);
+    // The display fonts are only fetched when the look is actually in use -- an opt-in beta
+    // should not cost every other phone three font downloads.
+    if (on && !document.getElementById('v2-fonts')) {
+      var l = document.createElement('link');
+      l.id = 'v2-fonts'; l.rel = 'stylesheet';
+      l.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap';
+      document.head.appendChild(l);
+    }
+    try { _setPill('set-uiv2-pill', on); } catch (e) {}
+  } catch (e) {}
+};
+window._setToggleUiV2 = function () {
+  var on = !window._uiV2On();
+  try { localStorage.setItem('gl_ui_v2', on ? '1' : '0'); } catch (e) {}
+  window._applyUiV2();
+  try { toast(on ? 'New look on — turn it off in Settings any time' : 'Back to the classic look', 2800); } catch (e) {}
+};
+try { window._applyUiV2(); } catch (e) {}
 function _setPill(id, on) {
   var p = document.getElementById(id); if (!p) return;
   p.textContent = on ? 'ON' : 'OFF';
@@ -7563,6 +7682,7 @@ function _setPill(id, on) {
   p.style.color = on ? '#3fb950' : 'var(--muted)';
 }
 function _syncSettings() {
+  try { _setPill('set-uiv2-pill', window._uiV2On()); } catch (e) {}
   _setPill('set-alerts-pill', !!alertsOn);
   // Per-type notification toggles — only relevant (and shown) when notifications are on.
   try {
