@@ -3382,7 +3382,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 745;
+var APP_BUILD = 746;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12899,6 +12899,15 @@ const PIN_COLORS = {
 // that was never saved. The save survived; the feedback did not. Draw it here, immediately, and
 // let the server's copy take over when it arrives.
 window._pendingPins = window._pendingPins || {};
+// Rebuild the drawn set from the durable outbox at startup. 742 drew queued pins but kept that
+// set in memory, so a reload showed nothing while the pin was still sitting safely in the queue
+// -- indistinguishable from having lost it.
+try {
+  var _ob = JSON.parse(localStorage.getItem('gl_outbox') || '[]') || [];
+  _ob.forEach(function (it) {
+    if (it && it.pin) window._pendingPins['queued_' + it.id] = it.pin;
+  });
+} catch (e) {}
 window._pinContentKey = function (p) {
   try { return (+p.lat).toFixed(5) + ',' + (+p.lng).toFixed(5) + '|' + (p.label || '') + '|' + (p.cat || ''); }
   catch (e) { return String(Math.random()); }
@@ -16245,8 +16254,13 @@ function _closePinModal() {
     var kindRow = document.getElementById('pin-kind-row');
     var inRoom = !window._soloMode && typeof groupName !== 'undefined' && groupName;
     if (kindRow) kindRow.style.display = inRoom ? 'flex' : 'none';
-    window._setPinKind(inRoom ? 'meet' : 'save');
-    var shChk = document.getElementById('pin-share-chk'); if (shChk) shChk.checked = false;
+    // Default to KEEPING it. A place you marked and lost costs you the place; a place you did
+    // not want costs one tap. "Meet here" stays one tap away for the message case.
+    var _lastKind = 'save';
+    try { _lastKind = localStorage.getItem('gl_pin_kind') || 'save'; } catch (e) {}
+    window._setPinKind(inRoom ? _lastKind : 'save');
+    // Dropping a pin on a crew map means the crew should see it; the box stays there to untick.
+    var shChk = document.getElementById('pin-share-chk'); if (shChk) shChk.checked = !!inRoom;
   } catch (e) {}
   document.getElementById('pin-confirm').textContent = 'Drop Pin';
 }
@@ -16871,6 +16885,7 @@ document.getElementById('pin-modal').addEventListener('click', e => {
 window._pinKind = 'meet';
 window._setPinKind = function (k) {
   window._pinKind = k;
+  try { localStorage.setItem('gl_pin_kind', k); } catch (e) {}
   var m = document.getElementById('pin-kind-meet');
   var sv = document.getElementById('pin-kind-save');
   var shareRow = document.getElementById('pin-kind-share-row');
