@@ -189,6 +189,77 @@
     font-size: 14px; color: var(--text);
   }
 
+
+  /* ── ui-v2 STRUCTURE ────────────────────────────────────────────────────────────────────
+     The anchor. One element carrying 3-5x the weight of anything else on the screen, because
+     the screen has one question: who is out there. */
+  body.ui-v2 #home-anchor { display: block !important; margin: 2px 0 10px; }
+  body.ui-v2 #home-anchor-btn {
+    position: relative; display: block; width: 100%; max-width: 300px; margin: 0 auto;
+    aspect-ratio: 1 / 1; background: none; border: none; padding: 0; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.ui-v2 .ha-gauge { width: 100%; height: 100%; display: block; }
+  body.ui-v2 .ha-center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none; gap: 2px;
+  }
+  /* Scale contrast: 14px body against a ~96px numeral. Pure white with an accent bloom reads
+     brighter than gradient-filled text, which is why it is not gradient-filled. */
+  body.ui-v2 .ha-center b {
+    font-family: 'Outfit', system-ui, sans-serif; font-weight: 800;
+    font-size: clamp(56px, 22vw, 104px); line-height: .84; letter-spacing: -.05em;
+    font-variant-numeric: tabular-nums; color: #fff;
+    text-shadow: 0 0 44px rgba(255,176,32,.55);
+  }
+  body.ui-v2 .ha-center span {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .19em; color: rgba(255,255,255,.62);
+  }
+  /* Supporting rows: raised widgets sitting ON the housing, one elevation step above it, each
+     with its own status light. A card containing only text is unfinished. */
+  body.ui-v2 #ha-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  body.ui-v2 .ha-row {
+    display: flex; align-items: center; gap: 11px; padding: 11px 13px; border-radius: 14px;
+    background: linear-gradient(160deg, rgba(42,48,66,.95), rgba(32,37,51,.92));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -1px 0 rgba(0,0,0,.5),
+                0 10px 20px -8px rgba(0,0,0,.95);
+    border: none; width: 100%; text-align: left; cursor: pointer; color: var(--text);
+  }
+  body.ui-v2 .ha-row .dot {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    background: #00E676; box-shadow: 0 0 10px rgba(0,230,118,.85);
+  }
+  body.ui-v2 .ha-row .dot.off { background: rgba(255,255,255,.22); box-shadow: none; }
+  body.ui-v2 .ha-row .nm { flex: 1; min-width: 0; font-weight: 700; font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.ui-v2 .ha-row .ct {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700;
+    color: rgba(255,255,255,.62); font-variant-numeric: tabular-nums;
+  }
+  /* The tab strip becomes a segmented control sunk INTO the card, not buttons floating on it. */
+  body.ui-v2 #join-tabs {
+    background: #07090D !important; border: none !important; border-radius: 999px !important;
+    box-shadow: inset 0 3px 8px rgba(0,0,0,.9), inset 0 -1px 0 rgba(255,255,255,.05) !important;
+    padding: 3px !important;
+  }
+  body.ui-v2 #join-tabs .jtab { border-radius: 999px !important; }
+  body.ui-v2 #join-tabs .jtab.active {
+    background: linear-gradient(150deg, #FFD37A, #FFB020) !important; color: #1A0E00 !important;
+    box-shadow: 0 4px 12px rgba(255,176,32,.5), inset 0 1px 0 rgba(255,255,255,.6) !important;
+  }
+  /* Recursion, applied where people actually look: list rows inside sheets become raised
+     widgets rather than text typed onto the sheet. */
+  body.ui-v2 .trk-row, body.ui-v2 #saved-pins-list > div, body.ui-v2 #crews-list > div {
+    border-radius: 14px !important;
+    background: linear-gradient(160deg, rgba(42,48,66,.95), rgba(32,37,51,.92)) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -1px 0 rgba(0,0,0,.5),
+                0 10px 20px -8px rgba(0,0,0,.95) !important;
+    border: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) { body.ui-v2 #ha-arc { transition: none !important; } }
+  body.ui-v2 #ha-arc { transition: stroke-dasharray .8s cubic-bezier(.2,.8,.2,1); }
+
   /* ══ NEW LOOK (ui-v2) — opt-in, per device ══════════════════════════════════════════════
      A skin over the existing markup, not a second UI. Everything below is scoped to
      body.ui-v2, so with the switch off not one rule applies and the app is byte-identical to
@@ -1352,6 +1423,36 @@
     <div id="join-pager">
       <!-- ░░ PANEL 0 — QUICK JOIN ░░ -->
       <section class="join-panel gl-on" id="panel-join">
+      <!-- ══ ANCHOR (ui-v2) ══ The one thing this screen is for: who is out there right now.
+           Hidden entirely unless the new look is on, so the classic home is untouched. -->
+      <div id="home-anchor" style="display:none">
+        <button type="button" id="home-anchor-btn" onclick="window._anchorGo && window._anchorGo()" aria-label="Open your crew">
+          <svg viewBox="0 0 340 340" class="ha-gauge" role="img" aria-label="Crew members live now">
+            <defs>
+              <linearGradient id="ha-grad" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#FF6B4A"/>
+                <stop offset="55%" stop-color="#FFB020"/>
+                <stop offset="100%" stop-color="#FFD37A"/>
+              </linearGradient>
+              <filter id="ha-glow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="9" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <!-- recessed track: the arc sits IN the housing, not on it -->
+            <circle cx="170" cy="170" r="130" fill="none" stroke="rgba(0,0,0,.65)" stroke-width="24"
+                    stroke-linecap="round" stroke-dasharray="613 817" transform="rotate(135 170 170)"/>
+            <circle id="ha-arc" cx="170" cy="170" r="130" fill="none" stroke="url(#ha-grad)" stroke-width="22"
+                    stroke-linecap="round" stroke-dasharray="0 817" transform="rotate(135 170 170)"
+                    filter="url(#ha-glow)"/>
+          </svg>
+          <div class="ha-center">
+            <b id="ha-num">0</b>
+            <span id="ha-label">nobody live</span>
+          </div>
+        </button>
+        <div id="ha-rows"></div>
+      </div>
         <!-- Account status: signed-in confirmation, or a prominent sign-in CTA for guests -->
         <div id="acct-status" style="display:none"></div>
         <!-- Install prompt (Android Chrome) -->
@@ -3174,7 +3275,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 742;
+var APP_BUILD = 743;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7670,6 +7771,7 @@ window._applyUiV2 = function () {
       document.head.appendChild(l);
     }
     try { _setPill('set-uiv2-pill', on); } catch (e) {}
+    try { if (on) window._renderHomeAnchor(); } catch (e) {}
   } catch (e) {}
 };
 window._setToggleUiV2 = function () {
@@ -9105,7 +9207,62 @@ window._notifyToTalk = function (uid, name) {
 };
 // My Crews, promoted out of the account screen onto its own button. Each row opens that
 // Crew's map; the Talk-all shortcut is here too so a Crew is one tap from either.
+
+// ── The home anchor (ui-v2) ─────────────────────────────────────────────────────────────────
+// Counts the people who are LIVE across your crews right now. This is the one number the home
+// screen exists to answer, so it gets the weight -- everything else on the screen supports it.
+window._renderHomeAnchor = function () {
+  try {
+    if (!window._uiV2On || !window._uiV2On()) return;
+    var host = document.getElementById('home-anchor'); if (!host) return;
+    var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
+    var detail = window._talkDetail || {};
+    var live = 0, total = 0, rows = [];
+    Object.keys(circles).forEach(function (k) {
+      var d = detail[k] || {};
+      var people = d.people || [];
+      var on = people.filter(function (x) { return x && x.live; }).length;
+      live += on; total += people.length;
+      rows.push({ key: k, name: (typeof _cleanName === 'function' ? _cleanName(circles[k]) : circles[k]) ||
+                  (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k), on: on, n: people.length });
+    });
+    // 270 degrees of sweep = 613 of the 817 circumference. Empty reads as an empty track, which
+    // is the honest picture when nobody is out.
+    var pct = total ? (live / total) : 0;
+    var arc = document.getElementById('ha-arc');
+    if (arc) arc.setAttribute('stroke-dasharray', (613 * pct).toFixed(0) + ' 817');
+    var num = document.getElementById('ha-num'); if (num) num.textContent = String(live);
+    var lab = document.getElementById('ha-label');
+    if (lab) lab.textContent = !total ? 'no crews yet' : (live === 1 ? 'live now' : 'live now');
+    var host2 = document.getElementById('ha-rows');
+    if (host2) {
+      rows.sort(function (a, b) { return b.on - a.on; });
+      host2.innerHTML = rows.map(function (r) {
+        return '<button type="button" class="ha-row" onclick="window._openCrew && window._openCrew(\'' + _escHtml(r.key) + '\')">' +
+          '<span class="dot' + (r.on ? '' : ' off') + '"></span>' +
+          '<span class="nm">' + _escHtml(r.name) + '</span>' +
+          '<span class="ct">' + r.on + '/' + r.n + '</span>' +
+        '</button>';
+      }).join('') || '<div style="text-align:center;color:var(--muted);font-size:12.5px;padding:6px 2px">No crews yet — start one below.</div>';
+    }
+  } catch (e) {}
+};
+// Tapping the anchor opens the crew with the most people out; that is what you wanted when you
+// looked at the number.
+window._anchorGo = function () {
+  try {
+    var circles = _getCircles() || {}, detail = window._talkDetail || {};
+    var best = null, bestOn = -1;
+    Object.keys(circles).forEach(function (k) {
+      var on = ((detail[k] || {}).people || []).filter(function (x) { return x && x.live; }).length;
+      if (on > bestOn) { bestOn = on; best = k; }
+    });
+    if (best && window._openCrew) window._openCrew(best);
+    else if (window._homeGo) window._homeGo('crews');
+  } catch (e) {}
+};
 window._renderCrewsSection = function () {
+  try { window._renderHomeAnchor(); } catch (e) {}
   var list = document.getElementById('crews-list'); if (!list) return;
   var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
   var keys = Object.keys(circles);
