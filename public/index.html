@@ -3248,6 +3248,29 @@
       <div class="pin-coords" id="pin-coords-label" style="margin-top:4px;display:block"></div>
       <div id="pin-move-hint" style="font-size:11px;color:var(--muted);margin-top:2px;display:none">Tap the map to move the pin</div>
     </div>
+    <!-- The first decision, made first and made loudly: does this pin stay or not. It used to
+         sit below the category grid and the description field, past where most people stop
+         reading, as two quiet stacked buttons. -->
+    <div id="pin-kind-row" style="display:none;flex-direction:column;gap:8px;margin:2px 0 10px">
+      <div style="display:flex;gap:8px">
+        <button type="button" id="pin-kind-save" onclick="window._setPinKind('save')"
+                style="flex:1;text-align:left;padding:12px 13px;border-radius:14px;border:2px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
+          <div style="font-size:20px;line-height:1;margin-bottom:5px">⭐</div>
+          <div style="font-size:13.5px;font-weight:800">Keep this spot</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35">Stays in My Pins for good — stands, gates, camps.</div>
+        </button>
+        <button type="button" id="pin-kind-meet" onclick="window._setPinKind('meet')"
+                style="flex:1;text-align:left;padding:12px 13px;border-radius:14px;border:2px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
+          <div style="font-size:20px;line-height:1;margin-bottom:5px">⏳</div>
+          <div style="font-size:13.5px;font-weight:800">Just for now</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35">Clears itself in 12 hours — meet me here, look at this.</div>
+        </button>
+      </div>
+      <label id="pin-kind-share-row" style="display:none;align-items:center;gap:9px;padding:9px 11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12.5px;color:var(--text)">
+        <input type="checkbox" id="pin-share-chk" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0" />
+        <span>Show it to the crew as well</span>
+      </label>
+    </div>
     <div class="pin-cats" id="pin-cats" style="display:block;max-height:30vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
     <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
     <div id="custom-cat-row" style="display:none;margin-top:6px">
@@ -3258,22 +3281,7 @@
          on your own map, exactly like a My Map drop — the room never sees it. -->
     <!-- What KIND of pin: a message that expires, or a place you keep. Hidden on My Map, where
          there is no crew to send anything to and every pin is a kept place. -->
-    <div id="pin-kind-row" style="display:none;flex-direction:column;gap:7px;margin-top:9px">
-      <button type="button" id="pin-kind-meet" onclick="window._setPinKind('meet')"
-              style="width:100%;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
-        <div style="font-size:13px;font-weight:800">📍 Meet here</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">The crew sees it now. Clears itself after 12 hours.</div>
-      </button>
-      <button type="button" id="pin-kind-save" onclick="window._setPinKind('save')"
-              style="width:100%;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">
-        <div style="font-size:13px;font-weight:800">⭐ Save a place</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">Kept in My Pins for good, on every map you open.</div>
-      </button>
-      <label id="pin-kind-share-row" style="display:none;align-items:center;gap:9px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12.5px;color:var(--text)">
-        <input type="checkbox" id="pin-share-chk" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0" />
-        <span>Show it to the crew as well</span>
-      </label>
-    </div>
+
     <div class="pin-actions">
       <button class="btn-cancel" id="pin-cancel">Cancel</button>
       <button class="btn-drop" id="pin-confirm">Drop Pin</button>
@@ -3385,7 +3393,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 747;
+var APP_BUILD = 748;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16904,9 +16912,13 @@ window._setPinKind = function (k) {
   var sv = document.getElementById('pin-kind-save');
   var shareRow = document.getElementById('pin-kind-share-row');
   [[m, k === 'meet'], [sv, k === 'save']].forEach(function (pair) {
-    var el = pair[0]; if (!el) return;
-    el.style.borderColor = pair[1] ? 'var(--accent)' : 'var(--border)';
-    el.style.background = pair[1] ? 'rgba(240,165,0,.10)' : 'var(--bg)';
+    var el = pair[0], on = pair[1]; if (!el) return;
+    // Filled when chosen. A border tint alone is not a decision anyone can see at arm's length
+    // in daylight, and getting this wrong costs you the pin.
+    el.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+    el.style.background = on ? 'rgba(240,165,0,.16)' : 'var(--bg)';
+    el.style.boxShadow = on ? '0 0 0 1px var(--accent), 0 6px 16px -8px rgba(240,165,0,.7)' : 'none';
+    el.style.opacity = on ? '1' : '.72';
   });
   // "Also show the crew" only means something for a kept place -- a meet pin is already shared.
   if (shareRow) shareRow.style.display = (k === 'save') ? 'flex' : 'none';
