@@ -198,14 +198,26 @@
      the redesign only half-done: hierarchy changed, but nothing was removed. */
   body.ui-v2 #crews-section { display: none !important; }
   body.ui-v2 #home-anchor { display: block !important; margin: 2px 0 10px; }
+  /* A small ring on a summary line, not a gauge that owns the screen. Who is live is worth a
+     glance, not a quarter of the home screen -- and it reads zero most of the time. */
   body.ui-v2 #home-anchor-btn {
-    position: relative; display: block; width: 100%; max-width: 290px; margin: 0 auto;
-    /* A real height, not just an aspect ratio: the ratio alone resolved to nothing here and the
-       whole gauge collapsed, leaving only the rows beneath it. */
-    height: min(290px, 62vw); aspect-ratio: 1 / 1;
-    background: none; border: none; padding: 0; cursor: pointer;
+    position: relative; display: flex; align-items: center; gap: 11px;
+    width: 100%; margin: 0 0 6px; padding: 9px 12px;
+    background: linear-gradient(160deg, rgba(42,48,66,.95), rgba(32,37,51,.92));
+    border: none; border-radius: 14px; cursor: pointer; text-align: left;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 18px -10px rgba(0,0,0,.9);
     -webkit-tap-highlight-color: transparent;
   }
+  body.ui-v2 .ha-gauge { width: 34px !important; height: 34px !important; flex: 0 0 34px; }
+  body.ui-v2 .ha-center {
+    position: static !important; flex-direction: row !important; align-items: baseline !important;
+    justify-content: flex-start !important; gap: 7px !important;
+  }
+  body.ui-v2 .ha-center b {
+    font-size: 20px !important; text-shadow: none !important; line-height: 1 !important;
+    letter-spacing: -.02em !important;
+  }
+  body.ui-v2 .ha-center span { font-size: 10px !important; }
   body.ui-v2 .ha-gauge { width: 100%; height: 100%; display: block; }
   body.ui-v2 .ha-center {
     position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -574,6 +586,23 @@
     padding: 5px 12px; color: #0d1117; font-size: 11px; font-weight: 700;
     cursor: pointer; white-space: nowrap; flex-shrink: 0;
   }
+
+
+  /* GPS quality — a readout, so mono and tabular; it sits with the other corner furniture. */
+  #gps-chip {
+    position: fixed; bottom: calc(8px + var(--safe-bot)); left: 30px; z-index: 150;
+    align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+    background: rgba(13,17,23,.72); border: 1px solid rgba(255,255,255,.12);
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 700;
+    color: #e6edf3; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #gps-chip.show { display: flex; }
+  .gq-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; }
+  .gq-good { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,.8); }
+  .gq-fair { background: #f0a500; box-shadow: 0 0 6px rgba(240,165,0,.75); }
+  .gq-poor { background: #f85149; box-shadow: 0 0 6px rgba(248,81,73,.75); }
+  .gq-none { background: #6e7681; box-shadow: none; }
 
   /* ── Wake lock indicator — tiny dot only ── */
   #wakelock-indicator {
@@ -2051,6 +2080,12 @@
   <button type="button" id="pin-cross-place" style="pointer-events:auto;position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);transform:translateX(-50%);padding:13px 26px;background:var(--accent);border:none;border-radius:12px;color:#1a1200;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)">Place pin here</button>
 </div>
 
+
+<!-- ══ GPS QUALITY ══ Your own fix, where you can see it. Tap for what it means. -->
+<div id="gps-chip" onclick="window._explainGps && window._explainGps()" style="display:none">
+  <span class="gq-dot"></span><span id="gps-chip-text">--</span>
+</div>
+
 <!-- ══ PIN MODE BAR ══════════════════════════════════════════════════ -->
 <div id="pin-mode-bar">
   <svg class="licon licon-sm"><use href="#ic-pin"/></svg><span id="pin-mode-text">Tap the map, or</span>
@@ -3417,7 +3452,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 749;
+var APP_BUILD = 751;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5825,13 +5860,16 @@ window._confirm = function (msg, onYes, opts) {
   function close() { try { ov.remove(); } catch (e) {} }
   ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
   var hasMid = !!(opts.mid && opts.onMid);
+  var hideNo = !!opts.hideNo;   // informational: nothing to cancel
   var yesBg = opts.danger ? '#e11d2e' : '#2e6be6';
   var btns = (hasMid
     ? '<button id="glc-yes" style="width:100%;padding:12px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;margin-bottom:8px">' + _escHtml(opts.yes || 'Yes') + '</button>' +
       '<button id="glc-mid" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px">' + _escHtml(opts.mid) + '</button>' +
       '<button id="glc-no" style="width:100%;padding:12px;background:none;border:none;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer">' + _escHtml(opts.no || 'Cancel') + '</button>'
-    : '<div style="display:flex;gap:8px"><button id="glc-no" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer">' + _escHtml(opts.no || 'Cancel') + '</button>' +
-      '<button id="glc-yes" style="flex:1;padding:11px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">' + _escHtml(opts.yes || 'Yes') + '</button></div>');
+    : (hideNo
+      ? '<button id="glc-yes" style="width:100%;padding:11px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">' + _escHtml(opts.yes || 'OK') + '</button>'
+      : '<div style="display:flex;gap:8px"><button id="glc-no" style="flex:1;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer">' + _escHtml(opts.no || 'Cancel') + '</button>' +
+        '<button id="glc-yes" style="flex:1;padding:11px;background:' + yesBg + ';border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer">' + _escHtml(opts.yes || 'Yes') + '</button></div>'));
   ov.innerHTML = '<div style="width:100%;max-width:340px;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:18px">' +
     (opts.title ? '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px">' + _escHtml(opts.title) + '</div>' : '') +
     '<div style="font-size:14px;color:var(--text);line-height:1.45;margin-bottom:16px;white-space:pre-line">' + _escHtml(msg) + '</div>' + btns + '</div>';
@@ -16870,6 +16908,48 @@ document.getElementById('chat-input').addEventListener('keydown', e => {
 
 // ── Placing a pin without aiming at the map ─────────────────────────────────────────────────
 // Opens the pin sheet at a known point, bypassing the fingertip entirely.
+
+// ── Your own GPS quality ────────────────────────────────────────────────────────────────────
+// Bands chosen for what they mean in the field rather than round numbers: under ~25ft you can
+// trust a dropped pin to the tree; 25-60ft is fine for finding a spot again but not for marking
+// one precisely; past that the fix is a neighbourhood, not a place. A fix older than a minute is
+// reported as stale rather than dressed up as current.
+window._gpsQuality = function () {
+  var accM = window._lastAccM, ts = window._lastFixTs || 0;
+  var ageS = ts ? Math.round((Date.now() - ts) / 1000) : null;
+  if (!ts || accM == null) return { cls: 'gq-none', text: 'no fix', tier: 'none' };
+  if (ageS != null && ageS > 90) return { cls: 'gq-none', text: 'stale ' + (ageS > 3600 ? Math.round(ageS / 3600) + 'h' : Math.round(ageS / 60) + 'm'), tier: 'stale', ageS: ageS };
+  var ft = Math.round(accM * 3.28084);
+  var tier = ft <= 25 ? 'good' : ft <= 60 ? 'fair' : 'poor';
+  return { cls: 'gq-' + tier, text: '\u00b1' + ft + ' ft', tier: tier, ft: ft, ageS: ageS };
+};
+window._updateGpsChip = function () {
+  try {
+    var el = document.getElementById('gps-chip'); if (!el) return;
+    // Only on the map: on the home screen it is noise, and there is nothing to place there.
+    var onMap = (typeof groupName !== 'undefined' && groupName) || window._soloMode;
+    if (!onMap) { el.classList.remove('show'); return; }
+    var q = window._gpsQuality();
+    el.classList.add('show');
+    var dot = el.querySelector('.gq-dot');
+    if (dot) dot.className = 'gq-dot ' + q.cls;
+    var t = document.getElementById('gps-chip-text');
+    if (t) t.textContent = q.text;
+  } catch (e) {}
+};
+window._explainGps = function () {
+  try {
+    var q = window._gpsQuality();
+    var msg;
+    if (q.tier === 'none') msg = 'No GPS fix yet.\n\nNothing you drop right now will land in the right place. Step into the open and give it a few seconds.';
+    else if (q.tier === 'stale') msg = 'Your last fix is ' + q.text.replace('stale ', '') + ' old.\n\nYour dot is where you WERE. Moving usually wakes it up.';
+    else if (q.tier === 'good') msg = 'Good fix — accurate to about ' + q.ft + ' feet.\n\nSafe to mark a spot you want to find again.';
+    else if (q.tier === 'fair') msg = 'Fair fix — about ' + q.ft + ' feet.\n\nFine for finding the area again, loose for marking an exact spot. Standing still for a few seconds usually tightens it.';
+    else msg = 'Poor fix — about ' + q.ft + ' feet.\n\nThat is a neighbourhood, not a place. Heavy canopy or a building is the usual cause; step into the open and wait a few seconds before dropping a pin.';
+    _confirm(msg, function () {}, { yes: 'OK', hideNo: true });
+  } catch (e) {}
+};
+try { setInterval(function () { window._updateGpsChip(); }, 2000); } catch (e) {}
 window._openPinAt = function (lng, lat, note) {
   try {
     pendingCoords = { lng: lng, lat: lat };
@@ -16890,9 +16970,19 @@ window._dropPinHere = function () {
   try {
     var g = window._lastGPS;
     if (!g) { toast('No GPS fix yet — try again in a moment', 2600); return; }
-    var accFt = (window._lastAccM != null) ? Math.round(window._lastAccM * 3.28084) : null;
-    window._openPinAt(g.lng, g.lat, accFt != null ? ('\u00b1' + accFt + ' ft') : '');
-    if (navigator.vibrate) navigator.vibrate(30);
+    var q = window._gpsQuality();
+    var go = function () {
+      window._openPinAt(g.lng, g.lat, q.ft != null ? ('\u00b1' + q.ft + ' ft') : '');
+      if (navigator.vibrate) navigator.vibrate(30);
+    };
+    // A poor fix makes a pin that is wrong and looks right. Say so first rather than after.
+    if (q.tier === 'poor' || q.tier === 'stale') {
+      _confirm('Your GPS is ' + (q.tier === 'stale' ? 'stale (' + q.text.replace('stale ', '') + ' old)' : 'only accurate to about ' + q.ft + ' feet') +
+               '.\n\nA pin dropped now could be well off. Wait a few seconds in the open, or drop it anyway?',
+               go, { yes: 'Drop anyway' });
+      return;
+    }
+    go();
   } catch (e) {}
 };
 // Crosshair: a fixed sight, and you move the map under it. Nothing hidden under a finger, and
