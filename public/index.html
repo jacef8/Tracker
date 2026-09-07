@@ -3492,7 +3492,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 754;
+var APP_BUILD = 755;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22773,8 +22773,13 @@ function _groupFollowTick(force) {
     var _myAcc = window._lastAccM || 0;
     if (_myFresh && _myAcc < 5000) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
   } catch (e) {}
-  // Nobody active? Then frame whoever we do have rather than showing an empty map.
-  if (!pts.length && ptsStale.length) pts = ptsStale;
+  // Everything with a marker on the map gets framed, active or not. Anything else means the
+  // camera frames some of what you can see, which is not what "follow the group" says.
+  // Outliers are handled deliberately, per member, via Exclude from follow group.
+  if (ptsStale.length) {
+    ptsStale.forEach(function (q) { pts.push(q); });
+    ptsStale.length = 0;
+  }
   window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
   // Everyone standing together (the merged-dot case) makes a degenerate bounding box, which
