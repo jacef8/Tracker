@@ -3519,7 +3519,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 760;
+var APP_BUILD = 761;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5270,6 +5270,35 @@ window._devAccLabel = function (live) {
   var q = a <= 100 ? 'GPS' : a <= 300 ? 'weak GPS / Wi-Fi' : 'cell estimate — no GPS lock';
   return '±' + Math.round(a) + ' · ' + q;
 };
+// The watch's card. Called from its map marker AND from the People list, which previously flew
+// the map to the watch and then showed nothing.
+window._openDeviceCard = function (id2) {
+  try {
+    var dd = (window._devicesAll[id2] || {}).live || {};
+    if (typeof dd.lat !== 'number' || typeof dd.lng !== 'number') { try { toast('No location for that device yet', 2400); } catch (e) {} return; }
+    var dIsLive = dd.ts && (Date.now() - dd.ts) < 120000;
+    var dName = (dd.name || 'Device').replace(/'/g, '');
+    var dCoords = (typeof dd.lat === 'number' && typeof dd.lng === 'number') ? dd.lat.toFixed(6) + ', ' + dd.lng.toFixed(6) : '';
+    var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
+      '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#8d97a1;font-weight:600">· watch</span></div>' +
+      '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + (window._devAccLabel(dd) ? ' · ' + _escHtml(window._devAccLabel(dd)) : '') + '</div>' +
+      (dCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
+      '<div style="display:flex;gap:6px">' +
+      '<button onclick="window._talkToDevice(\'' + id2 + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
+      // Same "follow this map marker continuously" mechanism as a human room member's
+      // "Follow Live" button (window._followUser is generic on the marker id — it already
+      // falls back to _deviceMarkers when the id isn't a room member).
+      '<button onclick="window._followUser(\'' + id2 + '\',\'' + dName + '\')" style="flex:1;background:' + (dIsLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
+      '</div>' +
+      '<div style="margin-top:8px">' + _gfExclButtonHtml(id2, dName) + '</div>' +
+    '</div>';
+    // closeOnClick MUST stay false. It defaults to true, and the click that opens this card
+    // bubbles to the map, where Mapbox's own handler closes it again inside the same event --
+    // so the card appeared for no frames at all and the watch read as untappable.
+    new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px', closeOnClick: false })
+      .setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map);
+  } catch (e) {}
+};
 function _renderDevices() {
   if (typeof map === 'undefined' || !map || typeof mapboxgl === 'undefined') return;
   if (!window._secDevOn()) {   // hidden on this group map — clear any drawn markers and stop
@@ -5292,25 +5321,10 @@ function _renderDevices() {
       mk._el = el;
       window._deviceMarkers[id] = mk;
       (function (id2) {
-        el.addEventListener('click', function () {
-          var dd = (window._devicesAll[id2] || {}).live || {};
-          var dIsLive = dd.ts && (Date.now() - dd.ts) < 120000;
-          var dName = (dd.name || 'Device').replace(/'/g, '');
-          var dCoords = (typeof dd.lat === 'number' && typeof dd.lng === 'number') ? dd.lat.toFixed(6) + ', ' + dd.lng.toFixed(6) : '';
-          var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
-            '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#8d97a1;font-weight:600">· watch</span></div>' +
-            '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + (window._devAccLabel(dd) ? ' · ' + _escHtml(window._devAccLabel(dd)) : '') + '</div>' +
-            (dCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
-            '<div style="display:flex;gap:6px">' +
-            '<button onclick="window._talkToDevice(\'' + id2 + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
-            // Same "follow this map marker continuously" mechanism as a human room member's
-            // "Follow Live" button (window._followUser is generic on the marker id — it already
-            // falls back to _deviceMarkers when the id isn't a room member).
-            '<button onclick="window._followUser(\'' + id2 + '\',\'' + dName + '\')" style="flex:1;background:' + (dIsLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
-            '</div>' +
-            '<div style="margin-top:8px">' + _gfExclButtonHtml(id2, dName) + '</div>' +
-          '</div>';
-          try { new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px' }).setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map); } catch (e) {}
+        el.addEventListener('click', function (ev) {
+          // Belt and braces with closeOnClick:false -- keep the opening click off the map.
+          try { ev.stopPropagation(); } catch (e) {}
+          window._openDeviceCard(id2);
         });
       })(id);
     } else {
@@ -5443,6 +5457,9 @@ function _flyToDevice() {
   try { _renderDevices(); } catch (e) {}
   try { map.flyTo({ center: [t.lng, t.lat], zoom: 16 }); } catch (e) {}
   try { toast((t.name || 'Device') + ' located'); } catch (e) {}
+  // Selecting the watch anywhere should end with its card open. Flying there and saying
+  // "located" left you looking at a dot with no way to act on it.
+  if (t.id) setTimeout(function () { try { window._openDeviceCard(t.id); } catch (e) {} }, 620);
 }
 // "Locate" jumps the map to a device. If you're not on a map yet, it opens one by rejoining
 // your first favorite room, then flies to the device once that map loads.
@@ -5474,9 +5491,13 @@ window._locateDevice = function (id) {
   try { window._wakeDevice(id, 'locate'); } catch (e) {}   // ask the watch for a fresh fix
   var d = (window._devicesAll[id] || {}).live || {};
   if (typeof d.lat !== 'number' || typeof d.lng !== 'number') { try { toast('Waking the watch for a fresh location…'); } catch (e) {} return; }
-  // Already on a GroundLink map (in a room)? fly to the device's ⌚ there.
-  if (typeof map !== 'undefined' && map && typeof groupName !== 'undefined' && groupName) {
-    window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
+  // Already looking at ANY GroundLink map -- a room, My Map, or All Crews? Just fly to the
+  // watch there. Only being in a room used to count, so from My Map this rebuilt the solo map
+  // from scratch, and from All Crews it discarded the map you were standing on.
+  var _onAMap = (typeof map !== 'undefined' && map) &&
+                ((typeof groupName !== 'undefined' && groupName) || window._soloMode || window._allMode);
+  if (_onAMap) {
+    window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name, id: id };
     _flyToDevice();
     return;
   }
@@ -5488,7 +5509,7 @@ window._locateDevice = function (id) {
 window._openMyMap = function (deviceId) {
   if (deviceId) {
     var d = (window._devicesAll[deviceId] || {}).live || {};
-    if (typeof d.lat === 'number') window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name };
+    if (typeof d.lat === 'number') window._locateTarget = { lng: d.lng, lat: d.lat, name: d.name, id: deviceId };
   }
   try { _enterSoloMap(); } catch (e) {}   // the existing "My Map" (no room) — now shows your devices
   // Once the solo map is ready, draw the devices + fly to the requested one.
@@ -5496,7 +5517,11 @@ window._openMyMap = function (deviceId) {
     if (window._mapReady && typeof map !== 'undefined' && map) {
       clearInterval(iv);
       try { _renderDevices(); } catch (e) {}
-      if (deviceId && window._locateTarget) { try { map.flyTo({ center: [window._locateTarget.lng, window._locateTarget.lat], zoom: 16 }); } catch (e) {} }
+      if (deviceId && window._locateTarget) {
+        try { map.flyTo({ center: [window._locateTarget.lng, window._locateTarget.lat], zoom: 16 }); } catch (e) {}
+        // Land with the card open, the same as every other way of selecting the watch.
+        setTimeout(function () { try { window._openDeviceCard(deviceId); } catch (e) {} }, 620);
+      }
     } else if (++tries > 50) clearInterval(iv);
   }, 150);
 };
