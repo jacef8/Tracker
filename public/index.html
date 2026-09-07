@@ -3318,6 +3318,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show my devices on every map</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Always show your private devices (like the watch) on every group map. Off = only on My Map, or where you turn it on per-room.</div></div></div>
       <span id="set-secdevall-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
+    <div id="set-secdevsolo-row" onclick="window._setToggleSecDevSolo && window._setToggleSecDevSolo()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-pin"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show my devices on My Map</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Your private devices on My Map and the All Crews map. Off = hidden there too.</div></div></div>
+      <span id="set-secdevsolo-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
     <div id="set-hearothers-row" onclick="window._setToggleHearOthers && window._setToggleHearOthers()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:#a78bfa;flex-shrink:0"><use href="#ic-mic"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Hear others on the device channel</div><div style="font-size:11px;color:var(--muted);margin-top:2px">On = you also hear family members talking to your device (e.g. the watch). Off = you only hear the device itself.</div></div></div>
       <span id="set-hearothers-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -3519,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 761;
+var APP_BUILD = 762;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5229,7 +5233,11 @@ window._listenDevices = function () {
 // Secure devices (the watch) show on My Map (no groupName) ALWAYS; on a GROUP map only when
 // you flip "Show secure devices here" in Room Info (per-room, off by default).
 window._secDevOn = function () {
-  if (typeof groupName === 'undefined' || !groupName) return true;   // My Map / no room
+  // Roomless maps (My Map, All Crews) had no switch at all. Default stays ON -- these are your
+  // own private maps and the watch belongs on them -- but it can now be turned off.
+  if (typeof groupName === 'undefined' || !groupName) {
+    try { return localStorage.getItem('gl_secdev_solo') !== '0'; } catch (e) { return true; }
+  }
   try { if (localStorage.getItem('gl_secdev_all') === '1') return true; } catch (e) {}   // global: show on every map
   try { return localStorage.getItem('gl_secdev_' + groupName) === '1'; } catch (e) { return false; }
 };
@@ -5272,6 +5280,35 @@ window._devAccLabel = function (live) {
 };
 // The watch's card. Called from its map marker AND from the People list, which previously flew
 // the map to the watch and then showed nothing.
+// Hide devices on whatever map you are looking at, from the card itself -- the place you are
+// already standing when you decide the watch is in the way. Buried in a settings screen it may
+// as well not exist, which is how it has been.
+window._hideDeviceHere = function () {
+  var roomless = (typeof groupName === 'undefined' || !groupName);
+  try {
+    if (roomless) localStorage.setItem('gl_secdev_solo', '0');
+    else localStorage.setItem('gl_secdev_' + groupName, '0');
+  } catch (e) {}
+  try { document.querySelectorAll('.mapboxgl-popup').forEach(function (el) { el.remove(); }); } catch (e) {}
+  try { _renderDevices(); } catch (e) {}
+  try { _renderDeviceList(); } catch (e) {}
+  try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {}
+  try { _setPill('set-secdevsolo-pill', window._secDevSoloOn()); } catch (e) {}
+  try { toast('Devices hidden here \u2014 turn back on in Settings', 4200); } catch (e) {}
+};
+window._secDevSoloOn = function () { try { return localStorage.getItem('gl_secdev_solo') !== '0'; } catch (e) { return true; } };
+window._setToggleSecDevSolo = function () {
+  var on = !window._secDevSoloOn();
+  try { localStorage.setItem('gl_secdev_solo', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-secdevsolo-pill', on); } catch (e) {}
+  try { _renderDevices(); } catch (e) {}
+  try { _renderDeviceList(); } catch (e) {}
+  try { window._refreshPeopleBadge && window._refreshPeopleBadge(); } catch (e) {}
+  try { toast(on ? 'Devices shown on My Map and All Crews' : 'Devices hidden on My Map and All Crews'); } catch (e) {}
+};
+window._closeDeviceCard = function () {
+  try { document.querySelectorAll('.mapboxgl-popup').forEach(function (el) { el.remove(); }); } catch (e) {}
+};
 window._openDeviceCard = function (id2) {
   try {
     var dd = (window._devicesAll[id2] || {}).live || {};
@@ -5280,23 +5317,34 @@ window._openDeviceCard = function (id2) {
     var dName = (dd.name || 'Device').replace(/'/g, '');
     var dCoords = (typeof dd.lat === 'number' && typeof dd.lng === 'number') ? dd.lat.toFixed(6) + ', ' + dd.lng.toFixed(6) : '';
     var h = '<div style="font-family:system-ui,-apple-system,sans-serif;min-width:160px">' +
-      '<div style="font-weight:800;font-size:14px;color:#0d1117">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#8d97a1;font-weight:600">· watch</span></div>' +
-      '<div style="font-size:11px;color:#8d97a1;margin:2px 0 4px">last seen ' + _devAgo(dd.ts) + (window._devAccLabel(dd) ? ' · ' + _escHtml(window._devAccLabel(dd)) : '') + '</div>' +
-      (dCoords ? '<div style="font-size:10px;color:#8a939e;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
+      '<div style="display:flex;align-items:flex-start;gap:8px">' +
+        '<div style="flex:1;min-width:0;font-weight:800;font-size:15px;color:#fff">' + _escHtml(dd.name || 'Device') + ' <span style="font-size:10px;color:#a9b4bf;font-weight:600">· watch</span></div>' +
+        '<button onclick="window._closeDeviceCard()" aria-label="Close" style="flex-shrink:0;width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.10);border:none;border-radius:50%;color:#e6edf3;font-size:15px;line-height:1;cursor:pointer">✕</button>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:#a9b4bf;margin:3px 0 5px">last seen ' + _devAgo(dd.ts) + (window._devAccLabel(dd) ? ' · ' + _escHtml(window._devAccLabel(dd)) : '') + '</div>' +
+      (dCoords ? '<div style="font-size:11px;color:#a9b4bf;margin:0 0 9px;cursor:pointer" onclick="window._copyCoords(\'' + dCoords + '\')" title="Tap to copy">' + dCoords + '</div>' : '<div style="margin:0 0 9px"></div>') +
       '<div style="display:flex;gap:6px">' +
       '<button onclick="window._talkToDevice(\'' + id2 + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;background:#2ea043;border:none;border-radius:9px;color:#fff;font-weight:800;font-size:13px;padding:9px;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>Talk</button>' +
       // Same "follow this map marker continuously" mechanism as a human room member's
       // "Follow Live" button (window._followUser is generic on the marker id — it already
       // falls back to _deviceMarkers when the id isn't a room member).
-      '<button onclick="window._followUser(\'' + id2 + '\',\'' + dName + '\')" style="flex:1;background:' + (dIsLive ? '#00e676' : '#555e6b') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
+      '<button onclick="window._followUser(\'' + id2 + '\',\'' + dName + '\')" style="flex:1;background:' + (dIsLive ? '#00e676' : '#3d4653') + ';border:none;border-radius:9px;font-size:13px;font-weight:800;color:' + (dIsLive ? '#000' : '#e6edf3') + ';cursor:pointer;white-space:nowrap">' + (dIsLive ? 'Follow Live' : 'Go to Last') + '</button>' +
       '</div>' +
-      '<div style="margin-top:8px">' + _gfExclButtonHtml(id2, dName) + '</div>' +
+      '<div style="display:flex;gap:6px;align-items:center;margin-top:8px">' +
+        '<div style="flex:1;min-width:0">' + _gfExclButtonHtml(id2, dName) + '</div>' +
+        '<button onclick="window._hideDeviceHere()" title="Hide devices on this map" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.22);border-radius:9px;color:#a9b4bf;font-size:12px;font-weight:800;padding:7px 11px;cursor:pointer;white-space:nowrap">Hide</button>' +
+      '</div>' +
     '</div>';
     // closeOnClick MUST stay false. It defaults to true, and the click that opens this card
     // bubbles to the map, where Mapbox's own handler closes it again inside the same event --
     // so the card appeared for no frames at all and the watch read as untappable.
     new mapboxgl.Popup({ closeButton: true, offset: 18, maxWidth: '260px', closeOnClick: false })
       .setLngLat([dd.lng, dd.lat]).setHTML(h).addTo(map);
+    // Tapping the map still closes it -- but only from the NEXT tap onward. Arming this a tick
+    // late is exactly what closeOnClick could not do, and why the card used to vanish instantly.
+    setTimeout(function () {
+      try { map.once('click', window._closeDeviceCard); } catch (e) {}
+    }, 0);
   } catch (e) {}
 };
 function _renderDevices() {
@@ -8087,6 +8135,8 @@ function _syncSettings() {
       _setPill('set-devlisten-pill', _devListenOn());
       var sdaRow = document.getElementById('set-secdevall-row');
       if (sdaRow) { sdaRow.style.display = ownsDev ? 'flex' : 'none'; _setPill('set-secdevall-pill', window._secDevAllOn()); }
+      var ssRow = document.getElementById('set-secdevsolo-row');
+      if (ssRow) { ssRow.style.display = ownsDev ? 'flex' : 'none'; _setPill('set-secdevsolo-pill', window._secDevSoloOn()); }
       var hoRow = document.getElementById('set-hearothers-row');
       if (hoRow) { hoRow.style.display = ownsDev ? 'flex' : 'none'; _setPill('set-hearothers-pill', window._hearOthersOn()); }
     }
