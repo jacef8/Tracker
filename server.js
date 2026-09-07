@@ -187,12 +187,39 @@ app.post('/wake-device', rateLimit(20, 60000), async function(req, res) {
 // Find one uid's push identity (FCM token and/or web-push sub) by scanning every room's
 // pushSubs and favSubs. Subscriptions are per-room with no global index, so this walks the
 // room list — cheap at family scale, and both /bump and /nudge below need it.
+// List the room names, and nothing else. `shallow=true` is the reason this is a raw REST call
+// rather than adminDb — the Admin SDK has no shallow read, and .once('value') on gl/ would drag
+// the entire database back on every push.
+//
+// It MUST be authenticated. This read was anonymous, and once the rules were tightened to
+// require auth != null it started returning {"error":"Permission denied"} — an object, not a
+// throw. Object.keys() of that is ["error"], so the scan below dutifully looked for
+// subscriptions in a room named "error", found none, and reported "no-subscription". Every
+// person-targeted push — Notify, Nudge, the silent Refresh, and invites — failed exactly that
+// way, silently, for everyone. Confirmed 2026-09-07 against a device with a valid live token.
+async function _roomNames() {
+  let url = DB_URL + '/gl.json?shallow=true';
+  if (fcmAdmin) {
+    const cred = fcmAdmin.app().options.credential;
+    const tok = await cred.getAccessToken();
+    url += '&access_token=' + encodeURIComponent(tok.access_token);
+  }
+  const j = await (await fetch(url)).json();
+  // Never treat an error payload as data again — that is the whole bug above.
+  if (!j || typeof j !== 'object' || j.error) throw new Error('room list: ' + ((j && j.error) || 'empty'));
+  return Object.keys(j).filter(k => k.charAt(0) !== '_');
+}
+
 async function findSubsForUid(uid) {
   let rooms = [];
   try {
-    const r = await fetch(DB_URL + '/gl.json?shallow=true');
-    rooms = Object.keys((await r.json()) || {}).filter(k => k.charAt(0) !== '_');
-  } catch (e) { return null; }
+    rooms = await _roomNames();
+  } catch (e) {
+    // Loud: with no room list there is nobody to find, and the caller can only report
+    // "no-subscription", which reads as "they turned notifications off" and is a lie.
+    console.error('findSubsForUid: cannot list rooms —', e.message);
+    return null;
+  }
   for (const room of rooms) {
     for (const branch of ['pushSubs', 'favSubs']) {
       try {
