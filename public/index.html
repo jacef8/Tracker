@@ -3492,7 +3492,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 756;
+var APP_BUILD = 757;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22904,7 +22904,7 @@ function _groupFollowTick(force) {
   window._gfStartLoop();
   // Tapping the button should arrive promptly rather than drifting in over several seconds.
   if (force) {
-    try { map.easeTo({ center: cam.center, zoom: targetZoom, duration: 650, easing: _linEase }); } catch (e) {}
+    try { map.easeTo({ center: cam.center, zoom: targetZoom, duration: 850, easing: _linEase }); } catch (e) {}
   }
   return true;
 }
@@ -22934,7 +22934,10 @@ function _gfLoop() {
     // Close to home: settle exactly and stop nudging, so a stationary group is still.
     if (Math.abs(dLng) < 1e-7 && Math.abs(dLat) < 1e-7 && Math.abs(dz) < 0.002) return;
     // One smoothing constant for both, so they arrive together rather than one finishing first.
-    var k = 0.085;
+    // At 60fps this closes ~95% of the gap in about a second and a half. 0.085 got there in
+    // well under a second, which read as smooth but hurried -- the camera should feel like it
+    // is following the group, not catching up to it.
+    var k = 0.045;
     map.jumpTo({
       center: [c.lng + dLng * k, c.lat + dLat * k],
       zoom: z + dz * k
