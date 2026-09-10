@@ -3523,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 763;
+var APP_BUILD = 764;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3929,6 +3929,7 @@ function _applyMarkerSolo(mk) {
   // colour and leaves a white circle, so put the member's colour back explicitly.
   el.style.background = '';
   if (mk._fillColor) el.style.backgroundColor = mk._fillColor;
+  el.style.opacity = mk._soloOpacity || '1';   // drop any fade inherited from a merged oval
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
     // Rewrite the whole inline style rather than clearing the specific leftovers I happen to
@@ -3963,7 +3964,9 @@ function _applyMarkerMerged(primary, members) {
   // reporting. The oval is live if ANYONE in it is live; each half then dims on its own.
   var anyLive = ordered.some(function (u) { var m = userMarkers[u]; return !!(m && m._isLive); });
   el.style.border = '3px solid ' + (anyLive ? '#ffffff' : '#a9b4bf');
-  el.style.opacity = anyLive ? '1' : '0.65';
+  // Always 1: each cell below carries its own member's liveness, and dimming here as well
+  // multiplied the two together -- .65 x .45 = .29, and the map showed through the marker.
+  el.style.opacity = '1';
   el.style.background = 'transparent';
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
@@ -3996,7 +3999,9 @@ function _applyMarkerMerged(primary, members) {
       // Each half carries its OWN status: a person who has stopped reporting greys out without
       // dragging the people beside them down with it.
       var liveU = !!(m && m._isLive);
-      var dim = liveU ? '' : 'opacity:.45;filter:grayscale(1);';
+      // .65 is the same fade a stale dot gets standing alone, so a person looks equally
+      // faded whether or not someone is beside them. Greyscale is the extra cue.
+      var dim = liveU ? '' : 'opacity:.65;filter:grayscale(1);';
       if (ava) {
         return '<span style="flex:1;height:100%;' + dim + 'background-image:url(&quot;' + ava +
           '&quot;);background-size:cover;background-position:center"></span>';
@@ -15405,6 +15410,7 @@ function listenUsers() {
         userMarkers[uid]._el = el;
         userMarkers[uid]._uid = uid;   // lets _animateMarker drag this member's trail tip along
         userMarkers[uid]._fillColor = fillColor;
+        userMarkers[uid]._soloOpacity = opacity;   // the fade this dot wears when alone
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = _initialsFor(uid, data.name);
         userMarkers[uid]._lastTs = data.ts || data.fixTs || 0;   // heartbeat age for follow-group's 6h rule
@@ -15438,6 +15444,7 @@ function listenUsers() {
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
         userMarkers[uid]._fillColor = fillColor;
+        userMarkers[uid]._soloOpacity = opacity;   // the fade this dot wears when alone
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
         userMarkers[uid]._initials = _initialsFor(uid, data.name);
         userMarkers[uid]._lastTs = data.ts || data.fixTs || 0;   // heartbeat age for follow-group's 6h rule
