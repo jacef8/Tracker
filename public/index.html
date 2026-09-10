@@ -3523,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 762;
+var APP_BUILD = 763;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4145,6 +4145,8 @@ function _spreadOverlappingMarkers() {
       if (v.dev) { var z = (ml || mt) ? '6' : '5'; if (v.el.style.zIndex !== z) v.el.style.zIndex = z; }
     });
     try { window._offsetCollidingPins(); } catch (e) {}
+    // AFTER the margins above are applied -- the chip slots are computed from them.
+    try { _layoutMarkerChips(); } catch (e) {}
     _drawMarkerLeaders(vis);
   } catch (e) {}
 }
@@ -4158,11 +4160,16 @@ function _layoutMarkerChips() {
       if (!chip || chip.style.display === 'none') chip = el.querySelector('.mk-age');
       if (!chip || chip.style.display === 'none') return;
       var p; try { p = map.project(mk._ll); } catch (e) { return; }
+      // Measure where the dot is actually DRAWN, not where it belongs geographically: the spread
+      // pass offsets colliding markers by these margins and the chip rides along with its marker.
+      var mx = parseFloat(el.style.marginLeft) || 0;
+      var my = parseFloat(el.style.marginTop) || 0;
       var w = chip.offsetWidth || 60;
       // Find the first vertical slot whose box doesn't overlap one already taken.
       for (var s = 0; s < _CHIP_SLOTS.length; s++) {
         var top = _CHIP_SLOTS[s];
-        var box = { x1: p.x - w / 2 - 3, x2: p.x + w / 2 + 3, y1: p.y + top - 11, y2: p.y + top + 11 };
+        var box = { x1: p.x + mx - w / 2 - 3, x2: p.x + mx + w / 2 + 3,
+                    y1: p.y + my + top - 11, y2: p.y + my + top + 11 };
         var clash = used.some(function (o) { return !(box.x2 < o.x1 || box.x1 > o.x2 || box.y2 < o.y1 || box.y1 > o.y2); });
         if (!clash || s === _CHIP_SLOTS.length - 1) { chip.style.top = top + 'px'; used.push(box); break; }
       }
