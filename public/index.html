@@ -3523,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 765;
+var APP_BUILD = 766;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9390,7 +9390,15 @@ try {
   setInterval(function () { window._fgBeat(); }, FG_BEAT_MS);
   // Stamp immediately on foreground so someone who just opened the app is instantly reachable
   // rather than waiting up to a full interval.
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') window._fgBeat(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    window._fgBeat();
+    // Back in the app: ask whoever you are looking at for a fresh fix.
+    try {
+      if (window._allMode) window._freshenAllCrews();
+      else if (typeof groupName !== 'undefined' && groupName) window._freshenCrew(groupName);
+    } catch (e) {}
+  });
   setTimeout(function () { window._fgBeat(); }, 4000);
 } catch (e) {}
 // ── Transmissions ───────────────────────────────────────────────────────────────
@@ -11304,6 +11312,9 @@ function saveSession(name, group, uid) {
 }
 
 function enterMap(name, group, uid) {
+  // Opening a Crew's map asks its quiet phones for a fresh fix, so the dots you are about to
+  // look at are current rather than whatever they were when the app last ran.
+  try { window._freshenCrew(group); } catch (e) {}
   // Refuse a tombstoned room. Without this, a stale invite link, a favorite, a notification
   // or the directory walks straight back in — and entering writes presence, which recreates
   // the room on the server. Every path into a room funnels through here, so this is the one
@@ -21408,6 +21419,27 @@ window._crewBadges = function (data) {
       }).join('') + '</div>';
   } catch (e) { return ''; }
 };
+// ── Freshen a Crew the moment you look at it ────────────────────────────────────────────────
+// The other half of the keep-alive. The server pokes quiet phones on a timer; this pokes them
+// when you actually open a map, which is why Life360's dots seem to update the instant you
+// look. Throttled per room -- opening, closing and reopening a map should not fan out pushes.
+window._freshenAt = window._freshenAt || {};
+window._freshenCrew = function (room) {
+  try {
+    if (!room || room.charAt(0) === '_') return;
+    var now = Date.now();
+    if (now - (window._freshenAt[room] || 0) < 60000) return;
+    window._freshenAt[room] = now;
+    fetch('/freshen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room: room })
+    }).catch(function () {});   // best effort: a dot that stays stale is the normal failure
+  } catch (e) {}
+};
+// Every Crew at once, for the All Crews map.
+window._freshenAllCrews = function () {
+  try { Object.keys(_getCircles() || {}).forEach(function (k) { window._freshenCrew(k); }); } catch (e) {}
+};
 window._allCrewsUsers = function () {
   var out = {}, all = window._circleUsersAll || {};
   Object.keys(all).forEach(function (room) {
@@ -21474,6 +21506,7 @@ window._enterAllCrews = function () {
   if (lbl) lbl.textContent = 'All Crews';
   var apply = function () {
     window._paintAllCrews();
+    try { window._freshenAllCrews(); } catch (e) {}
     setTimeout(function () { window._paintAllCrews(); window._fitAllCrews(); }, 700);
     var n = Object.keys(crews).length;
     toast('Everyone across your ' + n + ' Crew' + (n === 1 ? '' : 's') + ' \u2014 tap anyone for their card', 3200);

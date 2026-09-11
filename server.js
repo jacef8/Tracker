@@ -235,12 +235,11 @@ async function findSubsForUid(uid) {
 // enough to report one fresh fix — the Life360 "member updates right when you look at them"
 // mechanic. Invisible on the target's phone; wakes from suspension and from system
 // termination, but nothing can wake a user force-quit (that's what /nudge is for).
-app.post('/bump', rateLimit(30, 60000), async function(req, res) {
-  if (!fcmAdmin) return res.json({ ok: false, reason: 'fcm-not-configured' });
-  const uid = String((req.body || {}).uid || '');
-  if (!uid) return res.json({ ok: false, reason: 'no-uid' });
+async function sendBump(uid) {
+  if (!fcmAdmin) return { ok: false, reason: 'fcm-not-configured' };
+  if (!uid) return { ok: false, reason: 'no-uid' };
   const rec = await findSubsForUid(uid);
-  if (!rec || !rec.fcm) return res.json({ ok: false, reason: 'no-token' });
+  if (!rec || !rec.fcm) return { ok: false, reason: 'no-token' };
   try {
     await fcmAdmin.messaging().send({
       token: rec.fcm,
@@ -251,8 +250,97 @@ app.post('/bump', rateLimit(30, 60000), async function(req, res) {
         payload: { aps: { 'content-available': 1 } }
       }
     });
-    res.json({ ok: true });
-  } catch (e) { res.json({ ok: false, reason: e.message }); }
+    return { ok: true };
+  } catch (e) { return { ok: false, reason: e.message }; }
+}
+
+app.post('/bump', rateLimit(30, 60000), async function(req, res) {
+  res.json(await sendBump(String((req.body || {}).uid || '')));
+});
+
+// ─── KEEP-ALIVE SWEEP ────────────────────────────────────────────────────────────
+// The missing half of "everyone just stays on the map". Background location works well while
+// the app is alive — measured at ~200 fixes a day with sub-minute gaps — but phones stop, and
+// until this nothing ever restarted them. /bump could revive a phone, yet it only ever fired
+// when somebody manually tapped Refresh on one person's card.
+//
+// So: poke anyone who has gone quiet, the way Life360 does. A content-available push relaunches
+// the app in the background, it takes one fix, writes it, and sleeps again.
+//
+// The thresholds are the whole design, so they are named rather than buried:
+const WAKE_SWEEP_MS    = 5 * 60 * 1000;       // how often we look for quiet phones
+const WAKE_STALE_MS    = 15 * 60 * 1000;      // quiet this long and we start poking
+const WAKE_COOLDOWN_MS = 10 * 60 * 1000;      // a recently-quiet phone: poke at most this often
+// Two speeds, because one threshold cannot serve both cases. A phone quiet for twenty minutes
+// is asleep and very likely to answer, so chase it hard. A phone quiet for days has probably
+// been force-quit or has Background App Refresh off, and will most likely ignore us -- but
+// "most likely" is not "certainly", and giving up entirely is how somebody stays off the map
+// for a week. So keep trying, just slowly: an unanswered silent push costs essentially nothing.
+const WAKE_SLOW_AFTER_MS   = 24 * 60 * 60 * 1000;  // past a day, drop to the slow lane
+const WAKE_SLOW_COOLDOWN_MS = 60 * 60 * 1000;      // ...and try once an hour
+const WAKE_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;   // a week of silence is uninstalled. Stop.
+const wakeLastSent = new Map();               // uid -> ts
+
+async function keepAliveSweep() {
+  if (!fcmAdmin || !adminDb) return;
+  let rooms;
+  try { rooms = await _roomNames(); } catch (e) { console.error('keep-alive: no room list —', e.message); return; }
+  const now = Date.now();
+  const targets = new Map();   // uid -> name, deduped across crews
+
+  for (const room of rooms) {
+    let cfg = null, users = null;
+    try { cfg = await _dbGet('gl/' + room + '/config'); } catch (e) { continue; }
+    // Crews only. A Crew is a standing relationship — "always show me these people" — which is
+    // the only thing that justifies waking someone's phone on a timer. A quick-join room is not.
+    if (!cfg || !cfg.circle) continue;
+    try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { continue; }
+    for (const [uid, u] of Object.entries(users || {})) {
+      if (!u || !u.name) continue;
+      if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
+      const age = now - (u.fixTs || u.ts || 0);
+      if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
+      const cooldown = age > WAKE_SLOW_AFTER_MS ? WAKE_SLOW_COOLDOWN_MS : WAKE_COOLDOWN_MS;
+      if (now - (wakeLastSent.get(uid) || 0) < cooldown) continue;
+      targets.set(uid, u.name);
+    }
+  }
+
+  for (const [uid, name] of targets) {
+    wakeLastSent.set(uid, now);   // stamp before sending: a failure should still respect the cooldown
+    const r = await sendBump(uid);
+    if (!r.ok) console.log('keep-alive: ' + name + ' (' + uid.slice(0, 8) + ') not woken — ' + r.reason);
+  }
+  if (targets.size) console.log('keep-alive: poked ' + targets.size + ' quiet device(s)');
+
+  // Don't let the cooldown map grow forever.
+  for (const [uid, t] of wakeLastSent) if (now - t > WAKE_GIVE_UP_MS) wakeLastSent.delete(uid);
+}
+setInterval(function () { keepAliveSweep().catch(function (e) { console.error('keep-alive:', e.message); }); },
+            WAKE_SWEEP_MS).unref();
+// One pass shortly after boot, so a restart doesn't leave everyone stale for five minutes.
+setTimeout(function () { keepAliveSweep().catch(function () {}); }, 30000).unref();
+
+// Freshen a whole Crew at once — what the app calls when you open a map and start looking at
+// people. Life360's dots update "right when you look" because something exactly like this runs.
+app.post('/freshen', rateLimit(20, 60000), async function(req, res) {
+  const room = String((req.body || {}).room || '');
+  if (!room || room.charAt(0) === '_') return res.json({ ok: false, reason: 'no-room' });
+  let users = null;
+  try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { return res.json({ ok: false, reason: 'unreadable' }); }
+  const now = Date.now();
+  let poked = 0;
+  for (const [uid, u] of Object.entries(users || {})) {
+    if (!u || !u.name) continue;
+    const age = now - (u.fixTs || u.ts || 0);
+    if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
+    // You are looking at this map right now, so chase even the long-quiet ones at full speed.
+    if (now - (wakeLastSent.get(uid) || 0) < WAKE_COOLDOWN_MS) continue;
+    wakeLastSent.set(uid, now);
+    const r = await sendBump(uid);
+    if (r.ok) poked++;
+  }
+  res.json({ ok: true, poked: poked });
 });
 
 // Loud fallback: a VISIBLE notification asking the person to reopen the app — for the one
