@@ -3523,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 767;
+var APP_BUILD = 768;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9388,6 +9388,7 @@ window._fgBeat = function () {
     try { if (typeof groupName !== 'undefined' && groupName) rooms[groupName] = 1; } catch (e) {}
     try { Object.keys(_getCircles() || {}).forEach(function (k) { rooms[k] = 1; }); } catch (e) {}
     var now = Date.now();
+    window._lastFgTs = now;   // the fix payload carries this forward on background writes
     Object.keys(rooms).forEach(function (k) {
       // Only where this device already has a presence row. Stamping a room we have never
       // reported into creates a nameless, positionless member — the phantom guarded against
@@ -14352,6 +14353,9 @@ function startLocationSharing() {
     // raw reading — when a bad fix was held back above, showing its degraded accuracy next to
     // the still-good held coordinates would be misleading.
     var _effAccM = (lat === rawLat && lng === rawLng) ? _accNow : window._lastGoodFix.acc;
+    try {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') window._lastFgTs = now;
+    } catch (e) {}
     var _fixPayload = {
       lat, lng, name: (typeof _personDisplayName === 'function') ? _personDisplayName() : userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
       // fixTs marks a position confirmed by an ACTUAL GPS fix. `ts` alone can't: the no-GPS
@@ -14360,10 +14364,11 @@ function startLocationSharing() {
       // confidently green, hour-old position — worse than showing it as stale, because it looks
       // current. Anything without fixTs (older clients) falls back to ts, as before.
       fixTs: now,
-      // Written by a visible page = the app really is in front, which is the whole meaning of
-      // fgTs. Carrying it here is also what stops the write below from deleting it: fbSet
-      // replaces the node, so anything not in this payload is gone.
-      fgTs: (typeof document !== 'undefined' && document.visibilityState === 'visible') ? now : 0,
+      // fbSet replaces the whole node, so fgTs has to ride along or it is deleted. When the
+      // page is in front that is `now`; when it is not, carry the LAST foreground moment
+      // forward rather than zeroing it — "last seen in front" is what this field means, and
+      // _talkPeopleIndex already expires it after FG_FRESH_MS.
+      fgTs: window._lastFgTs || 0,
       trail: true, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
       hereSince: window._hereSinceTs,
       color: window._myColor || '',
