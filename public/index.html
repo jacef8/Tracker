@@ -3523,7 +3523,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 768;
+var APP_BUILD = 771;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4003,7 +4003,8 @@ function _applyMarkerMerged(primary, members) {
       // faded whether or not someone is beside them. Greyscale is the extra cue.
       var dim = liveU ? '' : 'opacity:.65;filter:grayscale(1);';
       if (ava) {
-        return '<span style="flex:1;height:100%;' + dim + 'background-image:url(&quot;' + ava +
+        return '<span style="flex:1;height:100%;' + dim + 'background-color:' + col +
+          ';background-image:url(&quot;' + ava +
           '&quot;);background-size:cover;background-position:center"></span>';
       }
       return '<span style="flex:1;height:100%;' + dim + 'display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
@@ -4019,6 +4020,9 @@ function _applyMarkerMerged(primary, members) {
 // print their chips on top of each other — the "66 mph" over "55 mph" pile-up. Nudge each
 // colliding chip to a free slot below its dot instead of leaving them stacked.
 var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
+// How far the callout floats above the point it marks, and the tail that reaches back down.
+var MK_LIFT = 34;   // px the bubble is raised
+var MK_TAIL = 12;   // px of pointer between bubble and ground
 
 // Push apart dots that overlap on screen but belong to people who are NOT together. Merging
 // them would assert they are in the same place; leaving them stacked hides one behind the
@@ -4168,7 +4172,7 @@ function _layoutMarkerChips() {
       // Measure where the dot is actually DRAWN, not where it belongs geographically: the spread
       // pass offsets colliding markers by these margins and the chip rides along with its marker.
       var mx = parseFloat(el.style.marginLeft) || 0;
-      var my = parseFloat(el.style.marginTop) || 0;
+      var my = (parseFloat(el.style.marginTop) || 0) - MK_LIFT;
       var w = chip.offsetWidth || 60;
       // Find the first vertical slot whose box doesn't overlap one already taken.
       for (var s = 0; s < _CHIP_SLOTS.length; s++) {
@@ -4277,7 +4281,13 @@ function _updateMarkerGrouping(immediate) {
 
   window._markerGroupMembers = {};
   Object.keys(finalGroups).forEach(function (sig) {
-    var members = finalGroups[sig].filter(function (u) { return userMarkers[u] && userMarkers[u]._el; });
+    var members = finalGroups[sig].filter(function (u) {
+      var mk = userMarkers[u], el = mk && mk._el;
+      if (!el) return false;
+      // display:none is set by THIS pass on non-primaries, so only treat a marker as absent
+      // when something else hid it — a hidden member, a private device, a filtered-out row.
+      return !(window._isMemberHidden && window._isMemberHidden(u));
+    });
     if (members.length < 2) {
       members.forEach(function (u) { _applyMarkerSolo(userMarkers[u]); });
       return;
@@ -14293,10 +14303,32 @@ function startLocationSharing() {
               fontSize: '14px', fontWeight: '800', color: '#000', fontFamily: 'system-ui, sans-serif',
               boxShadow: '0 2px 14px rgba(0,0,0,.7), 0 0 0 2px rgba(0,0,0,.4)', userSelect: 'none'
             });
-            _meEl.textContent = initials(userName);
-            userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+            // Initials in their own child, exactly as the member loop does — the merge and
+            // solo layout code both address .mk-initials and silently no-op without it.
+            var _meIni = document.createElement('div');
+            _meIni.className = 'mk-initials';
+            _meIni.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit';
+            _meIni.textContent = initials(userName);
+            _meEl.appendChild(_meIni);
+            _meEl.style.position = 'absolute';   // see the marker-stacking note in the member loop
+            var _meTail = document.createElement('div');
+            _meTail.className = 'mk-tail';
+            _meTail.style.cssText = 'position:absolute;top:100%;left:50%;transform:translateX(-50%);width:0;height:0;' +
+              'border-left:6px solid transparent;border-right:6px solid transparent;border-top:' + MK_TAIL + 'px solid #f0a500;' +
+              'filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none';
+            _meEl.appendChild(_meTail);
+            userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center', offset: [0, -MK_LIFT] }).setLngLat([lng, lat]).addTo(map);
             userMarkers[userId]._el = _meEl;
             userMarkers[userId]._uid = userId;   // your own marker is built here, not in the member loop — without this its gold trail still runs ahead of the pin
+            // The fields the shared layout code restores from. Without _fillColor in particular,
+            // _applyMarkerSolo blanks the background and leaves a see-through dot.
+            userMarkers[userId]._fillColor = '#f0a500';
+            userMarkers[userId]._borderShorthand = '4px solid #f0a500';
+            userMarkers[userId]._initials = initials(userName);
+            userMarkers[userId]._name = userName || '';
+            userMarkers[userId]._isLive = true;
+            userMarkers[userId]._soloOpacity = '1';
+            try { setTimeout(function () { window._applyMarkerAvatar(userId); }, 0); } catch (e) {}
           } else {
             _animateMarker(userMarkers[userId], lng, lat);
           }
@@ -15422,6 +15454,14 @@ function listenUsers() {
         _initEl.textContent = _initialsFor(uid, data.name);
         setTimeout(function () { try { window._applyMarkerAvatar(uid); } catch (e) {} }, 0);
         el.appendChild(_initEl);
+        // Pointer back down to the real position. Its colour tracks the ring so a stale or
+        // resting member reads the same at the tip as at the bubble.
+        var _tailEl = document.createElement('div');
+        _tailEl.className = 'mk-tail';
+        _tailEl.style.cssText = 'position:absolute;top:100%;left:50%;transform:translateX(-50%);width:0;height:0;' +
+          'border-left:6px solid transparent;border-right:6px solid transparent;border-top:' + MK_TAIL + 'px solid ' +
+          borderColor + ';filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none';
+        el.appendChild(_tailEl);
         // MUST stay 'absolute'. Mapbox's own .mapboxgl-marker rule is position:absolute, and it
         // places every marker purely by transform from the container's origin. An inline
         // 'relative' overrode that rule and put markers back into normal document flow, so each
@@ -15451,7 +15491,7 @@ function listenUsers() {
         _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
         _updateMarkerDev(el, data.dev);
 
-        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [0, -MK_LIFT] })
           .setLngLat([data.lng, data.lat])
           .addTo(map);
         userMarkers[uid]._el = el;
@@ -15524,6 +15564,7 @@ function listenUsers() {
                                                   // background-image and wiped the profile photo
                                                   // on every position update.
           el.style.borderColor  = borderColor;
+          try { var _t = el.querySelector('.mk-tail'); if (_t) _t.style.borderTopColor = borderColor; } catch (e) {}
           try { window._applyMarkerAvatar(uid); } catch (e) {}
           el.style.opacity      = opacity;
           el.style.color        = textColor;
@@ -21509,8 +21550,17 @@ window._fitAllCrews = function () {
       return;
     }
     if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: 14, duration: 700 }); return; }
+    // Median, not mean: one point on the far side of the world drags a mean with it, which is
+    // the whole failure being guarded against.
+    var mid = function (arr) { var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; };
+    var cLng = mid(pts.map(function (q) { return q[0]; })), cLat = mid(pts.map(function (q) { return q[1]; }));
+    var near = pts.filter(function (q) {
+      var dLat = (q[1] - cLat) * 111, dLng = (q[0] - cLng) * 111 * Math.cos(cLat * Math.PI / 180);
+      return Math.sqrt(dLat * dLat + dLng * dLng) < 800;   // km — still one region, not one planet
+    });
+    if (near.length < 2) near = pts;
     var b = new mapboxgl.LngLatBounds();
-    pts.forEach(function (q) { b.extend(q); });
+    near.forEach(function (q) { b.extend(q); });
     map.fitBounds(b, { padding: 70, maxZoom: 15, duration: 800 });
   } catch (e) {}
 };
