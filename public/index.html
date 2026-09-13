@@ -2807,6 +2807,10 @@
         <div id="offline-storage-meter"></div>
         <button onclick="window._startOfflineMode && window._startOfflineMode()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download an area for offline</button>
         <div id="offline-areas"></div>
+        <div onclick="window._setToggleAutoCache && window._setToggleAutoCache()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-top:8px;-webkit-tap-highlight-color:transparent">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-download"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Cache around me automatically</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Quietly saves a few miles of imagery around wherever you are, while you still have signal. Uses data.</div></div></div>
+          <span id="set-autocache-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+        </div>
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
@@ -3523,7 +3527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 771;
+var APP_BUILD = 772;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14440,6 +14444,9 @@ function startLocationSharing() {
       }
     } catch (e) {}
     if (groupName && !window._roomClosed && _roomWritable(groupName)) { fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload); _fgMark(groupName); }
+    // Keep imagery for the ground around you while there is still signal to fetch it with.
+    // Cheap on the common path: it returns immediately unless you have genuinely moved on.
+    try { window._autoCacheAround(lat, lng); } catch (e) {}
     // Family Circles: a circle is a permanent membership, independent of whatever room (if any)
     // is currently open, or even NO room at all (My Map) — fan this same fix out to every circle
     // so background location keeps updating there too. This one function is the single place
@@ -18881,6 +18888,93 @@ function _updateOfflineEst() {
 }
 // Enter "frame the area" mode: close the layers sheet so the map is fully visible,
 // switch to Aerial, and float a small bar with a LIVE size estimate as you pan/zoom.
+// == AUTO OFFLINE: KEEP THE GROUND AROUND YOU ================================================
+// Downloading an area by hand only helps if you thought about it BEFORE you lost signal, and in
+// the places this app is for you rarely do. This keeps a rolling patch of imagery around
+// wherever you actually are, fetched quietly while you still have service, so the map you need
+// when service drops is already on the phone.
+//
+// It rides the same machinery as the manual download -- same USGS tiles, same gltiles_ cache
+// prefix the service worker already serves from -- so nothing new is needed to READ these.
+var GL_AUTO_CACHE     = 'gltiles_auto';
+var GL_AUTO_RADIUS_KM = 4;                 // how much ground to keep around you
+var GL_AUTO_MINZ      = 12;                // enough to navigate by; 16+ is a huge pile of tiles
+var GL_AUTO_MAXZ      = 15;
+var GL_AUTO_MOVE_KM   = 2.5;               // re-cache once you leave the patch you hold
+var GL_AUTO_CAP       = 80 * 1024 * 1024;  // rolling budget, well under the 200 MB manual cap
+var GL_AUTO_MIN_GAP_MS = 4 * 60 * 1000;    // never more often than this, whatever the movement
+
+window._autoCacheOn = function () { try { return localStorage.getItem('gl_autocache') !== '0'; } catch (e) { return true; } };
+window._setToggleAutoCache = function () {
+  var on = !window._autoCacheOn();
+  try { localStorage.setItem('gl_autocache', on ? '1' : '0'); } catch (e) {}
+  try { _setPill('set-autocache-pill', on); } catch (e) {}
+  if (!on) { try { caches.delete(GL_AUTO_CACHE); } catch (e) {} }
+  try { toast(on ? 'Map will cache around you automatically' : 'Auto map caching off - saved areas still work'); } catch (e) {}
+};
+
+function _kmApart(aLat, aLng, bLat, bLng) {
+  var R = 6371, r = function (d) { return d * Math.PI / 180; };
+  var dLat = r(bLat - aLat), dLng = r(bLng - aLng);
+  var x = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+// Tile ids for a box around a POINT. The manual path derives these from the viewport, which is
+// no use here: this patch has to follow you, not whatever you happen to be looking at.
+function _autoTileIds(lat, lng) {
+  var dLat = GL_AUTO_RADIUS_KM / 111;
+  var dLng = GL_AUTO_RADIUS_KM / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+  var out = [];
+  for (var z = GL_AUTO_MINZ; z <= GL_AUTO_MAXZ; z++) {
+    var x0 = _lon2tx(lng - dLng, z), x1 = _lon2tx(lng + dLng, z);
+    var y0 = _lat2ty(lat + dLat, z), y1 = _lat2ty(lat - dLat, z);
+    for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) out.push(z + '/' + y + '/' + x);
+  }
+  return out;
+}
+
+window._autoCacheBusy = false;
+window._autoCacheAround = async function (lat, lng) {
+  if (window._autoCacheBusy) return;
+  if (!window.caches || !window._autoCacheOn()) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;   // nothing to fetch with
+  var now = Date.now();
+  var last = null;
+  try { last = JSON.parse(localStorage.getItem('gl_autocache_at') || 'null'); } catch (e) {}
+  if (last && (now - last.ts) < GL_AUTO_MIN_GAP_MS) return;
+  // Still inside the patch we hold - nothing to do. This is the common case and has to stay
+  // cheap, because it runs off every GPS fix.
+  if (last && _kmApart(lat, lng, last.lat, last.lng) < GL_AUTO_MOVE_KM) return;
+
+  window._autoCacheBusy = true;
+  try {
+    var cache = await caches.open(GL_AUTO_CACHE);
+    // Rolling budget: once the patch outgrows its cap, drop the lot and refill around where you
+    // are NOW. Evicting precisely would mean tracking every tile's age for a saving nobody would
+    // notice, and the tiles being dropped are for ground you have already left.
+    try {
+      var held = await cache.keys();
+      if (held.length * 18000 > GL_AUTO_CAP) { await caches.delete(GL_AUTO_CACHE); cache = await caches.open(GL_AUTO_CACHE); }
+    } catch (e) {}
+
+    var ids = _autoTileIds(lat, lng), got = 0;
+    for (var i = 0; i < ids.length; i++) {
+      if (!window._autoCacheOn()) break;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) break;
+      var pz = ids[i].split('/');
+      var url = GL_AERIAL_TPL.replace('{z}', pz[0]).replace('{y}', pz[1]).replace('{x}', pz[2]);
+      try {
+        if (await cache.match(url)) continue;            // already held - don't spend the data twice
+        var resp = await fetch(url, { mode: 'cors' });
+        if (resp && resp.ok) { await cache.put(url, resp); got++; }
+      } catch (e) { /* signal died mid-run: stop quietly, try again at the next fix */ }
+    }
+    try { localStorage.setItem('gl_autocache_at', JSON.stringify({ lat: lat, lng: lng, ts: now })); } catch (e) {}
+    if (got && window._evt) window._evt('auto-cached ' + got + ' tiles around this spot');
+  } catch (e) {
+  } finally { window._autoCacheBusy = false; }
+};
 window._startOfflineMode = function () {
   if (!map || !window.caches) { toast('Offline caching isn\'t supported in this browser.'); return; }
   if (typeof closeLayerSheet === 'function') closeLayerSheet();
@@ -18973,6 +19067,7 @@ window._doDeleteOfflineArea = async function (id, a) {
   if (window._evt && a) window._evt('offline area "' + a.name + '" deleted');
 };
 function _renderOfflineAreas() {
+  try { _setPill('set-autocache-pill', window._autoCacheOn()); } catch (e) {}
   _updateStorageMeter();
   var el = document.getElementById('offline-areas'); if (!el) return;
   var areas = _getAreas();
