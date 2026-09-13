@@ -3527,7 +3527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 774;
+var APP_BUILD = 775;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4029,6 +4029,8 @@ function _applyMarkerMerged(primary, members) {
   // the whole cluster with one member's device. The inline letters cover this instead.
   var db = el.querySelector('.mk-dev-badge');
   if (db) db.style.display = 'none';
+  // Several people in one shape is the definition of crowded — always a callout.
+  try { window._setCallout(mk, true); } catch (e) {}
   _setGroupBadge(el, ordered.length - shown.length);
 }
 // Chips (speed / "3h 8m") all sit at the same offset under their dot, so two nearby markers
@@ -4036,8 +4038,23 @@ function _applyMarkerMerged(primary, members) {
 // colliding chip to a free slot below its dot instead of leaving them stacked.
 var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
 // How far the callout floats above the point it marks, and the tail that reaches back down.
-var MK_LIFT = 34;   // px the bubble is raised
+// 22 (half the 44px circle) + 12 (tail), so the TIP of the tail sits exactly on the position
+// rather than merely near it. Change one and the other has to follow.
 var MK_TAIL = 12;   // px of pointer between bubble and ground
+var MK_LIFT = 22 + MK_TAIL;
+// Lift a marker into callout form, or drop it back onto its position. No-ops when nothing
+// changes, so it costs nothing on the common uncluttered path.
+window._setCallout = function (mk, on) {
+  try {
+    if (!mk || !mk._el) return;
+    on = !!on;
+    if (!!mk._calloutOn === on) return;
+    mk._calloutOn = on;
+    if (mk.setOffset) mk.setOffset(on ? [0, -MK_LIFT] : [0, 0]);
+    var t = mk._el.querySelector('.mk-tail');
+    if (t) t.style.display = on ? 'block' : 'none';
+  } catch (e) {}
+};
 
 // Push apart dots that overlap on screen but belong to people who are NOT together. Merging
 // them would assert they are in the same place; leaving them stacked hides one behind the
@@ -4135,6 +4152,7 @@ function _spreadOverlappingMarkers() {
     if (vis.length < 2) {
       vis.forEach(function (v) {
         if (v.el.style.marginLeft) { v.el.style.marginLeft = ''; v.el.style.marginTop = ''; }
+        window._setCallout(v.mk, false);
       });
       _drawMarkerLeaders([]);
       return;
@@ -4164,6 +4182,8 @@ function _spreadOverlappingMarkers() {
       var mt = Math.abs(v.dy) < 0.5 ? '' : (Math.round(v.dy) + 'px');
       if (v.el.style.marginLeft !== ml) v.el.style.marginLeft = ml;
       if (v.el.style.marginTop !== mt) v.el.style.marginTop = mt;
+      // Nudged = something was on top of it = worth lifting clear of whatever it covers.
+      window._setCallout(v.mk, !!(ml || mt));
       // The watch is the smallest dot on the map and the easiest to lose behind a 44px photo,
       // so when anything is still overlapping it, it draws on top rather than underneath.
       if (v.dev) { var z = (ml || mt) ? '6' : '5'; if (v.el.style.zIndex !== z) v.el.style.zIndex = z; }
@@ -4187,7 +4207,7 @@ function _layoutMarkerChips() {
       // Measure where the dot is actually DRAWN, not where it belongs geographically: the spread
       // pass offsets colliding markers by these margins and the chip rides along with its marker.
       var mx = parseFloat(el.style.marginLeft) || 0;
-      var my = (parseFloat(el.style.marginTop) || 0) - MK_LIFT;
+      var my = (parseFloat(el.style.marginTop) || 0) - (mk._calloutOn ? MK_LIFT : 0);
       var w = chip.offsetWidth || 60;
       // Find the first vertical slot whose box doesn't overlap one already taken.
       for (var s = 0; s < _CHIP_SLOTS.length; s++) {
@@ -14330,9 +14350,9 @@ function startLocationSharing() {
             _meTail.className = 'mk-tail';
             _meTail.style.cssText = 'position:absolute;top:100%;left:50%;transform:translateX(-50%);width:0;height:0;' +
               'border-left:6px solid transparent;border-right:6px solid transparent;border-top:' + MK_TAIL + 'px solid #f0a500;' +
-              'filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none';
+              'filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none;display:none';
             _meEl.appendChild(_meTail);
-            userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center', offset: [0, -MK_LIFT] }).setLngLat([lng, lat]).addTo(map);
+            userMarkers[userId] = new mapboxgl.Marker({ element: _meEl, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
             userMarkers[userId]._el = _meEl;
             userMarkers[userId]._uid = userId;   // your own marker is built here, not in the member loop — without this its gold trail still runs ahead of the pin
             // The fields the shared layout code restores from. Without _fillColor in particular,
@@ -15478,7 +15498,7 @@ function listenUsers() {
         _tailEl.className = 'mk-tail';
         _tailEl.style.cssText = 'position:absolute;top:100%;left:50%;transform:translateX(-50%);width:0;height:0;' +
           'border-left:6px solid transparent;border-right:6px solid transparent;border-top:' + MK_TAIL + 'px solid ' +
-          borderColor + ';filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none';
+          borderColor + ';filter:drop-shadow(0 1px 1px rgba(0,0,0,.55));pointer-events:none;display:none';
         el.appendChild(_tailEl);
         // MUST stay 'absolute'. Mapbox's own .mapboxgl-marker rule is position:absolute, and it
         // places every marker purely by transform from the container's origin. An inline
@@ -15509,7 +15529,7 @@ function listenUsers() {
         _updateMarkerAge(el, isLive, isMine, ageMin, data.hidden, data.noGps);
         _updateMarkerDev(el, data.dev);
 
-        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [0, -MK_LIFT] })
+        userMarkers[uid] = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([data.lng, data.lat])
           .addTo(map);
         userMarkers[uid]._el = el;
