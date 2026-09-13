@@ -3527,7 +3527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 773;
+var APP_BUILD = 774;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3811,7 +3811,15 @@ function _animateMarker(marker, toLng, toLat) {
       if (marker._uid && marker._uid === window._camLockUid
           && Date.now() >= (window._followPausedUntil || 0)
           && document.visibilityState === 'visible') {
-        map.setCenter([lng, lat]);
+        // Heading Up needs the map rotated as well as centred. Setting both in ONE jumpTo, in
+        // this frame, is a single camera update — the thing that could not be done while the
+        // rotation lived in a separate per-fix easeTo, which is why Heading Up was excluded
+        // from the smooth path and stepped instead.
+        var _hu = (typeof headingUpOn !== 'undefined') && headingUpOn &&
+                  window._lastHeading != null && !isNaN(window._lastHeading) &&
+                  window._lastSpeedMph > 3;
+        if (_hu) map.jumpTo({ center: [lng, lat], bearing: window._lastHeading });
+        else map.setCenter([lng, lat]);
       }
     } catch (e) {}
     marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
@@ -3865,6 +3873,9 @@ function _applyCameraOnSelfFix(lng, lat) {
   var headed = (typeof headingUpOn !== 'undefined') && headingUpOn &&
                window._lastHeading != null && !isNaN(window._lastHeading) && window._lastSpeedMph > 3;
   var opts = null;
+  // The frame loop already owns centre AND bearing for the locked marker. Anything added here
+  // is a second camera aimed at the same place, which is the fight that reads as stutter.
+  if (window._camLockUid && window._camLockUid === followUid) return;
   if (followUid === userId) {
     opts = { center: [lng, lat], duration: 1400, easing: function(t) { return t; } };
     var _sp = _camPad(); if (_sp) opts.padding = _sp;
@@ -22579,8 +22590,9 @@ window._followUser = function(uid, name) {
   // common case and was left on the older, steppier path. The exception is Heading Up, where the
   // camera must also rotate: a bare setCenter would fight the rotation every frame, so that
   // configuration keeps the easeTo path.
-  var _headingUp = (typeof headingUpOn !== 'undefined') && headingUpOn;
-  window._camLockUid = _headingUp ? null : uid;
+  // Every follow uses the frame loop now, Heading Up included — the loop carries the bearing
+  // too (see _animateMarker), so there is nothing left for the old easeTo path to add.
+  window._camLockUid = uid;
   var btn = document.getElementById('locate-me');
   btn.style.background  = isSelf ? 'var(--accent)' : '#00e676';
   btn.style.color       = '#000';
