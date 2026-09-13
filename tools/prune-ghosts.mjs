@@ -23,9 +23,9 @@ const ago = t => !t ? 'never' : (d => d < 60 ? Math.round(d)+'m' : d < 1440 ? Ma
 
 // Where this family actually lives — the yardstick for "absurdly far".
 const HOME = { lat: 30.42, lng: -84.96 };
-const FAR_KM = 800;
-const km = (a, b) => {
-  const R = 6371, rad = d => d*Math.PI/180;
+const FAR_MI = 500;
+const miles = (a, b) => {
+  const R = 3958.8, rad = d => d*Math.PI/180;
   const dLat = rad(b.lat-a.lat), dLng = rad(b.lng-a.lng);
   const x = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLng/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
@@ -42,7 +42,7 @@ for (const room of Object.keys(gl).filter(k => k[0] !== '_')) {
     if (lat === 0 && lng === 0) why = 'null island (0,0)';
     else if (Math.abs(lat - 37.3349) < 0.2 && Math.abs(lng + 122.009) < 0.2) why = 'iOS simulator default (Apple Park)';
     else if (Math.abs(lat - 37.4220) < 0.2 && Math.abs(lng + 122.084) < 0.2) why = 'Android emulator default (Mountain View)';
-    else { const d = km(HOME, { lat, lng }); if (d > FAR_KM) why = Math.round(d) + ' km from home'; }
+    else { const d = miles(HOME, { lat, lng }); if (d > FAR_MI) why = Math.round(d) + " miles from home"; }
     if (why) doomed.push({ room, uid, name: u.name || '?', ts: u.ts || 0, lat, lng, why });
   }
 }

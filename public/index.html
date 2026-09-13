@@ -3527,7 +3527,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 772;
+var APP_BUILD = 773;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18897,10 +18897,10 @@ function _updateOfflineEst() {
 // It rides the same machinery as the manual download -- same USGS tiles, same gltiles_ cache
 // prefix the service worker already serves from -- so nothing new is needed to READ these.
 var GL_AUTO_CACHE     = 'gltiles_auto';
-var GL_AUTO_RADIUS_KM = 4;                 // how much ground to keep around you
+var GL_AUTO_RADIUS_MI = 2.5;               // how much ground to keep around you
 var GL_AUTO_MINZ      = 12;                // enough to navigate by; 16+ is a huge pile of tiles
 var GL_AUTO_MAXZ      = 15;
-var GL_AUTO_MOVE_KM   = 2.5;               // re-cache once you leave the patch you hold
+var GL_AUTO_MOVE_MI   = 1.5;               // re-cache once you leave the patch you hold
 var GL_AUTO_CAP       = 80 * 1024 * 1024;  // rolling budget, well under the 200 MB manual cap
 var GL_AUTO_MIN_GAP_MS = 4 * 60 * 1000;    // never more often than this, whatever the movement
 
@@ -18913,8 +18913,8 @@ window._setToggleAutoCache = function () {
   try { toast(on ? 'Map will cache around you automatically' : 'Auto map caching off - saved areas still work'); } catch (e) {}
 };
 
-function _kmApart(aLat, aLng, bLat, bLng) {
-  var R = 6371, r = function (d) { return d * Math.PI / 180; };
+function _milesApart(aLat, aLng, bLat, bLng) {
+  var R = 3958.8, r = function (d) { return d * Math.PI / 180; };
   var dLat = r(bLat - aLat), dLng = r(bLng - aLng);
   var x = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
           Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
@@ -18923,8 +18923,9 @@ function _kmApart(aLat, aLng, bLat, bLng) {
 // Tile ids for a box around a POINT. The manual path derives these from the viewport, which is
 // no use here: this patch has to follow you, not whatever you happen to be looking at.
 function _autoTileIds(lat, lng) {
-  var dLat = GL_AUTO_RADIUS_KM / 111;
-  var dLng = GL_AUTO_RADIUS_KM / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+  var MI_PER_DEG = 69;   // degrees of latitude, in miles
+  var dLat = GL_AUTO_RADIUS_MI / MI_PER_DEG;
+  var dLng = GL_AUTO_RADIUS_MI / (MI_PER_DEG * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
   var out = [];
   for (var z = GL_AUTO_MINZ; z <= GL_AUTO_MAXZ; z++) {
     var x0 = _lon2tx(lng - dLng, z), x1 = _lon2tx(lng + dLng, z);
@@ -18945,7 +18946,7 @@ window._autoCacheAround = async function (lat, lng) {
   if (last && (now - last.ts) < GL_AUTO_MIN_GAP_MS) return;
   // Still inside the patch we hold - nothing to do. This is the common case and has to stay
   // cheap, because it runs off every GPS fix.
-  if (last && _kmApart(lat, lng, last.lat, last.lng) < GL_AUTO_MOVE_KM) return;
+  if (last && _milesApart(lat, lng, last.lat, last.lng) < GL_AUTO_MOVE_MI) return;
 
   window._autoCacheBusy = true;
   try {
@@ -21650,8 +21651,8 @@ window._fitAllCrews = function () {
     var mid = function (arr) { var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; };
     var cLng = mid(pts.map(function (q) { return q[0]; })), cLat = mid(pts.map(function (q) { return q[1]; }));
     var near = pts.filter(function (q) {
-      var dLat = (q[1] - cLat) * 111, dLng = (q[0] - cLng) * 111 * Math.cos(cLat * Math.PI / 180);
-      return Math.sqrt(dLat * dLat + dLng * dLng) < 800;   // km — still one region, not one planet
+      var dLat = (q[1] - cLat) * 69, dLng = (q[0] - cLng) * 69 * Math.cos(cLat * Math.PI / 180);
+      return Math.sqrt(dLat * dLat + dLng * dLng) < 500;   // miles — still one region, not one planet
     });
     if (near.length < 2) near = pts;
     var b = new mapboxgl.LngLatBounds();
