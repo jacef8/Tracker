@@ -38,6 +38,11 @@ for (const room of Object.keys(gl).filter(k => k[0] !== '_')) {
     if (!u) continue;
     const lat = u.lat, lng = u.lng;
     if (typeof lat !== 'number' || typeof lng !== 'number') continue;
+    // A "claiming" row is the placeholder written the moment someone joins, before their first
+    // GPS fix replaces it — and it sits at 0,0. Deleting those would remove brand-new members
+    // who have simply not been granted location permission yet. Found while looking at Steph in
+    // roberts_fam, whose row this would have taken.
+    if (u.claiming) continue;
     let why = null;
     if (lat === 0 && lng === 0) why = 'null island (0,0)';
     else if (Math.abs(lat - 37.3349) < 0.2 && Math.abs(lng + 122.009) < 0.2) why = 'iOS simulator default (Apple Park)';
