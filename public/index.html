@@ -2348,6 +2348,43 @@
 
 <!-- ══ NEW GROUP VISIBILITY ════════════════════════════════════════════ -->
 <!-- ══ NEW ROOM TYPE — Crew vs quick room, asked before visibility ══ -->
+
+<!-- ══ NEW CREW SETUP ══ Shown once, right after a Crew is created. -->
+<div id="crew-setup-modal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:18px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:88vh;overflow-y:auto">
+    <div style="font-size:19px;font-weight:800;color:var(--text)">Crew created</div>
+    <div id="crew-setup-name" style="font-size:13px;color:var(--accent);font-weight:700;margin-top:3px"></div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:10px 0 16px">
+      A Crew keeps everyone visible to each other all the time &mdash; not just while a room is open.
+      It&rsquo;s just you so far.
+    </div>
+
+    <div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin-bottom:7px">ADD PEOPLE</div>
+    <!-- A link works for someone who has never opened GroundLink, which the in-app picker
+         cannot do. For a first Crew that is everyone, so it goes first and largest. -->
+    <button onclick="window._crewSetupInvite('sms')" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px;margin-bottom:8px;background:var(--accent);border:none;border-radius:11px;color:#1a1200;font-size:14.5px;font-weight:800;cursor:pointer">
+      <svg class="licon licon-sm"><use href="#ic-share"/></svg>Text an invite link
+    </button>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button onclick="window._crewSetupInvite('email')" style="flex:1;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Email</button>
+      <button onclick="window._crewSetupInvite('copy')" style="flex:1;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Copy link</button>
+    </div>
+    <button onclick="window._crewSetupPick()" style="width:100%;padding:11px;margin-bottom:16px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Choose from people already on GroundLink</button>
+
+    <div style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);margin-bottom:7px">SETTINGS</div>
+    <div onclick="window._crewSetupToggle('announce')" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer">
+      <div><div style="font-size:13.5px;font-weight:600;color:var(--text)">Announce when I join</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Tell the Crew when you arrive.</div></div>
+      <span id="crew-setup-announce" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
+    </div>
+    <div onclick="window._crewSetupToggle('devices')" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer">
+      <div><div style="font-size:13.5px;font-weight:600;color:var(--text)">Show my devices here</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Private devices like a watch on this Crew&rsquo;s map.</div></div>
+      <span id="crew-setup-devices" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin:4px 0 16px">Everything else is under &#9881; Crew info on the map.</div>
+
+    <button onclick="window._closeCrewSetup()" style="width:100%;padding:12px;background:transparent;border:1px solid var(--border);border-radius:11px;color:var(--text);font-size:14px;font-weight:800;cursor:pointer">Done</button>
+  </div>
+</div>
 <div id="roomtype-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:330px">
     <div style="font-size:17px;font-weight:800;margin-bottom:4px">New room — what kind?</div>
@@ -3529,7 +3566,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 781;
+var APP_BUILD = 782;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5864,6 +5901,41 @@ window._showAddDeviceBox = function () {
 
 // Straight to naming a Crew. The pieces all existed -- the Rooms card, the collapsed "start a
 // new group" block, the room-type dialog -- but only in that order, and only if you knew it.
+// ── New Crew setup ──────────────────────────────────────────────────────────────────────────
+// Opened once, immediately after a Crew is created, because that is the only moment you know
+// for certain the person wants to set it up.
+window._openCrewSetup = function (key, label) {
+  try {
+    window._crewSetupKey = key;
+    var n = document.getElementById('crew-setup-name');
+    if (n) n.textContent = label || (typeof _prettyGroup === 'function' ? _prettyGroup(key) : key);
+    // The invite helpers take their target from this, so a link built here points at the NEW
+    // Crew rather than whatever room happens to be open.
+    window._inviteLinkRoom = key;
+    try { _setPill('crew-setup-announce', _announceJoinOn()); } catch (e) {}
+    try { _setPill('crew-setup-devices', window._secDevOn && window._secDevOn()); } catch (e) {}
+    var m = document.getElementById('crew-setup-modal');
+    if (m) m.style.display = 'flex';
+  } catch (e) {}
+};
+window._closeCrewSetup = function () {
+  try { document.getElementById('crew-setup-modal').style.display = 'none'; } catch (e) {}
+  window._inviteLinkRoom = null;
+};
+window._crewSetupInvite = function (how) {
+  try { window._inviteLinkRoom = window._crewSetupKey || groupName; window._inviteVia(how); } catch (e) {}
+};
+window._crewSetupPick = function () {
+  var k = window._crewSetupKey || groupName;
+  window._closeCrewSetup();
+  try { window._openCircleInvitePicker(k, (typeof _prettyGroup === 'function') ? _prettyGroup(k) : k); } catch (e) {}
+};
+window._crewSetupToggle = function (which) {
+  try {
+    if (which === 'announce') { _setToggleAnnounceJoin(); _setPill('crew-setup-announce', _announceJoinOn()); }
+    else { window._toggleSecureDevices(); _setPill('crew-setup-devices', window._secDevOn()); }
+  } catch (e) {}
+};
 window._startNewCrew = function () {
   try {
     window._newCrewIntent = 1;               // the type dialog is answered for them below
@@ -11529,6 +11601,12 @@ function enterMap(name, group, uid) {
         var _circles = _getCircles(); _circles[groupName] = group; _setCircles(_circles);
       } catch (_) {}
       window._pendingCircle = null;
+      // Land somewhere. A Crew with one member needs people in it, and this is the moment the
+      // person is actually thinking about that.
+      try {
+        var _ck = groupName, _cl = group;
+        setTimeout(function () { window._openCrewSetup(_ck, _cl); }, 900);
+      } catch (e) {}
     }
     // Track this room so onGpsFix's fan-out keeps feeding it regardless of what room (if any)
     // becomes current later — same "always show up" guarantee Circles/Favorites already have,
