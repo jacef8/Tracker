@@ -3529,7 +3529,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 779;
+var APP_BUILD = 780;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9378,7 +9378,14 @@ window._talkLoadDetail = async function () {
       // fgTs is written only by a visible page (see _fgBeat). ts/fixTs come from the native
       // background service and stay fresh with the app closed, which is why they were the
       // wrong signal for "can they answer a voice ping right now".
-      people.forEach(function (p) { p.live = !!p.fgTs && (now - p.fgTs) < FG_FRESH_MS; });
+      people.forEach(function (p) {
+        // Reachable for VOICE: their app is open right now.
+        p.live = !!p.fgTs && (now - p.fgTs) < FG_FRESH_MS;
+        // Sharing a position: their phone is reporting, app open or not. This is what the home
+        // screen counts — someone driving with the phone in their pocket is very much "on", and
+        // calling that zero made the headline number contradict the map underneath it.
+        p.sharing = (now - (p.ts || 0)) < SHARING_FRESH_MS;
+      });
       people.sort(function (a, b) { return (b.live - a.live) || (b.ts - a.ts); });
       // The loader already pulls each Crew's voicelog to count unheard messages — keep the
       // clips themselves so Talk can list them without a second round trip.
@@ -9416,6 +9423,10 @@ window._talkLoadDetail = async function () {
 // touches it, so it cannot be faked by the background service.
 var FG_BEAT_MS = 45 * 1000;      // how often a visible page re-stamps
 var FG_FRESH_MS = 2 * 60 * 1000; // how recent that stamp must be to count as reachable
+// How recent a POSITION has to be to call someone "sharing now". Generous next to
+// FG_FRESH_MS because a phone at rest reports on a slow heartbeat — a quarter of an hour
+// of silence still means the phone is with them and working.
+var SHARING_FRESH_MS = 15 * 60 * 1000;
 // Rooms this device has genuinely written a position into. The heartbeat may only stamp these
 // — writing fgTs anywhere else conjures a record out of nothing.
 window._fgRooms = window._fgRooms || {};
@@ -9633,7 +9644,7 @@ window._renderHomeAnchor = function () {
     Object.keys(circles).forEach(function (k) {
       var d = detail[k] || {};
       var people = d.people || [];
-      var on = people.filter(function (x) { return x && x.live; }).length;
+      var on = people.filter(function (x) { return x && x.sharing; }).length;
       live += on; total += people.length;
       rows.push({ key: k, name: (typeof _cleanName === 'function' ? _cleanName(circles[k]) : circles[k]) ||
                   (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k), on: on, n: people.length });
@@ -9649,8 +9660,8 @@ window._renderHomeAnchor = function () {
     // true -- how many people are in reach at all -- so the screen still answers something.
     if (lab) {
       lab.textContent = !total ? 'no crews yet'
-        : (live ? (live === 1 ? 'person live now' : 'people live now')
-                : (total + (total === 1 ? ' person · none live' : ' people · none live')));
+        : (live ? (live === 1 ? 'person sharing now' : 'people sharing now')
+                : (total + (total === 1 ? ' person · nobody sharing' : ' people · nobody sharing')));
     }
     var num = document.getElementById('ha-num');
     if (num) num.style.opacity = live ? '1' : '.55';   // present, but not shouting a zero
@@ -9694,13 +9705,13 @@ window._renderCrewsSection = function () {
   list.innerHTML = keys.map(function (k) {
     var label = _cleanName(circles[k]) || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
     var d = detail[k] || {};
-    var on = (d.people || []).filter(function (p) { return p.live; }).length;
+    var on = (d.people || []).filter(function (p) { return p.sharing; }).length;
     return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
       '<div onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex:1;min-width:0;cursor:pointer">' +
         '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
           (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
         '</div>' +
-        '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' with the app open' : 'Nobody has the app open')) + '</div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' sharing now' : 'Nobody sharing right now')) + '</div>' +
       '</div>' +
       '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" title="Talk to everyone" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-size:12px;font-weight:800;padding:7px 11px;cursor:pointer"><svg class="licon licon-sm" style="width:13px;height:13px"><use href="#ic-mic"/></svg>Talk</button>' +
       '<button onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer">Open</button>' +
