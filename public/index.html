@@ -2352,9 +2352,9 @@
 <!-- ══ NEW CREW SETUP ══ Shown once, right after a Crew is created. -->
 <div id="crew-setup-modal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:18px">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:88vh;overflow-y:auto">
-    <div style="font-size:19px;font-weight:800;color:var(--text)">Crew created</div>
+    <div id="crew-setup-title" style="font-size:19px;font-weight:800;color:var(--text)">Crew created</div>
     <div id="crew-setup-name" style="font-size:13px;color:var(--accent);font-weight:700;margin-top:3px"></div>
-    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:10px 0 16px">
+    <div id="crew-setup-blurb" style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:10px 0 16px">
       A Crew keeps everyone visible to each other all the time &mdash; not just while a room is open.
       It&rsquo;s just you so far.
     </div>
@@ -2386,17 +2386,21 @@
   </div>
 </div>
 <div id="roomtype-modal" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
-  <div style="background:rgba(22,27,34,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:330px">
-    <div style="font-size:17px;font-weight:800;margin-bottom:4px">New room — what kind?</div>
+  <div style="background:var(--surface);border:1px solid rgba(240,165,0,0.30);border-radius:16px;padding:22px;width:100%;max-width:340px">
+    <div style="font-size:18px;font-weight:800;margin-bottom:4px">Keep sharing after today?</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5">You're creating <b id="roomtype-group-name" style="color:var(--accent)"></b>.</div>
-    <button onclick="window._pickRoomType('crew')" style="width:100%;text-align:left;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.45);border-radius:11px;padding:13px 14px;margin-bottom:10px;cursor:pointer;color:var(--text)">
-      <div style="font-size:14px;font-weight:700;color:var(--accent)">&#128101; Crew — family &amp; long-term groups</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:3px">Permanent and private. Members always show up here for each other, even with the app closed or while in other rooms. Each person accepts once when they join.</div>
+    <button onclick="window._pickRoomType('crew')" style="width:100%;text-align:left;background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.45);border-radius:11px;padding:13px 14px;margin-bottom:14px;cursor:pointer;color:var(--text)">
+      <div style="font-size:14.5px;font-weight:800;color:var(--accent)">Yes &mdash; make it a Crew</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.45">Family and people you always share with. Everyone stays on the map, even with the app closed.</div>
     </button>
-    <button onclick="window._pickRoomType('quick')" style="width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:13px 14px;margin-bottom:6px;cursor:pointer;color:var(--text)">
-      <div style="font-size:14px;font-weight:700">&#9203; Quick room — for a day or a trip</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:3px">Temporary — expires after 24 hours (extendable to 7 days). People see each other while they're in it. A quick room can be upgraded to a Crew later.</div>
-    </button>
+    <div style="font-size:14.5px;font-weight:800;margin-bottom:2px">No &mdash; a Room until&hellip;</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:9px;line-height:1.45">A hunt, a trip, an event. It closes itself when time&rsquo;s up.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <button onclick="window._pickRoomType('quick','tonight')"  style="padding:11px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Tonight</button>
+      <button onclick="window._pickRoomType('quick','tomorrow')" style="padding:11px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Tomorrow</button>
+      <button onclick="window._pickRoomType('quick','weekend')"  style="padding:11px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">This weekend</button>
+      <button onclick="window._pickRoomType('quick','week')"     style="padding:11px 6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">A week</button>
+    </div>
     <button onclick="window._cancelRoomType()" style="width:100%;padding:11px;background:transparent;border:none;border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer;margin-top:2px">Cancel</button>
   </div>
 </div>
@@ -3566,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 783;
+var APP_BUILD = 784;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5904,9 +5908,22 @@ window._showAddDeviceBox = function () {
 // ── New Crew setup ──────────────────────────────────────────────────────────────────────────
 // Opened once, immediately after a Crew is created, because that is the only moment you know
 // for certain the person wants to set it up.
-window._openCrewSetup = function (key, label) {
+window._openCrewSetup = function (key, label, opts) {
   try {
+    opts = opts || {};
     window._crewSetupKey = key;
+    var _t = document.getElementById('crew-setup-title');
+    var _b = document.getElementById('crew-setup-blurb');
+    if (opts.room) {
+      var _when = '';
+      try { _when = new Date(opts.ends).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+      if (_t) _t.textContent = 'Room created';
+      if (_b) _b.innerHTML = 'Everyone who joins sees each other on the map until <b style="color:var(--text)">' +
+        _escHtml(_when) + '</b>, then it closes itself. Change the time in Room info. It&rsquo;s just you so far.';
+    } else {
+      if (_t) _t.textContent = 'Crew created';
+      if (_b) _b.innerHTML = 'A Crew keeps everyone visible to each other all the time &mdash; not just while a room is open. It&rsquo;s just you so far.';
+    }
     var n = document.getElementById('crew-setup-name');
     if (n) n.textContent = label || (typeof _prettyGroup === 'function' ? _prettyGroup(key) : key);
     // The invite helpers take their target from this, so a link built here points at the NEW
@@ -7900,6 +7917,20 @@ function _applyRoomExpire(ts) {
   _renderRoomExpire();
 }
 // One-tap presets — all resolve to 11:59 PM of the target day (week = 7 days out).
+// A preset end time, as a timestamp. Shared by Room Info (change it later) and creation.
+function _roomEndPreset(kind) {
+  var d = new Date();
+  if (kind === 'tonight') { d.setHours(23, 59, 0, 0); }
+  else if (kind === 'tomorrow') { d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); }
+  else if (kind === 'weekend') { var add = (7 - d.getDay()) % 7; d.setDate(d.getDate() + add); d.setHours(23, 59, 0, 0); }
+  // Six days to the end of that night: a full week's worth that still lands on 11:59 PM,
+  // rather than being clipped by the 7-day cap to whatever time it happens to be now.
+  else if (kind === 'week') { d.setDate(d.getDate() + 6); d.setHours(23, 59, 0, 0); }
+  else { return Date.now() + 86400000; }
+  var ts = d.getTime();
+  if (ts <= Date.now()) ts = Date.now() + 86400000;   // "tonight" tapped after 11:59 PM
+  return Math.min(ts, Date.now() + QUICK_JOIN_MAX_MS);
+}
 window._setRoomExpirePreset = function (kind) {
   var d = new Date();
   if (kind === 'tonight') { d.setHours(23, 59, 0, 0); }
@@ -11628,9 +11659,16 @@ function enterMap(name, group, uid) {
       // when this creation is ALSO becoming a Circle below, since that sets config.persistent
       // (never expires) instead — private/passcode status has no bearing on this at all.
       if (!window._pendingCircle) {
+        var _end = window._pendingRoomEnd || (Date.now() + 24 * 60 * 60 * 1000);
+        window._pendingRoomEnd = null;
         try {
           fbSet(fbRef(db, 'gl/' + groupName + '/config/createdAt'), Date.now());
-          fbSet(fbRef(db, 'gl/' + groupName + '/config/expires'), Date.now() + 24 * 60 * 60 * 1000);
+          fbSet(fbRef(db, 'gl/' + groupName + '/config/expires'), _end);
+        } catch (_) {}
+        // Same next step as a new Crew: a Room is only useful once the others are in it.
+        try {
+          var _rk = groupName, _rl = group;
+          setTimeout(function () { window._openCrewSetup(_rk, _rl, { room: true, ends: _end }); }, 900);
         } catch (_) {}
       }
       window._pendingVisibility = null;
@@ -12602,11 +12640,11 @@ function handleJoin() {
     // the type outright; the checkbox survives purely as a skip-the-question fast path.
     _askRoomType(group, function (type) {
       if (type === 'crew') { _asCrew(); return; }
-      _askVisibility(group, function(vis) {
-        window._pendingVisibility = vis;
-        window._pendingCircle = false;
-        checkGroupPasscode(name, group, uid, invitePin);
-      });
+      // Rooms are private and joined by link. The public/private dialog used to follow here;
+      // nobody made a public room, and the public directory is what exposed private Crews.
+      window._pendingVisibility = 'private';
+      window._pendingCircle = false;
+      checkGroupPasscode(name, group, uid, invitePin);
     });
   };
   var _enterExisting = function () { checkGroupPasscode(name, group, uid, invitePin); };
@@ -12635,10 +12673,12 @@ function _askRoomType(group, cb) {
   var nm = document.getElementById('roomtype-group-name'); if (nm) nm.textContent = group;
   document.getElementById('roomtype-modal').style.display = 'flex';
 }
-window._pickRoomType = function (t) {
+window._pickRoomType = function (t, endKind) {
   document.getElementById('roomtype-modal').style.display = 'none';
   var cb = _roomTypeCb; _roomTypeCb = null;
   window._newCrewIntent = 0;
+  // A Room's end time is chosen in the same tap that chooses a Room.
+  window._pendingRoomEnd = (t === 'quick') ? _roomEndPreset(endKind) : null;
   if (cb) cb(t);
 };
 // Abort without calling the callback — same reasoning as _cancelVisibility below.
