@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 784;
+var APP_BUILD = 785;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7778,7 +7778,11 @@ function openRoomInfo() {
   // Pending join requests — owner/admin only; hides itself otherwise.
   try { _renderJoinQueue(); } catch (e) {}
   var row = document.getElementById('ri-pin-row');
-  if (row) {
+  // Passcodes are retired: the invite link's room key is already unguessable, so a PIN only
+  // added a step. No room uses one. The row still appears on a room that HAS one, so its owner
+  // can see it and remove it — never a setting you can't get back out of.
+  if (row) row.style.display = window._roomHasPin ? 'block' : 'none';
+  if (row && window._roomHasPin) {
     var head = '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Passcode</div>';
     var editBtn = function(txt) {
       // The room owner or a co-admin can set or change the passcode.
@@ -7811,7 +7815,9 @@ function openRoomInfo() {
   // Visibility control — owner or co-admin.
   var visRow = document.getElementById('ri-vis-row');
   if (visRow) {
-    if (window._canManageRoom && window._canManageRoom()) {
+    // Every room is private now; public rooms fed the directory that exposed private Crews and
+    // were never used. Only a room still marked public shows this, so it can be switched off.
+    if (window._canManageRoom && window._canManageRoom() && (window._roomVisibility || 'public') === 'public') {
       visRow.style.display = 'block';
       var vis = window._roomVisibility || 'public';
       var vbtn = function(val, label) {
