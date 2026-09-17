@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 785;
+var APP_BUILD = 786;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7960,19 +7960,22 @@ window._clearRoomExpire = function () {
   _renderRoomExpire();
 };
 function _renderRiFav() {
+  var _row = document.getElementById('ri-fav-row');
+  var _member = !!(groupName && typeof _isCircleMember === 'function' && _isCircleMember(groupName));
+  if (_row) _row.style.display = _member ? 'flex' : 'none';
   var on = (typeof _isFav === 'function') && groupName && _isFav(groupName);
   var star = document.getElementById('ri-fav-star');
   var sub = document.getElementById('ri-fav-sub');
   var title = document.getElementById('ri-fav-title');
   var pill = document.getElementById('ri-fav-pill');
   if (star) { star.innerHTML = on ? '&#9733;' : '&#9734;'; star.style.color = on ? 'var(--accent)' : 'var(--muted)'; }
-  if (title) title.textContent = on ? 'Favorited' : 'Favorite this group';
+  if (title) title.textContent = on ? 'Favorited' : 'Favorite this Crew';
   if (pill) {
     pill.textContent = on ? 'ON' : 'OFF';
     pill.style.background = on ? 'rgba(240,165,0,.16)' : 'var(--border)';
     pill.style.color = on ? 'var(--accent)' : 'var(--muted)';
   }
-  if (sub) sub.textContent = on ? 'Saved — shows on your home screen, and your location keeps flowing here no matter what room you\'re in' : 'Pin it to your home screen, and your location will keep flowing here even from other rooms';
+  if (sub) sub.textContent = on ? 'Kept at the top of your Crews' : 'Keep this Crew at the top of your list';
 }
 window._riToggleFav = function() {
   if (!groupName) return;
@@ -10607,14 +10610,14 @@ window._toggleFav = function(key, name, ev) {
   if (ev) ev.stopPropagation();
   var f = _getFavs(); var i = f.indexOf(key);
   if (i === -1) {
+    // Only a Crew you belong to can be a favorite. Favoriting used to put you on the map of any
+    // room you visited; membership is what does that now.
+    if (!_isCircleMember(key)) {
+      toast('Only members can favorite a Crew. Join it from an invite link first.', 3800);
+      return;
+    }
     f.push(key); _setFavs(f);
-    // Favoriting keeps the room alive server-side, so a starred room never auto-deletes.
-    try { var fbF = window._fb; if (fbF && fbF.set) fbF.set(fbF.ref(fbF.db, 'gl/' + key + '/config/persistent'), true); } catch (e) {}
-    toast('★ ' + (name || 'Group') + ' favorited — your location will keep flowing here from other rooms too', 3600);
-    _registerFavSub(key, name, false).then(function(ok) {
-      toast(ok ? 'Background alerts on — you’ll be notified when ' + (name || 'this group') + ' is active'
-               : 'Favorited. Turn on notifications (in Settings) to get background alerts when it’s active.', 5500);
-    });
+    toast('★ ' + (name || 'Crew') + ' favorited — it stays at the top of your list', 3000);
   } else {
     f.splice(i, 1); _setFavs(f);
     // If this room is ALSO a Crew you belong to, unfavoriting doesn't actually stop your
@@ -11888,7 +11891,9 @@ function enterMap(name, group, uid) {
         // alive and easy to get back to" via the dedicated circle-switcher, so auto-favoriting
         // it too just clutters the Favorites tab with a redundant second entry for the same room.
         try {
-          if (window._roomVisibility === 'private' && !_isCircleMember(groupName) && typeof _getFavs === 'function' && _getFavs().indexOf(groupName) === -1) {
+          // Retired: visiting a private room as a non-member used to favorite it — and a favorite
+          // shared your location — which put visitors on maps they never joined. Membership only.
+          if (false) {
             var ff = _getFavs(); ff.push(groupName); _setFavs(ff);
             try { var fbV = window._fb; if (fbV && fbV.set) fbV.set(fbV.ref(fbV.db, 'gl/' + groupName + '/config/persistent'), true); } catch (e) {}
             try { _registerFavSub(groupName, userName); } catch (e) {}
@@ -12258,7 +12263,7 @@ function showJoinScreen() {
   // pipeline My Map already starts on its own (beginLocation → onGpsFix's fan-out), just
   // triggered here too so nobody has to specifically open My Map for it to kick in.
   try {
-    var _hasFanoutTargets = Object.keys(_getCircles()).length || _getFavs().length || Object.keys(_getJoinedRooms()).length;
+    var _hasFanoutTargets = Object.keys(_getCircles()).length || Object.keys(_getJoinedRooms()).length;
     if (window._gpsWatchId == null && _hasFanoutTargets) {
       if (!userId) { var _cs = getSavedSession(); userId = _cs.uid || genUid(); userName = userName || _cs.name || 'Me'; }
       beginLocation();
@@ -14701,9 +14706,10 @@ function startLocationSharing() {
     // your location actually follow that intent instead of only flowing while it happens to be
     // the one currently-open room — which is exactly what left people missing from rooms they
     // were expected to still be part of.
+    // Favorites no longer share location: a favorite is only ever a Crew you belong to, and
+    // that Crew is already written above. Kept as an empty list so later code is unaffected.
     var _favKeys = [];
     try {
-      _favKeys = (typeof _getFavs === 'function') ? _getFavs() : [];
       for (var _fi = 0; _fi < _favKeys.length; _fi++) {
         var _fk = _favKeys[_fi];
         if (_fk === groupName || _circleKeys.indexOf(_fk) !== -1) continue; // already written above
@@ -24170,6 +24176,16 @@ try {
       // local gl_circles cache, and this device silently never fans out GPS to it or subscribes to
       // see it live, even though the permanent gl/<key>/members roster correctly shows them "joined".
       if (p.circles) { LS.set('gl_circles', typeof p.circles === 'string' ? p.circles : JSON.stringify(p.circles)); try { window._listenCircles && window._listenCircles(); } catch (e) {} }
+      // Only now — with this account's real Crew list in hand — drop favorites that are not one
+      // of its Crews. Doing it any earlier could strip a valid favorite before its Crew synced.
+      if (p.circles) {
+        try {
+          var _cmap = typeof p.circles === 'string' ? JSON.parse(p.circles) : p.circles;
+          var _fv = JSON.parse(LS.get('gl_favs') || '[]');
+          var _kept = _fv.filter(function (k) { return _cmap && _cmap[k]; });
+          if (_kept.length !== _fv.length) LS.set('gl_favs', JSON.stringify(_kept));
+        } catch (e9) {}
+      }
       // gl_user_colors (colors YOU'VE assigned to other members) is deliberately NOT synced —
       // see the comment on _getUserColors above. If two of your devices ever picked different
       // colors for the same person, syncing this would make them fight over which one wins,
