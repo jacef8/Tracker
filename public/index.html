@@ -3566,7 +3566,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 782;
+var APP_BUILD = 783;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8746,6 +8746,48 @@ async function _ensurePushIdentity() {
 // roomKey: which room's favSubs/pushSubs to notify. Defaults to the CURRENT room (groupName) —
 // pass it explicitly for actions that target some OTHER room than the one you're standing in
 // (e.g. leaving a Crew from the Home-screen switcher, where groupName is empty).
+// == PIN DROP NOTIFICATIONS ===================================================================
+// A "meet me here" pin is only useful if the person it is meant for finds out, and the whole
+// point of dropping one is that they are NOT looking at the app. The push existed, but it went
+// only to phones registered while this exact room's map was open (pushSubs) and skipped the
+// list that covers every Crew member (favSubs) -- so whoever had not opened that map lately
+// never heard about it. Its text, "Our Crew - new pin / Jace dropped a Meet pin", also did not
+// say where or why. And a kept spot shared with the crew sent nothing at all.
+window._notifyPinDrop = function (room, coords, cat, label, kind) {
+  try {
+    if (!room || !coords) return;
+    var who = userName || 'Someone';
+    var what = (label && String(label).trim()) || cat || 'a pin';
+    var crew = (typeof _prettyGroup === 'function') ? _prettyGroup(room) : room;
+    var title = kind === 'save' ? (who + ' shared a spot: ' + what) : (who + ': ' + what);
+    var body = crew + ' \u2014 tap to see where';
+    // The link opens the room AND flies to the pin, rather than dropping you on the map to hunt.
+    var url = '/?room=' + encodeURIComponent(room) +
+              '&pin=' + (+coords.lat).toFixed(6) + ',' + (+coords.lng).toFixed(6);
+    pushNotify('pin', title, body, { toFavs: true, url: url }, room);
+  } catch (e) {}
+};
+// Fly to a pin that a notification pointed at, once the map can take it.
+window._flyToNotifPin = function (lat, lng) {
+  try {
+    var go = function () {
+      try {
+        map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom ? map.getZoom() : 0, 16), duration: 900 });
+        if (window._pauseFollow) window._pauseFollow(12000);   // do not let follow drag it away
+      } catch (e) {}
+    };
+    if (window._mapReady) go();
+    else { var t = setInterval(function () { if (window._mapReady) { clearInterval(t); go(); } }, 200); setTimeout(function () { clearInterval(t); }, 15000); }
+  } catch (e) {}
+};
+function _parsePinParam(v) {
+  try {
+    var parts = String(v || '').split(',');
+    var lat = parseFloat(parts[0]), lng = parseFloat(parts[1]);
+    if (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat: lat, lng: lng };
+  } catch (e) {}
+  return null;
+}
 function pushNotify(type, title, body, opts, roomKey) {
   try {
     var grp = roomKey || groupName;
@@ -8758,7 +8800,7 @@ function pushNotify(type, title, body, opts, roomKey) {
       headers: { 'Content-Type': 'application/json' },
       // senderFcm/senderEndpoint identify THIS physical device so the server can skip it even
       // if a stale subscription for this device lingers under an old uid (avoids self-notify).
-      body: JSON.stringify({ ns: 'gl', group: grp, senderId: userId, senderFcm: window._fcmToken || '', senderEndpoint: window._pushEndpoint || '', type, title, body, url: '/', toFavs: !!opts.toFavs })
+      body: JSON.stringify({ ns: 'gl', group: grp, senderId: userId, senderFcm: window._fcmToken || '', senderEndpoint: window._pushEndpoint || '', type, title, body, url: opts.url || '/', toFavs: !!opts.toFavs })
     }).catch(function(){});
   } catch (e) {}
 }
@@ -8791,12 +8833,17 @@ window._handleNotifOpen = function (data) {
     data = data || {};
     var grp = data.group || ''; var type = data.type || '';
     if (!grp) return;
+    // A pin notification carries the spot in its link.
+    var _pin = null;
+    try { var _m = String(data.url || '').match(/[?&]pin=([^&]+)/); if (_m) _pin = _parsePinParam(decodeURIComponent(_m[1])); } catch (e) {}
     if (typeof groupName !== 'undefined' && groupName === grp) {   // already in that room
+      if (_pin) { window._flyToNotifPin(_pin.lat, _pin.lng); }
       if (type === 'voice') { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }
       try { window.focus && window.focus(); } catch (e) {}
       return;
     }
-    location.href = '/?room=' + encodeURIComponent(grp) + (type === 'voice' ? '&notif=voice' : '');
+    location.href = '/?room=' + encodeURIComponent(grp) + (type === 'voice' ? '&notif=voice' : '') +
+      (_pin ? '&pin=' + _pin.lat + ',' + _pin.lng : '');
   } catch (e) {}
 };
 // A notification that arrived while the app is in the FOREGROUND (native FCM) — surface a
@@ -11975,6 +12022,8 @@ function enterMap(name, group, uid) {
     try { listenVoiceLog(); } catch (e) {}
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
+    // Opened from a pin notification -> land on the pin, not just the room.
+    if (window._pendingPinFly) { var _ppf = window._pendingPinFly; window._pendingPinFly = null; setTimeout(function () { window._flyToNotifPin(_ppf.lat, _ppf.lng); }, 1600); }
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
       if (snap.val() && !window._roomClosed) _roomClosedByAdmin();
@@ -12422,6 +12471,7 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   if (_invRoom) {
     window._inviteRoom = _invRoom;
     if (_q.get('notif') === 'voice') window._pendingNotif = 'voice';   // opened from a voice ping
+    try { var _pp = _parsePinParam(_q.get('pin')); if (_pp) window._pendingPinFly = _pp; } catch (e) {}   // opened from a pin
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
     // ?room= is not only invite links — push notifications deep-link with it too. Treating
@@ -17536,6 +17586,8 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       try {
         window._queuePin(groupName, { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat,
           label: label, name: userName, droppedBy: userId, ts: Date.now(), _noKeep: 1 });
+        // Sharing a kept spot with the crew is telling them about it, so they hear about it too.
+        window._notifyPinDrop(groupName, pendingCoords, finalCat, label, 'save');
       } catch (e) {}
     }
   }
@@ -17563,7 +17615,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   });
   toast('Pin dropped');
   try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {} // lifetime "pins dropped" stat
-  pushNotify('pin', groupName + ' — new pin', userName + ' dropped a ' + finalCat + ' pin');
+  try { window._notifyPinDrop(groupName, pendingCoords, finalCat, label, 'meet'); } catch (e) {}
   try { window._evt('dropped a pin — ' + finalCat + (label ? ' (' + label + ')' : '')); } catch (e) {}
   _closePinModal();
 });

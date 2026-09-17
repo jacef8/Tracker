@@ -214,7 +214,9 @@ self.addEventListener('notificationclick', function(e) {
   var data = (e.notification && e.notification.data) || {};
   var grp = data.group || '';
   // Deep-link into the room (and flag a voice ping so the app opens the transmission log).
-  var url = grp ? ('/?room=' + encodeURIComponent(grp) + (data.type === 'voice' ? '&notif=voice' : '')) : (data.url || '/');
+  // A pin notification's own link already names the room and the spot, so use it as-is.
+  var url = (data.url && data.url.indexOf('pin=') !== -1) ? data.url
+    : grp ? ('/?room=' + encodeURIComponent(grp) + (data.type === 'voice' ? '&notif=voice' : '')) : (data.url || '/');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
       for (var i = 0; i < list.length; i++) {
