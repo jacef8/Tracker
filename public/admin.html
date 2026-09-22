@@ -12,7 +12,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, onValue, remove, push, set, get }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  import { getAuth, signInAnonymously }
+  import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -37,7 +37,21 @@
   try {
     const auth = getAuth(app);
     window._fb.auth = auth;
-    if (!auth.currentUser) signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
+    // Logs, diagnostics and the force-reload switches are readable/writable only by the app
+    // admin's Google account (database rules). An anonymous session still sees rooms, so the
+    // page works either way — but it offers the Google sign-in, and reloads once signed in so
+    // every listener re-registers with the admin identity.
+    onAuthStateChanged(auth, (u) => {
+      if (!u) { signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e)); return; }
+      if (!u.isAnonymous) return;
+      if (document.getElementById('admin-signin')) return;
+      const b = document.createElement('button');
+      b.id = 'admin-signin';
+      b.textContent = 'Sign in with Google for admin tools';
+      b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:#f0a500;color:#0d1117;border:none;border-radius:10px;padding:10px 16px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5)';
+      b.onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).then(() => location.reload()).catch((e) => alert('Sign-in failed: ' + (e && e.message)));
+      (document.body || document.documentElement).appendChild(b);
+    });
   } catch (e) { console.warn('auth init', e); }
 </script>
 

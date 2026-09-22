@@ -6,8 +6,12 @@ Run it before deploying any rules change:
     export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-25.0.3.9-hotspot"
     export PATH="$JAVA_HOME/bin:$PATH"
     cd tools/rules-test
+    cp ../../database.rules.json .      # the emulator refuses a rules file outside this folder
     firebase emulators:start --only database --project demo-groundlink &
     python test_rules.py
+
+The emulator hot-reloads database.rules.json here, so re-copy after every edit. Deploy
+with `node tools/deploy-rules.mjs --apply` (backs up the live rules first).
 
 READ THIS BEFORE TRUSTING A GREEN RUN. Any token sent via `Authorization: Bearer`
 -- including a deliberately malformed one -- is treated by the emulator as ADMIN
@@ -32,6 +36,10 @@ NS = "demo-groundlink-default-rtdb"
 
 ALICE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa"   # 28 chars, auth-uid shaped
 BOB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+CAROL = "cccccccccccccccccccccccccccc"
+DAVE = "dddddddddddddddddddddddddddd"
+ADMIN = "1RwPgdSdOEgp3lhlGly5I71EkY73"   # the app admin's Google account
+IK = "k3y-abcdefghijkl"
 
 
 PROJECT = "demo-groundlink"
@@ -85,6 +93,10 @@ def req(method, path, uid=None, body=None, admin=False):
 
 def seed():
     """Admin-write a realistic tree so delete/overwrite cases have something to hit."""
+    # Start from nothing: the emulator keeps data between runs, and leftovers from a previous
+    # run (an acl entry, an invite key) silently turn deny cases into allows.
+    req("DELETE", "gl", admin=True)
+    req("DELETE", "gltest", admin=True)
     req("PUT", "gl/testroom/config", admin=True,
         body={"owner": ALICE, "name": "Test Room", "persistent": True})
     req("PUT", f"gl/testroom/users/{BOB}", admin=True, body={"name": "Bob", "ts": 1})
@@ -103,6 +115,15 @@ def seed():
     req("PUT", "gl/_devices/watch_abc/ownerName", admin=True, body="Jace")
     req("PUT", "gl/_devices/watch_abc/fcmToken", admin=True, body="tok")
     req("PUT", "_forceReload", admin=True, body=1)
+    # Phase A: invite keys, owner migration, unowned rooms, admin-only logs.
+    req("PUT", "gl/ikroom/config", admin=True, body={"owner": ALICE, "name": "IK", "inviteKey": IK, "circle": True})
+    req("PUT", f"gl/ikroom/acl/{ALICE}", admin=True, body={"ts": 1})
+    req("PUT", "gl/migroom/config", admin=True, body={"owner": "dev_alice", "name": "Mig"})
+    req("PUT", "gl/_devOwner/dev_alice", admin=True, body={"acct": ALICE})
+    req("PUT", "gl/openroom/config", admin=True, body={"name": "No owner yet"})
+    req("PUT", f"gl/testroom/config/removed/{BOB}", admin=True, body=5)
+    req("PUT", "gl/_debug/x", admin=True, body=1)
+    req("PUT", "gl/_diag/devices/d1", admin=True, body={"b": 1})
 
 
 # (label, expect_allowed, method, path, uid, body)
@@ -148,10 +169,60 @@ CASES = [
     ("authed write _deviceOwners", True, "PUT", f"gl/_deviceOwners/{ALICE}/watch_abc", ALICE, True),
     ("authed write _directory", True, "PUT", f"gl/_directory/{ALICE}", ALICE, {"d": 1}),
     ("authed READ a room", True, "GET", "gl/testroom", ALICE, None),
-    ("_forceReload still writable (deploy flow)", True, "PUT", "_forceReload", ALICE, 12345),
+    ("_forceReload: ordinary user CANNOT reload everyone", False, "PUT", "_forceReload", ALICE, 12345),
+    ("_forceReload: app admin can", True, "PUT", "_forceReload", ADMIN, 12345),
+    ("_minNative: ordinary user CANNOT", False, "PUT", "_minNative", BOB, 99),
+
+    # --- Phase A: room settings are the owner's -------------------------------
+    ("config: non-owner renames a room", False, "PUT", "gl/testroom/config/name", BOB, "Hijacked"),
+    ("config: non-owner takes ownership", False, "PUT", "gl/testroom/config/owner", BOB, BOB),
+    ("config: non-owner makes self admin", False, "PUT", f"gl/testroom/config/admins/{BOB}", BOB, {"n": 1}),
+    ("config: non-owner makes room PUBLIC", False, "PUT", "gl/testroom/config/visibility", BOB, "public"),
+    ("config: non-owner locks room PRIVATE (safety)", True, "PUT", "gl/testroom/config/visibility", BOB, "private"),
+    ("config: non-owner sets a passcode", False, "PUT", "gl/testroom/config/pin", BOB, "hash"),
+    ("config: member records an invite", True, "PUT", f"gl/testroom/config/invited/{CAROL}", BOB, {"name": "C"}),
+    ("config: member asks to be admin", True, "PUT", f"gl/testroom/config/adminRequest/{BOB}", BOB, {"ts": 1}),
+    ("config: member writes a place guard", True, "PUT", "gl/testroom/config/placeGuard/x_y_arrive", BOB, 1),
+    ("config: member converts to Crew (circle)", True, "PUT", "gl/testroom/config/circle", BOB, True),
+    ("config: member clears own removed marker", True, "DELETE", f"gl/testroom/config/removed/{BOB}", BOB, None),
+    ("config: member marks someone removed", False, "PUT", f"gl/testroom/config/removed/{ALICE}", BOB, 1),
+    ("config: persistent room can't be given an expiry", False, "PUT", "gl/testroom/config/expires", BOB, 1),
+    ("config: self-heal expiry on a room with none", True, "PUT", "gl/openroom/config/expires", BOB, 99),
+    ("config: first visitor claims an unowned room", True, "PUT", "gl/openroom/config/owner", BOB, BOB),
+    ("config: owner migrates device-id owner to account", True, "PUT", "gl/migroom/config/owner", ALICE, ALICE),
+    ("config: a stranger can't wholesale-replace config", False, "PUT", "gl/ikroom/config", BOB, {"owner": BOB}),
+
+    # --- Phase A: invite keys --------------------------------------------------
+    ("acl: self-grant with the WRONG invite key", False, "PUT", f"gl/ikroom/acl/{CAROL}", CAROL, {"ik": "nope-nope-nope", "ts": 1}),
+    ("acl: self-grant with NO key", False, "PUT", f"gl/ikroom/acl/{CAROL}", CAROL, {"ts": 1}),
+    ("acl: key holder grants ANOTHER uid", False, "PUT", f"gl/ikroom/acl/{DAVE}", CAROL, {"ik": IK, "ts": 1}),
+    ("acl: self-grant with the RIGHT invite key", True, "PUT", f"gl/ikroom/acl/{CAROL}", CAROL, {"ik": IK, "ts": 1}),
+    ("acl: a member invites someone (grants their id)", True, "PUT", f"gl/ikroom/acl/{DAVE}", CAROL, {"ts": 1, "by": CAROL}),
+    ("acl: a member can't DELETE another member", False, "DELETE", f"gl/ikroom/acl/{ALICE}", CAROL, None),
+    ("inviteKey: a member can't REPLACE it", False, "PUT", "gl/ikroom/config/inviteKey", CAROL, "another-key-123"),
+    ("inviteKey: the owner CAN rotate it (revokes old links)", True, "PUT", "gl/ikroom/config/inviteKey", ALICE, "rotated-key-12345"),
+    ("inviteKey: too short to be a secret", False, "PUT", "gl/testroom/config/inviteKey", BOB, "abc"),
+    ("inviteKey: a member creates one where none exists", True, "PUT", "gl/testroom/config/inviteKey", BOB, "fresh-key-12345"),
+
+    # --- Phase A: admin-only logs and push tokens ------------------------------
+    ("_debug: ordinary user can't read", False, "GET", "gl/_debug", ALICE, None),
+    ("_debug: admin reads", True, "GET", "gl/_debug", ADMIN, None),
+    ("_diag: ordinary user can't read", False, "GET", "gl/_diag", ALICE, None),
+    ("_diag: device still writes its beacon", True, "PUT", "gl/_diag/devices/d2", ALICE, {"b": 2}),
+    ("_activityLog: ordinary user can't read", False, "GET", "gl/_activityLog", ALICE, None),
+    ("_aclMiss: ordinary user can't read", False, "GET", "gl/_aclMiss", ALICE, None),
+    ("_voipSubs: nobody reads call tokens", False, "GET", "gl/_voipSubs", ALICE, None),
+    ("_pttSubs: nobody reads PTT tokens", False, "GET", "gl/_pttSubs", ALICE, None),
+    ("_voipSubs: device still registers", True, "PUT", f"gl/_voipSubs/{ALICE}", ALICE, {"token": "t"}),
+    ("_authMap: report own sign-in id", True, "PUT", f"gl/_authMap/{BOB}", BOB, {"glUid": "dev_b"}),
+    ("_authMap: forge another's", False, "PUT", f"gl/_authMap/{ALICE}", BOB, {"glUid": "x"}),
+    ("_authMap: ordinary user can't read", False, "GET", "gl/_authMap", BOB, None),
+    ("_authMap: admin reads", True, "GET", "gl/_authMap", ADMIN, None),
+    ("gltest: open sandbox is closed", False, "PUT", "gltest/g/anything", ALICE, {"x": 1}),
+    ("gltest: unauth write closed", False, "PUT", "gltest/g/anything", None, {"x": 1}),
 
     # --- ACL / joinReq surface (approval queue) -------------------------------
-    ("acl: non-owner grants SELF access", False, "PUT", f"gl/testroom/acl/{BOB}", BOB, {"ts": 2}),
+    ("acl: non-member grants SELF access (no key)", False, "PUT", f"gl/testroom/acl/{CAROL}", CAROL, {"ts": 2}),
     ("acl: owner grants a member access", True, "PUT", f"gl/testroom/acl/{BOB}", ALICE, {"ts": 2, "by": "alice"}),
     ("acl: non-owner deletes ANOTHER's entry", False, "DELETE", f"gl/testroom/acl/{ALICE}", BOB, None),
     ("acl: member deletes their OWN entry", True, "DELETE", f"gl/testroom/acl/{BOB}", BOB, None),

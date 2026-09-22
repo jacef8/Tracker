@@ -913,7 +913,9 @@ app.get('/.well-known/apple-app-site-association', function(req, res) {
 app.get('/j/:room', function(req, res) {
   var room = String(req.params.room || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
   var k = req.query.k ? '&k=' + encodeURIComponent(String(req.query.k)) : '';
-  res.redirect(302, '/?room=' + encodeURIComponent(room) + k);
+  // The room's invite key — lets the person who opens the link onto the room's access list.
+  var ik = req.query.ik ? '&ik=' + encodeURIComponent(String(req.query.ik).slice(0, 64)) : '';
+  res.redirect(302, '/?room=' + encodeURIComponent(room) + k + ik);
 });
 // Short device-share link: /d/<code> → the app's accept-device URL. Same idea as /j/ — keeps
 // the texted link short + clean, App-Links opens it natively, browsers 302 into the web app.

@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 790;
+var APP_BUILD = 791;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5929,6 +5929,7 @@ window._openCrewSetup = function (key, label, opts) {
     // The invite helpers take their target from this, so a link built here points at the NEW
     // Crew rather than whatever room happens to be open.
     window._inviteLinkRoom = key;
+    try { window._ensureInviteKey(key); } catch (e) {}
     try { _setPill('crew-setup-announce', _announceJoinOn()); } catch (e) {}
     try { _setPill('crew-setup-devices', window._secDevOn && window._secDevOn()); } catch (e) {}
     var m = document.getElementById('crew-setup-modal');
@@ -9199,8 +9200,9 @@ var _fbReadReady = false, _fbReadPromise = null;
 function _verifyFbRead() {
   if (_fbReadReady) return Promise.resolve();
   if (_fbReadPromise) return _fbReadPromise;
-  _fbReadPromise = window._fb.get(window._fb.ref(window._fb.db, 'gl/_debug'))
-    .then(function () { _fbReadReady = true; })
+  // gl/_roomIndex: readable by every signed-in session. (gl/_debug is admin-only now.)
+  _fbReadPromise = window._fb.get(window._fb.ref(window._fb.db, 'gl/_roomIndex'))
+    .then(function () { _fbReadReady = true; try { window._reportAuthMap(); } catch (e) {} })
     .catch(function () { return new Promise(function (res) { setTimeout(res, 400); }).then(function () { _fbReadReady = true; }); });
   return _fbReadPromise;
 }
@@ -11866,6 +11868,8 @@ function enterMap(name, group, uid) {
           }
         } catch (e) {}
         try { _reportAclMiss(groupName); } catch (e) {}
+        try { window._reportAuthMap(); } catch (e) {}
+        try { window._ensureInviteKey(groupName); } catch (e) {}
         try { renderRoomInfoOwner(); } catch (e) {}
       });
     } catch (e) {}
@@ -12588,6 +12592,13 @@ function _showNativeUpdateBar(msg, url, mine, need) {
     try { var _pp = _parsePinParam(_q.get('pin')); if (_pp) window._pendingPinFly = _pp; } catch (e) {}   // opened from a pin
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
+    var _ik = _q.get('ik');
+    if (_ik) {
+      var _ikRoom = String(_invRoom).toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+      window._pendingIk = { room: _ikRoom, ik: _ik };
+      // Survives a Google sign-in redirect between opening the link and joining.
+      try { localStorage.setItem('gl_pending_ik', JSON.stringify(window._pendingIk)); } catch (e) {}
+    }
     // ?room= is not only invite links — push notifications deep-link with it too. Treating
     // every arrival as a stranger showed the OWNER "You've been invited to..." for their own
     // Crew when they tapped a join notification. With a saved identity and a room that's
@@ -18215,6 +18226,94 @@ function _authUid() {
     return (u && u.uid) || '';
   } catch (e) { return ''; }
 }
+// ── Invite keys ──────────────────────────────────────────────────────
+// Every room carries one secret, config/inviteKey, created once by whoever first needs it.
+// Invite links carry it as &ik=, in-app invites carry it in the invite record, and the
+// database lets a person add THEIR OWN sign-in id to the room's access list only when they
+// present it. That is what keeps invites one-tap once the access list becomes the gate for
+// reading a room: a link is proof someone in the room chose to let you in.
+window._inviteKeys = window._inviteKeys || {};
+function _newInviteKey() {
+  var a = new Uint8Array(12);
+  try { crypto.getRandomValues(a); } catch (e) { for (var i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+  var b = ''; for (var j = 0; j < a.length; j++) b += String.fromCharCode(a[j]);
+  return btoa(b).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+window._ensureInviteKey = function (room) {
+  try {
+    if (!room || room.charAt(0) === '_') return Promise.resolve('');
+    if (window._inviteKeys[room]) return Promise.resolve(window._inviteKeys[room]);
+    var fb = window._fb; if (!fb || !fb.db || !fb.get) return Promise.resolve('');
+    var r = fb.ref(fb.db, 'gl/' + room + '/config/inviteKey');
+    var keep = function (k) { if (typeof k === 'string' && k.length >= 12) { window._inviteKeys[room] = k; return k; } return ''; };
+    return fb.get(r).then(function (snap) {
+      var k = keep(snap && snap.val());
+      if (k) return k;
+      var nk = _newInviteKey();
+      // Create-once in the rules: if someone else won the race, read theirs.
+      return fb.set(r, nk).then(function () { return keep(nk); }, function () {
+        return fb.get(r).then(function (s2) { return keep(s2 && s2.val()); }, function () { return ''; });
+      });
+    }, function () { return ''; });
+  } catch (e) { return Promise.resolve(''); }
+};
+function _waitAuthUid(ms) {
+  return new Promise(function (res) {
+    var t0 = Date.now();
+    (function poll() {
+      var au = _authUid();
+      if (au || Date.now() - t0 > (ms || 6000)) return res(au);
+      setTimeout(poll, 150);
+    })();
+  });
+}
+// Put MY sign-in id on a room's access list, using its invite key.
+window._grantSelfWithKey = function (room, ik) {
+  if (!room || !ik) return Promise.resolve(false);
+  return _waitAuthUid(6000).then(function (au) {
+    var fb = window._fb;
+    if (!au || !fb || !fb.db) return false;
+    var nm = ''; try { nm = userName || localStorage.getItem('gl_name') || ''; } catch (e) {}
+    var gu = ''; try { gu = userId || localStorage.getItem('gl_uid') || ''; } catch (e) {}
+    return fb.set(fb.ref(fb.db, 'gl/' + room + '/acl/' + au), { ik: ik, ts: Date.now(), by: 'self:invite', name: nm, glUid: gu })
+      .then(function () { return true; }, function () { return false; });
+  });
+};
+// A member lets someone in directly: their device id and their account id, whichever exist.
+// (Their sign-in id is one of those two for everyone signed in with Google, and for most
+// anonymous installs; the invite key they receive covers the rest.)
+function _grantInvitee(room, uid) {
+  try {
+    var fb = window._fb; if (!fb || !fb.db || !room || !uid) return;
+    var by = _authUid() || userId || '';
+    var ids = [uid];
+    var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
+    if (acct && acct !== uid) ids.push(acct);
+    ids.forEach(function (id) {
+      try { fb.set(fb.ref(fb.db, 'gl/' + room + '/acl/' + id), { ts: Date.now(), by: by, via: 'invite' }).catch(function () {}); } catch (e) {}
+    });
+  } catch (e) {}
+}
+// Which sign-in id this install actually uses. The database rules test auth.uid, and that
+// value exists only on the device — so each device reports it, once per session, under its
+// own id. This is the list the access-list backfill is built from before the read gate lands.
+window._reportAuthMap = function () {
+  try {
+    var au = _authUid(); if (!au) return;
+    if (window._authMapSent === au) return;
+    var fb = window._fb; if (!fb || !fb.db) return;
+    var gu = ''; try { gu = userId || localStorage.getItem('gl_uid') || ''; } catch (e) {}
+    if (!gu) return;
+    var acct = ''; try { acct = _myAcct() || ''; } catch (e) {}
+    var nm = ''; try { nm = userName || localStorage.getItem('gl_name') || ''; } catch (e) {}
+    var plat = 'web';
+    try { var c = window.Capacitor; if (c && c.getPlatform) plat = c.getPlatform(); } catch (e) {}
+    window._authMapSent = au;
+    fb.set(fb.ref(fb.db, 'gl/_authMap/' + au), {
+      glUid: gu, acct: acct, name: nm, plat: plat, build: (typeof APP_BUILD !== 'undefined' ? APP_BUILD : 0), ts: Date.now()
+    }).catch(function () { window._authMapSent = ''; });
+  } catch (e) {}
+};
 // Am I in this room's ACL? Checks every id form, because the backfill writes an
 // entry per form and a room populated by an older backfill may only carry one.
 window._aclHasMe = function () {
@@ -18238,9 +18337,11 @@ function _reportAclMiss(roomKey) {
     if (!roomKey || !window._roomAclLoaded) return;
     var acl = window._roomAcl || {};
     if (!Object.keys(acl).length) return;     // room not backfilled yet — not a miss, just absent
-    if (window._aclHasMe()) return;
     var au = _authUid();
     if (!au) return;                          // auth hasn't resolved; the next snapshot will retry
+    // Strict: the rule tests auth.uid and nothing else. The old check also counted the device
+    // and account ids, which made people look covered who the rule would in fact lock out.
+    if (acl[au]) return;
     window._aclMissSent = window._aclMissSent || {};
     if (window._aclMissSent[roomKey]) return; // once per room per session
     window._aclMissSent[roomKey] = 1;
@@ -18464,6 +18565,7 @@ window._openInvitePicker = function() {
   window._invitePickerMode = 'room';
   window._circleInviteTarget = null;
   window._inviteLinkRoom = groupName;
+  try { window._ensureInviteKey(groupName); } catch (e) {}
   window._invitePickerBackTo = 'roomInfo';   // this is only ever opened FROM Room Info (closeRoomInfo() runs right before it)
   var back = document.getElementById('invite-picker-back'); if (back) back.style.display = '';
   var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to this room';
@@ -18504,6 +18606,7 @@ window._closeInvitePicker = function (goBack) {
 window._openCircleInvitePicker = function(circleKey, circleName) {
   window._invitePickerMode = 'circle';
   window._circleInviteTarget = { key: circleKey, name: circleName || circleKey };
+  try { window._ensureInviteKey(circleKey); } catch (e) {}
   window._inviteLinkRoom = circleKey;   // NOT groupName — this can be opened from the home screen
   window._circleInviteMembers = {};
   window._invitePickerBackTo = null;   // opened from the home screen / Account page, not Room Info — nothing to go "back" to
@@ -18714,6 +18817,8 @@ window._sendRoomInvite = function(uid) {
   // room invites did not.
   var rec = { room: label, key: groupName, from: userId, fromName: userName, ts: Date.now() };
   if (pin) rec.pin = pin;
+  if (window._inviteKeys[groupName]) rec.ik = window._inviteKeys[groupName];
+  _grantInvitee(groupName, uid);
   // The toast used to fire unconditionally AFTER this try/catch — meaning a swallowed exception
   // (network blip, permission hiccup) still showed "Invited ___" even though nothing was ever
   // written, so a real failure looked identical to success. Toast only follows an actual write now.
@@ -18801,6 +18906,8 @@ window._sendCircleInvite = function(uid) {
   var ms = (window._mySessions || {})[uid];
   var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
+  if (window._inviteKeys[t.key]) rec.ik = window._inviteKeys[t.key];
+  _grantInvitee(t.key, uid);
   try {
     var r = fb.push(fb.ref(fb.db, 'gl/_invites/' + uid)); fb.set(r, rec);
     // Pending-invite record on the target Crew (see _sendRoomInvite's note).
@@ -19059,6 +19166,7 @@ window._acceptInvite = function(key) {
   try { if (f && src) f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
   window._inviteRoom = inv.room;
   window._invitePin = inv.pin || null;
+  if (inv.ik && inv.key) window._pendingIk = { room: inv.key, ik: inv.ik };
   showInviteJoin(inv.room, inv.pin || null);
 };
 window._acceptCircleInvite = function(key) {
@@ -19071,6 +19179,7 @@ window._acceptCircleInvite = function(key) {
   if (!uid) return;
   var src = inv._src || uid;
   try { f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
+  try { if (inv.ik) window._grantSelfWithKey(inv.key, inv.ik); } catch (e) {}
   try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: inv.from || null }); } catch (e) {}
   var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
   try { _registerFavSub(inv.key, inv.room || inv.key, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
@@ -23774,6 +23883,11 @@ function _inviteUrl(includePin, plainPin, roomKey) {
   // for a Crew that ISN'T the room currently open — groupName would build a link to the wrong one.
   var u = INVITE_BASE + 'j/' + encodeURIComponent(roomKey || groupName);
   if (includePin && plainPin) { try { u += '?k=' + encodeURIComponent(btoa(plainPin)); } catch (e) {} }
+  // The room's invite key (fetched when the room or its invite picker opened). Without it the
+  // link still opens the room today; once reading a room needs an access-list entry, it is
+  // what lets the person you sent it to in without waiting for an approval.
+  var ik = window._inviteKeys && window._inviteKeys[roomKey || groupName];
+  if (ik) u += (u.indexOf('?') === -1 ? '?' : '&') + 'ik=' + encodeURIComponent(ik);
   return u;
 }
 
@@ -23936,17 +24050,29 @@ function checkGroupPasscode(name, group, uid, invitePin) {
     // anything that isn't an outright permission denial (offline, a dropped socket):
     // the rules are the real gate, and a flaky connection shouldn't tell someone
     // they've been shut out of their own family's room.
-    var _accessProbe;
-    try { _accessProbe = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) { _accessProbe = null; }
-    if (!_accessProbe || !_accessProbe.then) { _checkBanned(); return; }
-    _accessProbe.then(function () { _checkBanned(); }).catch(function (err) {
-      var denied = false;
-      try {
-        var code = (err && (err.code || err.message) || '').toString().toUpperCase();
-        denied = code.indexOf('PERMISSION_DENIED') !== -1 || code.indexOf('PERMISSION DENIED') !== -1;
-      } catch (e) {}
-      if (denied) { window._showAccessRequestScreen(groupKey, group); return; }
-      _checkBanned();
+    // Arrived with an invite key (a link's &ik=, or an in-app invite)? Put this sign-in on
+    // the room's access list first, so the probe below — and every read after it — succeeds.
+    var _pik = window._pendingIk;
+    if (!_pik) { try { _pik = JSON.parse(localStorage.getItem('gl_pending_ik') || 'null'); } catch (e) { _pik = null; } }
+    var _grant = null;
+    if (_pik && _pik.room === groupKey && _pik.ik) {
+      window._pendingIk = null;
+      try { localStorage.removeItem('gl_pending_ik'); } catch (e) {}
+      try { _grant = window._grantSelfWithKey(groupKey, _pik.ik); } catch (e) { _grant = null; }
+    }
+    Promise.resolve(_grant).catch(function () {}).then(function () {
+      var _accessProbe;
+      try { _accessProbe = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) { _accessProbe = null; }
+      if (!_accessProbe || !_accessProbe.then) { _checkBanned(); return; }
+      _accessProbe.then(function () { _checkBanned(); }).catch(function (err) {
+        var denied = false;
+        try {
+          var code = (err && (err.code || err.message) || '').toString().toUpperCase();
+          denied = code.indexOf('PERMISSION_DENIED') !== -1 || code.indexOf('PERMISSION DENIED') !== -1;
+        } catch (e) {}
+        if (denied) { window._showAccessRequestScreen(groupKey, group); return; }
+        _checkBanned();
+      });
     });
     return;
 
