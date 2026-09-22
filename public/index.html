@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 791;
+var APP_BUILD = 792;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14367,7 +14367,26 @@ function _bgOpenAppSettings(n) {
 // permission no third-party app can ever hold. The generic App Info flow below (with its own
 // numbered on-screen steps) is the only way in for a regular app.
 window._bgOpenLocationSettings = function() { _bgOpenAppSettings(1); };
-window._bgOpenBatterySettings  = function() { _bgOpenAppSettings(2); };
+// Android shell 1.4.3+ can show the system's own one-tap "always run in the background?"
+// dialog, which is exactly Battery -> Unrestricted without the trip through Settings.
+function _canAskBattery() {
+  try { var P = window.GLPermissions; return !!(P && typeof P.requestUnrestrictedBattery === 'function'); } catch (e) { return false; }
+}
+// true / false from the phone itself, or null when it can't say (iOS, web, older shell).
+function _batteryUnrestricted() {
+  try {
+    var P = window.GLPermissions;
+    if (!P || typeof P.settingsJson !== 'function') return null;
+    var o = JSON.parse(P.settingsJson() || '{}');
+    return (typeof o.unrestricted === 'boolean') ? o.unrestricted : null;
+  } catch (e) { return null; }
+}
+window._bgOpenBatterySettings = function() {
+  try {
+    if (_canAskBattery() && window.GLPermissions.requestUnrestrictedBattery()) { _bgMarkStep(2, true); return; }
+  } catch (e) {}
+  _bgOpenAppSettings(2);
+};
 // This card used to show the SAME Android-only copy ("Tap Permissions → Location",
 // "Battery → Unrestricted", "Samsung phones...") to every native user regardless of platform —
 // none of those menus exist on iOS, so an iPhone user following it would land on Settings →
@@ -14398,7 +14417,10 @@ function _bgSetupCopyForPlatform() {
       '&#8201;3.&nbsp; Choose <b style="color:var(--accent)">Allow all the time</b> <span style="color:var(--muted)">— not "While using the app"</span>';
     if (b1) b1.textContent = 'Open Settings for Location';
     if (t2) t2.textContent = 'Battery → Unrestricted';
-    if (i2) i2.innerHTML = 'On the settings page that opens:<br>' +
+    try { var b2 = document.getElementById('bg-step2-btn'); if (b2 && _canAskBattery() && localStorage.getItem('gl_bg_step2') !== '1') b2.textContent = 'Let GroundLink run in the background'; } catch (e) {}
+    if (i2 && _canAskBattery()) i2.innerHTML = 'Tap the button, then choose <b style="color:var(--accent)">Allow</b> when your phone asks whether GroundLink may always run in the background.<br>' +
+      '<span style="color:var(--muted)"><b>Samsung phones:</b> also turn off <b>Pause app activity if unused</b> in the app’s settings for GroundLink.</span>';
+    else if (i2) i2.innerHTML = 'On the settings page that opens:<br>' +
       '&#8201;1.&nbsp; Tap <b style="color:var(--accent)">Battery</b><br>' +
       '&#8201;2.&nbsp; Choose <b style="color:var(--accent)">Unrestricted</b> <span style="color:var(--muted)">(or "Don\'t optimize")</span><br>' +
       '&#8201;3.&nbsp; <b>Samsung phones:</b> also turn off <b style="color:var(--accent)">Pause app activity if unused</b>';
@@ -14418,7 +14440,9 @@ var BG_SETUP_SNOOZE_MS = 24 * 60 * 60 * 1000;
 window._openBgSetup = function(force) {
   // Never nag when the permission is actually in place — cheap guard against a stale or
   // mistimed NOT_AUTHORIZED (CoreLocation reports one for a few seconds after a cold launch).
-  try { if (!force && typeof _hasBackgroundLocation === 'function' && _hasBackgroundLocation()) return; } catch (e) {}
+  // On Android, "Allow all the time" is only half of it: a battery-restricted app still gets
+  // frozen once the phone sits idle. Keep the card for that case too.
+  try { if (!force && typeof _hasBackgroundLocation === 'function' && _hasBackgroundLocation() && _batteryUnrestricted() !== false) return; } catch (e) {}
   if (!force) {
     try {
       var sn = parseInt(localStorage.getItem('gl_bg_setup_ts'), 10) || 0;

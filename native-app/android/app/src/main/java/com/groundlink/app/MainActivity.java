@@ -371,6 +371,26 @@ public class MainActivity extends BridgeActivity {
                     for (int i = 0; i < p.size(); i++) { if (i > 0) sb.append(","); sb.append(p.get(i)); }
                     return sb.append("}").toString();
                 }
+                // Android's own one-tap dialog: "Let GroundLink always run in the background?"
+                // Allow = "Unrestricted" battery, without walking anyone through Settings.
+                // That exemption is also what lets the background tracker start itself after
+                // the app closes. Returns false if the dialog could not be shown, so the web
+                // side can fall back to the App Info page.
+                @JavascriptInterface
+                public boolean requestUnrestrictedBattery() {
+                    try {
+                        if (Build.VERSION.SDK_INT < 23) return false;
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) return true;
+                        Intent i = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        i.setData(android.net.Uri.parse("package:" + getPackageName()));
+                        runOnUiThread(() -> { try { startActivity(i); } catch (Exception e) { Log.w(TAG, "battery dialog failed", e); } });
+                        return true;
+                    } catch (Exception e) { return false; }
+                }
+                // Version of this native shell, so the web app can offer features it adds.
+                @JavascriptInterface
+                public int nativeVersion() { return 22; }
                 // NOTE: a direct deep-link straight to the Location permission's own picker
                 // (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed — confirmed
                 // on-device 2026-07-20 that launching it throws SecurityException requiring
@@ -407,6 +427,39 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Exception e) {}
         hideNavBar();
+    }
+
+    // Leaving with the Back button finishes this Activity but leaves the task in Recents, so
+    // onTaskRemoved never fires — and the background-geolocation plugin stops the moment the
+    // Activity is destroyed. Tracking simply ended until the app was reopened. Hand over to the
+    // background tracker while we are still in front (onPause of a finishing Activity), when
+    // Android still allows starting a location foreground service.
+    @Override
+    public void onPause() {
+        super.onPause();
+        if (isFinishing() && !isChangingConfigurations()) {
+            try { HeadlessTrackerService.startActive(this); } catch (Exception e) { Log.w(TAG, "handover on finish failed", e); }
+        }
+    }
+
+    // The system destroying the Activity to reclaim memory (not a rotation, not Back) has the
+    // same effect on the plugin. Try the same handover; with "Unrestricted" battery Android
+    // allows it from the background, and if it refuses, the server's keep-alive push is the
+    // next chance (GLMessagingService).
+    @Override
+    public void onDestroy() {
+        if (!isFinishing() && !isChangingConfigurations()) {
+            try { HeadlessTrackerService.startActive(this); } catch (Exception e) { Log.w(TAG, "handover on destroy failed", e); }
+        }
+        super.onDestroy();
+    }
+
+    // Back in front: the in-app path is tracking again, so the background tracker steps down.
+    // onCreate already did this for a fresh start; a resumed Activity never gets onCreate.
+    @Override
+    public void onResume() {
+        super.onResume();
+        try { HeadlessTrackerService.startStandby(this); } catch (Exception e) {}
     }
 
     @Override

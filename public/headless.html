@@ -351,6 +351,41 @@
     return false;
   }
 
+  // ── Low power while parked ──────────────────────────────────────────
+  // Full GPS all day is what makes people restrict an app's battery, and a restricted app is
+  // one that stops reporting — so a phone that has sat still for 5 minutes drops to low-power
+  // location (cell/Wi-Fi), which the OS serves at a fraction of the cost. Those rougher fixes
+  // are never written: they only watch for the phone moving off the spot, and the first sign
+  // of that switches straight back to full GPS. While parked, the 3-minute heartbeat keeps
+  // re-reporting the last good GPS fix, so the dot stays exactly where it was and stays fresh.
+  var STILL_AFTER_MS = 5 * 60 * 1000;
+  var STILL_RADIUS_M = 50;       // ~165 ft: GPS wander at rest stays inside this
+  var _watchId = null, _hiAcc = true, _anchor = null, _stillSince = 0;
+  function startWatch(hi) {
+    try { if (_watchId != null) navigator.geolocation.clearWatch(_watchId); } catch (e) {}
+    _hiAcc = hi;
+    _watchId = navigator.geolocation.watchPosition(onWatchFix, function (err) { log('geo error ' + err.code); },
+      hi ? { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
+         : { enableHighAccuracy: false, maximumAge: 60000, timeout: 60000 });
+    log(hi ? 'GPS: full accuracy' : 'GPS: low power (parked)');
+  }
+  function onWatchFix(pos) {
+    var c = pos && pos.coords; if (!c) return;
+    var now = Date.now();
+    if (!_hiAcc) {
+      // A rough fix only matters if it is clearly somewhere else: beyond its own error AND
+      // beyond ~500 ft, so cell-tower jitter can't wake the GPS every few minutes.
+      var d = _anchor ? metersApart(_anchor.lat, _anchor.lng, c.latitude, c.longitude) : Infinity;
+      if (d > Math.max(150, (c.accuracy || 0) * 1.5)) { _anchor = null; startWatch(true); }
+      return;
+    }
+    onFix(pos);
+    if (!_anchor || metersApart(_anchor.lat, _anchor.lng, c.latitude, c.longitude) > STILL_RADIUS_M) {
+      _anchor = { lat: c.latitude, lng: c.longitude }; _stillSince = now; return;
+    }
+    if (now - _stillSince > STILL_AFTER_MS && (c.accuracy || 999) <= 100) startWatch(false);
+  }
+
   var started = false;
   function start() {
     if (started) return;
@@ -378,8 +413,7 @@
     if (window._nativeDriven) { log('native-driven (iOS) — skipping own watchPosition'); return; }
     if (!navigator.geolocation) { log('no geolocation API'); return; }
     started = true;
-    navigator.geolocation.watchPosition(onFix, function (err) { log('geo error ' + err.code); },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    startWatch(true);
     log('watch started for uid ' + getUid());
     // Re-check periodically in case everything gets unfavorited/expires while this instance is
     // running long-term — the initial check above only covers the moment it started.

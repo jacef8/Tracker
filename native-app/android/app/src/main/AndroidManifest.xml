@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -80,6 +81,21 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- Push messages. Replaces the messaging plugin's own service (removed just below) with
+             a subclass that still forwards everything to the plugin, but also starts
+             HeadlessTrackerService when the server's keep-alive "bump" arrives with the app
+             closed. See GLMessagingService.java. -->
+        <service
+            android:name=".GLMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService"
+            tools:node="remove" />
+
         <!-- Auto-starts HeadlessTrackerService right after boot, with no user action needed —
              see BootReceiver.java. -->
         <receiver
@@ -113,6 +129,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Keep the CPU awake for location while the screen is off -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets the app show Android's one-tap "let GroundLink always run in the background?"
+         dialog instead of walking people through Settings -> Battery -> Unrestricted. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Vibrate for join / chat / pin / SOS alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
