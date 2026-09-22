@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 788;
+var APP_BUILD = 789;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8602,6 +8602,21 @@ window._collectSettings = function () {
 //
 // Returns the fan-out target list, not just the current room: the whole point is that writes
 // keep flowing to Favorites/Crews when no room is even open.
+// iPhone builds before 1.0.4 sign their background writes in as a throwaway anonymous account,
+// which the database rules reject — every background fix from them is lost. But they only take
+// that path when this config lists rooms; with none, they hand each fix to the hidden headless
+// page instead, which IS signed in as this person. So until 1.0.4 is on the phone, give old
+// iPhones an empty room list and let the path that works carry their location.
+function _iosWriterIsFixed() {
+  try {
+    var plat = (window.Capacitor && typeof window.Capacitor.getPlatform === 'function') ? window.Capacitor.getPlatform() : 'web';
+    if (plat !== 'ios') return true;                       // only iPhones had the broken writer
+    var v = (window._nativeAppInfo && window._nativeAppInfo.version) || '';
+    var a = String(v).split('.').map(function (n) { return parseInt(n, 10) || 0; });
+    if (!v) return false;                                  // unknown yet: take the safe path
+    return (a[0] > 1) || (a[0] === 1 && (a[1] > 0 || (a[1] === 0 && (a[2] || 0) >= 4)));
+  } catch (e) { return false; }
+}
 window.__nativeWriteConfig = function () {
   try {
     var rooms = {};
@@ -8621,7 +8636,7 @@ window.__nativeWriteConfig = function () {
       dev: (typeof _deviceLabel === 'function') ? _deviceLabel() : 'phone',
       priv: (typeof _devicePrivate === 'function' && _devicePrivate()) ? 1 : 0,
       spdH: (typeof _shareSpeed === 'function' && !_shareSpeed()) ? 1 : 0,
-      rooms: Object.keys(rooms),
+      rooms: _iosWriterIsFixed() ? Object.keys(rooms) : [],
       // For the native iOS background reporter's trail writes (glh/<crew>/<uid>/<date>): which
       // rooms are Crews (history is crew-only) and whether this person keeps their trail on.
       circles: (function () { try { return Object.keys(_getCircles() || {}); } catch (e) { return []; } })(),
