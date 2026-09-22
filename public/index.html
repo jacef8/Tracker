@@ -3570,7 +3570,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 789;
+var APP_BUILD = 790;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5619,7 +5619,7 @@ function _flyToDevice() {
 window._wakeDevice = function (id, type) {
   try {
     var token = ((window._devicesAll[id] || {}).fcmToken) || '';
-    fetch('/wake-device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: id, token: token, type: type || 'voice' }) }).catch(function () {});
+    window._glFetch('/wake-device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: id, token: token, type: type || 'voice' }) }).catch(function () {});
   } catch (e) {}
 };
 // Keep an on-demand watch ALIVE while you're actively looking at it: ping every ~15s so its
@@ -8875,6 +8875,24 @@ function _parsePinParam(v) {
   } catch (e) {}
   return null;
 }
+// Calls to the server's push endpoints carry this session's sign-in. The server now refuses
+// anyone who is not signed in, and only lets you reach people you share a room with.
+window._glFetch = function (url, opts) {
+  opts = opts || {};
+  var go = function (tok) {
+    var h = {}; var src = opts.headers || {};
+    for (var k in src) h[k] = src[k];
+    if (tok) h['Authorization'] = 'Bearer ' + tok;
+    var o = {}; for (var k2 in opts) o[k2] = opts[k2];
+    o.headers = h;
+    return fetch(url, o);
+  };
+  try {
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    if (u && u.getIdToken) return u.getIdToken().then(go, function () { return go(''); });
+  } catch (e) {}
+  return go('');
+};
 function pushNotify(type, title, body, opts, roomKey) {
   try {
     var grp = roomKey || groupName;
@@ -8882,7 +8900,7 @@ function pushNotify(type, title, body, opts, roomKey) {
     opts = opts || {};
     try { if (!window._pushEndpoint) window._pushEndpoint = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
     try { if (!window._fcmToken) window._fcmToken = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
-    fetch('/push', {
+    window._glFetch('/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // senderFcm/senderEndpoint identify THIS physical device so the server can skip it even
@@ -8964,7 +8982,7 @@ window._onVoiceTx = function () {
         var _u = (window._lastGlSnap && window._lastGlSnap[groupName] && window._lastGlSnap[groupName].users) || {};
         var _tg = Object.keys(_u).filter(function (x) { return x !== userId; });
         if (_rm && _tg.length) {
-          fetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          window._glFetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ uids: _tg, room: _rm, fromName: userName || 'Someone' }) }).catch(function () {});
         }
       } catch (e) {}
@@ -18671,7 +18689,7 @@ function _pushInvite(uids, roomLabel, isCrew) {
   try {
     var list = (uids || []).filter(Boolean);
     if (!list.length) return;
-    fetch('/invitePush', {
+    window._glFetch('/invitePush', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uids: list, fromName: userName || 'Someone', room: roomLabel || '', crew: !!isCrew })
@@ -18747,7 +18765,7 @@ window._sendRoomInvite = function(uid) {
 // Nothing visible happens on their phone; if it worked, their dot refreshes in ~15-30s.
 window._bumpMember = function (uid, nm) {
   try {
-    fetch('/bump', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid }) })
+    window._glFetch('/bump', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid }) })
       .then(function (r) { return r.json(); })
       .then(function (j) { toast(j && j.ok ? 'Asked ' + (nm || 'their') + "'s phone for a fresh fix — watch for ~30s" : 'Couldn\u2019t reach their device (no push subscription)', 3200); })
       .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
@@ -18757,7 +18775,7 @@ window._bumpMember = function (uid, nm) {
 // reopen the app. Confirmed first — this pings a real human.
 window._nudgeMember = function (uid, nm) {
   _confirm('Send ' + (nm || 'them') + ' a notification asking them to reopen GroundLink? Use this when their location has been stuck a while.', function () {
-    fetch('/nudge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid, fromName: userName || 'Someone' }) })
+    window._glFetch('/nudge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid, fromName: userName || 'Someone' }) })
       .then(function (r) { return r.json(); })
       .then(function (j) { toast(j && j.ok ? 'Nudge sent' : 'Couldn\u2019t reach their device', 2600); })
       .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
@@ -21886,7 +21904,7 @@ window._freshenCrew = function (room) {
     var now = Date.now();
     if (now - (window._freshenAt[room] || 0) < 60000) return;
     window._freshenAt[room] = now;
-    fetch('/freshen', {
+    window._glFetch('/freshen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ room: room })
     }).catch(function () {});   // best effort: a dot that stays stale is the normal failure
@@ -24859,7 +24877,7 @@ function _pushToUid(uid, title, body, type) {
       var acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (acct && ids.indexOf(acct) === -1) ids.push(acct);
     } catch (e) {}
-    return fetch('/pushTo', {
+    return window._glFetch('/pushTo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uids: ids, title: title, body: body, type: type || 'info' })
     }).then(function (r) { return r.json(); }).catch(function () { return null; });
@@ -24905,7 +24923,7 @@ window._openVoiceTo = async function (uid, name) {
   // banner, but a VoIP push rings the phone as a call and auto-joins THIS 1:1 room on answer
   // (same mechanism the group channel uses). No-op for Android / anyone with no VoIP token.
   try {
-    fetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    window._glFetch('/voip', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uids: [uid], room: roomId, fromName: userName || 'Someone' }) }).catch(function () {});
   } catch (e) {}
   if (window._evt) window._evt('🎙 started voice with ' + name);

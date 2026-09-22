@@ -164,13 +164,29 @@ async function getDeviceToken(device) {
     return (typeof t === 'string' && t) ? t : null;
   } catch (e) { return null; }
 }
-app.post('/wake-device', rateLimit(20, 60000), async function(req, res) {
+app.post('/wake-device', rateLimit(20, 60000), requireUser, async function(req, res) {
   if (!fcmAdmin) return res.json({ ok: false, reason: 'fcm-not-configured' });
   const b = req.body || {};
   const device = String(b.device || '');
   const type = String(b.type || 'voice');
-  let token = String(b.token || '');           // caller may pass it directly; else we look it up
-  if (!token && device) token = (await getDeviceToken(device)) || '';
+  if (!device) return res.json({ ok: false, reason: 'no-device' });
+  // Owner, or someone the device has been shared with.
+  let allowed = false;
+  try {
+    const d = await _dbGet('gl/_devices/' + device + '/owner');
+    if (d && d === req.authUid) allowed = true;
+    if (!allowed) {
+      const mine = await _dbGet('gl/_deviceSharedWithMe/' + req.authUid);
+      if (mine && (mine[device] || Object.values(mine).indexOf(device) !== -1)) allowed = true;
+    }
+    if (!allowed) {
+      const own = await _cachedGet('gl/_devOwner', 60000);
+      if (own && d && own[req.authUid] && own[req.authUid].acct === d) allowed = true;
+    }
+  } catch (e) {}
+  if (!allowed) return res.status(403).json({ ok: false, reason: 'not-your-device' });
+  // Always the device's own registered token — a caller-supplied one is ignored.
+  const token = (await getDeviceToken(device)) || '';
   if (!token) return res.json({ ok: false, reason: 'no-token' });
   try {
     await fcmAdmin.messaging().send({
@@ -197,6 +213,74 @@ app.post('/wake-device', rateLimit(20, 60000), async function(req, res) {
 // subscriptions in a room named "error", found none, and reported "no-subscription". Every
 // person-targeted push — Notify, Nudge, the silent Refresh, and invites — failed exactly that
 // way, silently, for everyone. Confirmed 2026-09-07 against a device with a valid live token.
+// ─── Who is calling ───────────────────────────────────────────────────────────────────────
+// A Firebase ID token in "Authorization: Bearer ...", verified with the Admin SDK. Anonymous
+// sessions are real sessions here (they are how a device without a Google account signs in),
+// so membership — not merely being signed in — is what grants reach.
+async function authUidFrom(req) {
+  if (!fcmAdmin) return null;
+  const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  try { return (await fcmAdmin.auth().verifyIdToken(m[1])).uid || null; } catch (e) { return null; }
+}
+function requireUser(req, res, next) {
+  authUidFrom(req).then(function (u) {
+    if (!u) return res.status(401).json({ ok: false, reason: 'sign-in-required' });
+    req.authUid = u;
+    next();
+  }).catch(function () { res.status(401).json({ ok: false, reason: 'sign-in-required' }); });
+}
+
+// Short-lived cache of the few nodes these checks read, so a burst of pushes costs one read.
+const _accCache = new Map();
+async function _cachedGet(path, ttl) {
+  const hit = _accCache.get(path);
+  if (hit && Date.now() - hit.at < (ttl || 30000)) return hit.v;
+  const v = await _dbGet(path);
+  _accCache.set(path, { v: v, at: Date.now() });
+  return v;
+}
+// Is `a` (an auth uid) a member of `room`? Every id form counts: the access list, the roster, the
+// owner/admins, a presence row under that id, or a device row whose owning account is `a`.
+async function roomAccess(room, a) {
+  if (!room || !a || room.charAt(0) === '_') return false;
+  try {
+    const acl = await _cachedGet('gl/' + room + '/acl');
+    if (acl && acl[a]) return true;
+    const members = await _cachedGet('gl/' + room + '/members');
+    if (members && members[a]) return true;
+    const cfg = await _cachedGet('gl/' + room + '/config');
+    if (cfg && (cfg.owner === a || (cfg.admins && cfg.admins[a]))) return true;
+    const users = await _cachedGet('gl/' + room + '/users');
+    if (users && users[a]) return true;
+    const own = await _cachedGet('gl/_devOwner', 60000);
+    for (const u of Object.keys(users || {})) if (own && own[u] && own[u].acct === a) return true;
+  } catch (e) {}
+  return false;
+}
+// Is `target` (any id form) present in `room`?
+async function inRoom(room, target) {
+  try {
+    const own = await _cachedGet('gl/_devOwner', 60000);
+    const acct = own && own[target] && own[target].acct;
+    for (const br of ['users', 'members', 'acl']) {
+      const v = await _cachedGet('gl/' + room + '/' + br);
+      if (v && (v[target] || (acct && v[acct]))) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+// Does caller `a` share at least one room with `target`?
+async function sharesRoom(a, target) {
+  if (!a || !target) return false;
+  let rooms = [];
+  try { rooms = await _roomNames(); } catch (e) { return false; }
+  for (const room of rooms) {
+    if (await roomAccess(room, a) && await inRoom(room, target)) return true;
+  }
+  return false;
+}
+
 async function _roomNames() {
   let url = DB_URL + '/gl.json?shallow=true';
   if (fcmAdmin) {
@@ -254,8 +338,10 @@ async function sendBump(uid) {
   } catch (e) { return { ok: false, reason: e.message }; }
 }
 
-app.post('/bump', rateLimit(30, 60000), async function(req, res) {
-  res.json(await sendBump(String((req.body || {}).uid || '')));
+app.post('/bump', rateLimit(30, 60000), requireUser, async function(req, res) {
+  const uid = String((req.body || {}).uid || '');
+  if (!(await sharesRoom(req.authUid, uid))) return res.status(403).json({ ok: false, reason: 'not-in-your-rooms' });
+  res.json(await sendBump(uid));
 });
 
 // ─── KEEP-ALIVE SWEEP ────────────────────────────────────────────────────────────
@@ -287,6 +373,10 @@ async function keepAliveSweep() {
   try { rooms = await _roomNames(); } catch (e) { console.error('keep-alive: no room list —', e.message); return; }
   const now = Date.now();
   const targets = new Map();   // uid -> name, deduped across crews
+  // Uptime: one sample per person per sweep, "current" meaning a position under 15 minutes old.
+  // Until this existed there was no honest answer to "is anyone actually on the map": the only
+  // time series was trail history, which records movement and so misses everyone sitting still.
+  const seen = new Map();      // uid -> { name, fresh }
 
   for (const room of rooms) {
     let cfg = null, users = null;
@@ -299,6 +389,8 @@ async function keepAliveSweep() {
       if (!u || !u.name) continue;
       if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
       const age = now - (u.fixTs || u.ts || 0);
+      const was = seen.get(uid);
+      if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000 });
       if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
       const cooldown = age > WAKE_SLOW_AFTER_MS ? WAKE_SLOW_COOLDOWN_MS : WAKE_COOLDOWN_MS;
       if (now - (wakeLastSent.get(uid) || 0) < cooldown) continue;
@@ -315,6 +407,20 @@ async function keepAliveSweep() {
 
   // Don't let the cooldown map grow forever.
   for (const [uid, t] of wakeLastSent) if (now - t > WAKE_GIVE_UP_MS) wakeLastSent.delete(uid);
+
+  // Record the uptime samples: gl/_uptime/<day>/<uid> = { name, samples, fresh }.
+  try {
+    const day = new Date(now).toISOString().slice(0, 10);
+    for (const [uid, v] of seen) {
+      await adminDb.ref('gl/_uptime/' + day + '/' + uid).transaction(function (cur) {
+        cur = cur || { name: v.name, samples: 0, fresh: 0 };
+        cur.name = v.name;
+        cur.samples = (cur.samples || 0) + 1;
+        if (v.fresh) cur.fresh = (cur.fresh || 0) + 1;
+        return cur;
+      });
+    }
+  } catch (e) { console.error('uptime sample:', e.message); }
 }
 setInterval(function () { keepAliveSweep().catch(function (e) { console.error('keep-alive:', e.message); }); },
             WAKE_SWEEP_MS).unref();
@@ -323,9 +429,10 @@ setTimeout(function () { keepAliveSweep().catch(function () {}); }, 30000).unref
 
 // Freshen a whole Crew at once — what the app calls when you open a map and start looking at
 // people. Life360's dots update "right when you look" because something exactly like this runs.
-app.post('/freshen', rateLimit(20, 60000), async function(req, res) {
+app.post('/freshen', rateLimit(20, 60000), requireUser, async function(req, res) {
   const room = String((req.body || {}).room || '');
   if (!room || room.charAt(0) === '_') return res.json({ ok: false, reason: 'no-room' });
+  if (!(await roomAccess(room, req.authUid))) return res.status(403).json({ ok: false, reason: 'not-a-member' });
   let users = null;
   try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { return res.json({ ok: false, reason: 'unreadable' }); }
   const now = Date.now();
@@ -346,8 +453,9 @@ app.post('/freshen', rateLimit(20, 60000), async function(req, res) {
 // Loud fallback: a VISIBLE notification asking the person to reopen the app — for the one
 // state no push can silently recover, a user force-quit. Sent deliberately by a member from
 // a stale dot's card, never automatically.
-app.post('/nudge', rateLimit(10, 60000), async function(req, res) {
+app.post('/nudge', rateLimit(10, 60000), requireUser, async function(req, res) {
   const uid = String((req.body || {}).uid || '');
+  if (!(await sharesRoom(req.authUid, uid))) return res.status(403).json({ ok: false, reason: 'not-in-your-rooms' });
   const fromName = String((req.body || {}).fromName || 'Someone');
   if (!uid) return res.json({ ok: false, reason: 'no-uid' });
   const rec = await findSubsForUid(uid);
@@ -382,8 +490,10 @@ app.post('/nudge', rateLimit(10, 60000), async function(req, res) {
 //
 // Best-effort by design: the invite itself is already committed to the DB before this is
 // called, so a push failure costs a notification, not the invite.
-app.post('/invitePush', rateLimit(20, 60000), async function(req, res) {
+app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, res) {
   const b = req.body || {};
+  { const _r = String(b.room || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+    if (_r && !(await roomAccess(_r, req.authUid))) return res.status(403).json({ ok: false, reason: 'not-a-member' }); }
   const fromName = String(b.fromName || 'Someone').slice(0, 60);
   const room = String(b.room || '').slice(0, 60);
   const crew = !!b.crew;
@@ -436,9 +546,14 @@ app.post('/invitePush', rateLimit(20, 60000), async function(req, res) {
 // Their dot stays live from the native background service either way, so a closed app looked
 // identical to an ignored call: the caller sat on "waiting for others…" forever with no way to
 // reach them. Reported 2026-08-05.
-app.post('/pushTo', rateLimit(30, 60000), async function(req, res) {
+app.post('/pushTo', rateLimit(30, 60000), requireUser, async function(req, res) {
   const b = req.body || {};
-  const uids = Array.isArray(b.uids) ? b.uids.slice(0, 8).map(u => String(u || '')).filter(Boolean) : [];
+  let uids = Array.isArray(b.uids) ? b.uids.slice(0, 8).map(u => String(u || '')).filter(Boolean) : [];
+  // Only people the caller actually shares a room with.
+  const _ok = [];
+  for (const u of uids) if (await sharesRoom(req.authUid, u)) _ok.push(u);
+  if (uids.length && !_ok.length) return res.status(403).json({ ok: false, reason: 'not-in-your-rooms' });
+  uids = _ok;
   const title = String(b.title || 'GroundLink').slice(0, 80);
   const body = String(b.body || '').slice(0, 200);
   const type = String(b.type || 'info');
@@ -482,10 +597,12 @@ app.post('/pushTo', rateLimit(30, 60000), async function(req, res) {
 // play. The client passes the target uids + the channel room; we look up each one's registered
 // VoIP token (gl/_voipSubs/<uid>) and send a direct APNs VoIP push. Uids with no token (Android,
 // or an iPhone that never registered) are simply skipped.
-app.post('/voip', rateLimit(60, 60000), async function (req, res) {
+app.post('/voip', rateLimit(60, 60000), requireUser, async function (req, res) {
   if (!apnsVoipReady) return res.json({ ok: false, reason: 'voip-not-configured' });
   const b = req.body || {};
-  const uids = Array.isArray(b.uids) ? b.uids.slice(0, 20).map(u => String(u || '')).filter(Boolean) : [];
+  const _all = Array.isArray(b.uids) ? b.uids.slice(0, 20).map(u => String(u || '')).filter(Boolean) : [];
+  const uids = [];
+  for (const u of _all) if (await sharesRoom(req.authUid, u)) uids.push(u);
   const room = String(b.room || '').slice(0, 200);
   const fromName = String(b.fromName || 'GroundLink').slice(0, 60);
   if (!uids.length || !room) return res.json({ ok: false, reason: 'no-target' });
@@ -524,10 +641,11 @@ app.post('/voip', rateLimit(60, 60000), async function (req, res) {
 
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
-app.post('/push', rateLimit(30, 60000), async function(req, res) {
+app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
   if (!pushReady && !fcmAdmin) return res.json({ ok: false, reason: 'push-not-configured' });
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
+  if (!(await roomAccess(String(group || ''), req.authUid))) return res.status(403).json({ ok: false, reason: 'not-a-member' });
   const senderFcm = b.senderFcm || '', senderEndpoint = b.senderEndpoint || '';
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
   // DB root namespace — sanitized + defaulted to production ('gl').

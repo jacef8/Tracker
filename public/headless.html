@@ -32,6 +32,21 @@
   const db = getDatabase(app);
   const auth = getAuth(app);
 
+  // Same as the app's _glFetch: the server's push endpoints need to know who is calling.
+  function authFetch(url, opts) {
+    opts = opts || {};
+    var go = function (tok) {
+      var h = {}; var src = opts.headers || {};
+      for (var k in src) h[k] = src[k];
+      if (tok) h['Authorization'] = 'Bearer ' + tok;
+      var o = {}; for (var k2 in opts) o[k2] = opts[k2];
+      o.headers = h;
+      return fetch(url, o);
+    };
+    try { var u = auth.currentUser; if (u && u.getIdToken) return u.getIdToken().then(go, function () { return go(''); }); } catch (e) {}
+    return go('');
+  }
+
   function log(msg) { try { console.log('[GL-headless] ' + msg); } catch (e) {} }
 
   function getUid() { try { return localStorage.getItem('gl_uid') || ''; } catch (e) { return ''; } }
@@ -145,7 +160,7 @@
         } else if (window._batt.pct <= 15 && !blSent) {
           localStorage.setItem('gl_lowbatt_sent', '1');
           Object.keys(getCircles()).forEach(function (ck) {
-            fetch('/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            authFetch('/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ns: 'gl', group: ck, type: 'battlow', title: 'Low battery',
                 body: (getName() || 'Someone') + "'s phone is at " + window._batt.pct + '% and not charging',
                 url: '/', toFavs: true, senderId: uid,
@@ -201,7 +216,7 @@
       var _sid = getUid();
       var _fcm = ''; try { _fcm = localStorage.getItem('gl_fcm') || ''; } catch (e) {}
       var _ep  = ''; try { _ep  = localStorage.getItem('gl_push_endpoint') || ''; } catch (e) {}
-      fetch('/push', {
+      authFetch('/push', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ns: 'gl', group: circleKey, type: 'place_' + kind, title: placeName || 'Place alert', body: body, url: '/', toFavs: true,
                                senderId: _sid, senderFcm: _fcm, senderEndpoint: _ep })
