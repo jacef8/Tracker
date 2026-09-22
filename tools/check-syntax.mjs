@@ -44,8 +44,26 @@ try {
   console.error('FAIL  could not compare version.json with APP_BUILD: ' + e.message);
 }
 
+// A second definition of the same global silently replaces the first — whichever loads last
+// wins, and the other one's fixes quietly stop applying. It has happened in this file (two
+// window.__nativeSettings handlers, only one of which ran). Top-level `function X` (column 0)
+// and `window.X = function` anywhere must each be unique.
+{
+  const seen = new Map();
+  const defRe = /^(?:function\s+([A-Za-z_$][\w$]*)\s*\(|\s*window\.([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b)/;
+  html.split('\n').forEach((ln, i) => {
+    const d = ln.match(defRe);
+    if (!d) return;
+    const name = d[1] || ('window.' + d[2]);
+    if (seen.has(name)) {
+      bad++;
+      console.error(`FAIL  ${name} is defined twice: ${file}:${seen.get(name)} and ${file}:${i + 1}`);
+    } else seen.set(name, i + 1);
+  });
+}
+
 if (bad) {
   console.error(`\n${bad} problem(s) — DO NOT DEPLOY.`);
   process.exit(1);
 }
-console.log(`ok — ${n} script blocks parse, version markers agree`);
+console.log(`ok — ${n} script blocks parse, version markers agree, no duplicate globals`);

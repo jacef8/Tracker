@@ -435,6 +435,67 @@ setInterval(function () { keepAliveSweep().catch(function (e) { console.error('k
 // One pass shortly after boot, so a restart doesn't leave everyone stale for five minutes.
 setTimeout(function () { keepAliveSweep().catch(function () {}); }, 30000).unref();
 
+// ─── RETENTION ───────────────────────────────────────────────────────────────────
+// Logs grew forever; nothing trimmed them. Once a day, drop what is past its use:
+const KEEP_ACTIVITY_DAYS = 60;   // gl/_activityLog/<day>   who opened the app
+const KEEP_UPTIME_DAYS   = 90;   // gl/_uptime/<day>        keep-alive health samples
+const KEEP_SESSION_DAYS  = 60;   // gl/_sessions/<sid>      by last activity (l)
+// Trails: the app promises "kept 30 days" (Settings → Keep my trail), but nothing ever deleted
+// glh/<crew>/<uid>/<date>. Report-only until PRUNE_TRAILS is switched on, because deleting
+// location history cannot be undone.
+const KEEP_TRAIL_DAYS = 30;
+const PRUNE_TRAILS = process.env.GL_PRUNE_TRAILS === '1';
+
+async function _shallowKeys(path) {
+  const v = await adminDb.ref(path).once('value');   // small nodes only (day keys, ids)
+  return Object.keys(v.val() || {});
+}
+async function retentionPass() {
+  if (!adminDb) return;
+  const now = Date.now();
+  const dayCut = function (days) { return new Date(now - days * 86400000).toISOString().slice(0, 10); };
+  let removed = 0;
+  // Day-keyed logs: keys are yyyy-mm-dd, so a string compare is a date compare.
+  for (const [path, days] of [['gl/_activityLog', KEEP_ACTIVITY_DAYS], ['gl/_uptime', KEEP_UPTIME_DAYS]]) {
+    const cut = dayCut(days);
+    const snap = await adminDb.ref(path).orderByKey().endAt(cut).once('value');
+    for (const day of Object.keys(snap.val() || {})) {
+      if (day < cut) { await adminDb.ref(path + '/' + day).remove(); removed++; }
+    }
+  }
+  const sessCut = now - KEEP_SESSION_DAYS * 86400000;
+  const sess = (await adminDb.ref('gl/_sessions').once('value')).val() || {};
+  for (const [sid, s] of Object.entries(sess)) {
+    const last = (s && (s.l || s.j)) || 0;
+    if (last && last < sessCut) { await adminDb.ref('gl/_sessions/' + sid).remove(); removed++; }
+  }
+  // Trails — per-day keys under each member; read keys only, via the REST shallow listing,
+  // since the full tree is tens of megabytes.
+  const trailCut = dayCut(KEEP_TRAIL_DAYS);
+  let trailDays = 0;
+  try {
+    const tok = (await fcmAdmin.app().options.credential.getAccessToken()).access_token;
+    const shallow = async function (p) {
+      const r = await fetch(DB_URL + '/' + p + '.json?shallow=true&access_token=' + tok);
+      return Object.keys((await r.json()) || {});
+    };
+    for (const crew of await shallow('glh')) {
+      for (const uid of await shallow('glh/' + crew)) {
+        for (const day of await shallow('glh/' + crew + '/' + uid)) {
+          if (day >= trailCut) continue;
+          trailDays++;
+          if (PRUNE_TRAILS) await adminDb.ref('glh/' + crew + '/' + uid + '/' + day).remove();
+        }
+      }
+    }
+  } catch (e) { console.error('retention: trail scan —', e.message); }
+  console.log('retention: removed ' + removed + ' old log entries; ' + trailDays + ' trail day(s) older than ' +
+              KEEP_TRAIL_DAYS + ' days ' + (PRUNE_TRAILS ? 'deleted' : 'found (report-only; set GL_PRUNE_TRAILS=1 to delete)'));
+}
+setInterval(function () { retentionPass().catch(function (e) { console.error('retention:', e.message); }); },
+            24 * 60 * 60 * 1000).unref();
+setTimeout(function () { retentionPass().catch(function (e) { console.error('retention:', e.message); }); }, 5 * 60 * 1000).unref();
+
 // Freshen a whole Crew at once — what the app calls when you open a map and start looking at
 // people. Life360's dots update "right when you look" because something exactly like this runs.
 app.post('/freshen', rateLimit(20, 60000), requireUser, async function(req, res) {

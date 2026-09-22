@@ -55,6 +55,48 @@
 
   const app = initializeApp(firebaseConfig);
   window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp };
+  // ── Refused writes ────────────────────────────────────────────────────────────────────────
+  // Nearly every write in this file is fire-and-forget inside try/catch, so when the database
+  // rules refuse one, nothing anywhere notices: the feature just quietly stops working. Count
+  // refusals by path shape (ids masked) and ship the tally with the device's diagnostics
+  // beacon (gl/_diag/devices/<uid>/denied), so a rule that is blocking something real shows
+  // up in the admin view instead of as "it doesn't work sometimes". Callers see exactly what
+  // they saw before — the rejection is re-thrown untouched.
+  (function () {
+    const tally = window._deniedWrites = window._deniedWrites || {};
+    let flushTimer = null;
+    const shape = function (path) {
+      return String(path || '').split('/').map(function (seg, i) {
+        if (i === 0 || seg.charAt(0) === '_') return seg;
+        if (i === 1) return '<room>';
+        return (/^[A-Za-z0-9_-]{12,}$/.test(seg) || /^\d+$/.test(seg)) ? '*' : seg;
+      }).join('|').replace(/[.#$\[\]]/g, '_');
+    };
+    const flush = function () {
+      flushTimer = null;
+      try {
+        const uid = localStorage.getItem('gl_uid');
+        if (uid) update(ref(window._fb.db, 'gl/_diag/devices/' + uid + '/denied'), tally).catch(function () {});
+      } catch (e) {}
+    };
+    const note = function (r, e) {
+      try {
+        if (!/permission/i.test(String((e && (e.code || e.message)) || ''))) return;
+        const path = decodeURIComponent(String(r).replace(/^https?:\/\/[^/]+\//, ''));
+        const k = shape(path).slice(0, 120);
+        const t = tally[k] || (tally[k] = { n: 0, last: 0 });
+        t.n++; t.last = Date.now();
+        console.warn('[GL] write refused by rules:', path);
+        if (!flushTimer) flushTimer = setTimeout(flush, 120000);
+      } catch (x) {}
+    };
+    ['set', 'update', 'remove'].forEach(function (fn) {
+      const raw = window._fb[fn];
+      window._fb[fn] = function (r) {
+        return raw.apply(null, arguments).catch(function (e) { note(r, e); throw e; });
+      };
+    });
+  })();
   // Firebase Auth (Google sign-in). Stays dormant until the Google provider is
   // enabled in the Firebase console — the rest of the app works without it.
   try {
@@ -1672,6 +1714,9 @@
           <span style="display:flex;align-items:center;gap:7px"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-download"/></svg>Install for best experience</span>
           <button id="install-btn">Add to Home Screen</button>
         </div>
+
+        <!-- Browser users in a Crew: a web page only shares while it is open (see _renderGetAppCard) -->
+        <div id="get-app-card" style="display:none"></div>
 
         <!-- Invite banner (shown when opened from a room invite link) -->
         <div id="invite-banner" style="display:none;background:rgba(240,165,0,.1);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.4">
@@ -3570,7 +3615,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 792;
+var APP_BUILD = 793;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3677,6 +3722,43 @@ window._hideInstallIfInstalled = function() {
   } catch (e) {}
 };
 _hideInstallIfInstalled();
+
+// ── Get the app (browser users in a Crew) ─────────────────────────────
+// A web page — in Safari, Chrome, or added to the Home Screen — can only share location while
+// it is open on screen. Someone in a Crew who uses GroundLink that way drops off everyone's map
+// the moment they switch apps, and nothing told them. Phones only (a laptop isn't what the
+// family is tracking), and a dismissal is honoured for a week.
+var GL_APP_STORE_URL = 'https://apps.apple.com/app/id6790179901';
+window._renderGetAppCard = function () {
+  try {
+    var el = document.getElementById('get-app-card'); if (!el) return;
+    var hide = function () { el.style.display = 'none'; };
+    if (_isNativeApp()) return hide();
+    var ua = navigator.userAgent || '';
+    var ios = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    var android = /android/i.test(ua);
+    if (!ios && !android) return hide();
+    var crews = {}; try { crews = _getCircles() || {}; } catch (e) {}
+    if (!Object.keys(crews).length) return hide();
+    var snooze = 0; try { snooze = parseInt(localStorage.getItem('gl_getapp_snooze') || '0', 10) || 0; } catch (e) {}
+    if (snooze && Date.now() < snooze) return hide();
+    var url = ios ? GL_APP_STORE_URL : '/download';
+    el.style.cssText = 'display:block;background:#3a2a13;border:1px solid var(--accent);border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.45;color:var(--text)';
+    el.innerHTML =
+      '<div style="font-weight:800;color:var(--accent);margin-bottom:4px">Your Crew only sees you while this page is open</div>' +
+      '<div>You’re using GroundLink in a web browser, which can’t share your location in the background. Switch apps or lock your phone and you drop off your family’s map. The app keeps you on it all day.</div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px">' +
+        '<a href="' + url + '" style="flex:1;text-align:center;text-decoration:none;padding:10px;background:var(--accent);border-radius:9px;color:#0d1117;font-size:13px;font-weight:800">' + (ios ? 'Get it on the App Store' : 'Install the Android app') + '</a>' +
+        '<button onclick="window._snoozeGetApp()" style="padding:10px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;cursor:pointer">Not now</button>' +
+      '</div>';
+  } catch (e) {}
+};
+window._snoozeGetApp = function () {
+  try { localStorage.setItem('gl_getapp_snooze', String(Date.now() + 7 * 864e5)); } catch (e) {}
+  window._renderGetAppCard();
+};
+window._renderGetAppCard();
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') window._renderGetAppCard(); });
 
 window.addEventListener('appinstalled', () => {
   document.getElementById('install-banner').classList.remove('show');
@@ -8528,6 +8610,8 @@ setTimeout(function () {
     var App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
     var write = function () {
       try { rec.settings = window._collectSettings(); } catch (e) {}
+      // Keep the refused-write tally (see the _fb wrapper) — this set replaces the whole node.
+      try { if (window._deniedWrites && Object.keys(window._deniedWrites).length) rec.denied = window._deniedWrites; } catch (e) {}
       try { window._fb.set(window._fb.ref(window._fb.db, 'gl/_diag/devices/' + uid), rec); } catch (e) {}
     };
     window._writeDeviceBeacon = write;   // re-run when the OS settings arrive from native
