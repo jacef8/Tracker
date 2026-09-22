@@ -365,6 +365,15 @@ const WAKE_COOLDOWN_MS = 10 * 60 * 1000;      // a recently-quiet phone: poke at
 const WAKE_SLOW_AFTER_MS   = 24 * 60 * 60 * 1000;  // past a day, drop to the slow lane
 const WAKE_SLOW_COOLDOWN_MS = 60 * 60 * 1000;      // ...and try once an hour
 const WAKE_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;   // a week of silence is uninstalled. Stop.
+// iPhones get a background push budget: Apple's guidance is two or three an hour, and a phone
+// that is sent more gets throttled — its pushes are then held back or dropped, including the
+// one that mattered. Every 10 minutes was 6 an hour. iPhones (they report oss.iosVer) are poked
+// at most every 20 minutes; Android has no such budget for high-priority data messages.
+const WAKE_IOS_COOLDOWN_MS = 20 * 60 * 1000;
+function _wakeCooldown(u, age) {
+  if (age > WAKE_SLOW_AFTER_MS) return WAKE_SLOW_COOLDOWN_MS;
+  return (u && u.oss && u.oss.iosVer) ? WAKE_IOS_COOLDOWN_MS : WAKE_COOLDOWN_MS;
+}
 const wakeLastSent = new Map();               // uid -> ts
 
 async function keepAliveSweep() {
@@ -392,8 +401,7 @@ async function keepAliveSweep() {
       const was = seen.get(uid);
       if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000 });
       if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
-      const cooldown = age > WAKE_SLOW_AFTER_MS ? WAKE_SLOW_COOLDOWN_MS : WAKE_COOLDOWN_MS;
-      if (now - (wakeLastSent.get(uid) || 0) < cooldown) continue;
+      if (now - (wakeLastSent.get(uid) || 0) < _wakeCooldown(u, age)) continue;
       targets.set(uid, u.name);
     }
   }
@@ -441,8 +449,9 @@ app.post('/freshen', rateLimit(20, 60000), requireUser, async function(req, res)
     if (!u || !u.name) continue;
     const age = now - (u.fixTs || u.ts || 0);
     if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
-    // You are looking at this map right now, so chase even the long-quiet ones at full speed.
-    if (now - (wakeLastSent.get(uid) || 0) < WAKE_COOLDOWN_MS) continue;
+    // You are looking at this map right now, so chase even the long-quiet ones at full speed —
+    // except an iPhone's push budget still applies (see WAKE_IOS_COOLDOWN_MS).
+    if (now - (wakeLastSent.get(uid) || 0) < ((u.oss && u.oss.iosVer) ? WAKE_IOS_COOLDOWN_MS : WAKE_COOLDOWN_MS)) continue;
     wakeLastSent.set(uid, now);
     const r = await sendBump(uid);
     if (r.ok) poked++;

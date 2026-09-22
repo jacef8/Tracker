@@ -50,6 +50,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
     private var pendingFix: CLLocation?
     private var lastReportedAt: Date?
+    // When this process started receiving locations. CoreLocation keeps `location` from before a
+    // relaunch — possibly hours old and somewhere else entirely. Once updates are running, a
+    // cached fix newer than this is trustworthy even if old (no update = hasn't moved 50 m);
+    // one older than this is a leftover and must not be reported as current.
+    private let sessionStart = Date()
+    private func isLeftover(_ loc: CLLocation) -> Bool { return loc.timestamp < sessionStart }
     private var staleFixTimer: Timer?
 
     // ── Voice audio session bridge (2026-08-15) ────────────────────────────────────────
@@ -131,7 +137,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // active, the main WebView's own path is already keeping this fresh continuously.
             if UIApplication.shared.applicationState == .active { return }
             let sinceLast = self.lastReportedAt.map { Date().timeIntervalSince($0) } ?? .infinity
-            if sinceLast > 170, let loc = self.bgLocationManager?.location {
+            if sinceLast > 170, let loc = self.bgLocationManager?.location, !self.isLeftover(loc) {
                 self.reportFixInBackground(loc)
             }
         }
@@ -172,12 +178,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // Whatever happens next, record the settings: if there is no position to send, this is
         // the only thing the Crew will learn about why.
         writeStatusNatively()
-        if let loc = bgLocationManager?.location {
+        if let loc = bgLocationManager?.location, !isLeftover(loc) {
             reportFixInBackground(loc)
             // Give the headless write a moment before iOS suspends us again.
             DispatchQueue.main.asyncAfter(deadline: .now() + 8) { completionHandler(.newData) }
         } else {
-            completionHandler(.noData)
+            // Relaunched by this push: the cached position predates this launch and could be
+            // hours old and miles away. Ask for a real one — didUpdateLocations reports it — and
+            // stay awake long enough for it to arrive (iOS allows ~30 s here).
+            bgLocationManager?.requestLocation()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                let got = (self?.lastReportedAt.map { Date().timeIntervalSince($0) < 25 }) ?? false
+                completionHandler(got ? .newData : .noData)
+            }
         }
     }
 
@@ -490,7 +503,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             "ts": ts,
             // fixTs marks a position confirmed by a REAL fix — the web layer uses it to tell
             // "app alive" from "position current". This is always a genuine CLLocation.
-            "fixTs": ts,
+            "fixTs": isLeftover(loc) ? Int(loc.timestamp.timeIntervalSince1970 * 1000) : ts,
             "trail": true,
             "priv": (cfg["priv"] as? Int) ?? 0,
             "spdH": (cfg["spdH"] as? Int) ?? 0
