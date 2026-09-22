@@ -169,6 +169,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Whatever happens next, record the settings: if there is no position to send, this is
+        // the only thing the Crew will learn about why.
+        writeStatusNatively()
         if let loc = bgLocationManager?.location {
             reportFixInBackground(loc)
             // Give the headless write a moment before iOS suspends us again.
@@ -290,36 +293,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
-    /// Read-only snapshot of the iOS settings that govern background location.
-    private func settingsJSON() -> String {
-        var parts: [String] = []
-        parts.append("\"lowPower\":\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
-
+    /// Read-only snapshot of the iOS settings that govern background location. Written with every
+    /// background fix (and on its own when there is no fix) so the Crew can see WHY a phone has
+    /// gone quiet: Low Power Mode, "While Using" instead of "Always", Precise Location off,
+    /// Background App Refresh off, or Location Services off.
+    private func settingsDict() -> [String: Any] {
+        var d: [String: Any] = [:]
+        d["lowPower"] = ProcessInfo.processInfo.isLowPowerModeEnabled
         let mgr = CLLocationManager()
         let auth: CLAuthorizationStatus
         if #available(iOS 14.0, *) { auth = mgr.authorizationStatus } else { auth = CLLocationManager.authorizationStatus() }
         // "Always" is the only setting that keeps fixes coming once the app is backgrounded;
         // "While Using" looks identical in the foreground and is the usual culprit.
-        parts.append("\"locAlways\":\(auth == .authorizedAlways)")
-        parts.append("\"locWhenInUse\":\(auth == .authorizedWhenInUse)")
-        parts.append("\"locDenied\":\(auth == .denied || auth == .restricted)")
+        d["locAlways"] = (auth == .authorizedAlways)
+        d["locWhenInUse"] = (auth == .authorizedWhenInUse)
+        d["locDenied"] = (auth == .denied || auth == .restricted)
         if #available(iOS 14.0, *) {
             // Precise Location off gives ~1-3 km fixes — the dot still moves, just uselessly.
-            parts.append("\"precise\":\(mgr.accuracyAuthorization == .fullAccuracy)")
+            d["precise"] = (mgr.accuracyAuthorization == .fullAccuracy)
         }
-        parts.append("\"locServices\":\(CLLocationManager.locationServicesEnabled())")
-
+        d["locServices"] = CLLocationManager.locationServicesEnabled()
         let refresh = UIApplication.shared.backgroundRefreshStatus
-        parts.append("\"bgRefresh\":\(refresh == .available)")
-        parts.append("\"bgRefreshDenied\":\(refresh == .denied)")
-
+        d["bgRefresh"] = (refresh == .available)
+        d["bgRefreshDenied"] = (refresh == .denied)
         let dev = UIDevice.current
         dev.isBatteryMonitoringEnabled = true
-        if dev.batteryLevel >= 0 { parts.append("\"batt\":\(Int(dev.batteryLevel * 100))") }
-        parts.append("\"charging\":\(dev.batteryState == .charging || dev.batteryState == .full)")
-        parts.append("\"iosVer\":\"\(UIDevice.current.systemVersion)\"")
+        if dev.batteryLevel >= 0 { d["batt"] = Int(dev.batteryLevel * 100) }
+        d["charging"] = (dev.batteryState == .charging || dev.batteryState == .full)
+        d["iosVer"] = dev.systemVersion
+        d["at"] = Int(Date().timeIntervalSince1970 * 1000)
+        return d
+    }
 
-        return "{" + parts.joined(separator: ",") + "}"
+    private func settingsJSON() -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: settingsDict()),
+              let json = String(data: data, encoding: .utf8) else { return "{}" }
+        return json
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
@@ -358,6 +367,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         // Best-effort feature — a failed fix here should never crash or otherwise affect the app.
+        // But it is exactly the moment to tell the Crew why there is no position (denied,
+        // services off). Throttled inside.
+        writeStatusNatively()
     }
 
     // Writes one location fix to Firebase via a hidden WebView loading the SAME headless.html
@@ -405,22 +417,57 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // Firebase rules require auth != null — nothing stronger — so an anonymous token is enough.
     // Minted natively and cached; refreshed a few minutes before the hour-long expiry so a fix
     // never fails on a token that went stale mid-flight.
-    private func withAuthToken(apiKey: String, _ done: @escaping (String?) -> Void) {
+    // Sign in as the SAME person the web app is signed in as, using that session's refresh token
+    // (handed over in the write config). This used to call accounts:signUp — a brand-new anonymous
+    // account every time — and the database rules only let a device, or its owner's account, write
+    // that device's row. Every background write came back 401 Permission denied, and nothing
+    // checked, so no iPhone recorded a position with the app closed. With no refresh token we
+    // return nil, which sends the fix through the hidden WebView — signed in properly — instead.
+    private func withAuthToken(apiKey: String, rt: String, _ done: @escaping (String?) -> Void) {
         if let t = cachedAuthToken, cachedAuthExpiry > Date().addingTimeInterval(300) { done(t); return }
-        guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=\(apiKey)") else { done(nil); return }
+        guard !rt.isEmpty,
+              let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(apiKey)") else { done(nil); return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = "{\"returnSecureToken\":true}".data(using: .utf8)
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let enc = rt.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? rt
+        req.httpBody = "grant_type=refresh_token&refresh_token=\(enc)".data(using: .utf8)
         req.timeoutInterval = 15
         URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
             guard let data = data,
                   let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tok = o["idToken"] as? String else { done(nil); return }
+                  let tok = o["id_token"] as? String else { done(nil); return }
+            let life = Double((o["expires_in"] as? String) ?? "") ?? 3600
             self?.cachedAuthToken = tok
-            self?.cachedAuthExpiry = Date().addingTimeInterval(3600)
+            self?.cachedAuthExpiry = Date().addingTimeInterval(life)
             done(tok)
         }.resume()
+    }
+
+    // Why this phone has no position, written on its own when it wakes without a usable fix.
+    // Only the `oss` field, merged (PATCH) — it never claims a position or a fresh timestamp.
+    private var lastStatusAt: Date = .distantPast
+    private func writeStatusNatively() {
+        if Date().timeIntervalSince(lastStatusAt) < 300 { return }
+        guard let cfg = nativeWriteConfig(),
+              let dbUrl = cfg["dbUrl"] as? String,
+              let apiKey = cfg["apiKey"] as? String,
+              let uid = cfg["uid"] as? String,
+              let rooms = cfg["rooms"] as? [String] else { return }
+        lastStatusAt = Date()
+        guard let payload = try? JSONSerialization.data(withJSONObject: ["oss": settingsDict()]) else { return }
+        withAuthToken(apiKey: apiKey, rt: (cfg["rt"] as? String) ?? "") { token in
+            guard let token = token else { return }
+            for room in rooms {
+                guard let u = URL(string: "\(dbUrl)/gl/\(room)/users/\(uid).json?auth=\(token)") else { continue }
+                var r = URLRequest(url: u)
+                r.httpMethod = "PATCH"
+                r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                r.httpBody = payload
+                r.timeoutInterval = 20
+                URLSession.shared.dataTask(with: r).resume()
+            }
+        }
     }
 
     // Returns true if it handled the write, false to fall through to the WebView path.
@@ -449,6 +496,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             "spdH": (cfg["spdH"] as? Int) ?? 0
         ]
         if loc.speed >= 0 { body["spd"] = Int((loc.speed * 2.23694).rounded()) }
+        // The settings ride along, so a viewer can tell "fine" from "about to go quiet".
+        body["oss"] = settingsDict()
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())
@@ -493,13 +542,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             }
         }
 
-        withAuthToken(apiKey: apiKey) { [weak self] token in
+        withAuthToken(apiKey: apiKey, rt: (cfg["rt"] as? String) ?? "") { [weak self] token in
             guard let token = token else {
                 // Couldn't authenticate — let the WebView path try instead of dropping the fix.
                 DispatchQueue.main.async { self?.reportFixViaWebView(loc) }
                 return
             }
             let group = DispatchGroup()
+            // Checked this time. A refused write used to vanish without a trace.
+            var denied = false
+            let deniedLock = NSLock()
             for room in rooms {
                 // PATCH, not PUT: merge into the existing row so fields this native path doesn't
                 // know about (colour, hereSince, conn) survive. A PUT would wipe them.
@@ -510,7 +562,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 r.httpBody = payload
                 r.timeoutInterval = 20
                 group.enter()
-                URLSession.shared.dataTask(with: r) { _, _, _ in group.leave() }.resume()
+                URLSession.shared.dataTask(with: r) { _, resp, _ in
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    if code == 401 || code == 403 { deniedLock.lock(); denied = true; deniedLock.unlock() }
+                    group.leave()
+                }.resume()
             }
             // Trail point: POST (Firebase REST push → auto key) into each Crew's history for today.
             if let hb = histBody, !histDate.isEmpty {
@@ -525,7 +581,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                     URLSession.shared.dataTask(with: hr) { _, _, _ in group.leave() }.resume()
                 }
             }
-            group.notify(queue: .main) { self?.endBackgroundTaskIfNeeded() }
+            group.notify(queue: .main) {
+                if denied {
+                    // The database refused this sign-in. Drop it and let the WebView path, which
+                    // is signed in as the app itself, deliver the fix rather than losing it.
+                    self?.cachedAuthToken = nil
+                    self?.reportFixViaWebView(loc)
+                    return
+                }
+                self?.endBackgroundTaskIfNeeded()
+            }
         }
         return true
     }
