@@ -110,13 +110,25 @@ if (mode === 'submitversion') {
   if (!att.ok) { console.error(`! attach build FAILED (HTTP ${att.status}): ${att.json?.errors?.map(e => e.detail || e.title).join('; ') || att.text.slice(0, 300)}`); process.exit(1); }
   console.log('+ build attached');
 
-  const notes = [
-    '- Much more detailed location trails on iPhone',
-    '- Live walkie-talkie voice for your Crew',
-    '- Notifications on iPhone',
-    '- Trail stop markers showing how long you parked',
-    '- Many fixes and performance improvements',
-  ].join('\n');
+  // Per-version release notes. Falls back to a generic line for a version with none written,
+  // rather than re-sending an older version's list as though it were new.
+  const NOTES = {
+    '1.0.2': [
+      '- Much more detailed location trails on iPhone',
+      '- Live walkie-talkie voice for your Crew',
+      '- Notifications on iPhone',
+      '- Trail stop markers showing how long you parked',
+      '- Many fixes and performance improvements',
+    ],
+    '1.0.4': [
+      '- Your location keeps updating on iPhone even when GroundLink is closed',
+      "- See why someone's location is paused, like Low Power Mode or location settings",
+      '- Get notified when someone in your Crew drops a pin',
+      '- Simpler setup when you create a Crew or Room',
+      '- Many fixes and improvements',
+    ],
+  };
+  const notes = (NOTES[verStr] || ['- Fixes and improvements']).join('\n');
   try {
     const locs = await asc('GET', `/appStoreVersions/${ver.id}/appStoreVersionLocalizations?limit=10`);
     for (const loc of (locs.json?.data || [])) {
