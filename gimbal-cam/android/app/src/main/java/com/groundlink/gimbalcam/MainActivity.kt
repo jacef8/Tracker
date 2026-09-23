@@ -1,0 +1,480 @@
+package com.groundlink.gimbalcam
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.view.Gravity
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.OrientationEventListener
+import android.view.ScaleGestureDetector
+import android.view.Surface
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import androidx.core.content.ContextCompat
+import com.groundlink.gimbalcam.databinding.ActivityMainBinding
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+
+class MainActivity : AppCompatActivity() {
+
+    private enum class RecState { IDLE, STARTING, RECORDING, PAUSED, STOPPING }
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var keyMap: GimbalKeyMap
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: Camera? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var lensFacing = CameraSelector.LENS_FACING_BACK
+
+    private var recording: Recording? = null
+    private var recState = RecState.IDLE
+    private var recordedNanos = 0L
+
+    /** Linear zoom, 0 = widest the lens allows, 1 = maximum zoom. */
+    private var linearZoom = 0f
+    private var zoomDirection = 0
+    private var recordHoldFired = false
+
+    /** Action waiting for its gimbal key in the setup panel, or null when not learning. */
+    private var learning: GimbalAction? = null
+
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            if (result[Manifest.permission.CAMERA] == true) startCamera()
+            else binding.status.text = "CAMERA PERMISSION NEEDED"
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        keyMap = GimbalKeyMap(this)
+
+        binding.recordBtn.setOnClickListener { toggleRecord() }
+        binding.stopBtn.setOnClickListener { stopRecording() }
+        binding.flipBtn.setOnClickListener { flipCamera() }
+        binding.buttonsBtn.setOnClickListener { showSetup(true) }
+        binding.doneBtn.setOnClickListener { showSetup(false) }
+        binding.resetBtn.setOnClickListener {
+            keyMap.reset()
+            learning = null
+            renderSetup()
+        }
+        setUpPinchZoom()
+        orientationListener.enable()
+        renderRecordUi()
+
+        val needed = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            needed += Manifest.permission.WRITE_EXTERNAL_STORAGE
+        }
+        val missing = needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) startCamera() else permissionLauncher.launch(missing.toTypedArray())
+    }
+
+    override fun onDestroy() {
+        orientationListener.disable()
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    // ── Camera ──────────────────────────────────────────────────────────────────────────────
+
+    private fun startCamera() {
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            cameraProvider = future.get()
+            bindCamera()
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun bindCamera() {
+        val provider = cameraProvider ?: return
+        val preview = Preview.Builder().build().also {
+            it.surfaceProvider = binding.preview.surfaceProvider
+        }
+        val recorder = Recorder.Builder()
+            .setQualitySelector(
+                QualitySelector.fromOrderedList(
+                    listOf(Quality.FHD, Quality.UHD, Quality.HD),
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
+                )
+            )
+            .build()
+        val capture = VideoCapture.withOutput(recorder)
+        capture.targetRotation = binding.preview.display?.rotation ?: Surface.ROTATION_0
+        videoCapture = capture
+
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        try {
+            provider.unbindAll()
+            camera = provider.bindToLifecycle(this, selector, preview, capture).also { cam ->
+                cam.cameraInfo.zoomState.observe(this) { state ->
+                    binding.zoomLabel.text = String.format(Locale.US, "%.1f×", state.zoomRatio)
+                }
+            }
+            linearZoom = 0f
+            camera?.cameraControl?.setLinearZoom(0f)
+        } catch (e: Exception) {
+            binding.status.text = "CAMERA ERROR"
+            Toast.makeText(this, "Couldn't open camera: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun flipCamera() {
+        if (recState != RecState.IDLE) return
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+            CameraSelector.LENS_FACING_FRONT
+        } else {
+            CameraSelector.LENS_FACING_BACK
+        }
+        bindCamera()
+    }
+
+    /** Keeps the saved video upright whichever way the phone sits in the gimbal. */
+    private val orientationListener by lazy {
+        object : OrientationEventListener(this) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == ORIENTATION_UNKNOWN) return
+                // The rotation is fixed when a recording starts; changing it mid-file does nothing.
+                if (recState != RecState.IDLE) return
+                videoCapture?.targetRotation = when (degrees) {
+                    in 45 until 135 -> Surface.ROTATION_270
+                    in 135 until 225 -> Surface.ROTATION_180
+                    in 225 until 315 -> Surface.ROTATION_90
+                    else -> Surface.ROTATION_0
+                }
+            }
+        }
+    }
+
+    // ── Recording: one tap starts, next pauses, next resumes; hold or ■ stops and saves ─────
+
+    private fun toggleRecord() {
+        when (recState) {
+            RecState.IDLE -> startRecording()
+            RecState.RECORDING -> recording?.pause()
+            RecState.PAUSED -> recording?.resume()
+            RecState.STARTING, RecState.STOPPING -> Unit
+        }
+    }
+
+    @SuppressLint("MissingPermission") // audio is only enabled after checking the permission
+    private fun startRecording() {
+        val capture = videoCapture ?: return
+        val name = "GimbalCam_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/GimbalCam")
+            }
+        }
+        val output = MediaStoreOutputOptions.Builder(
+            contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        ).setContentValues(values).build()
+
+        var pending = capture.output.prepareRecording(this, output)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            pending = pending.withAudioEnabled()
+        }
+        recState = RecState.STARTING
+        recordedNanos = 0L
+        renderRecordUi()
+        recording = pending.start(ContextCompat.getMainExecutor(this), ::onRecordEvent)
+    }
+
+    private fun stopRecording() {
+        if (recState == RecState.RECORDING || recState == RecState.PAUSED) {
+            recState = RecState.STOPPING
+            renderRecordUi()
+            recording?.stop()
+        }
+    }
+
+    private fun onRecordEvent(event: VideoRecordEvent) {
+        when (event) {
+            is VideoRecordEvent.Start -> recState = RecState.RECORDING
+            is VideoRecordEvent.Pause -> recState = RecState.PAUSED
+            is VideoRecordEvent.Resume -> recState = RecState.RECORDING
+            is VideoRecordEvent.Status -> recordedNanos = event.recordingStats.recordedDurationNanos
+            is VideoRecordEvent.Finalize -> {
+                recording = null
+                recState = RecState.IDLE
+                val saved = !event.hasError() ||
+                    event.error == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE
+                val msg = if (saved) "Saved to Movies/GimbalCam" else "Recording failed (error ${event.error})"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+        renderRecordUi()
+    }
+
+    private fun renderRecordUi() {
+        val seconds = TimeUnit.NANOSECONDS.toSeconds(recordedNanos)
+        val clock = String.format(Locale.US, "%02d:%02d", seconds / 60, seconds % 60)
+        val b = binding
+        when (recState) {
+            RecState.IDLE -> {
+                b.status.text = "READY"
+                b.status.setTextColor(getColor(android.R.color.white))
+            }
+            RecState.STARTING -> b.status.text = "STARTING…"
+            RecState.RECORDING -> {
+                b.status.text = "● REC  $clock"
+                b.status.setTextColor(getColor(R.color.rec_red))
+            }
+            RecState.PAUSED -> {
+                b.status.text = "❚❚ PAUSED  $clock"
+                b.status.setTextColor(getColor(R.color.paused_amber))
+            }
+            RecState.STOPPING -> b.status.text = "SAVING…"
+        }
+
+        val open = recState != RecState.IDLE
+        b.stopBtn.visibility = if (open) View.VISIBLE else View.GONE
+        b.flipBtn.visibility = if (open) View.INVISIBLE else View.VISIBLE
+        when (recState) {
+            RecState.RECORDING -> {
+                // Showing "pause" while recording: the next press pauses.
+                b.recordInner.setBackgroundResource(R.drawable.record_square)
+                b.recordInner.layoutParams = b.recordInner.layoutParams.apply { width = dp(34); height = dp(34) }
+                b.recordGlyph.text = "❚❚"
+            }
+            RecState.PAUSED -> {
+                b.recordInner.setBackgroundResource(R.drawable.record_dot)
+                b.recordInner.layoutParams = b.recordInner.layoutParams.apply { width = dp(62); height = dp(62) }
+                b.recordGlyph.text = "▶"
+            }
+            else -> {
+                b.recordInner.setBackgroundResource(R.drawable.record_dot)
+                b.recordInner.layoutParams = b.recordInner.layoutParams.apply { width = dp(62); height = dp(62) }
+                b.recordGlyph.text = ""
+            }
+        }
+        b.recordInner.requestLayout()
+    }
+
+    // ── Zoom ────────────────────────────────────────────────────────────────────────────────
+
+    private fun setZoom(value: Float) {
+        linearZoom = value.coerceIn(0f, 1f)
+        camera?.cameraControl?.setLinearZoom(linearZoom)
+    }
+
+    /** One detent of the gimbal wheel / one press of a zoom key. */
+    private fun zoomStep(direction: Int) = setZoom(linearZoom + direction * ZOOM_STEP)
+
+    /** While a zoom key is held, keep zooming smoothly until it's released. */
+    private val zoomRamp = object : Runnable {
+        override fun run() {
+            if (zoomDirection == 0) return
+            setZoom(linearZoom + zoomDirection * ZOOM_RAMP_PER_FRAME)
+            handler.postDelayed(this, FRAME_MS)
+        }
+    }
+
+    private fun startZoom(direction: Int) {
+        handler.removeCallbacks(zoomRamp)
+        zoomDirection = direction
+        zoomStep(direction)
+        handler.postDelayed(zoomRamp, HOLD_BEFORE_RAMP_MS)
+    }
+
+    private fun stopZoom() {
+        zoomDirection = 0
+        handler.removeCallbacks(zoomRamp)
+    }
+
+    private fun setUpPinchZoom() {
+        val detector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(d: ScaleGestureDetector): Boolean {
+                val cam = camera ?: return false
+                val state = cam.cameraInfo.zoomState.value ?: return false
+                cam.cameraControl.setZoomRatio(state.zoomRatio * d.scaleFactor)
+                // Keep linearZoom in step so the next gimbal zoom continues from here.
+                linearZoom = cam.cameraInfo.zoomState.value?.linearZoom ?: linearZoom
+                return true
+            }
+        })
+        binding.preview.setOnTouchListener { v, e ->
+            detector.onTouchEvent(e)
+            if (e.action == MotionEvent.ACTION_UP) v.performClick()
+            true
+        }
+    }
+
+    // ── Gimbal input ────────────────────────────────────────────────────────────────────────
+
+    private val recordHold = Runnable {
+        recordHoldFired = true
+        stopRecording()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code in GimbalKeyMap.RESERVED) return super.dispatchKeyEvent(event)
+
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            showLastKey(code, event)
+            learning?.let { action ->
+                keyMap.assign(code, action)
+                learning = null
+                renderSetup()
+                return true
+            }
+        }
+        // While the setup panel is open, gimbal keys only get shown, not acted on.
+        if (binding.setupPanel.visibility == View.VISIBLE) {
+            return keyMap.actionFor(code) != null || super.dispatchKeyEvent(event)
+        }
+
+        val action = keyMap.actionFor(code) ?: return super.dispatchKeyEvent(event)
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) onGimbalDown(action)
+            KeyEvent.ACTION_UP -> onGimbalUp(action)
+        }
+        return true
+    }
+
+    private fun onGimbalDown(action: GimbalAction) {
+        when (action) {
+            GimbalAction.RECORD -> {
+                recordHoldFired = false
+                handler.postDelayed(recordHold, LONG_PRESS_MS)
+            }
+            GimbalAction.ZOOM_IN -> startZoom(+1)
+            GimbalAction.ZOOM_OUT -> startZoom(-1)
+            GimbalAction.STOP -> stopRecording()
+            GimbalAction.FLIP -> flipCamera()
+        }
+    }
+
+    private fun onGimbalUp(action: GimbalAction) {
+        when (action) {
+            GimbalAction.RECORD -> {
+                handler.removeCallbacks(recordHold)
+                if (!recordHoldFired) toggleRecord()
+                recordHoldFired = false
+            }
+            GimbalAction.ZOOM_IN, GimbalAction.ZOOM_OUT -> stopZoom()
+            else -> Unit
+        }
+    }
+
+    /** Some controllers report a wheel as a scroll axis instead of keys. */
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_SCROLL &&
+            event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
+        ) {
+            val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+            if (v != 0f) {
+                zoomStep(if (v > 0) +1 else -1)
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    private val hideLastKey = Runnable { binding.lastKey.visibility = View.GONE }
+
+    private fun showLastKey(code: Int, event: KeyEvent) {
+        val device = event.device?.name ?: "unknown device"
+        val action = keyMap.actionFor(code)?.label ?: "not assigned"
+        val text = "${GimbalKeyMap.keyName(code)} ($code) from $device → $action"
+        binding.setupLastKey.text = text
+        binding.lastKey.text = text
+        binding.lastKey.visibility = View.VISIBLE
+        handler.removeCallbacks(hideLastKey)
+        handler.postDelayed(hideLastKey, 2500)
+    }
+
+    // ── Setup panel ─────────────────────────────────────────────────────────────────────────
+
+    private fun showSetup(show: Boolean) {
+        learning = null
+        binding.setupPanel.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) renderSetup()
+    }
+
+    private fun renderSetup() {
+        val rows = binding.actionRows
+        rows.removeAllViews()
+        for (action in GimbalAction.entries) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            val keys = keyMap.keysFor(action)
+            val label = TextView(this).apply {
+                text = buildString {
+                    append(action.label)
+                    append('\n')
+                    append(
+                        if (keys.isEmpty()) "no button"
+                        else keys.joinToString(", ") { GimbalKeyMap.keyName(it) }
+                    )
+                }
+                setTextColor(getColor(android.R.color.white))
+                textSize = 14f
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val learn = Button(this).apply {
+                text = if (learning == action) "Press it…" else "Learn"
+                setOnClickListener {
+                    learning = if (learning == action) null else action
+                    renderSetup()
+                }
+            }
+            row.addView(label)
+            row.addView(learn)
+            rows.addView(row)
+        }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val LONG_PRESS_MS = 800L
+        private const val HOLD_BEFORE_RAMP_MS = 250L
+        private const val FRAME_MS = 33L
+        private const val ZOOM_STEP = 0.04f
+        private const val ZOOM_RAMP_PER_FRAME = 0.008f
+    }
+}

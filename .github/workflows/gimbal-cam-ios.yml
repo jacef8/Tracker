@@ -1,0 +1,74 @@
+name: Gimbal Cam — iOS
+
+# push: compile check only (simulator build, no signing, nothing uploaded).
+# Run workflow with "testflight" ticked: signed build uploaded to TestFlight, using the same
+# App Store Connect key and distribution certificate secrets as GroundLink's iOS release.
+on:
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: "Upload a signed build to TestFlight"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - 'gimbal-cam/ios/**'
+      - '.github/workflows/gimbal-cam-ios.yml'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: gimbal-cam/ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compile for the simulator
+        if: ${{ !inputs.testflight }}
+        run: |
+          xcodebuild build \
+            -project GimbalCam.xcodeproj \
+            -scheme GimbalCam \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - uses: ruby/setup-ruby@v1
+        if: ${{ inputs.testflight }}
+        with:
+          ruby-version: "3.2"
+
+      - name: Install fastlane
+        if: ${{ inputs.testflight }}
+        run: gem install fastlane -N
+
+      - name: Install signing certificate
+        if: ${{ inputs.testflight }}
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/dist_cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Build and upload to TestFlight
+        if: ${{ inputs.testflight }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: fastlane beta
