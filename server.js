@@ -399,7 +399,10 @@ async function keepAliveSweep() {
       if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
       const age = now - (u.fixTs || u.ts || 0);
       const was = seen.get(uid);
-      if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000 });
+      // Battery, as the phone last reported it (web/Android put it on the row, iPhones in oss).
+      const batt = (typeof u.batt === 'number') ? u.batt : (u.oss && typeof u.oss.batt === 'number' ? u.oss.batt : null);
+      const chg = (u.chg === 1) || !!(u.oss && u.oss.charging);
+      if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000, batt: batt, chg: chg, battAt: (u.fixTs || u.ts || 0) });
       if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
       if (now - (wakeLastSent.get(uid) || 0) < _wakeCooldown(u, age)) continue;
       targets.set(uid, u.name);
@@ -425,6 +428,14 @@ async function keepAliveSweep() {
         cur.name = v.name;
         cur.samples = (cur.samples || 0) + 1;
         if (v.fresh) cur.fresh = (cur.fresh || 0) + 1;
+        // Battery series: one point per sweep when the phone has reported a level, so
+        // "is GroundLink draining phones" is answered with a number (tools/battery-drain.mjs).
+        if (v.batt != null) {
+          const b = Array.isArray(cur.batt) ? cur.batt : [];
+          const last = b[b.length - 1];
+          if (!last || last.at !== v.battAt) b.push({ t: now, at: v.battAt, b: v.batt, c: v.chg ? 1 : 0 });
+          cur.batt = b.slice(-300);
+        }
         return cur;
       });
     }
