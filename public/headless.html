@@ -391,6 +391,20 @@
     if (now - _stillSince > STILL_AFTER_MS && (c.accuracy || 999) <= 100) startWatch(false);
   }
 
+  // ── Follow new builds ─────────────────────────────────────────────────
+  // This page lives as long as the app process (days on a phone). Reload when a new build
+  // ships, so a fix in here reaches phones without waiting for a reboot.
+  var _hlBuild = 0;
+  function _hlCheckBuild() {
+    fetch('/version.json?cb=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+      var b = (v && v.build) || 0;
+      if (!_hlBuild) { _hlBuild = b; return; }
+      if (b && b !== _hlBuild) { log('new build ' + b + ' — reloading'); location.reload(); }
+    }).catch(function () {});
+  }
+  _hlCheckBuild();
+  setInterval(_hlCheckBuild, 10 * 60 * 1000);
+
   var started = false;
   function start() {
     if (started) return;
