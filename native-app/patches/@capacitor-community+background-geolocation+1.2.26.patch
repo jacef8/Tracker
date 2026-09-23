@@ -1,5 +1,5 @@
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
-index a92fcf9..0a9f50e 100644
+index a92fcf9..4b3f56c 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
 @@ -49,6 +49,14 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
@@ -35,17 +35,18 @@ index a92fcf9..0a9f50e 100644
              }
  
              backgroundNotification = builder.build();
-@@ -159,7 +167,8 @@ public class BackgroundGeolocation extends Plugin {
+@@ -159,7 +167,9 @@ public class BackgroundGeolocation extends Plugin {
          service.addWatcher(
                  call.getCallbackId(),
                  backgroundNotification,
 -                call.getFloat("distanceFilter", 0f)
 +                call.getFloat("distanceFilter", 0f),
-+                call.getInt("interval", 1000)
++                call.getInt("interval", 1000),
++                call.getBoolean("lowPower", false)
          );
      }
  
-@@ -286,13 +295,19 @@ public class BackgroundGeolocation extends Plugin {
+@@ -286,13 +296,19 @@ public class BackgroundGeolocation extends Plugin {
              NotificationManager manager = (NotificationManager) getContext().getSystemService(
                      Context.NOTIFICATION_SERVICE
              );
@@ -69,16 +70,17 @@ index a92fcf9..0a9f50e 100644
              channel.enableLights(false);
              channel.enableVibration(false);
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-index fafbb86..fff8291 100644
+index fafbb86..6dbe224 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-@@ -75,14 +75,21 @@ public class BackgroundGeolocationService extends Service {
+@@ -75,15 +75,26 @@ public class BackgroundGeolocationService extends Service {
          void addWatcher(
                  final String id,
                  Notification backgroundNotification,
 -                float distanceFilter
 +                float distanceFilter,
-+                long interval
++                long interval,
++                boolean lowPower
          ) {
              FusedLocationProviderClient client = LocationServices.getFusedLocationProviderClient(
                      BackgroundGeolocationService.this
@@ -86,6 +88,7 @@ index fafbb86..fff8291 100644
              LocationRequest locationRequest = new LocationRequest();
 -            locationRequest.setMaxWaitTime(1000);
 -            locationRequest.setInterval(1000);
+-            locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
 +            // interval used to be hardcoded to 1000ms regardless of distanceFilter — meaning the
 +            // battery-saver's idle mode (see _bsApplyPower in index.html) widened distanceFilter to
 +            // 75m but the GPS radio still woke every single second anyway, since smallestDisplacement
@@ -94,9 +97,13 @@ index fafbb86..fff8291 100644
 +            // actually sleeps between polls instead of just discarding 29 out of 30 fixes a minute.
 +            locationRequest.setMaxWaitTime(interval);
 +            locationRequest.setInterval(interval);
-             locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
++            // lowPower (set by the app once the phone has sat still a few minutes): balanced
++            // accuracy uses cell/Wi-Fi and leaves the GPS chip off. High accuracy kept it powered
++            // all night on a nightstand.
++            locationRequest.setPriority(lowPower ? LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY : LocationRequest.PRIORITY_HIGH_ACCURACY);
              locationRequest.setSmallestDisplacement(distanceFilter);
  
+             LocationCallback callback = new LocationCallback(){
 diff --git a/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift b/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
 index d4a5965..8f030f3 100644
 --- a/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift

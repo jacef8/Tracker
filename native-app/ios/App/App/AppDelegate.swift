@@ -116,6 +116,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // bridge being active at all, not just the rare significant-change event.
         mgr.desiredAccuracy = kCLLocationAccuracyHundredMeters
         mgr.distanceFilter = 50 // meters — family-location-sharing granularity, not turn-by-turn
+        mgr.activityType = .other
+        // From 1.0.6 this manager is the ONLY background location session. The plugin's
+        // navigation-grade watcher, which ran alongside it around the clock, is no longer started
+        // by the web app on this shell — so the permission prompts it used to trigger are asked
+        // for here: When In Use first (iOS insists), then the Always upgrade.
+        let status: CLAuthorizationStatus
+        if #available(iOS 14.0, *) { status = mgr.authorizationStatus } else { status = CLLocationManager.authorizationStatus() }
+        if status == .notDetermined { mgr.requestWhenInUseAuthorization() }
+        else if status == .authorizedWhenInUse { mgr.requestAlwaysAuthorization() }
         mgr.startUpdatingLocation()
         if CLLocationManager.significantLocationChangeMonitoringAvailable() {
             mgr.startMonitoringSignificantLocationChanges()
@@ -376,6 +385,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         updateHereRegion(loc)
         if UIApplication.shared.applicationState == .active { return }
         reportFixInBackground(loc)
+    }
+
+    // Granted While Using → ask for Always, once, so background sharing works without a trip
+    // to Settings. iOS shows this as its own prompt (or defers it to a later moment it chooses).
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if #available(iOS 14.0, *), manager === bgLocationManager, manager.authorizationStatus == .authorizedWhenInUse {
+            manager.requestAlwaysAuthorization()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

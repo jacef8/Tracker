@@ -119,6 +119,11 @@
     var keys = fanOutKeys();
     if (!keys.length) return;
     var c = pos.coords;
+    // Report rate — same rule as the main app: while moving, one write per 10 s or ~300 ft.
+    // (The parked heartbeat re-sends the cached fix every 3 minutes and is not subject to this.)
+    var _rp = window._lastReport;
+    if (_rp && !pos._heartbeat && Date.now() - _rp.ts < 10000 && metersApart(_rp.lat, _rp.lng, c.latitude, c.longitude) < 90) return;
+    window._lastReport = { lat: c.latitude, lng: c.longitude, ts: Date.now() };
     // Doppler speed when the fix has one, else distance-over-time from the previous fix —
     // Android fixes intermittently arrive with speed:null mid-drive, and writing 0 for
     // those made the map's speed chip blink off and on while actually moving.
@@ -407,6 +412,7 @@
       try {
         if (window._nativeDriven || !_lastFixCache) return;
         if (Date.now() - _lastWriteTs < 170000) return;   // movement is already reporting
+        _lastFixCache._heartbeat = true;
         onFix(_lastFixCache);
       } catch (e) {}
     }, 180000);

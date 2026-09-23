@@ -3389,6 +3389,10 @@
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-history"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep my trail</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Record where you go so you and your Crew can look back on any day (kept 30 days)</div></div></div>
       <span id="set-history-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
     </div>
+    <div onclick="_setToggleScreen()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-target"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Keep screen on</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Stop the screen sleeping while the map is open. Uses a lot of battery — recording a track turns it on by itself</div></div></div>
+      <span id="set-screen-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+    </div>
     <div class="section-title" style="margin:14px 0 7px">Voice &amp; devices</div>
     <div onclick="_setToggleVoice()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Voice (push-to-talk)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Show the Talk button to start walkie-talkie voice with members</div></div></div>
@@ -3615,7 +3619,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 793;
+var APP_BUILD = 794;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5719,7 +5723,8 @@ window._pingVisibleDevices = function () {
     });
   } catch (e) {}
 };
-try { if (!window._devicePinger) window._devicePinger = setInterval(function () { window._pingVisibleDevices(); }, 15000); } catch (e) {}
+// Once a minute, not every 15 s — each ping wakes the watch's radio and GPS.
+try { if (!window._devicePinger) window._devicePinger = setInterval(function () { window._pingVisibleDevices(); }, 60000); } catch (e) {}
 window._locateDevice = function (id) {
   try { window._wakeDevice(id, 'locate'); } catch (e) {}   // ask the watch for a fresh fix
   var d = (window._devicesAll[id] || {}).live || {};
@@ -6398,7 +6403,9 @@ window._writeSession = function () {
     fb.set(fb.ref(fb.db, 'gl/_users/' + acct + '/sessions/' + sessId), rec);
   } catch (e) {}
 };
-try { setInterval(function () { try { window._writeSession(); } catch (e) {} }, 22000); } catch (e) {}
+// Once a minute, and only while the app is actually on screen — this ran every 22 s all day,
+// in the background too, for a record nothing reads that often.
+try { setInterval(function () { try { if (!document.hidden) window._writeSession(); } catch (e) {} }, 60000); } catch (e) {}
 try { document.addEventListener('visibilitychange', function () { if (!document.hidden) window._writeSession(); }); } catch (e) {}
 window._subMySessions = function () {
   try {
@@ -7550,8 +7557,20 @@ function formatTime(ts) {
 }
 
 // ══ WAKE LOCK ════════════════════════════════════════════════════
-async function acquireWakeLock() {
+// Opening a room used to lock the screen on for as long as the map was showing, with no way to
+// turn it off — a phone left on the map burned its screen at full brightness for hours. Now a
+// Settings toggle (off by default); recording a track still forces it.
+function _keepScreenOn() { try { return localStorage.getItem('gl_keep_screen') === '1'; } catch (e) { return false; } }
+function _setToggleScreen() {
+  var on = !_keepScreenOn();
+  try { localStorage.setItem('gl_keep_screen', on ? '1' : '0'); } catch (e) {}
+  _syncSettings();
+  if (on) acquireWakeLock(true); else if (wakeLock && !window._trackRec) { try { wakeLock.release(); } catch (e) {} }
+  toast(on ? 'Screen stays on while the map is open' : 'Screen can sleep normally', 2400);
+}
+async function acquireWakeLock(force) {
   if (!('wakeLock' in navigator)) return;
+  if (!force && !_keepScreenOn() && !window._trackRec) return;
   try {
     wakeLock = await navigator.wakeLock.request('screen');
     document.getElementById('wakelock-indicator').classList.add('active');
@@ -7567,7 +7586,7 @@ async function acquireWakeLock() {
 // Re-acquire wake lock when page becomes visible again
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && wakeLock === null) {
-    await acquireWakeLock();
+    await acquireWakeLock(false);
   }
 });
 
@@ -8398,6 +8417,7 @@ function _setPill(id, on) {
 }
 function _syncSettings() {
   try { _setPill('set-uiv2-pill', window._uiV2On()); } catch (e) {}
+  try { _setPill('set-screen-pill', _keepScreenOn()); } catch (e) {}
   _setPill('set-alerts-pill', !!alertsOn);
   // Per-type notification toggles — only relevant (and shown) when notifications are on.
   try {
@@ -10658,6 +10678,32 @@ window._leaveCircle = function (key, name) {
 // shipped in an earlier session but was scope beyond what was ever actually asked for, so it's
 // been removed. The subscription below stays alive regardless — window._circleUsersAll still
 // feeds the live-count shown in the Home/room-switcher Crew lists, it just no longer drives a map.
+// ── Position feeds ───────────────────────────────────────────────────────────────────────
+// Every phone kept a live subscription to every Crew's positions around the clock — home
+// screen, background, overnight — so each write from anyone driving woke everyone's radio.
+// Feeds registered here are dropped 45 s after the app leaves the screen and re-attached the
+// moment it is back; nothing is looking at them in between.
+window._feeds = [];
+window._feedOn = function (ref, cb) {
+  var fb = window._fb; if (!fb || !fb.onValue) return;
+  var f = { ref: ref, cb: cb, off: null };
+  try { f.off = fb.onValue(ref, cb); } catch (e) {}
+  window._feeds.push(f);
+};
+window._feedsPause = function () {
+  window._feeds.forEach(function (f) { try { if (f.off) f.off(); } catch (e) {} f.off = null; });
+};
+window._feedsResume = function () {
+  var fb = window._fb; if (!fb || !fb.onValue) return;
+  window._feeds.forEach(function (f) { if (f.off) return; try { f.off = fb.onValue(f.ref, f.cb); } catch (e) {} });
+};
+try {
+  document.addEventListener('visibilitychange', function () {
+    clearTimeout(window._feedPauseTimer);
+    if (document.hidden) window._feedPauseTimer = setTimeout(function () { if (document.hidden) window._feedsPause(); }, 45000);
+    else window._feedsResume();
+  });
+} catch (e) {}
 window._circleUsersAll = {};   // circleKey -> { uid: userData }, latest snapshot per circle
 window._circleMarkers = {};    // uid -> mapboxgl.Marker; always kept empty now, see _renderCircles
 window._circleSubbed = {};     // circleKey -> true once its onValue listener is attached
@@ -10667,7 +10713,7 @@ window._listenCircles = function () {
     if (window._circleSubbed[key]) return;
     window._circleSubbed[key] = true;
     try {
-      fb.onValue(fb.ref(fb.db, 'gl/' + key + '/users'), function (snap) {
+      window._feedOn(fb.ref(fb.db, 'gl/' + key + '/users'), function (snap) {
         window._circleUsersAll[key] = (snap && snap.val && snap.val()) || {};
         try { window._renderCircleSwitcher(); } catch (e) {}   // live-count peek on the home/switcher lists
         try { window._paintAllCrews(); } catch (e) {}          // no-op unless the All Crews map is open
@@ -11780,7 +11826,7 @@ function enterMap(name, group, uid) {
     // Also scan for and remove any other ghost entries with same name + noGps
     // (handles duplicate tabs/windows on same device)
     waitForFirebase(function(fb) {
-      fb.onValue(fb.ref(fb.db, 'gl/' + groupName + '/users'), function(snap) {
+      window._feedOn(fb.ref(fb.db, 'gl/' + groupName + '/users'), function(snap) {
         var all = snap.val() || {};
         Object.entries(all).forEach(function(entry) {
           var uid = entry[0], d = entry[1];
@@ -14164,8 +14210,23 @@ function _hasBackgroundLocation() {
 // start the foreground service, so Android shows no persistent status-bar notification —
 // at the cost of the dot only updating while the app is open.
 function _bgLocationOn() { try { return localStorage.getItem('gl_bg_location') !== '0'; } catch (e) { return true; } }
+function _iosShellAtLeast(maj, min, pat) {
+  try {
+    if (!_isIOS()) return false;
+    var v = (window._nativeAppInfo && window._nativeAppInfo.version) || '';
+    if (!v) return false;
+    var a = String(v).split('.').map(function (n) { return parseInt(n, 10) || 0; });
+    if (a[0] !== maj) return a[0] > maj;
+    if ((a[1] || 0) !== min) return (a[1] || 0) > min;
+    return (a[2] || 0) >= pat;
+  } catch (e) { return false; }
+}
+// iPhone shells from 1.0.6 handle location natively (AppDelegate requests permission and runs
+// one coarse background session). The plugin's second, navigation-grade session is skipped.
+function _iosPluginSkipped() { return _iosShellAtLeast(1, 0, 6); }
 async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
+  if (_iosPluginSkipped()) return;
   if (!_bgLocationOn()) return;   // user turned off background location → no service, no status-bar icon
   window._bgGeoStarted = true;
   try {
@@ -14234,6 +14295,7 @@ async function startNativeBackgroundTracking() {
         } catch (e) {}
       }
       window._gotNativeFix = true;   // confirms the native service has delivered at least one fix
+      try { if (window._webWatchOff && !_isIOS()) window._webWatchOff(); } catch (e) {}   // one session, not two
       window._onGpsFix({ coords: {
         latitude: location.latitude,
         longitude: location.longitude,
@@ -14376,7 +14438,9 @@ function _showBgHealthBanner(mins) {
 // GPS distance filter so the radio samples far less often, and we stop writing on
 // every fix — instead sending a low-rate "still here" heartbeat so the group can
 // always see you and SOS still works. Movement instantly restores full tracking.
-var BS_IDLE_ENTER_MS = 15 * 60 * 1000;  // still this long → enter low-power
+var BS_IDLE_ENTER_MS = 5 * 60 * 1000;   // still this long → enter low-power
+var REPORT_MOVE_MS   = 10 * 1000;       // while moving, write at most this often…
+var REPORT_MOVE_M    = 90;              // …unless you've covered ~300 ft since the last write
 var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
 var BS_MOVE_M        = 30;              // moved more than this → you're moving again
 var HERE_MOVE_M       = 40;             // "here since" anchor: moved more than this → new stop
@@ -14386,7 +14450,8 @@ var MOVE_ON_MPH       = 3;              // cross UP through this → Moving
 var MOVE_OFF_MPH      = 1.5;            // ...and keep saying Moving until they fall under this
 var MOVE_STICKY_MS    = 75 * 1000;      // ...or go this long without a >=MOVE_ON_MPH reading
 window._moveSeen      = window._moveSeen || {};   // uid -> last time they were clearly moving
-var BS_DF_IDLE       = 75;              // native GPS distance filter while idle (m)
+var BS_DF_IDLE       = 150;             // native distance filter while idle (m) — coarse fixes wander ~50-100 m
+var BS_WAKE_IDLE_M   = 150;             // moved this far from the idle anchor → moving again
 var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
 // The vendored plugin used to hardcode its LocationRequest interval to 1000ms regardless of
 // distanceFilter — so idle mode's wider distanceFilter only reduced how many fixes got
@@ -14394,12 +14459,23 @@ var BS_DF_ACTIVE     = 8;               // native GPS distance filter while acti
 // accept an interval so idle mode can genuinely let the radio sleep between polls instead of
 // polling every second and discarding most of the results.
 var BS_INTERVAL_ACTIVE = 1000;          // native GPS poll interval while active (ms) — unchanged
-var BS_INTERVAL_IDLE    = 30000;        // native GPS poll interval while idle (ms)
+var BS_INTERVAL_IDLE    = 60000;        // native poll interval while idle (ms)
 window._batterySaver = (function(){ try { return localStorage.getItem('gl_battsaver') !== '0'; } catch(e){ return true; } })();
+// Battery level rides along with each report (Android WebView and desktop browsers expose it;
+// iPhones report it natively in `oss`). This is how "is GroundLink draining phones" stops
+// being a feeling: drain per hour per person, from the data.
+try {
+  if (navigator.getBattery) navigator.getBattery().then(function (b) {
+    var upd = function () { window._battPct = Math.round((b.level || 0) * 100); window._battChg = !!b.charging; };
+    upd(); b.addEventListener('levelchange', upd); b.addEventListener('chargingchange', upd);
+  }).catch(function () {});
+} catch (e) {}
 
 // Re-arm the native watcher at a wider/narrower distance filter so the GPS radio
 // works less while you're parked. No-op on web (foreground watch handles itself).
 function _bsApplyPower(idle) {
+  // The in-page watch (web, PWA, iPhone foreground) follows the same idle/active state.
+  try { if (window._gpsWatchId != null && typeof window._armWebWatch === 'function') window._armWebWatch(!idle); } catch (e) {}
   try {
     if (!window._bgGeo || window._bgWatcherId == null || typeof window._bgWatcherCb !== 'function') return;
     var prev = window._bgWatcherId;
@@ -14409,7 +14485,8 @@ function _bsApplyPower(idle) {
       requestPermissions: false,
       stale: false,
       distanceFilter: idle ? BS_DF_IDLE : BS_DF_ACTIVE,
-      interval: idle ? BS_INTERVAL_IDLE : BS_INTERVAL_ACTIVE
+      interval: idle ? BS_INTERVAL_IDLE : BS_INTERVAL_ACTIVE,
+      lowPower: !!idle                    // Android shell 1.4.4+: balanced-power fixes, GPS chip off
     }, window._bgWatcherCb).then(function(id) {
       window._bgWatcherId = id;
       try { window._bgGeo.removeWatcher({ id: prev }); } catch (e) {}
@@ -14421,6 +14498,7 @@ window._bsApplyPower = _bsApplyPower;
 // Force full-power tracking immediately (used by SOS so an alert never waits on a heartbeat).
 window._bsWake = function() {
   window._bsLastMoveTs = Date.now();
+  window._forceReport = true;   // SOS and friends: the next fix goes out regardless of the report rate
   if (window._bsIdle) { window._bsIdle = false; try { window._evt('battery saver — woken (full tracking)'); } catch (e) {} _bsApplyPower(false); }
 };
 
@@ -14775,7 +14853,11 @@ function startLocationSharing() {
     // (real speed or moving past the anchor) instantly restores full tracking.
     if (window._batterySaver) {
       var bsMoved = window._bsAnchor ? metersApart(window._bsAnchor.lat, window._bsAnchor.lng, lat, lng) : Infinity;
-      var bsMoving = (window._lastSpeedMph >= 2) || (bsMoved > BS_MOVE_M);
+      // While idle the fixes are coarse (cell/Wi-Fi), so a few hundred feet of wander and a
+      // phantom 2 mph are normal — only real displacement counts as moving.
+      var bsMoving = window._bsIdle
+        ? (bsMoved > BS_WAKE_IDLE_M)
+        : ((window._lastSpeedMph >= 2) || (bsMoved > BS_MOVE_M));
       if (bsMoving) {
         window._bsAnchor = { lat: lat, lng: lng };
         window._bsLastMoveTs = now;
@@ -14811,6 +14893,18 @@ function startLocationSharing() {
     try {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') window._lastFgTs = now;
     } catch (e) {}
+    // ── Report rate ───────────────────────────────────────────────────────────────────
+    // The 8 m movement threshold means a fix every ~0.6 s at 30 mph, and every fix used to be
+    // written to every room, the trail and the history — one phone wrote 6,436 history points
+    // in a day. The marker, speed and here-since above are already updated locally on every
+    // fix; the network only needs to hear about it every 10 s or every ~300 ft, whichever
+    // comes first. Nobody can see the difference on a map; the cellular radio very much can.
+    var _rpMoved = window._lastReportPos ? metersApart(window._lastReportPos.lat, window._lastReportPos.lng, lat, lng) : Infinity;
+    var _rpAge = now - (window._lastReportTs || 0);
+    if (window._lastReportTs && !window._forceReport && _rpAge < REPORT_MOVE_MS && _rpMoved < REPORT_MOVE_M) return;
+    window._forceReport = false;
+    window._lastReportTs = now;
+    window._lastReportPos = { lat: lat, lng: lng };
     var _fixPayload = {
       lat, lng, name: (typeof _personDisplayName === 'function') ? _personDisplayName() : userName, dev: _deviceLabel(), accuracy: Math.round(_effAccM * 3.28084), ts: now,
       // fixTs marks a position confirmed by an ACTUAL GPS fix. `ts` alone can't: the no-GPS
@@ -14834,6 +14928,8 @@ function startLocationSharing() {
       // in EVERY room automatically. See _devicePrivate.
       priv: _devicePrivate() ? 1 : 0
     };
+    // Battery, so drain per hour per person can be measured instead of guessed at.
+    if (window._battPct != null) { _fixPayload.batt = window._battPct; _fixPayload.chg = window._battChg ? 1 : 0; }
     // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
     // encoding of "this platform doesn't say" (iOS).
     try { if (window._batt) { _fixPayload.batt = window._batt.pct; _fixPayload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
@@ -15083,7 +15179,7 @@ function startLocationSharing() {
   // isn't really running (didn't start, or the OS/battery-optimization suspended it) and
   // the web layer is masking it — exactly the "my phone drops out" case. Retry once, then
   // log it for the admin panel and nudge the user to fix permissions/battery.
-  if (_isNativeApp()) {
+  if (_isNativeApp() && !_iosPluginSkipped()) {
     // T+40s: if nothing native yet and the service never started, try starting it again.
     setTimeout(function() {
       if (window._roomClosed || window._gotNativeFix) return;
@@ -15160,8 +15256,23 @@ function startLocationSharing() {
     { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
 
   // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
-  window._gpsWatchId = navigator.geolocation.watchPosition(_webFix, onGpsErr,
-    { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
+  // (Re)arm the in-page watch. Full GPS while moving; while parked, cell/Wi-Fi fixes are
+  // plenty to notice the phone leaving, and the GPS chip stays off.
+  window._armWebWatch = function (hi) {
+    try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
+    window._webWatchHi = !!hi;
+    window._gpsWatchId = navigator.geolocation.watchPosition(_webFix, onGpsErr,
+      hi ? { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 }
+         : { enableHighAccuracy: false, maximumAge: 60000, timeout: 60000 });
+  };
+  // On the Android app the native service is the location source; this in-page watch is only
+  // the bridge until that service delivers its first fix (see _webWatchOff), so the phone is
+  // never running two GPS sessions for one dot.
+  window._webWatchOff = function () {
+    try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
+    window._gpsWatchId = null;
+  };
+  window._armWebWatch(!window._bsIdle);
 
   // ── Ongoing GPS liveness watchdog ───────────────────────────────────
   // The one-time startup watchdog above (T+40s/T+80s) only ever checks whether background GPS
@@ -15186,11 +15297,7 @@ function startLocationSharing() {
     if (age < GPS_WATCHDOG_STALE_MS) return;
     try { window._evt('⚠ no GPS fix in ' + Math.round(age / 60000) + 'm — restarting tracking'); } catch (e) {}
     try { if (_isNativeApp()) startNativeBackgroundTracking(); } catch (e) {}
-    try {
-      if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId);
-      window._gpsWatchId = navigator.geolocation.watchPosition(_webFix, onGpsErr,
-        { enableHighAccuracy: true, maximumAge: 10000, timeout: 27000 });
-    } catch (e) {}
+    try { window._armWebWatch(true); } catch (e) {}
   }
   if (window._gpsWatchdogInterval) clearInterval(window._gpsWatchdogInterval);
   window._gpsWatchdogInterval = setInterval(_gpsWatchdogTick, 3 * 60 * 1000);
@@ -15240,7 +15347,7 @@ function startLocationSharing() {
   // visibilitychange still fires an immediate write whenever the app comes to front, so the
   // data is fresh exactly when someone's actually about to look at it.
   clearInterval(window._diagTimer);
-  window._diagTimer = setInterval(window._writeDiag, 60000);
+  window._diagTimer = setInterval(function () { if (!document.hidden) window._writeDiag(); }, 60000);   // on screen only
   window._writeDiag();
   document.addEventListener('visibilitychange', window._writeDiag);
 
@@ -20942,7 +21049,7 @@ window._startTrackRec = function(){
   window._trackRec={ pts:[], startTs:Date.now(), paused:false };
   try { window._trackRecWatch = navigator.geolocation.watchPosition(function(pp){ window._trackRecOnFix(pp, Date.now()); }, function(){}, {enableHighAccuracy:true,maximumAge:1000,timeout:25000}); } catch (e) {}
   try { if (typeof _isNativeApp==='function' && _isNativeApp() && !window._bgGeoStarted && typeof startNativeBackgroundTracking==='function') startNativeBackgroundTracking(); } catch (e) {}
-  try { acquireWakeLock(); } catch (e) {}
+  try { acquireWakeLock(true); } catch (e) {}
   try { window._trackRecTick = setInterval(_refreshRecChip, 1000); } catch (e) {}
   _showRecChip(); _syncRecHubBtn();
   try { toast('Recording — tap the light to pause, hold to stop', 3200); } catch (e) {}

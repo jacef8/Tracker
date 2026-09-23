@@ -363,6 +363,13 @@ public class MainActivity extends BridgeActivity {
                         if (nm != null) p.add("\"notif\":" + nm.areNotificationsEnabled());
                     } catch (Exception e) {}
                     try {
+                        android.os.BatteryManager bm = (android.os.BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                        if (bm != null) {
+                            p.add("\"batt\":" + bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY));
+                            p.add("\"charging\":" + bm.isCharging());
+                        }
+                    } catch (Exception e) {}
+                    try {
                         p.add("\"mfr\":\"" + Build.MANUFACTURER.replace("\"", "") + "\"");
                         p.add("\"model\":\"" + Build.MODEL.replace("\"", "") + "\"");
                         p.add("\"sdk\":" + Build.VERSION.SDK_INT);
@@ -390,7 +397,7 @@ public class MainActivity extends BridgeActivity {
                 }
                 // Version of this native shell, so the web app can offer features it adds.
                 @JavascriptInterface
-                public int nativeVersion() { return 22; }
+                public int nativeVersion() { return 23; }
                 // NOTE: a direct deep-link straight to the Location permission's own picker
                 // (Intent.ACTION_MANAGE_APP_PERMISSION) was tried and removed — confirmed
                 // on-device 2026-07-20 that launching it throws SecurityException requiring
