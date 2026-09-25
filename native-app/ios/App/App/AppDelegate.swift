@@ -383,7 +383,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // Move the anchor with the device even while foregrounded: the point is to have a live
         // region in place BEFORE the app is terminated, and termination can happen at any time.
         updateHereRegion(loc)
-        if UIApplication.shared.applicationState == .active { return }
+        if UIApplication.shared.applicationState == .active { pathBuf.removeAll(); return }
+        for l in locations { pathPush(l) }
         reportFixInBackground(loc)
     }
 
@@ -528,6 +529,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         if loc.speed >= 0 { body["spd"] = Int((loc.speed * 2.23694).rounded()) }
         // The settings ride along, so a viewer can tell "fine" from "about to go quiet".
         body["oss"] = settingsDict()
+        // The route since the last report, so viewers animate the corners instead of cutting them.
+        if let route = pathTake() { body["path"] = route }
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())
@@ -631,6 +634,75 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     /// iPhone on 1.0.4 wrote 2,308 history points in a day while an Android phone on the throttled
     /// path wrote 416. One write per 10 seconds while moving; `force` is for the wake push and the
     /// stationary heartbeat, which are already rate-limited by their own timers.
+    // ── The route between reports ────────────────────────────────────────────────────────
+    // CoreLocation keeps delivering while the report rate above holds writes back, so a report
+    // carries the shape of the ground covered since the last one rather than just its endpoint.
+    // Without it a 10-second gap draws as a straight line and a turn taken in between shows the
+    // dot cutting the corner. Mirrors _pathPush/_pathTake in index.html: same simplification,
+    // same tolerance, same 14-point ceiling, same [lat, lng, ts] triples.
+    private var pathBuf: [CLLocation] = []
+    private func pathPush(_ loc: CLLocation) {
+        if let last = pathBuf.last, last.distance(from: loc) < 2 { return }
+        pathBuf.append(loc)
+        if pathBuf.count > 400 { pathBuf.removeFirst(pathBuf.count - 400) }
+    }
+    /// Perpendicular distance in metres, flat-earth over the tens of metres this spans.
+    private func pathPerpM(_ p: CLLocation, _ a: CLLocation, _ b: CLLocation) -> Double {
+        let mx = 111320.0 * cos(a.coordinate.latitude * .pi / 180), my = 110540.0
+        let px = (p.coordinate.longitude - a.coordinate.longitude) * mx
+        let py = (p.coordinate.latitude - a.coordinate.latitude) * my
+        let bx = (b.coordinate.longitude - a.coordinate.longitude) * mx
+        let by = (b.coordinate.latitude - a.coordinate.latitude) * my
+        let len2 = bx * bx + by * by
+        if len2 == 0 { return (px * px + py * py).squareRoot() }
+        var t = (px * bx + py * by) / len2
+        t = Swift.max(0, Swift.min(1, t))
+        let dx = px - bx * t, dy = py - by * t
+        return (dx * dx + dy * dy).squareRoot()
+    }
+    /// Ramer-Douglas-Peucker: keep the points that give the line its shape.
+    private func pathSimplify(_ pts: [CLLocation], _ tolM: Double) -> [CLLocation] {
+        if pts.count < 3 { return pts }
+        var keep = [Bool](repeating: false, count: pts.count)
+        keep[0] = true; keep[pts.count - 1] = true
+        var stack: [(Int, Int)] = [(0, pts.count - 1)]
+        while let seg = stack.popLast() {
+            let (i, j) = seg
+            if j <= i + 1 { continue }
+            var maxD = -1.0, idx = -1
+            for k in (i + 1)..<j {
+                let d = pathPerpM(pts[k], pts[i], pts[j])
+                if d > maxD { maxD = d; idx = k }
+            }
+            if maxD > tolM && idx > 0 { keep[idx] = true; stack.append((i, idx)); stack.append((idx, j)) }
+        }
+        var out: [CLLocation] = []
+        for n in 0..<pts.count where keep[n] { out.append(pts[n]) }
+        return out
+    }
+    private func pathTake() -> [[Any]]? {
+        let raw = pathBuf
+        pathBuf = []
+        if raw.count < 3 { return nil }                       // two points IS a straight line
+        var sp = pathSimplify(raw, 6)
+        if sp.count < 3 { return nil }
+        if sp.count > 14 {                                    // thin the middle, always keep both ends
+            var out = [sp[0]]
+            let step = Double(sp.count - 2) / 12.0
+            for i in 1...12 {
+                let idx = Swift.min(sp.count - 2, Swift.max(1, Int((Double(i) * step).rounded())))
+                out.append(sp[idx])
+            }
+            out.append(sp[sp.count - 1])
+            sp = out
+        }
+        return sp.map { l in
+            [(l.coordinate.latitude * 1e6).rounded() / 1e6,
+             (l.coordinate.longitude * 1e6).rounded() / 1e6,
+             Int(l.timestamp.timeIntervalSince1970 * 1000)]
+        }
+    }
+
     private var lastNativeReportAt: Date = .distantPast
     private static let nativeReportMinInterval: TimeInterval = 10
     private func reportFixInBackground(_ loc: CLLocation, force: Bool = false) {
