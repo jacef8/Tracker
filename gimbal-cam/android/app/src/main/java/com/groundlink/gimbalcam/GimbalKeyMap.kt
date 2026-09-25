@@ -13,59 +13,109 @@ enum class GimbalAction(val label: String) {
 }
 
 /**
- * Maps the key codes a Bluetooth gimbal sends to [GimbalAction]s.
+ * Exactly which input arrived: the Android key code plus the hardware scan code and the name of
+ * the device that sent it. Two gimbal controls can share a key code (e.g. both "Volume Up") yet
+ * differ in scan code or come from different HID interfaces, so learning keys on all three.
+ */
+data class KeySignature(val keyCode: Int, val scanCode: Int, val device: String) {
+    fun encode() = "$keyCode|$scanCode|$device"
+
+    val name: String
+        get() = "${GimbalKeyMap.keyName(keyCode)} (scan $scanCode, $device)"
+
+    companion object {
+        fun of(event: KeyEvent) = KeySignature(
+            event.keyCode,
+            event.scanCode,
+            (event.device?.name ?: "unknown").replace('|', '/').replace(',', ' ').replace('=', ' '),
+        )
+
+        fun decode(s: String): KeySignature? {
+            val parts = s.split('|', limit = 3)
+            if (parts.size != 3) return null
+            val code = parts[0].toIntOrNull() ?: return null
+            val scan = parts[1].toIntOrNull() ?: return null
+            return KeySignature(code, scan, parts[2])
+        }
+    }
+}
+
+/**
+ * Maps the keys a Bluetooth gimbal sends to [GimbalAction]s.
  *
  * Paired over plain Bluetooth, an Osmo Mobile shows up to Android as a HID input device, so its
  * buttons arrive as ordinary [KeyEvent]s. DJI doesn't document which key codes each control
- * sends (and they can differ between firmware versions), so the defaults below cover every code
- * a camera remote commonly uses, and the setup panel lets you teach the app the real ones.
+ * sends, so the defaults below cover the codes camera remotes commonly use, and the setup panel
+ * learns the real ones. Learned bindings match on the full [KeySignature] and win over the
+ * defaults, which match on key code alone.
  */
 class GimbalKeyMap(context: Context) {
 
     private val prefs = context.getSharedPreferences("gimbal_keys", Context.MODE_PRIVATE)
-    private val map = mutableMapOf<Int, GimbalAction>()
+    private val learned = mutableMapOf<KeySignature, GimbalAction>()
 
     init {
         load()
     }
 
-    fun actionFor(keyCode: Int): GimbalAction? = map[keyCode]
+    fun actionFor(sig: KeySignature): GimbalAction? =
+        learned[sig] ?: DEFAULTS[sig.keyCode]
 
-    fun keysFor(action: GimbalAction): List<Int> = map.filterValues { it == action }.keys.sorted()
+    /** What the setup panel lists next to [action]. */
+    fun describe(action: GimbalAction): List<String> {
+        val learnedNames = learned.filterValues { it == action }.keys.map { it.name }
+        val defaultNames = DEFAULTS.keys
+            .filter { code -> DEFAULTS[code] == action }
+            .filter { code -> learned.keys.none { it.keyCode == code } }
+            .sorted()
+            .map { keyName(it) }
+        return learnedNames + defaultNames
+    }
 
-    /** Binds [keyCode] to [action], replacing whatever that key did before. */
-    fun assign(keyCode: Int, action: GimbalAction) {
-        map[keyCode] = action
+    /** The action [sig] is already bound to by learning, if it's a different one. */
+    fun learnedConflict(sig: KeySignature, action: GimbalAction): GimbalAction? =
+        learned[sig]?.takeIf { it != action }
+
+    /**
+     * Binds [sig] to [action]. Other learned inputs for [action] are kept, so a zoom wheel that
+     * sends two different keys can be taught both.
+     */
+    fun assign(sig: KeySignature, action: GimbalAction) {
+        learned[sig] = action
+        save()
+    }
+
+    fun clearLearned(action: GimbalAction) {
+        learned.entries.removeAll { it.value == action }
         save()
     }
 
     fun reset() {
-        map.clear()
-        map.putAll(DEFAULTS)
+        learned.clear()
         save()
     }
 
     private fun load() {
-        val stored = prefs.getString(PREF_KEY, null)
-        if (stored == null) {
-            map.putAll(DEFAULTS)
-            return
-        }
-        stored.split(',').filter { it.isNotBlank() }.forEach { entry ->
-            val (code, name) = entry.split('=').takeIf { it.size == 2 } ?: return@forEach
-            val action = GimbalAction.entries.firstOrNull { it.name == name } ?: return@forEach
-            code.toIntOrNull()?.let { map[it] = action }
+        prefs.getString(PREF_LEARNED, null)?.split('\n')?.forEach { line ->
+            val eq = line.lastIndexOf('=')
+            if (eq <= 0) return@forEach
+            val sig = KeySignature.decode(line.substring(0, eq)) ?: return@forEach
+            val action = GimbalAction.entries.firstOrNull { it.name == line.substring(eq + 1) } ?: return@forEach
+            learned[sig] = action
         }
     }
 
     private fun save() {
         prefs.edit()
-            .putString(PREF_KEY, map.entries.joinToString(",") { "${it.key}=${it.value.name}" })
+            // v1 stored a code-only map under "map"; it's dropped so old bindings can't
+            // shadow the new learned ones.
+            .remove("map")
+            .putString(PREF_LEARNED, learned.entries.joinToString("\n") { "${it.key.encode()}=${it.value.name}" })
             .apply()
     }
 
     companion object {
-        private const val PREF_KEY = "map"
+        private const val PREF_LEARNED = "learned_v2"
 
         /** Keys the app never takes over, so the phone stays usable. */
         val RESERVED = setOf(

@@ -60,13 +60,19 @@ class MainActivity : AppCompatActivity() {
     private var recState = RecState.IDLE
     private var recordedNanos = 0L
 
-    /** Linear zoom, 0 = widest the lens allows, 1 = maximum zoom. */
+    /** Linear zoom being shown, 0 = widest the lens allows, 1 = maximum zoom. */
     private var linearZoom = 0f
+    /** Where the zoom is gliding to; gimbal input moves this, the animator follows it. */
+    private var targetZoom = 0f
     private var zoomDirection = 0
     private var recordHoldFired = false
 
     /** Action waiting for its gimbal key in the setup panel, or null when not learning. */
     private var learning: GimbalAction? = null
+
+    /** Recent inputs and what the app did with them, shown (and copyable) on the setup panel. */
+    private val eventLog = ArrayDeque<String>()
+    private var lastEventAt = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -89,8 +95,10 @@ class MainActivity : AppCompatActivity() {
         binding.resetBtn.setOnClickListener {
             keyMap.reset()
             learning = null
+            log("Reset all buttons to defaults")
             renderSetup()
         }
+        binding.copyLogBtn.setOnClickListener { copyLog() }
         setUpPinchZoom()
         orientationListener.enable()
         renderRecordUi()
@@ -147,6 +155,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             linearZoom = 0f
+            targetZoom = 0f
             camera?.cameraControl?.setLinearZoom(0f)
         } catch (e: Exception) {
             binding.status.text = "CAMERA ERROR"
@@ -229,9 +238,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun onRecordEvent(event: VideoRecordEvent) {
         when (event) {
-            is VideoRecordEvent.Start -> recState = RecState.RECORDING
-            is VideoRecordEvent.Pause -> recState = RecState.PAUSED
-            is VideoRecordEvent.Resume -> recState = RecState.RECORDING
+            is VideoRecordEvent.Start -> { recState = RecState.RECORDING; log("Recording started") }
+            is VideoRecordEvent.Pause -> { recState = RecState.PAUSED; log("Recording paused") }
+            is VideoRecordEvent.Resume -> { recState = RecState.RECORDING; log("Recording resumed") }
             is VideoRecordEvent.Status -> recordedNanos = event.recordingStats.recordedDurationNanos
             is VideoRecordEvent.Finalize -> {
                 recording = null
@@ -239,6 +248,7 @@ class MainActivity : AppCompatActivity() {
                 val saved = !event.hasError() ||
                     event.error == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE
                 val msg = if (saved) "Saved to Movies/GimbalCam" else "Recording failed (error ${event.error})"
+                log(msg + (event.cause?.message?.let { " — $it" } ?: ""))
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             }
         }
@@ -292,33 +302,59 @@ class MainActivity : AppCompatActivity() {
 
     // ── Zoom ────────────────────────────────────────────────────────────────────────────────
 
+    /** Jump straight to [value] (pinch, camera switch). */
     private fun setZoom(value: Float) {
         linearZoom = value.coerceIn(0f, 1f)
+        targetZoom = linearZoom
         camera?.cameraControl?.setLinearZoom(linearZoom)
     }
 
-    /** One detent of the gimbal wheel / one press of a zoom key. */
-    private fun zoomStep(direction: Int) = setZoom(linearZoom + direction * ZOOM_STEP)
+    /** Glide toward [value]: the gimbal wheel sends separate clicks, and jumping a whole step
+     *  per click looked jerky, so each click moves the target and the preview eases after it. */
+    private fun glideZoomTo(value: Float) {
+        targetZoom = value.coerceIn(0f, 1f)
+        handler.removeCallbacks(zoomGlide)
+        handler.post(zoomGlide)
+    }
 
-    /** While a zoom key is held, keep zooming smoothly until it's released. */
-    private val zoomRamp = object : Runnable {
+    private val zoomGlide = object : Runnable {
         override fun run() {
-            if (zoomDirection == 0) return
-            setZoom(linearZoom + zoomDirection * ZOOM_RAMP_PER_FRAME)
+            if (zoomDirection != 0) {
+                targetZoom = (targetZoom + zoomDirection * ZOOM_RAMP_PER_FRAME).coerceIn(0f, 1f)
+            }
+            val diff = targetZoom - linearZoom
+            if (kotlin.math.abs(diff) < 0.001f && zoomDirection == 0) {
+                linearZoom = targetZoom
+                camera?.cameraControl?.setLinearZoom(linearZoom)
+                return
+            }
+            linearZoom += diff * ZOOM_EASE
+            camera?.cameraControl?.setLinearZoom(linearZoom)
             handler.postDelayed(this, FRAME_MS)
         }
     }
 
+    /** One click of the gimbal wheel / one press of a zoom key. */
+    private fun zoomStep(direction: Int) = glideZoomTo(targetZoom + direction * ZOOM_STEP)
+
+    /** Held-down zoom: after a short pause, keep moving the target until release. */
+    private val zoomHoldStart = Runnable {
+        zoomDirection = pendingZoomDirection
+        handler.removeCallbacks(zoomGlide)
+        handler.post(zoomGlide)
+    }
+    private var pendingZoomDirection = 0
+
     private fun startZoom(direction: Int) {
-        handler.removeCallbacks(zoomRamp)
-        zoomDirection = direction
+        handler.removeCallbacks(zoomHoldStart)
         zoomStep(direction)
-        handler.postDelayed(zoomRamp, HOLD_BEFORE_RAMP_MS)
+        pendingZoomDirection = direction
+        handler.postDelayed(zoomHoldStart, HOLD_BEFORE_RAMP_MS)
     }
 
     private fun stopZoom() {
+        handler.removeCallbacks(zoomHoldStart)
         zoomDirection = 0
-        handler.removeCallbacks(zoomRamp)
     }
 
     private fun setUpPinchZoom() {
@@ -329,6 +365,7 @@ class MainActivity : AppCompatActivity() {
                 cam.cameraControl.setZoomRatio(state.zoomRatio * d.scaleFactor)
                 // Keep linearZoom in step so the next gimbal zoom continues from here.
                 linearZoom = cam.cameraInfo.zoomState.value?.linearZoom ?: linearZoom
+                targetZoom = linearZoom
                 return true
             }
         })
@@ -349,11 +386,19 @@ class MainActivity : AppCompatActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
         if (code in GimbalKeyMap.RESERVED) return super.dispatchKeyEvent(event)
+        val sig = KeySignature.of(event)
+        val action = keyMap.actionFor(sig)
+        logKey(event, sig, action)
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            showLastKey(code, event)
-            learning?.let { action ->
-                keyMap.assign(code, action)
+            showLastKey(sig, action)
+            learning?.let { learnAction ->
+                keyMap.learnedConflict(sig, learnAction)?.let { other ->
+                    log("⚠ This is the same signal as \"${other.label}\" — the gimbal sends " +
+                        "identical input for both, so it can only do one of them.")
+                }
+                keyMap.assign(sig, learnAction)
+                log("Learned ${sig.name} → ${learnAction.label}")
                 learning = null
                 renderSetup()
                 return true
@@ -361,10 +406,10 @@ class MainActivity : AppCompatActivity() {
         }
         // While the setup panel is open, gimbal keys only get shown, not acted on.
         if (binding.setupPanel.visibility == View.VISIBLE) {
-            return keyMap.actionFor(code) != null || super.dispatchKeyEvent(event)
+            return action != null || super.dispatchKeyEvent(event)
         }
 
-        val action = keyMap.actionFor(code) ?: return super.dispatchKeyEvent(event)
+        if (action == null) return super.dispatchKeyEvent(event)
         when (event.action) {
             KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) onGimbalDown(action)
             KeyEvent.ACTION_UP -> onGimbalUp(action)
@@ -404,6 +449,7 @@ class MainActivity : AppCompatActivity() {
         ) {
             val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
             if (v != 0f) {
+                log("Scroll ${"%.2f".format(v)} from ${event.device?.name ?: "unknown"}")
                 zoomStep(if (v > 0) +1 else -1)
                 return true
             }
@@ -413,10 +459,8 @@ class MainActivity : AppCompatActivity() {
 
     private val hideLastKey = Runnable { binding.lastKey.visibility = View.GONE }
 
-    private fun showLastKey(code: Int, event: KeyEvent) {
-        val device = event.device?.name ?: "unknown device"
-        val action = keyMap.actionFor(code)?.label ?: "not assigned"
-        val text = "${GimbalKeyMap.keyName(code)} ($code) from $device → $action"
+    private fun showLastKey(sig: KeySignature, action: GimbalAction?) {
+        val text = "${sig.name} → ${action?.label ?: "not assigned"}"
         binding.setupLastKey.text = text
         binding.lastKey.text = text
         binding.lastKey.visibility = View.VISIBLE
@@ -424,12 +468,46 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(hideLastKey, 2500)
     }
 
+    private fun logKey(event: KeyEvent, sig: KeySignature, action: GimbalAction?) {
+        val kind = when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount > 0) "repeat ${event.repeatCount}" else "down"
+            KeyEvent.ACTION_UP -> "up"
+            else -> "action ${event.action}"
+        }
+        // Repeats of a held key would flood the log; keep only the first few.
+        if (event.repeatCount > 3) return
+        log("$kind ${GimbalKeyMap.keyName(sig.keyCode)} (${sig.keyCode}) scan ${sig.scanCode} " +
+            "[${sig.device}] → ${action?.label ?: "—"}")
+    }
+
+    private fun log(line: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val gap = if (lastEventAt == 0L) 0L else now - lastEventAt
+        lastEventAt = now
+        eventLog.addLast(String.format(Locale.US, "+%5dms  %s", gap, line))
+        while (eventLog.size > 40) eventLog.removeFirst()
+        if (binding.setupPanel.visibility == View.VISIBLE) {
+            binding.eventLog.text = eventLog.reversed().joinToString("\n")
+        }
+    }
+
+    private fun copyLog() {
+        val text = "Gimbal Cam ${BuildConfig.VERSION_NAME} on ${Build.MANUFACTURER} ${Build.MODEL} " +
+            "(Android ${Build.VERSION.RELEASE})\n" + eventLog.joinToString("\n")
+        val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Gimbal Cam log", text))
+        Toast.makeText(this, "Log copied — paste it into your message", Toast.LENGTH_SHORT).show()
+    }
+
     // ── Setup panel ─────────────────────────────────────────────────────────────────────────
 
     private fun showSetup(show: Boolean) {
         learning = null
         binding.setupPanel.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) renderSetup()
+        if (show) {
+            binding.eventLog.text = eventLog.reversed().joinToString("\n")
+            renderSetup()
+        }
     }
 
     private fun renderSetup() {
@@ -441,15 +519,12 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(6), 0, dp(6))
             }
-            val keys = keyMap.keysFor(action)
+            val keys = keyMap.describe(action)
             val label = TextView(this).apply {
                 text = buildString {
                     append(action.label)
                     append('\n')
-                    append(
-                        if (keys.isEmpty()) "no button"
-                        else keys.joinToString(", ") { GimbalKeyMap.keyName(it) }
-                    )
+                    append(if (keys.isEmpty()) "no button" else keys.joinToString("\n"))
                 }
                 setTextColor(getColor(android.R.color.white))
                 textSize = 14f
@@ -460,6 +535,13 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     learning = if (learning == action) null else action
                     renderSetup()
+                }
+                // Long-press forgets what was learned for this action.
+                setOnLongClickListener {
+                    keyMap.clearLearned(action)
+                    log("Cleared learned buttons for ${action.label}")
+                    renderSetup()
+                    true
                 }
             }
             row.addView(label)
@@ -474,7 +556,9 @@ class MainActivity : AppCompatActivity() {
         private const val LONG_PRESS_MS = 800L
         private const val HOLD_BEFORE_RAMP_MS = 250L
         private const val FRAME_MS = 33L
-        private const val ZOOM_STEP = 0.04f
-        private const val ZOOM_RAMP_PER_FRAME = 0.008f
+        private const val ZOOM_STEP = 0.025f
+        private const val ZOOM_RAMP_PER_FRAME = 0.005f
+        /** Fraction of the remaining distance covered each frame while gliding. */
+        private const val ZOOM_EASE = 0.18f
     }
 }
