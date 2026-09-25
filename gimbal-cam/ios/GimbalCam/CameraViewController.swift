@@ -315,7 +315,7 @@ final class CameraViewController: UIViewController {
         title.textColor = .white
 
         let help = UILabel()
-        help.text = "Pair the gimbal with the iPhone in Settings › Bluetooth. To teach a control, tap Learn next to it, then press or roll that control on the gimbal. Hold the record button about a second to stop and save."
+        help.text = "Connect the gimbal in DJI Mimo first, then switch to Gimbal Cam. You can leave Mimo running in the background. To teach a control, tap Learn next to it, then press or roll that control on the gimbal. Hold the record button about a second to stop and save."
         help.numberOfLines = 0
         help.font = .systemFont(ofSize: 14)
         help.textColor = UIColor(white: 1, alpha: 0.75)

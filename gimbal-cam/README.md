@@ -31,8 +31,10 @@ starts with the common defaults (shutter → record, volume down / Page Down / a
 The **⚙ Gimbal buttons** screen shows every press the phone receives, and you can teach it
 your gimbal's controls:
 
-1. Pair the gimbal with the phone in **Bluetooth settings**. DJI Mimo pairing alone isn't
-   enough. Close DJI Mimo so it doesn't take over the gimbal.
+1. Connect the gimbal in **DJI Mimo** as usual, then switch to Gimbal Cam. The Osmo Mobile 7
+   only links to the phone through Mimo's own connection process, and it stays connected when
+   you switch apps. Leave Mimo running in the background. On Android 10+, Gimbal Cam shows
+   "Gimbal not connected" until the gimbal's buttons are available to it.
 2. Open Gimbal Cam, tap **⚙**, and press each gimbal control. The top line shows what came in.
 3. Tap **Learn** next to an action, then press or roll the gimbal control you want for it.
 

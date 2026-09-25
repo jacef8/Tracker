@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.view.Gravity
+import android.hardware.input.InputManager
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -101,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         binding.copyLogBtn.setOnClickListener { copyLog() }
         setUpPinchZoom()
         orientationListener.enable()
+        watchGimbalConnection()
         renderRecordUi()
 
         val needed = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
@@ -115,6 +117,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         orientationListener.disable()
+        getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
@@ -389,6 +392,8 @@ class MainActivity : AppCompatActivity() {
         val sig = KeySignature.of(event)
         val action = keyMap.actionFor(sig)
         logKey(event, sig, action)
+        // Input from a real device proves something is connected, whatever its device class.
+        if (event.device?.isVirtual == false) binding.connectHint.visibility = View.GONE
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             showLastKey(sig, action)
@@ -497,6 +502,54 @@ class MainActivity : AppCompatActivity() {
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Gimbal Cam log", text))
         Toast.makeText(this, "Log copied — paste it into your message", Toast.LENGTH_SHORT).show()
+    }
+
+    // ── Gimbal connection ───────────────────────────────────────────────────────────────────
+    // The Osmo only links up after DJI Mimo connects it, so show whether its input device is
+    // actually present rather than leaving "nothing happens" as the only clue.
+
+    private var connectedNames = emptyList<String>()
+
+    private val inputDeviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(id: Int) = refreshGimbalConnection()
+        override fun onInputDeviceRemoved(id: Int) = refreshGimbalConnection()
+        override fun onInputDeviceChanged(id: Int) = refreshGimbalConnection()
+    }
+
+    private fun watchGimbalConnection() {
+        getSystemService(InputManager::class.java).registerInputDeviceListener(inputDeviceListener, handler)
+        refreshGimbalConnection()
+    }
+
+    /** External (Bluetooth/USB) devices that send keys. Only knowable on Android 10+. */
+    private fun externalKeyDevices(): List<String>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return InputDevice.getDeviceIds().toList()
+            .mapNotNull { InputDevice.getDevice(it) }
+            .filter { !it.isVirtual && it.isExternal && it.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD }
+            .map { it.name }
+            .distinct()
+    }
+
+    private fun refreshGimbalConnection() {
+        val names = externalKeyDevices()
+        if (names == null) {
+            binding.gimbalStatus.text = "Press a gimbal button to check it's connected."
+            binding.connectHint.visibility = View.GONE
+            return
+        }
+        for (n in names - connectedNames.toSet()) log("Connected: $n")
+        for (n in connectedNames - names.toSet()) log("Disconnected: $n")
+        connectedNames = names
+        if (names.isEmpty()) {
+            binding.gimbalStatus.text = "✕ No gimbal connected"
+            binding.gimbalStatus.setTextColor(getColor(R.color.paused_amber))
+            binding.connectHint.visibility = View.VISIBLE
+        } else {
+            binding.gimbalStatus.text = "✓ Connected: " + names.joinToString(", ")
+            binding.gimbalStatus.setTextColor(0xFF4CD964.toInt())
+            binding.connectHint.visibility = View.GONE
+        }
     }
 
     // ── Setup panel ─────────────────────────────────────────────────────────────────────────
