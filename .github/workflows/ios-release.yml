@@ -15,6 +15,10 @@ on:
         description: "What to Test note (external distribution requires one)"
         required: false
         type: string
+      build:
+        description: "distribute only: the exact build number to hand out (blank = newest PROCESSED build, which is not always the newest UPLOADED one)"
+        required: false
+        type: string
 
 jobs:
   build-and-upload:
@@ -120,6 +124,10 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           LANE: ${{ inputs.lane || 'beta' }}
           CHANGELOG: ${{ inputs.changelog }}
+          # Apple takes minutes to process an upload, and `distribute` picks the newest build it
+          # can SEE — which twice now was the previous one, handing testers a build we had already
+          # superseded. Pin it when it matters.
+          DISTRIBUTE_BUILD: ${{ inputs.build }}
         run: |
           cd ios/App
           fastlane "${LANE}"
