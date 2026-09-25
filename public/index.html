@@ -3619,7 +3619,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 796;
+var APP_BUILD = 797;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3909,7 +3909,81 @@ function _checkMarkerAlignment() {
       + (worstDetail ? ' ' + worstDetail : '');
   } catch (e) {}
 }
-function _animateMarker(marker, toLng, toLat) {
+// ── The path between reports ──────────────────────────────────────────────────────────────
+// The GPS chip keeps delivering a fix every second or two — only the NETWORK write is
+// throttled. So every report carries the shape of the ground covered since the last one, and
+// viewers animate along it. Without this, a 10-second gap is drawn as a straight line between
+// two points, which cuts corners: a turn taken between reports shows the dot sailing through
+// whatever is on the inside of the bend.
+//
+// Cost is a few hundred bytes on ONE write instead of ten separate writes, and the shape is
+// simplified first, so a straight highway stretch collapses to its two ends while a corner
+// keeps the points that make it a corner.
+var PATH_MAX_PTS = 14;          // ceiling on points per report
+var PATH_SIMPLIFY_M = 6;        // drop a point sitting within ~20 ft of the line through its neighbours
+var PATH_MIN_STEP_M = 2;        // ignore GPS jitter while standing still
+window._pathBuf = window._pathBuf || [];
+window._pathPush = function (lat, lng, ts) {
+  try {
+    var b = window._pathBuf;
+    var last = b[b.length - 1];
+    if (last && metersApart(last[0], last[1], lat, lng) < PATH_MIN_STEP_M) return;
+    b.push([lat, lng, ts]);
+    if (b.length > 400) b.splice(0, b.length - 400);   // a report should never be far off; cap anyway
+  } catch (e) {}
+};
+// Perpendicular distance in metres, flat-earth over the tens of metres this is used across.
+function _pathPerpM(pt, a, b) {
+  var mx = 111320 * Math.cos(a[0] * Math.PI / 180), my = 110540;
+  var px = (pt[1] - a[1]) * mx, py = (pt[0] - a[0]) * my;
+  var bx = (b[1] - a[1]) * mx, by = (b[0] - a[0]) * my;
+  var len2 = bx * bx + by * by;
+  if (!len2) return Math.sqrt(px * px + py * py);
+  var t = Math.max(0, Math.min(1, (px * bx + py * by) / len2));
+  var dx = px - bx * t, dy = py - by * t;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+// Ramer-Douglas-Peucker: keep the points that give the line its shape, drop the rest.
+function _pathSimplify(pts, tolM) {
+  if (pts.length < 3) return pts.slice();
+  var keep = new Array(pts.length);
+  keep[0] = keep[pts.length - 1] = true;
+  var stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    var seg = stack.pop(), i = seg[0], j = seg[1];
+    if (j <= i + 1) continue;
+    var maxD = -1, idx = -1;
+    for (var k = i + 1; k < j; k++) {
+      var d = _pathPerpM(pts[k], pts[i], pts[j]);
+      if (d > maxD) { maxD = d; idx = k; }
+    }
+    if (maxD > tolM && idx > 0) { keep[idx] = true; stack.push([i, idx], [idx, j]); }
+  }
+  var out = [];
+  for (var n = 0; n < pts.length; n++) if (keep[n]) out.push(pts[n]);
+  return out;
+}
+// Hand over the shape since the last report and start a new one.
+window._pathTake = function () {
+  try {
+    var b = window._pathBuf;
+    window._pathBuf = [];
+    if (b.length < 3) return null;                     // two points IS a straight line — nothing to add
+    var sp = _pathSimplify(b, PATH_SIMPLIFY_M);
+    if (sp.length < 3) return null;
+    if (sp.length > PATH_MAX_PTS) {                    // thin the middle, always keep both ends
+      var out = [sp[0]], step = (sp.length - 2) / (PATH_MAX_PTS - 2);
+      for (var i = 1; i < PATH_MAX_PTS - 1; i++) out.push(sp[Math.round(i * step)]);
+      out.push(sp[sp.length - 1]);
+      sp = out;
+    }
+    return sp.map(function (q) {
+      return [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6, q[2]];  // ~4 inches
+    });
+  } catch (e) { return null; }
+};
+
+function _animateMarker(marker, toLng, toLat, path) {
   if (!marker) return;
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
   var cur = marker._curLngLat;
@@ -3926,12 +4000,52 @@ function _animateMarker(marker, toLng, toLat) {
   marker._lastFixAt = _nowMs;
   // A little longer than the observed gap: arriving fractionally late keeps the dot moving
   // through the handover, where arriving early puts a visible stop in it.
-  var dur = Math.max(700, Math.min(5000, _gap * 1.08));
+  // Glide across the WHOLE gap between reports. The old 5-second ceiling was written when fixes
+  // arrived every second or two; once reports are 10+ seconds apart it made the dot slide for
+  // five seconds and then sit frozen for the rest — the stutter that reads as "it stopped".
+  var dur = Math.max(700, Math.min(30000, _gap * 1.08));
   var start = _nowMs;
+  // Waypoints: where the dot is now, the route the phone actually took, then the new position.
+  // Each leg gets a share of the glide proportional to its length, so the speed stays even.
+  var _wp = [[fromLng, fromLat]];
+  if (path && path.length) {
+    for (var _pi = 0; _pi < path.length; _pi++) {
+      var _pp = path[_pi];
+      if (!_pp || _pp.length < 2) continue;
+      var _plng = +_pp[1], _plat = +_pp[0];
+      if (isNaN(_plng) || isNaN(_plat)) continue;
+      var _prev = _wp[_wp.length - 1];
+      if (Math.abs(_prev[0] - _plng) + Math.abs(_prev[1] - _plat) < 1e-7) continue;
+      _wp.push([_plng, _plat]);
+    }
+  }
+  _wp.push([toLng, toLat]);
+  var _seg = [], _total = 0;
+  for (var _si = 1; _si < _wp.length; _si++) {
+    var _dx = _wp[_si][0] - _wp[_si - 1][0], _dy = _wp[_si][1] - _wp[_si - 1][1];
+    var _len = Math.sqrt(_dx * _dx + _dy * _dy);
+    _seg.push(_len); _total += _len;
+  }
+  function _atFraction(t) {
+    if (_total <= 0 || _seg.length === 1) {
+      return [fromLng + (toLng - fromLng) * t, fromLat + (toLat - fromLat) * t];
+    }
+    var want = t * _total, acc = 0;
+    for (var i = 0; i < _seg.length; i++) {
+      if (acc + _seg[i] >= want || i === _seg.length - 1) {
+        var u = _seg[i] > 0 ? (want - acc) / _seg[i] : 1;
+        if (u > 1) u = 1;
+        return [_wp[i][0] + (_wp[i + 1][0] - _wp[i][0]) * u,
+                _wp[i][1] + (_wp[i + 1][1] - _wp[i][1]) * u];
+      }
+      acc += _seg[i];
+    }
+    return [toLng, toLat];
+  }
   function step(t2) {
     var t = Math.min(1, (t2 - start) / dur);
-    var lng = fromLng + (toLng - fromLng) * t;
-    var lat = fromLat + (toLat - fromLat) * t;
+    var _at = _atFraction(t);
+    var lng = _at[0], lat = _at[1];
     // Camera FIRST, then the marker into it. A marker computes its screen position from the
     // camera transform as it stands when setLngLat runs, so placing the marker and then moving
     // the camera leaves the icon one frame behind, every frame -- a dot twitching against a map
@@ -14899,6 +15013,7 @@ function startLocationSharing() {
     // in a day. The marker, speed and here-since above are already updated locally on every
     // fix; the network only needs to hear about it every 10 s or every ~300 ft, whichever
     // comes first. Nobody can see the difference on a map; the cellular radio very much can.
+    window._pathPush(lat, lng, now);   // every fix, gated or not — this is what keeps corners
     var _rpMoved = window._lastReportPos ? metersApart(window._lastReportPos.lat, window._lastReportPos.lng, lat, lng) : Infinity;
     var _rpAge = now - (window._lastReportTs || 0);
     // Time only. A distance clause ("or every 300 ft") was tried first and at 60 mph it fired
@@ -14932,6 +15047,8 @@ function startLocationSharing() {
     };
     // Battery, so drain per hour per person can be measured instead of guessed at.
     if (window._battPct != null) { _fixPayload.batt = window._battPct; _fixPayload.chg = window._battChg ? 1 : 0; }
+    // The route since the last report, so viewers animate the corners instead of cutting them.
+    try { var _pth = window._pathTake(); if (_pth) _fixPayload.path = _pth; } catch (e) {}
     // Battery fields only when known — RTDB rejects undefined, and an absent key is the honest
     // encoding of "this platform doesn't say" (iOS).
     try { if (window._batt) { _fixPayload.batt = window._batt.pct; _fixPayload.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
@@ -16068,7 +16185,7 @@ function listenUsers() {
         // Update position only if live — keep last known position if not. Glide instead
         // of teleport, and if we're following this person, recenter smoothly on the fix.
         if (isLive || isMine) {
-          _animateMarker(userMarkers[uid], data.lng, data.lat);
+          _animateMarker(userMarkers[uid], data.lng, data.lat, data.path);
           if (followUid === uid && !isMine) _followRecenter(data.lng, data.lat);
         }
         // Update appearance
