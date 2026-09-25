@@ -147,7 +147,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             if UIApplication.shared.applicationState == .active { return }
             let sinceLast = self.lastReportedAt.map { Date().timeIntervalSince($0) } ?? .infinity
             if sinceLast > 170, let loc = self.bgLocationManager?.location, !self.isLeftover(loc) {
-                self.reportFixInBackground(loc)
+                self.reportFixInBackground(loc, force: true)
             }
         }
         // launchOptions[.location] != nil means iOS relaunched us purely for this — no UI will
@@ -188,7 +188,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // the only thing the Crew will learn about why.
         writeStatusNatively()
         if let loc = bgLocationManager?.location, !isLeftover(loc) {
-            reportFixInBackground(loc)
+            reportFixInBackground(loc, force: true)
             // Give the headless write a moment before iOS suspends us again.
             DispatchQueue.main.asyncAfter(deadline: .now() + 8) { completionHandler(.newData) }
         } else {
@@ -264,11 +264,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        if let loc = manager.location { reportFixInBackground(loc) }
+        if let loc = manager.location { reportFixInBackground(loc, force: true) }
     }
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         if let loc = manager.location {
-            reportFixInBackground(loc)
+            reportFixInBackground(loc, force: true)
             // Leaving the anchor is exactly when a new one is needed: re-anchor here so the next
             // departure wakes us too. Without this the phone gets one relaunch and no more.
             if region.identifier == hereRegionId { updateHereRegion(loc) }
@@ -625,7 +625,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         return true
     }
 
-    private func reportFixInBackground(_ loc: CLLocation) {
+    /// Report rate. CoreLocation delivers a fix every 50 m, which at driving speed is one every
+    /// ~2 seconds — and this native path writes the live row AND a history point each time,
+    /// bypassing the web layer's own 10-second throttle (build 796). Measured on 2026-09-25: an
+    /// iPhone on 1.0.4 wrote 2,308 history points in a day while an Android phone on the throttled
+    /// path wrote 416. One write per 10 seconds while moving; `force` is for the wake push and the
+    /// stationary heartbeat, which are already rate-limited by their own timers.
+    private var lastNativeReportAt: Date = .distantPast
+    private static let nativeReportMinInterval: TimeInterval = 10
+    private func reportFixInBackground(_ loc: CLLocation, force: Bool = false) {
+        if !force && Date().timeIntervalSince(lastNativeReportAt) < Self.nativeReportMinInterval { return }
+        lastNativeReportAt = Date()
         lastReportedAt = Date()
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
             self?.endBackgroundTaskIfNeeded()
