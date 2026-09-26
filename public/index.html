@@ -3619,7 +3619,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 797;
+var APP_BUILD = 798;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16184,7 +16184,16 @@ function listenUsers() {
       } else if (hasGps && userMarkers[uid]) {
         // Update position only if live — keep last known position if not. Glide instead
         // of teleport, and if we're following this person, recenter smoothly on the fix.
-        if (isLive || isMine) {
+        // Only when this is genuinely a NEW report for this person. This listener fires on every
+        // snapshot of the room — i.e. every time ANYONE writes — and re-renders every marker, so
+        // a member who hasn't moved was being handed the same position again and again. That used
+        // to be a no-op (animating from a point to itself). Now that a report carries the route
+        // travelled, replaying it walked the dot back to where the route STARTED and forward
+        // again, every time somebody else reported: the bouncing between "where they are" and
+        // "where they were".
+        var _rep = (data.fixTs || data.ts || 0) + '@' + data.lng + ',' + data.lat;
+        if ((isLive || isMine) && userMarkers[uid]._lastRep !== _rep) {
+          userMarkers[uid]._lastRep = _rep;
           _animateMarker(userMarkers[uid], data.lng, data.lat, data.path);
           if (followUid === uid && !isMine) _followRecenter(data.lng, data.lat);
         }
