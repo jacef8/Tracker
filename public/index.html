@@ -2976,13 +2976,20 @@
 </div>
 
 <!-- ══ TRACK VIEW BAR (shown while viewing a saved track on the map) ══ -->
-<div id="track-view-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:160;max-width:94vw;background:rgba(13,17,23,.85);border:1px solid #00b0ff;border-radius:12px;padding:8px 10px 8px 13px;box-shadow:0 4px 18px rgba(0,0,0,.55);align-items:center;gap:10px">
+<!-- Tapping the bar reopens the track's overview (stats, elevation, rename/share/delete). Only
+     the X stopped viewing before, so once a track was on the map there was no way back to its
+     detail sheet without going through the Tracks list again. -->
+<div id="track-view-bar" role="button" tabindex="0" title="Open track overview"
+     onclick="if(!(event.target.closest&&event.target.closest('button'))) window._openShownTrack()"
+     onkeydown="if((event.key==='Enter'||event.key===' ')&&!(event.target.closest&&event.target.closest('button'))){event.preventDefault();window._openShownTrack();}"
+     style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:160;max-width:94vw;background:rgba(13,17,23,.85);border:1px solid #00b0ff;border-radius:12px;padding:8px 10px 8px 13px;box-shadow:0 4px 18px rgba(0,0,0,.55);align-items:center;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent">
   <span style="width:9px;height:9px;border-radius:50%;background:#00b0ff;box-shadow:0 0 8px #00b0ff;flex-shrink:0"></span>
   <div style="min-width:0">
     <div id="tvb-name" style="font-size:13px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:58vw">Track</div>
     <div id="tvb-stats" style="font-size:11px;color:#9fb3c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:58vw"></div>
   </div>
-  <button onclick="window._clearShownTrack()" title="Stop viewing" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:5px 10px;cursor:pointer;margin-left:2px">&#10005;</button>
+  <svg class="licon licon-sm" style="flex-shrink:0;color:#00b0ff;transform:rotate(-90deg);opacity:.85" aria-hidden="true"><use href="#ic-chevron-down"/></svg>
+  <button onclick="event.stopPropagation();window._clearShownTrack()" title="Stop viewing" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.25);border-radius:8px;color:#fff;font-size:13px;font-weight:800;padding:5px 10px;cursor:pointer;margin-left:2px">&#10005;</button>
 </div>
 
 <!-- ══ TRACK NAME MODAL (on-brand, replaces OS prompt) ══════════════ -->
@@ -3790,7 +3797,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 802;
+var APP_BUILD = 803;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22651,6 +22658,8 @@ function _showTrackViewBar(t, st){
 }
 function _hideTrackViewBar(){ var bar=document.getElementById('track-view-bar'); if(bar) bar.style.display='none'; }
 window._clearShownTrack=function(){ _clearSavedTrack(); };
+// Back to the overview for whichever track is currently drawn on the map.
+window._openShownTrack=function(){ try { if (window._shownTrackId) _openTrackDetail(window._shownTrackId); } catch(e){} };
 window._trkPrompt=function(title, defVal, onSave, onCancel){
   var m=document.getElementById('trk-name-modal'), inp=document.getElementById('trk-name-input'), ti=document.getElementById('trk-name-title');
   // The modal markup is static and always in the page — this branch should be unreachable. If it
