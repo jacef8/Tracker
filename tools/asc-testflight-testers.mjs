@@ -127,6 +127,13 @@ if (mode === 'submitversion') {
       '- Simpler setup when you create a Crew or Room',
       '- Many fixes and improvements',
     ],
+    '1.0.8': [
+      '- Much better battery life: GroundLink now sends your location about once every 10 seconds instead of several times a second',
+      '- Your location switches to low power while you are parked, and back to full GPS when you move',
+      '- Your dot follows the road around corners instead of cutting across them',
+      '- The app no longer keeps your screen awake unless you ask it to, in Settings',
+      '- Many fixes and improvements',
+    ],
   };
   const notes = (NOTES[verStr] || ['- Fixes and improvements']).join('\n');
   try {
