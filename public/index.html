@@ -3619,7 +3619,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 798;
+var APP_BUILD = 799;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -3982,6 +3982,28 @@ window._pathTake = function () {
     });
   } catch (e) { return null; }
 };
+
+// Write a run of points as ONE network update. Reports are ~10 s apart, which at 50 mph is 876
+// ft, and a trail drawn through points that far apart cuts every corner — measured on a real
+// drive: 368 points across 55 miles. The route collected between reports goes in alongside the
+// endpoint, batched into a single update(), so the recorded trail keeps its shape at no extra
+// cost in transmissions. A straight stretch adds nothing (the route collapses to its two ends);
+// a corner adds the three or four points that make it a corner.
+function _writeRun(base, route, endRec, extra) {
+  try {
+    var upd = {};
+    for (var i = 0; route && i < route.length; i++) {
+      var q = route[i];
+      if (!q || q.length < 3) continue;
+      if (metersApart(q[0], q[1], endRec.lat, endRec.lng) < 3) continue;   // this one IS the endpoint
+      var pt = { lat: q[0], lng: q[1], ts: q[2], acc: endRec.acc };
+      if (extra) for (var k in extra) pt[k] = extra[k];
+      upd[fbPush(fbRef(db, base)).key] = pt;
+    }
+    upd[fbPush(fbRef(db, base)).key] = endRec;
+    window._fb.update(fbRef(db, base), upd).catch(function () {});
+  } catch (e) {}
+}
 
 function _animateMarker(marker, toLng, toLat, path) {
   if (!marker) return;
@@ -15193,8 +15215,9 @@ function startLocationSharing() {
         lastBreadcrumbPos = { lat, lng };
         lastBreadcrumbTs = now;
         _trailRooms.forEach(function (_room) {
-          const crumbRef = fbPush(fbRef(db, `gl/${_room}/trails/${userId}`));
-          fbSet(crumbRef, { lat, lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' });
+          _writeRun(`gl/${_room}/trails/${userId}`, _fixPayload.path,
+                    { lat: lat, lng: lng, ts: now, acc: Math.round(accM), src: window._lastFixSrc || 'web' },
+                    { src: window._lastFixSrc || 'web' });
 
           // Prune points past the retention window.
           fbOnValue(fbRef(db, `gl/${_room}/trails/${userId}`), snap => {
@@ -15258,8 +15281,8 @@ function startLocationSharing() {
           // device re-downloaded, re-parsed and re-rendered a tree that is mostly history it never
           // displays, on every write from anyone. glh/ is only ever read by the Trail sheet, on
           // demand, for one person and one day at a time.
-          const histRef = fbPush(fbRef(db, `glh/${_circleKeys[_hi]}/${userId}/${dateStr}`));
-          fbSet(histRef, { lat, lng, ts: now, acc: Math.round(hAccM) });
+          _writeRun(`glh/${_circleKeys[_hi]}/${userId}/${dateStr}`, _fixPayload.path,
+                    { lat: lat, lng: lng, ts: now, acc: Math.round(hAccM) });
         }
       }
     }
