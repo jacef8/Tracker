@@ -3797,7 +3797,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 803;
+var APP_BUILD = 804;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18166,16 +18166,24 @@ function enablePinMode() {
   map.getCanvas().style.cursor = 'crosshair';
   try { toast('Tap the map to place a pin · Cancel at the top', 3000); } catch (e) {}
 }
-// Back, Escape, or tapping the pin tool again — none of which need the Cancel bar to be visible.
+// Escape and the hardware Back button leave ANY map mode — pin, place or measure — so none of
+// them can strand you if their Cancel bar is missed. Each mode's own bar is still the obvious
+// way out; this is the one that always works.
+function _exitMapMode() {
+  try { if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); return true; } } catch (e) {}
+  try { if (typeof placeMode !== 'undefined' && placeMode) { window._disablePlaceMode(); return true; } } catch (e) {}
+  try { if (typeof measureMode !== 'undefined' && measureMode) { disableMeasure(); return true; } } catch (e) {}
+  try {
+    var mp = document.getElementById('measure-mode-picker');
+    if (mp && mp.classList.contains('active')) { disableMeasure(); return true; }
+  } catch (e) {}
+  return false;
+}
 try {
   document.addEventListener('keydown', function (ev) {
-    if (ev.key !== 'Escape') return;
-    if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); ev.preventDefault(); }
-    else if (typeof placeMode !== 'undefined' && placeMode) { window._disablePlaceMode(); ev.preventDefault(); }
+    if (ev.key === 'Escape' && _exitMapMode()) ev.preventDefault();
   });
-  window.addEventListener('popstate', function () {
-    try { if (typeof pinMode !== 'undefined' && pinMode) disablePinMode(); } catch (e) {}
-  });
+  window.addEventListener('popstate', function () { try { _exitMapMode(); } catch (e) {} });
 } catch (e) {}
 
 function disablePinMode() {
@@ -18185,7 +18193,10 @@ function disablePinMode() {
   map.getCanvas().style.cursor = '';
 }
 window._enablePlaceMode = function () {
+  if (placeMode) { window._disablePlaceMode(); return; }   // tapping it again backs out
   placeMode = true;
+  _syncTopbarH();                                          // its Cancel bar hangs off the toolbar
+
   document.getElementById('place-mode-bar').classList.add('active');
   map.getCanvas().style.cursor = 'crosshair';
 };
