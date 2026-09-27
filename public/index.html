@@ -226,7 +226,10 @@
     --chat-h:  230px;
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bot: env(safe-area-inset-bottom, 0px);
-    --topbar-h: 116px;  /* update if topbar height changes */
+    /* A fallback only. _syncTopbarH() measures the real toolbar at runtime and overwrites this,
+       because the toolbar is two rows on most phones and taller than any fixed number. Eight
+       fixed-position bars hang off it, including the Cancel that gets you out of pin mode. */
+    --topbar-h: 116px;
     font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
     font-size: 14px; color: var(--text);
   }
@@ -3784,7 +3787,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 800;
+var APP_BUILD = 801;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13707,6 +13710,20 @@ function initMap() {
 
     // ── 2. Pin drop mode ──────────────────────────────────────────
     if (pinMode) {
+      // Tapping an existing pin while placing used to drop a second pin on top of it, which is
+      // how "I can't tap a pin to delete it" happens — you are in pin mode and every tap places.
+      // Land on one and it opens instead.
+      try {
+        if (map.getLayer('pins-layer')) {
+          var _onPin = map.queryRenderedFeatures(e.point, { layers: ['pins-layer'] });
+          if (_onPin.length) {
+            disablePinMode();
+            if (window._soloMode) window._soloPinPopup(_onPin[0], e.lngLat);
+            else window._showPinPopup(_onPin[0].properties.pid, e.lngLat);
+            return;
+          }
+        }
+      } catch (_pe) {}
       pendingCoords = e.lngLat;
       document.getElementById('pin-coords-label').textContent =
         e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
@@ -18131,10 +18148,26 @@ window._crossUpdate = function () {
   } catch (e) {}
 };
 function enablePinMode() {
+  // Tapping the tool a second time backs out, so the mode is never a one-way door.
+  if (pinMode) { disablePinMode(); return; }
   pinMode = true;
+  _syncTopbarH();                       // the Cancel bar sits under the toolbar — measure it first
   document.getElementById('pin-mode-bar').classList.add('active');
   map.getCanvas().style.cursor = 'crosshair';
+  try { toast('Tap the map to place a pin · Cancel at the top', 3000); } catch (e) {}
 }
+// Back, Escape, or tapping the pin tool again — none of which need the Cancel bar to be visible.
+try {
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape') return;
+    if (typeof pinMode !== 'undefined' && pinMode) { disablePinMode(); ev.preventDefault(); }
+    else if (typeof placeMode !== 'undefined' && placeMode) { window._disablePlaceMode(); ev.preventDefault(); }
+  });
+  window.addEventListener('popstate', function () {
+    try { if (typeof pinMode !== 'undefined' && pinMode) disablePinMode(); } catch (e) {}
+  });
+} catch (e) {}
+
 function disablePinMode() {
   pinMode = false;
   document.getElementById('pin-mode-bar').classList.remove('active');
@@ -24398,6 +24431,35 @@ window._toggleGroupFollowExcl = function (id, name) {
 // #map-controls via CSS). Confirmed on-device 2026-07-22: edge members were getting clipped
 // under the toolbars because the old flat {top:100,bottom:130} undershot the real topbar height
 // (116px) before even adding the notch inset on top of it.
+// Keep --topbar-h honest. Anything positioned under the toolbar (the pin / place / measure
+// cancel bars, drawers, the update banner) reads this, and a stale value hides them behind it.
+function _syncTopbarH() {
+  try {
+    var tb = document.getElementById('topbar');
+    if (!tb) return;
+    var h = tb.getBoundingClientRect().height;
+    if (!(h > 0)) return;
+    // The toolbar's own padding already includes the notch inset, and every consumer adds
+    // --safe-top again, so take it back off here rather than counting it twice.
+    var safe = 0;
+    try { safe = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 0; } catch (e) {}
+    document.documentElement.style.setProperty('--topbar-h', Math.round(Math.max(0, h - safe)) + 'px');
+  } catch (e) {}
+}
+try {
+  window.addEventListener('load', _syncTopbarH);
+  window.addEventListener('resize', _syncTopbarH);
+  window.addEventListener('orientationchange', function () { setTimeout(_syncTopbarH, 250); });
+  if (window.ResizeObserver) {
+    var _tbRO = new ResizeObserver(function () { _syncTopbarH(); });
+    document.addEventListener('DOMContentLoaded', function () {
+      var tb = document.getElementById('topbar'); if (tb) _tbRO.observe(tb);
+      _syncTopbarH();
+    });
+  }
+  setTimeout(_syncTopbarH, 600);
+} catch (e) {}
+
 function _followPadding() {
   var top = 100, bottom = 130; // fallback if the elements are ever missing
   try {
