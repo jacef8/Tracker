@@ -416,6 +416,9 @@ async function keepAliveSweep() {
   }
   if (targets.size) console.log('keep-alive: poked ' + targets.size + ' quiet device(s)');
 
+  // Clear out identities a reinstall left behind (see pruneSupersededDevices).
+  try { await pruneSupersededDevices(); } catch (e) { console.error('prune:', e.message); }
+
   // Don't let the cooldown map grow forever.
   for (const [uid, t] of wakeLastSent) if (now - t > WAKE_GIVE_UP_MS) wakeLastSent.delete(uid);
 
@@ -445,6 +448,90 @@ setInterval(function () { keepAliveSweep().catch(function (e) { console.error('k
             WAKE_SWEEP_MS).unref();
 // One pass shortly after boot, so a restart doesn't leave everyone stale for five minutes.
 setTimeout(function () { keepAliveSweep().catch(function () {}); }, 30000).unref();
+
+// ─── SUPERSEDED DEVICES ──────────────────────────────────────────────────────────
+// Reinstalling gives a phone a brand-new device id, so its previous identity keeps its last
+// position and sits on the map as a second, frozen copy of the same person. That happened on
+// every reinstall this week and someone had to ask for each one to be cleared by hand.
+//
+// A row is superseded when the SAME account has another row with the SAME device label
+// (phone / tablet / PC) that is live right now: one physical device cannot be in two places.
+// Both halves of that test matter — without the device label a tablet that has been switched
+// off for a day would be deleted because its owner's phone is active.
+//
+// Everything removed is copied to gl/_pruned/<day>/<uid> first, so a wrong call is recoverable.
+const PRUNE_KEEPER_FRESH_MS = 30 * 60 * 1000;      // the survivor has to be genuinely active
+const PRUNE_LOSER_STALE_MS = 2 * 60 * 60 * 1000;   // ...and the ghost quiet at least this long
+
+async function pruneSupersededDevices() {
+  if (!adminDb) return;
+  const now = Date.now();
+  let rooms;
+  try { rooms = await _roomNames(); } catch (e) { return; }
+  const own = (await _cachedGet('gl/_devOwner', 60000)) || {};
+
+  // uid -> { name, dev, newest, rooms:Set }
+  const seen = new Map();
+  for (const room of rooms) {
+    let users = null;
+    try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { continue; }
+    for (const [uid, u] of Object.entries(users || {})) {
+      if (!u || !u.name) continue;
+      const ts = u.fixTs || u.ts || 0;
+      const e = seen.get(uid) || { name: u.name, dev: u.dev || '', newest: 0, rooms: new Set() };
+      if (u.dev && !e.dev) e.dev = u.dev;
+      if (ts > e.newest) e.newest = ts;
+      e.rooms.add(room);
+      seen.set(uid, e);
+    }
+  }
+
+  // Group by who owns it and what kind of device it is.
+  const groups = new Map();
+  for (const [uid, e] of seen) {
+    const acct = own[uid] && own[uid].acct;
+    const key = (acct ? 'a:' + acct : 'n:' + String(e.name).trim().toLowerCase()) + '|' + (e.dev || '');
+    const g = groups.get(key) || [];
+    g.push({ uid, ...e });
+    groups.set(key, g);
+  }
+
+  const doomed = [];
+  for (const [, list] of groups) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => b.newest - a.newest);
+    const keeper = list[0];
+    if (now - keeper.newest > PRUNE_KEEPER_FRESH_MS) continue;      // nothing here is live; leave it alone
+    for (const loser of list.slice(1)) {
+      if (now - loser.newest < PRUNE_LOSER_STALE_MS) continue;      // still recently active — not a ghost
+      doomed.push({ loser, keeper });
+    }
+  }
+  if (!doomed.length) return;
+
+  const day = new Date(now).toISOString().slice(0, 10);
+  for (const { loser, keeper } of doomed) {
+    for (const room of loser.rooms) {
+      try {
+        const row = await _dbGet('gl/' + room + '/users/' + loser.uid);
+        if (!row) continue;
+        await adminDb.ref('gl/_pruned/' + day + '/' + loser.uid + '/' + room).set({
+          row: row, supersededBy: keeper.uid, at: now
+        });
+        await adminDb.ref('gl/' + room + '/users/' + loser.uid).remove();
+        // The roster entry too, but only where the survivor is already on it — otherwise this
+        // would quietly drop the person out of the Crew instead of tidying a duplicate.
+        const roster = await _dbGet('gl/' + room + '/members');
+        if (roster && roster[loser.uid] && roster[keeper.uid]) {
+          await adminDb.ref('gl/_pruned/' + day + '/' + loser.uid + '/' + room + '/member').set(roster[loser.uid]);
+          await adminDb.ref('gl/' + room + '/members/' + loser.uid).remove();
+        }
+      } catch (e) { console.error('prune: ' + loser.uid.slice(0, 8) + ' in ' + room + ' —', e.message); }
+    }
+    console.log('prune: removed ' + loser.name + ' (' + loser.dev + ', ' + loser.uid.slice(0, 8) +
+                ', quiet ' + Math.round((now - loser.newest) / 3600000) + 'h) — superseded by ' + keeper.uid.slice(0, 8));
+  }
+}
 
 // ─── RETENTION ───────────────────────────────────────────────────────────────────
 // Logs grew forever; nothing trimmed them. Once a day, drop what is past its use:
