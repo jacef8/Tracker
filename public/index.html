@@ -1437,6 +1437,108 @@
   .trk-stat { background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:9px 11px; }
   .trk-stat .v { font-size:17px; font-weight:800; color:var(--text); line-height:1.1; }
   .trk-stat .l { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
+
+  /* ══ FIELD INSTRUMENTS — Activity panel and Radar finder ═══════════════════════════════════
+     Two full-screen instruments borrowed from Vector and rebuilt in GroundLink's own palette.
+     Deliberately quiet: an elevation ladder, real bevels, one circular anchor and hard contrast,
+     but no breathing gradients and no rotating rings. These run while somebody is walking a
+     trail with the screen on, and this app just spent a week buying battery back. */
+  .fi {
+    --fi-e1:   rgba(22,27,34,.88);      /* card, translucent over the map */
+    --fi-e1hi: rgba(30,36,46,.92);
+    --fi-e2:   rgba(34,41,52,.95);      /* widget sitting on a card */
+    --fi-e2hi: rgba(44,53,67,.97);
+    --fi-well: #06080c;                 /* engraved, below the canvas */
+    --fi-hair: rgba(255,255,255,.08);
+    --fi-raise: inset 0 1px 0 rgba(255,255,255,.10), inset 0 -1px 0 rgba(0,0,0,.55),
+                0 1px 2px rgba(0,0,0,.6), 0 6px 14px -8px rgba(0,0,0,.9);
+    --fi-sunk:  inset 0 3px 8px rgba(0,0,0,.9), inset 0 -1px 0 rgba(255,255,255,.05);
+    position: fixed; inset: 0; z-index: 2400; display: none;
+    flex-direction: column; background: var(--bg);
+    padding-top: var(--safe-top); padding-bottom: var(--safe-bot);
+  }
+  .fi.show { display: flex; }
+  .fi-head { display:flex; align-items:center; gap:12px; padding:12px 14px 10px; flex-shrink:0; }
+  .fi-head h3 { flex:1; min-width:0; font-size:17px; font-weight:800; color:var(--text);
+                letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fi-x { width:38px; height:38px; border-radius:50%; flex-shrink:0; cursor:pointer;
+          border:1px solid var(--fi-hair); color:var(--text); font-size:19px; line-height:1;
+          background:linear-gradient(160deg,var(--fi-e2hi),var(--fi-e2)); box-shadow:var(--fi-raise);
+          display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; }
+  .fi-body { flex:1; min-height:0; overflow-y:auto; padding:0 14px 16px;
+              display:flex; flex-direction:column; }
+  /* The tiles take whatever height is left instead of leaving a dead band above the buttons. */
+  #act-grid { flex:1; min-height:0; grid-auto-rows:1fr; }
+  #act-grid .fi-tile { display:flex; flex-direction:column; justify-content:center; }
+  #act-note { flex-shrink:0; margin-top:10px; }
+  /* The radar has a fixed-size scope, so its stack centres in the space instead. */
+  #radar-panel .fi-body { justify-content:center; }
+
+  /* the one circular anchor */
+  .fi-anchor { position:relative; width:min(78vw,320px); aspect-ratio:1; margin:2px auto 14px; }
+  .fi-anchor svg { width:100%; height:100%; display:block; }
+  .fi-read { position:absolute; inset:0; display:flex; flex-direction:column;
+             align-items:center; justify-content:center; pointer-events:none; }
+  .fi-read b { font-size:clamp(50px,17vw,84px); font-weight:800; color:#fff; line-height:.86;
+               letter-spacing:-.05em; font-variant-numeric:tabular-nums; }
+  .fi-read i { font-style:normal; font-size:13px; font-weight:800; color:var(--muted);
+               text-transform:uppercase; letter-spacing:.14em; margin-top:8px;
+               font-family:ui-monospace,'JetBrains Mono',monospace; }
+  .fi-read s { text-decoration:none; font-size:15px; font-weight:700; color:var(--text); margin-top:5px; }
+
+  /* tiles */
+  .fi-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .fi-tile { border-radius:16px; padding:11px 13px 10px;
+             background:linear-gradient(158deg,var(--fi-e1hi),var(--fi-e1) 70%);
+             border:1px solid var(--fi-hair); box-shadow:var(--fi-raise); }
+  .fi-tile .v { font-size:22px; font-weight:800; color:#fff; line-height:1.05;
+                font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+                font-family:ui-monospace,'JetBrains Mono',monospace; }
+  .fi-tile .u { font-size:13px; font-weight:700; color:var(--muted); margin-left:3px;
+                font-family:ui-monospace,'JetBrains Mono',monospace; }
+  .fi-tile .l { font-size:12px; font-weight:800; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.12em; margin-top:3px; font-family:ui-monospace,'JetBrains Mono',monospace; }
+  /* every tile carries a cue — the recessed well is the object at the other elevation */
+  .fi-cue { height:6px; border-radius:999px; background:var(--fi-well); box-shadow:var(--fi-sunk);
+            margin-top:9px; overflow:hidden; }
+  .fi-cue i { display:block; height:100%; width:0; border-radius:999px;
+              background:linear-gradient(90deg,var(--accent2),var(--accent));
+              box-shadow:0 0 6px rgba(240,165,0,.75); transition:width .3s ease; }
+  .fi-cue.g i { background:linear-gradient(90deg,#2ea043,#3fb950); box-shadow:0 0 6px rgba(63,185,80,.7); }
+  .fi-cue.r i { background:linear-gradient(90deg,#b0342c,#e74c3c); box-shadow:0 0 6px rgba(231,76,60,.7); }
+
+  /* footer actions */
+  .fi-acts { display:flex; gap:10px; padding:12px 14px calc(var(--safe-bot) + 12px); flex-shrink:0; }
+  .fi-btn { flex:1; padding:14px 12px; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;
+            border:1px solid var(--fi-hair); color:var(--text);
+            background:linear-gradient(160deg,var(--fi-e2hi),var(--fi-e2)); box-shadow:var(--fi-raise);
+            -webkit-tap-highlight-color:transparent; }
+  .fi-btn.pri { color:#1a1200; border:none; background:linear-gradient(150deg,#ffc247,var(--accent));
+                box-shadow:0 4px 12px rgba(240,165,0,.4), inset 0 1px 0 rgba(255,255,255,.55); }
+  .fi-btn.dan { color:#fff; border:none; background:linear-gradient(150deg,#e74c3c,#b0342c);
+                box-shadow:0 4px 12px rgba(231,76,60,.35), inset 0 1px 0 rgba(255,255,255,.3); }
+
+  /* radar scope */
+  #radar-scope { width:min(92vw,420px); aspect-ratio:1; margin:0 auto; display:block; }
+  .fi-turn { text-align:center; margin:10px 0 2px; }
+  .fi-turn b { display:block; font-size:clamp(40px,14vw,64px); font-weight:800; color:#fff;
+               line-height:.9; font-variant-numeric:tabular-nums; letter-spacing:-.04em;
+               font-family:ui-monospace,'JetBrains Mono',monospace; }
+  .fi-turn span { display:block; font-size:15px; font-weight:800; margin-top:7px; }
+  /* range picker — pills sunk into a well, the only pill shape in here */
+  .fi-pills { display:flex; gap:3px; padding:3px; border-radius:999px; background:var(--fi-well);
+              box-shadow:var(--fi-sunk); margin:14px auto 0; width:fit-content; max-width:100%; }
+  .fi-pills button { padding:8px 14px; border:none; border-radius:999px; background:transparent;
+                     color:var(--muted); font-size:13px; font-weight:800; cursor:pointer;
+                     font-family:ui-monospace,'JetBrains Mono',monospace;
+                     -webkit-tap-highlight-color:transparent; }
+  .fi-pills button[aria-pressed="true"] { color:#1a1200;
+                     background:linear-gradient(150deg,#ffc247,var(--accent));
+                     box-shadow:0 3px 10px rgba(240,165,0,.45), inset 0 1px 0 rgba(255,255,255,.55); }
+  .fi-note { font-size:13px; color:var(--muted); text-align:center; padding:12px 6px 0; line-height:1.45; }
+  .fi-btn:focus-visible, .fi-x:focus-visible, .fi-pills button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { .fi-cue i { transition:none; } }
   #saved-pins-list { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
   #saved-pins-filter { display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); }
   #saved-pins-filter:empty { display:none; padding:0; border:none; }
@@ -2804,6 +2906,69 @@
   </button>
 </div>
 
+
+<!-- ══ ACTIVITY — live instrument panel while a track is recording ══ -->
+<div id="act-panel" class="fi">
+  <div class="fi-head">
+    <h3 id="act-title">Recording</h3>
+    <button class="fi-x" type="button" onclick="window._closeActivity()" aria-label="Close">&#10005;</button>
+  </div>
+  <div class="fi-body">
+    <div class="fi-anchor">
+      <svg viewBox="0 0 340 340" role="img" aria-label="Current speed">
+        <defs>
+          <linearGradient id="actArc" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stop-color="#e05a2b"/><stop offset="100%" stop-color="#f0a500"/>
+          </linearGradient>
+          <filter id="actGlow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="4" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <circle cx="170" cy="170" r="163" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1"
+                stroke-dasharray="1.5 13"/>
+        <circle cx="170" cy="170" r="130" fill="none" stroke="rgba(0,0,0,.7)" stroke-width="24"
+                stroke-linecap="round" stroke-dasharray="613 817" transform="rotate(135 170 170)"/>
+        <circle id="act-arc" cx="170" cy="170" r="130" fill="none" stroke="url(#actArc)" stroke-width="22"
+                stroke-linecap="round" stroke-dasharray="0 817" transform="rotate(135 170 170)"
+                filter="url(#actGlow)"/>
+      </svg>
+      <div class="fi-read">
+        <b id="act-speed">0.0</b>
+        <i id="act-speed-unit">mph</i>
+        <s id="act-elapsed">0:00</s>
+      </div>
+    </div>
+    <div class="fi-grid" id="act-grid"></div>
+    <div class="fi-note" id="act-note"></div>
+  </div>
+  <div class="fi-acts">
+    <button class="fi-btn" type="button" id="act-pause" onclick="window._actPause()">Pause</button>
+    <button class="fi-btn dan" type="button" onclick="window._actStop()">Finish</button>
+  </div>
+</div>
+
+<!-- ══ RADAR — close-range finder for a dropped pin ══ -->
+<div id="radar-panel" class="fi">
+  <div class="fi-head">
+    <h3 id="radar-title">Radar</h3>
+    <button class="fi-x" type="button" onclick="window._closeRadar()" aria-label="Close">&#10005;</button>
+  </div>
+  <div class="fi-body">
+    <canvas id="radar-scope"></canvas>
+    <div class="fi-turn">
+      <b id="radar-dist">—</b>
+      <span id="radar-turn" style="color:var(--muted)">Waiting for GPS</span>
+    </div>
+    <div class="fi-pills" id="radar-ranges"></div>
+    <div class="fi-note" id="radar-note"></div>
+  </div>
+  <div class="fi-acts">
+    <button class="fi-btn" type="button" id="radar-ping-btn" onclick="window._radarTogglePing()">Sound on</button>
+    <button class="fi-btn pri" type="button" onclick="window._radarPickTarget()">Choose pin</button>
+  </div>
+</div>
+
 <!-- ══ TRACK VIEW BAR (shown while viewing a saved track on the map) ══ -->
 <div id="track-view-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--topbar-h) + var(--safe-top) + 8px);z-index:160;max-width:94vw;background:rgba(13,17,23,.85);border:1px solid #00b0ff;border-radius:12px;padding:8px 10px 8px 13px;box-shadow:0 4px 18px rgba(0,0,0,.55);align-items:center;gap:10px">
   <span style="width:9px;height:9px;border-radius:50%;background:#00b0ff;box-shadow:0 0 8px #00b0ff;flex-shrink:0"></span>
@@ -3619,7 +3784,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 799;
+var APP_BUILD = 800;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17214,6 +17379,7 @@ window._showPinPopup = function(pid, lngLat) {
     '<div class="pop-actions">' +
       '<button class="pop-btn pop-edit" onclick="window._navigateTo(' + pin.lat + ',' + pin.lng + ',\'' + (pin.cat||'Pin').replace(/'/g,'') + '\')">Navigate</button>' +
       '<button class="pop-btn" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
+      '<button class="pop-btn" onclick="window._openRadar(\'' + pid + '\')">Radar</button>' +
       '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
       (isMine ? '<button class="pop-btn" onclick="window._movePin(\'' + pid + '\')">Move</button>' : '') +
       (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
@@ -21136,6 +21302,385 @@ function _trkFt(m){ return m*3.28084; }
 function _trkFmtDist(m){ return m < 1609.344 ? Math.round(_trkFt(m)) + ' ft' : _trkMi(m).toFixed(2) + ' mi'; }
 function _trkFmtElev(m){ return Math.round(_trkFt(m)).toLocaleString() + ' ft'; }
 function _trkFmtDur(ms){ var s=Math.max(0,Math.round(ms/1000)); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60; return (h>0? h+':'+(m<10?'0':'')+m : ''+m) + ':' + (ss<10?'0':'') + ss; }
+// ══ FIELD INSTRUMENTS ════════════════════════════════════════════════════════════════════════
+// Two screens carried over from Vector (the standalone GPS app) and rebuilt here in JavaScript
+// so they work on iPhones too: a live Activity panel while a track records, and a close-range
+// Radar for walking onto a dropped pin — a game camera at night is the case it was built for.
+//
+// Both only run their loop while open AND on screen. Nothing here ticks in the background.
+
+// ── Shared maths ────────────────────────────────────────────────────────────────────────────
+// Initial great-circle bearing, degrees clockwise from true north.
+function _bearingDeg(lat1, lng1, lat2, lng2) {
+  var R = Math.PI / 180;
+  var p1 = lat1 * R, p2 = lat2 * R, dl = (lng2 - lng1) * R;
+  var y = Math.sin(dl) * Math.cos(p2);
+  var x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) / R + 360) % 360;
+}
+// Smallest signed turn from a to b: negative left, positive right.
+function _bearingDiff(a, b) { var d = ((b - a + 540) % 360) - 180; return d; }
+function _compassPoint(d) {
+  var pts = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return pts[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+}
+
+// ── Compass ─────────────────────────────────────────────────────────────────────────────────
+// GPS heading only exists once you are moving, which is exactly wrong for hunting for something
+// on foot. This reads the magnetometer instead. iPhones require a permission granted from a real
+// tap, so it is asked for when the Radar opens, not at startup.
+window._compassDeg = null;
+window._compassOn = false;
+function _compassHandler(ev) {
+  var h = null;
+  if (ev.webkitCompassHeading != null && !isNaN(ev.webkitCompassHeading)) {
+    h = ev.webkitCompassHeading;                       // iOS: already degrees from magnetic north
+  } else if (ev.alpha != null && !isNaN(ev.alpha)) {
+    h = 360 - ev.alpha;                                // Android: alpha counts anticlockwise
+    var so = 0;
+    try { so = (screen.orientation && screen.orientation.angle) || window.orientation || 0; } catch (e) {}
+    h = (h + so + 360) % 360;
+  }
+  if (h == null) return;
+  // Light smoothing across the 0/360 seam, so the scope doesn't jitter.
+  if (window._compassDeg == null) window._compassDeg = h;
+  else {
+    var d = _bearingDiff(window._compassDeg, h);
+    window._compassDeg = (window._compassDeg + d * 0.25 + 360) % 360;
+  }
+}
+window._compassStart = function () {
+  if (window._compassOn) return Promise.resolve(true);
+  var attach = function () {
+    var evt = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
+    window.addEventListener(evt, _compassHandler, true);
+    window._compassEvt = evt; window._compassOn = true;
+    return true;
+  };
+  try {
+    var D = window.DeviceOrientationEvent;
+    if (D && typeof D.requestPermission === 'function') {
+      return D.requestPermission().then(function (r) { return r === 'granted' ? attach() : false; })
+                                  .catch(function () { return false; });
+    }
+  } catch (e) {}
+  return Promise.resolve(attach());
+};
+window._compassStop = function () {
+  try { if (window._compassOn) window.removeEventListener(window._compassEvt, _compassHandler, true); } catch (e) {}
+  window._compassOn = false;
+};
+// What the scope points with: the compass when we have it, else GPS course while moving.
+function _facingDeg() {
+  if (window._compassDeg != null) return window._compassDeg;
+  if (window._lastHeading != null && !isNaN(window._lastHeading) && (window._lastSpeedMph || 0) > 2) return window._lastHeading;
+  return null;
+}
+
+// ── ACTIVITY ────────────────────────────────────────────────────────────────────────────────
+window._openActivity = function () {
+  if (!window._trackRec) { try { toast('Start a track first'); } catch (e) {} return; }
+  var el = document.getElementById('act-panel'); if (!el) return;
+  el.classList.add('show');
+  _actTick();
+  clearInterval(window._actTimer);
+  window._actTimer = setInterval(function () {
+    if (document.visibilityState !== 'visible') return;   // nothing ticks behind a locked screen
+    _actTick();
+  }, 1000);
+};
+window._closeActivity = function () {
+  clearInterval(window._actTimer); window._actTimer = null;
+  var el = document.getElementById('act-panel'); if (el) el.classList.remove('show');
+};
+window._actPause = function () {
+  try { window._pauseTrackRec(); } catch (e) {}
+  _actTick();
+};
+window._actStop = function () {
+  window._closeActivity();
+  try { window._confirmEndTrack(); } catch (e) { try { window._stopTrackRec(); } catch (e2) {} }
+};
+function _actTile(v, unit, label, frac, cls) {
+  var pct = Math.max(0, Math.min(1, isFinite(frac) ? frac : 0)) * 100;
+  return '<div class="fi-tile"><div class="v">' + v + (unit ? '<span class="u">' + unit + '</span>' : '') + '</div>' +
+         '<div class="l">' + label + '</div>' +
+         '<div class="fi-cue' + (cls ? ' ' + cls : '') + '"><i style="width:' + pct.toFixed(1) + '%"></i></div></div>';
+}
+function _actTick() {
+  var r = window._trackRec; if (!r) { window._closeActivity(); return; }
+  var st = _trackStats(r.pts || []);
+  var mph = Math.max(0, window._smoothMph || 0);
+  // The dial's top end follows what you're doing — walking, riding, driving — so the needle
+  // uses the whole sweep instead of sitting near zero all afternoon.
+  var peak = Math.max(st.maxMph || 0, mph);
+  var scale = peak <= 6 ? 8 : peak <= 18 ? 20 : peak <= 40 ? 45 : 80;
+  var arc = document.getElementById('act-arc');
+  if (arc) arc.setAttribute('stroke-dasharray', (613 * Math.max(0, Math.min(1, mph / scale))).toFixed(0) + ' 817');
+  var sp = document.getElementById('act-speed'); if (sp) sp.textContent = mph.toFixed(1);
+  var elp = document.getElementById('act-elapsed');
+  var elapsed = Date.now() - r.startTs;
+  if (elp) elp.textContent = (r.paused ? 'PAUSED · ' : '') + _trkFmtDur(elapsed);
+  var pb = document.getElementById('act-pause'); if (pb) pb.textContent = r.paused ? 'Resume' : 'Pause';
+  var ttl = document.getElementById('act-title'); if (ttl) ttl.textContent = r.paused ? 'Paused' : 'Recording';
+
+  var lastAlt = null;
+  for (var i = (r.pts || []).length - 1; i >= 0; i--) { if (r.pts[i].alt != null && !isNaN(r.pts[i].alt)) { lastAlt = r.pts[i].alt; break; } }
+  var stopped = Math.max(0, elapsed - (st.movMs || 0));
+  var g = document.getElementById('act-grid');
+  if (g) g.innerHTML =
+    _actTile(_trkFmtDist(st.distM).replace(/ (ft|mi)$/, ''), _trkFmtDist(st.distM).indexOf(' mi') > -1 ? 'mi' : 'ft', 'Distance', st.distM / 16093, '') +
+    _actTile((st.maxMph || 0).toFixed(1), 'mph', 'Max speed', (st.maxMph || 0) / scale, '') +
+    _actTile((st.avgMph || 0).toFixed(1), 'mph', 'Avg moving', (st.avgMph || 0) / scale, '') +
+    _actTile(_trkFmtDur(st.movMs || 0), '', 'Moving', elapsed ? (st.movMs || 0) / elapsed : 0, 'g') +
+    _actTile(_trkFmtDur(stopped), '', 'Stopped', elapsed ? stopped / elapsed : 0, 'r') +
+    _actTile(st.gainM ? _trkFmtElev(st.gainM).replace(/ ft$/, '') : '0', 'ft', 'Elev gain', (st.gainM || 0) / 305, '');
+  var note = document.getElementById('act-note');
+  if (note) note.textContent = (st.n || 0) + ' points' +
+    (lastAlt != null ? ' · now at ' + _trkFmtElev(lastAlt) : '') +
+    (st.minAlt != null && st.maxAlt != null ? ' · ' + _trkFmtElev(st.minAlt) + ' to ' + _trkFmtElev(st.maxAlt) : '');
+}
+
+// ── RADAR ───────────────────────────────────────────────────────────────────────────────────
+// Ranges in yards. Auto picks the smallest ring that still contains the target.
+var RADAR_RANGES_YD = [25, 50, 100, 250];
+window._radarRange = 0;        // 0 = auto, else index+1 into RADAR_RANGES_YD
+window._radarTargetId = null;
+window._radarPingOn = true;
+
+// Every pin we could walk to: the open room's pins plus this device's saved ones.
+function _radarTargets() {
+  var out = [];
+  try { Object.keys(lastPins || {}).forEach(function (id) {
+    var p = lastPins[id];
+    if (p && p.lat != null && p.lng != null) out.push({ id: id, lat: p.lat, lng: p.lng, name: p.label || p.name || 'Pin' });
+  }); } catch (e) {}
+  try { (getSavedPins() || []).forEach(function (p) {
+    if (p && p.lat != null && p.lng != null && !out.some(function (o) { return o.id === p.pid; }))
+      out.push({ id: p.pid, lat: p.lat, lng: p.lng, name: p.label || p.name || 'Saved pin' });
+  }); } catch (e) {}
+  return out;
+}
+function _radarFocus() {
+  var all = _radarTargets();
+  if (!all.length) return null;
+  var t = null;
+  if (window._radarTargetId) t = all.filter(function (o) { return o.id === window._radarTargetId; })[0] || null;
+  if (t) return t;
+  var me = window._lastGPS; if (!me) return all[0];
+  var best = null, bd = Infinity;
+  all.forEach(function (o) { var d = metersApart(me.lat, me.lng, o.lat, o.lng); if (d < bd) { bd = d; best = o; } });
+  return best;
+}
+function _radarRangeM(distM) {
+  if (window._radarRange > 0) return RADAR_RANGES_YD[window._radarRange - 1] * 0.9144;
+  var steps = [10, 25, 50, 75, 100, 150, 250, 500, 1000, 2500];
+  var need = (isFinite(distM) ? distM : 90) * 1.15;
+  for (var i = 0; i < steps.length; i++) if (steps[i] * 0.9144 >= need) return steps[i] * 0.9144;
+  return 2500 * 0.9144;
+}
+window._openRadar = function (pinId) {
+  var el = document.getElementById('radar-panel'); if (!el) return;
+  if (pinId) window._radarTargetId = pinId;
+  el.classList.add('show');
+  _radarPills();
+  window._compassStart().then(function (ok) {
+    var n = document.getElementById('radar-note');
+    if (!ok && n) n.textContent = 'No compass — the scope will point the way you are moving instead. Walk a few steps to set it.';
+  });
+  var loop = function () {
+    if (!el.classList.contains('show')) return;
+    window._radarRaf = requestAnimationFrame(loop);
+    var now = Date.now();
+    if (now - (window._radarLast || 0) < 100) return;   // 10 a second is plenty for a compass
+    window._radarLast = now;
+    if (document.visibilityState !== 'visible') return;
+    _radarDraw();
+  };
+  cancelAnimationFrame(window._radarRaf); loop();
+};
+window._closeRadar = function () {
+  cancelAnimationFrame(window._radarRaf); window._radarRaf = null;
+  window._compassStop();
+  var el = document.getElementById('radar-panel'); if (el) el.classList.remove('show');
+};
+window._radarTogglePing = function () {
+  window._radarPingOn = !window._radarPingOn;
+  var b = document.getElementById('radar-ping-btn'); if (b) b.textContent = window._radarPingOn ? 'Sound on' : 'Sound off';
+};
+function _radarPills() {
+  var box = document.getElementById('radar-ranges'); if (!box) return;
+  var html = '<button type="button" onclick="window._radarSetRange(0)" aria-pressed="' + (window._radarRange === 0) + '">Auto</button>';
+  RADAR_RANGES_YD.forEach(function (y, i) {
+    html += '<button type="button" onclick="window._radarSetRange(' + (i + 1) + ')" aria-pressed="' + (window._radarRange === i + 1) + '">' + y + ' yd</button>';
+  });
+  box.innerHTML = html;
+}
+window._radarSetRange = function (i) { window._radarRange = i; _radarPills(); _radarDraw(); };
+window._radarPickTarget = function () {
+  var all = _radarTargets();
+  if (!all.length) { try { toast('Drop a pin first, then come back'); } catch (e) {} return; }
+  var me = window._lastGPS;
+  if (me) all.sort(function (a, b) { return metersApart(me.lat, me.lng, a.lat, a.lng) - metersApart(me.lat, me.lng, b.lat, b.lng); });
+  var rows = all.slice(0, 40).map(function (o) {
+    var d = me ? ' · ' + _trkFmtDist(metersApart(me.lat, me.lng, o.lat, o.lng)) : '';
+    return '<button type="button" class="fi-btn" style="width:100%;text-align:left;margin-bottom:8px" ' +
+           'onclick="window._radarChoose(\'' + String(o.id).replace(/'/g, "\\'") + '\')">' +
+           _escHtml(o.name) + '<span style="color:var(--muted);font-weight:700">' + d + '</span></button>';
+  }).join('');
+  var ov = document.createElement('div');
+  ov.id = 'radar-pick';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2500;background:rgba(0,0,0,.66);display:flex;align-items:flex-end;justify-content:center;padding:16px';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML = '<div style="width:100%;max-width:440px;max-height:72vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:14px">' +
+    '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:10px">Which pin?</div>' + rows + '</div>';
+  document.body.appendChild(ov);
+};
+window._radarChoose = function (id) {
+  window._radarTargetId = id;
+  var ov = document.getElementById('radar-pick'); if (ov) ov.remove();
+  _radarDraw();
+};
+
+// Metal-detector ping: the closer you are, the faster it beeps.
+function _radarPing(distM, rangeM) {
+  if (!window._radarPingOn || !isFinite(distM) || distM > rangeM) return;
+  var k = Math.max(0, Math.min(1, distM / rangeM));
+  var gap = 160 + k * 1400;
+  var now = Date.now();
+  if (now - (window._radarLastPing || 0) < gap) return;
+  window._radarLastPing = now;
+  var close = k < 0.12;
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      window._radarAC = window._radarAC || new AC();
+      var ac = window._radarAC;
+      if (ac.state === 'suspended') ac.resume();
+      var o = ac.createOscillator(), g2 = ac.createGain();
+      o.type = 'sine'; o.frequency.value = close ? 1650 : 880;
+      g2.gain.setValueAtTime(0.0001, ac.currentTime);
+      g2.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.008);
+      g2.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + (close ? 0.16 : 0.09));
+      o.connect(g2); g2.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + (close ? 0.18 : 0.11));
+    }
+  } catch (e) {}
+  // Android only — iPhones ignore this in a web app, which is why the sound carries it.
+  try { if (navigator.vibrate) navigator.vibrate(close ? 28 : 12); } catch (e) {}
+}
+
+function _radarDraw() {
+  var cv = document.getElementById('radar-scope'); if (!cv) return;
+  var css = getComputedStyle(document.documentElement);
+  var ACC = (css.getPropertyValue('--accent') || '#f0a500').trim();
+  var MUT = (css.getPropertyValue('--muted') || '#a9b4bf').trim();
+  var GRN = '#3fb950', RED = '#e74c3c';
+  var dpr = Math.min(3, window.devicePixelRatio || 1);
+  var w = cv.clientWidth || 320;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr); }
+  var c = cv.getContext('2d'); if (!c) return;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, w);
+  var cx = w / 2, cy = w / 2, R = w / 2 - 6;
+
+  var me = window._lastGPS, f = _radarFocus();
+  var dist = NaN, brg = 0;
+  if (me && f) { dist = metersApart(me.lat, me.lng, f.lat, f.lng); brg = _bearingDeg(me.lat, me.lng, f.lat, f.lng); }
+  var rangeM = _radarRangeM(dist);
+  var face = _facingDeg();
+  var ref = face == null ? 0 : face;
+
+  // recessed scope face
+  c.save();
+  c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2);
+  var grd = c.createRadialGradient(cx, cy - R * 0.3, R * 0.1, cx, cy, R);
+  grd.addColorStop(0, '#11161d'); grd.addColorStop(1, '#06080c');
+  c.fillStyle = grd; c.fill();
+  c.strokeStyle = 'rgba(255,255,255,.07)'; c.lineWidth = 1; c.stroke();
+  c.restore();
+
+  // range rings + crosshair
+  c.strokeStyle = 'rgba(240,165,0,.28)'; c.lineWidth = 1.1;
+  for (var i = 1; i <= 4; i++) { c.beginPath(); c.arc(cx, cy, R * i / 4, 0, Math.PI * 2); c.stroke(); }
+  c.strokeStyle = 'rgba(255,255,255,.10)';
+  c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
+
+  // ring labels, in yards or feet
+  c.font = '700 12px ui-monospace, monospace'; c.fillStyle = MUT;
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (var k = 2; k <= 4; k += 2) {
+    var rm = rangeM * k / 4, lbl = rm < 91 ? Math.round(rm * 3.28084) + ' ft' : Math.round(rm / 0.9144) + ' yd';
+    var lx = cx + R * k / 4 * 0.7071, ly = cy + R * k / 4 * 0.7071;
+    c.fillStyle = 'rgba(6,8,12,.85)'; var tw = c.measureText(lbl).width + 10;
+    // roundRect is missing on older Safari; without the guard one absent method throws and the
+    // whole scope draws blank.
+    c.beginPath();
+    if (c.roundRect) c.roundRect(lx - tw / 2, ly - 9, tw, 18, 9);
+    else c.rect(lx - tw / 2, ly - 9, tw, 18);
+    c.fill();
+    c.fillStyle = MUT; c.fillText(lbl, lx, ly);
+  }
+
+  // north marker, so the scope reads as facing-up
+  // Placed by the heading but drawn upright — rotating the glyph itself left it on its side.
+  var nA = (-ref) * Math.PI / 180, nR = R - 13;
+  c.fillStyle = MUT; c.font = '800 13px ui-monospace, monospace'; c.textBaseline = 'middle';
+  c.fillText('N', cx + Math.sin(nA) * nR, cy - Math.cos(nA) * nR);
+
+  // blips for every pin
+  var all = _radarTargets();
+  if (me) all.forEach(function (o) {
+    var d = metersApart(me.lat, me.lng, o.lat, o.lng);
+    if (d > rangeM) return;
+    var rel = (_bearingDeg(me.lat, me.lng, o.lat, o.lng) - ref) * Math.PI / 180;
+    var rr = (d / rangeM) * R;
+    var x = cx + Math.sin(rel) * rr, y = cy - Math.cos(rel) * rr;
+    var isF = f && o.id === f.id;
+    c.beginPath(); c.arc(x, y, isF ? 8 : 4.5, 0, Math.PI * 2);
+    c.fillStyle = isF ? ACC : 'rgba(255,255,255,.45)';
+    if (isF) { c.shadowColor = ACC; c.shadowBlur = 10; }
+    c.fill(); c.shadowBlur = 0;
+    if (isF) { c.strokeStyle = '#1a1200'; c.lineWidth = 1.5; c.stroke(); }
+  });
+
+  // you, in the middle, pointing the way you face
+  c.save(); c.translate(cx, cy);
+  c.beginPath(); c.moveTo(0, -11); c.lineTo(7, 8); c.lineTo(0, 4); c.lineTo(-7, 8); c.closePath();
+  c.fillStyle = face == null ? MUT : '#fff'; c.fill();
+  c.restore();
+
+  // the readout under the scope
+  var dEl = document.getElementById('radar-dist'), tEl = document.getElementById('radar-turn');
+  var nEl = document.getElementById('radar-note'), ttl = document.getElementById('radar-title');
+  if (ttl) ttl.textContent = f ? f.name : 'Radar';
+  if (!f) {
+    if (dEl) dEl.textContent = '—';
+    if (tEl) { tEl.textContent = 'No pins yet'; tEl.style.color = MUT; }
+    if (nEl) nEl.textContent = 'Drop a pin on the map first, then walk away and come back to it.';
+    return;
+  }
+  if (!me || !isFinite(dist)) {
+    if (dEl) dEl.textContent = '—';
+    if (tEl) { tEl.textContent = 'Waiting for GPS'; tEl.style.color = MUT; }
+    return;
+  }
+  if (dEl) dEl.textContent = dist < 91 ? Math.round(dist * 3.28084) + ' ft' : _trkFmtDist(dist);
+  var acc = window._lastAccM || 0;
+  if (tEl) {
+    if (dist <= Math.max(3, acc)) { tEl.textContent = "You're on it — look around"; tEl.style.color = GRN; }
+    else if (face == null) { tEl.textContent = _compassPoint(brg) + ' · ' + Math.round(brg) + '°'; tEl.style.color = MUT; }
+    else {
+      var rel2 = _bearingDiff(ref, brg);
+      if (Math.abs(rel2) < 12) { tEl.textContent = 'Straight ahead'; tEl.style.color = GRN; }
+      else if (Math.abs(rel2) > 150) { tEl.textContent = 'Behind you — turn around'; tEl.style.color = RED; }
+      else { tEl.textContent = 'Turn ' + (rel2 > 0 ? 'right ' : 'left ') + Math.round(Math.abs(rel2)) + '°'; tEl.style.color = '#fff'; }
+    }
+  }
+  if (nEl) nEl.textContent = 'GPS accurate to about ' + Math.round((acc || 0) * 3.28084) + ' ft' +
+    (face == null ? ' · no compass yet' : '') + ' · ring ' + Math.round(rangeM / 0.9144) + ' yd';
+  _radarPing(dist, rangeM);
+}
 function _trkFmtDate(ts){ try { return new Date(ts).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}); } catch(e){ return ''; } }
 function _trkFmtTime(ts){ try { return new Date(ts).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); } catch(e){ return ''; } }
 
@@ -21205,7 +21750,7 @@ window._startTrackRec = function(){
   try { acquireWakeLock(true); } catch (e) {}
   try { window._trackRecTick = setInterval(_refreshRecChip, 1000); } catch (e) {}
   _showRecChip(); _syncRecHubBtn();
-  try { toast('Recording — tap the light to pause, hold to stop', 3200); } catch (e) {}
+  try { toast('Recording — tap the time above the button for speed, distance and elevation', 4200); } catch (e) {}
 };
 window._stopTrackRec = function(){
   var r=window._trackRec; if (!r) return;
@@ -21225,6 +21770,13 @@ window._stopTrackRec = function(){
   }, function(){ try { toast('Recording discarded'); } catch(e){} });
 };
 window._toggleTrackRec = function(){ if (window._trackRec) window._stopTrackRec(); else window._startTrackRec(); };
+// Tapping the stat chip above the record button opens the live instrument panel.
+try {
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest && ev.target.closest('#rec-fab-stat');
+    if (t && window._trackRec) { ev.preventDefault(); ev.stopPropagation(); window._openActivity(); }
+  }, true);
+} catch (e) {}
 window._recTrackHubTap = function(){ closePinHub(); if(window._trackRec) window._confirmEndTrack(); else window._startTrackRec(); };
 window._pauseTrackRec = function(){ var r=window._trackRec; if(!r) return; r.paused=!r.paused; _refreshRecChip(); };
 
