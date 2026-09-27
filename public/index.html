@@ -3307,6 +3307,13 @@
         <svg class="licon licon-lg" style="color:var(--accent)"><use href="#ic-pin"/></svg>
         <div><div style="font-size:15px;font-weight:700;color:var(--text)">Pins <span id="pin-hub-count" style="color:var(--muted);font-weight:400;font-size:12px"></span></div><div style="font-size:12px;color:var(--muted)">This room's live pins &amp; your saved library</div></div>
       </button>
+      <!-- Live stats — only while a track is running. The Record row below turns into "Stop
+           Recording" at that point, so without this there was nowhere in the hub to look at the
+           run in progress; the only way in was the small chip by the record button. -->
+      <button id="act-hub-btn" onclick="closePinHub();window._openActivity();" style="display:none;align-items:center;gap:14px;background:var(--bg);border:1px solid rgba(240,165,0,.45);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
+        <svg class="licon licon-lg" style="color:var(--accent)"><use href="#ic-target"/></svg>
+        <div><div style="font-size:15px;font-weight:700;color:var(--text)">Live stats</div><div id="act-hub-sub" style="font-size:12px;color:var(--muted)">Speed, distance, elevation as you go</div></div>
+      </button>
       <!-- Radar — the only way in used to be a pin's own popup, which is no good when the pin is
            off-screen in the woods. Opening it cold locks onto the nearest pin; Choose pin switches. -->
       <button onclick="closePinHub();window._openRadar();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
@@ -3803,7 +3810,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 805;
+var APP_BUILD = 806;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -21856,6 +21863,17 @@ function _syncRecFab(){
 }
 function _syncRecHubBtn(){
   var on=!!window._trackRec;
+  try {
+    var ab=document.getElementById('act-hub-btn');
+    if (ab) {
+      ab.style.display = on ? 'flex' : 'none';
+      var sub=document.getElementById('act-hub-sub');
+      if (on && sub) {
+        var r=window._trackRec, st=_trackStats(r.pts||[]);
+        sub.textContent = (r.paused?'Paused · ':'') + _trkFmtDur(Date.now()-r.startTs) + ' · ' + _trkFmtDist(st.distM);
+      }
+    }
+  } catch (e) {}
   var t=document.getElementById('rec-track-hub-title'), s=document.getElementById('rec-track-hub-sub'), ic=document.getElementById('rec-track-hub-icon');
   if (t) t.textContent = on?'Stop Recording':'Record Track';
   if (s) s.textContent = on?'Tap to stop & save your track':'Save your path with stats';
@@ -23905,6 +23923,7 @@ function openPinHub() {
   var count = Object.keys(lastPins || {}).length;
   var countEl = document.getElementById('pin-hub-count');
   if (countEl) countEl.textContent = count ? '(' + count + ')' : '';
+  try { _syncRecHubBtn(); } catch (e) {}   // shows Live stats, with the numbers as they stand now
 }
 function closePinHub() {
   document.getElementById('pin-hub-sheet').style.display = 'none';
