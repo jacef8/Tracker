@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 808;
+var APP_BUILD = 809;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4282,7 +4282,13 @@ function _animateMarker(marker, toLng, toLat, path) {
     // the camera leaves the icon one frame behind, every frame -- a dot twitching against a map
     // that slides perfectly. Same value, same frame, correct order.
     try {
-      if (marker._uid && marker._uid === window._camLockUid
+      // Follow the marker where it actually IS this frame, not where its newest report says it
+      // will end up. _followRecenter eased the camera to the destination over 1.4 s while the
+      // marker spent the whole reporting interval travelling there, so the camera arrived first
+      // and sat on empty road with the dot trailing it. Invisible when reports were a second
+      // apart; at 10-second reports and 79 mph it is a quarter mile of nothing.
+      var _camUid = window._camLockUid || (typeof followUid !== 'undefined' ? followUid : null);
+      if (marker._uid && marker._uid === _camUid
           && Date.now() >= (window._followPausedUntil || 0)
           && document.visibilityState === 'visible') {
         // Heading Up needs the map rotated as well as centred. Setting both in ONE jumpTo, in
@@ -4292,7 +4298,10 @@ function _animateMarker(marker, toLng, toLat, path) {
         var _hu = (typeof headingUpOn !== 'undefined') && headingUpOn &&
                   window._lastHeading != null && !isNaN(window._lastHeading) &&
                   window._lastSpeedMph > 3;
-        if (_hu) map.jumpTo({ center: [lng, lat], bearing: window._lastHeading });
+        var _pad = null; try { _pad = _camPad(); } catch (e2) {}   // keep the dot above an open sheet
+        if (_hu) map.jumpTo(_pad ? { center: [lng, lat], bearing: window._lastHeading, padding: _pad }
+                                 : { center: [lng, lat], bearing: window._lastHeading });
+        else if (_pad) map.jumpTo({ center: [lng, lat], padding: _pad });
         else map.setCenter([lng, lat]);
       }
     } catch (e) {}
@@ -4323,6 +4332,9 @@ function _camPad() {
 }
 function _followRecenter(lng, lat) {
   if (!followUid) return;
+  // The marker's own animation carries the camera while it is in flight (see _animateMarker);
+  // easing to the destination here as well is what put the camera ahead of the dot.
+  try { var _fm = userMarkers[followUid]; if (_fm && _fm._anim) return; } catch (e) {}
   // Respect the interaction pause. Fixes arrive ~every second, so without this check a manual
   // pan was stomped almost immediately — dragstart sets _followPausedUntil, but this per-fix
   // recenter ignored it ("can't hardly move the map at all before it snaps back"). The follow
