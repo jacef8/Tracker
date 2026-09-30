@@ -65,11 +65,28 @@
   (function () {
     const tally = window._deniedWrites = window._deniedWrites || {};
     let flushTimer = null;
+    // Every id this device answers to: its own device id, the account it signed in as, and the
+    // uid the database rules actually test. A refused write is only diagnosable if you can tell
+    // "it refused MY row" from "it refused someone else's" — the first is a bug that silences
+    // this phone, the second is usually a cleanup sweep bumping into the roster lockdown and is
+    // harmless. Other people's ids are never recorded, only the fact that it wasn't ours.
+    const mine = function () {
+      const out = [];
+      try { const u = localStorage.getItem('gl_uid'); if (u) out.push(u); } catch (e) {}
+      try { const a = localStorage.getItem('gl_account_uid'); if (a) out.push(a); } catch (e) {}
+      try {
+        const cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
+        if (cu && cu.uid) out.push(cu.uid);
+      } catch (e) {}
+      return out;
+    };
     const shape = function (path) {
+      const ids = mine();
       return String(path || '').split('/').map(function (seg, i) {
         if (i === 0 || seg.charAt(0) === '_') return seg;
         if (i === 1) return '<room>';
-        return (/^[A-Za-z0-9_-]{12,}$/.test(seg) || /^\d+$/.test(seg)) ? '*' : seg;
+        if (ids.indexOf(seg) !== -1) return '<me>';
+        return (/^[A-Za-z0-9_-]{12,}$/.test(seg) || /^\d+$/.test(seg)) ? '<other>' : seg;
       }).join('|').replace(/[.#$\[\]]/g, '_');
     };
     const flush = function () {
@@ -86,6 +103,7 @@
         const k = shape(path).slice(0, 120);
         const t = tally[k] || (tally[k] = { n: 0, last: 0 });
         t.n++; t.last = Date.now();
+        try { t.code = String((e && (e.code || e.message)) || '').slice(0, 60); } catch (x) {}
         console.warn('[GL] write refused by rules:', path);
         if (!flushTimer) flushTimer = setTimeout(flush, 120000);
       } catch (x) {}
@@ -3810,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 807;
+var APP_BUILD = 808;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
