@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 809;
+var APP_BUILD = 810;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16478,11 +16478,17 @@ function listenUsers() {
         // travelled, replaying it walked the dot back to where the route STARTED and forward
         // again, every time somebody else reported: the bouncing between "where they are" and
         // "where they were".
+        // Never your own marker. Yours is driven by your own GPS in onGpsFix, on every fix,
+        // before the reporting throttle — nothing arriving from the database can be newer than
+        // the fix your phone just took. Animating it from here as well replayed a ten-second-old
+        // route every time a report landed, dragging your dot back down the road it had already
+        // covered and fighting the live path for control of the marker. That is the "several
+        // seconds behind" left over once the camera was following the marker properly.
         var _rep = (data.fixTs || data.ts || 0) + '@' + data.lng + ',' + data.lat;
-        if ((isLive || isMine) && userMarkers[uid]._lastRep !== _rep) {
+        if (!isMine && isLive && userMarkers[uid]._lastRep !== _rep) {
           userMarkers[uid]._lastRep = _rep;
           _animateMarker(userMarkers[uid], data.lng, data.lat, data.path);
-          if (followUid === uid && !isMine) _followRecenter(data.lng, data.lat);
+          if (followUid === uid) _followRecenter(data.lng, data.lat);
         }
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
