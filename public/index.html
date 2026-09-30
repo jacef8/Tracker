@@ -3810,7 +3810,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 806;
+var APP_BUILD = 807;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14309,7 +14309,16 @@ let breadcrumbsOn = false;
 let historyOn = false;
 let lastHistoryPos = null;
 let lastHistoryTs = 0;
-const HIST_MIN_DIST_M = 50;
+const HIST_MIN_DIST_M = 50;              // driving default — see _histMinDistM
+// Recording a walk in the woods and recording a drive are not the same job. At 164 ft apart a
+// walked trail is a straight line between two trees; at 10 ft it is the path actually taken.
+// Distance covered is what makes a drive expensive, so only the drive keeps the coarse number.
+function _histMinDistM(mph, accM) {
+  if (window._trackRec) return Math.max(3, _moveThresholdM(accM));   // recording: every step
+  if ((mph || 0) < 8) return Math.max(3, _moveThresholdM(accM));     // on foot
+  if ((mph || 0) < 25) return 20;                                    // slow going
+  return HIST_MIN_DIST_M;
+}
 const HIST_MAX_AGE_DAYS = 30;
 let unreadPinCount = 0;
 
@@ -14784,6 +14793,18 @@ var REPORT_MOVE_MS   = 10 * 1000;       // while moving, write at most this ofte
 var REPORT_MOVE_M    = 90;              // diagnostics only — see the report-rate gate
 var BS_HEARTBEAT_MS  = 4 * 60 * 1000;   // while idle, write at most this often
 var BS_MOVE_M        = 30;              // moved more than this → you're moving again
+// How far you have to move before it counts as moving. One fixed number can't serve both a
+// sharp GPS fix and a cell-tower guess: 10 ft is real movement on a 15 ft fix and pure noise on
+// a 500 ft one. So the threshold follows the accuracy of the fix that reported it. The 400 ft
+// circle iOS watches to wake a sleeping phone is a separate thing entirely — that one is a
+// platform minimum and stays where it is; nothing else uses a buffer that size.
+function _moveThresholdM(accM) {
+  var a = accM || 0;
+  if (a > 0 && a <= 12) return 3;        // sharp GPS (under ~40 ft): a 10 ft step counts
+  if (a > 0 && a <= 30) return 10;       // ordinary GPS
+  if (a > 0 && a <= 60) return 40;       // poor sky view
+  return 150;                            // cell/Wi-Fi only — anything less is wander
+}
 var HERE_MOVE_M       = 40;             // "here since" anchor: moved more than this → new stop
 // Moving/stationary hysteresis for the "Moving" vs "Here 12m" line. A single threshold made
 // a walker flicker between the two on every fix, because walking speed IS the threshold.
@@ -14792,7 +14813,7 @@ var MOVE_OFF_MPH      = 1.5;            // ...and keep saying Moving until they 
 var MOVE_STICKY_MS    = 75 * 1000;      // ...or go this long without a >=MOVE_ON_MPH reading
 window._moveSeen      = window._moveSeen || {};   // uid -> last time they were clearly moving
 var BS_DF_IDLE       = 150;             // native distance filter while idle (m) — coarse fixes wander ~50-100 m
-var BS_WAKE_IDLE_M   = 150;             // moved this far from the idle anchor → moving again
+var BS_WAKE_IDLE_M_MIN = 8;             // floor for waking out of idle; the rest comes from the fix
 var BS_DF_ACTIVE     = 8;               // native GPS distance filter while active (m)
 // The vendored plugin used to hardcode its LocationRequest interval to 1000ms regardless of
 // distanceFilter — so idle mode's wider distanceFilter only reduced how many fixes got
@@ -15197,7 +15218,7 @@ function startLocationSharing() {
       // While idle the fixes are coarse (cell/Wi-Fi), so a few hundred feet of wander and a
       // phantom 2 mph are normal — only real displacement counts as moving.
       var bsMoving = window._bsIdle
-        ? (bsMoved > BS_WAKE_IDLE_M)
+        ? (bsMoved > Math.max(BS_WAKE_IDLE_M_MIN, _moveThresholdM(_accNow)))
         : ((window._lastSpeedMph >= 2) || (bsMoved > BS_MOVE_M));
       if (bsMoving) {
         window._bsAnchor = { lat: lat, lng: lng };
@@ -15468,7 +15489,7 @@ function startLocationSharing() {
       const hGoodAccuracy = hAccM > 0 && hAccM <= TRAIL_MAX_ACC_M;
       const hDistM = lastHistoryPos
         ? metersApart(lastHistoryPos.lat, lastHistoryPos.lng, lat, lng) : Infinity;
-      const hMoved = hDistM > HIST_MIN_DIST_M;
+      const hMoved = hDistM > _histMinDistM(window._lastSpeedMph, hAccM);
       let hPlausible = true;
       if (lastHistoryPos && lastHistoryTs) {
         const hDtSec = Math.max(1, (now - lastHistoryTs) / 1000);
@@ -15866,6 +15887,14 @@ const STALE_MS = 20 * 60 * 1000; // 20 min — drop members who've gone quiet (l
 // socket is not a departure. It used to be treated as one (conn:false cleared the row within
 // DISC_GRACE_MS), which is why backgrounding an iPhone looked identical to walking out.
 const BS_REST_MAX_MS = 3 * 24 * 60 * 60 * 1000;
+// How long a parked phone stays trustworthy, by how often that phone is able to report at all.
+function _restWindowMs(data) {
+  try {
+    var o = (data && data.oss) || {};
+    if (o.iosVer) return 26 * 60 * 1000;   // suspended iPhone: poked every 20 min, plus slack
+  } catch (e) {}
+  return 14 * 60 * 1000;                   // Android keeps a service running; expect better
+}
 
 // Track known users to detect joins/leaves
 var knownUsers = {};
@@ -16288,7 +16317,7 @@ function listenUsers() {
       // "Last known", which reads as lost signal when they're just parked with a perfectly
       // good position.
       const isResting = !isLive && !data.noGps && !data.hidden
-                        && (now - (data.ts || 0)) < BS_REST_MAX_MS && (data.lat !== 0 || data.lng !== 0);
+                        && (now - (data.ts || 0)) < _restWindowMs(data) && (data.lat !== 0 || data.lng !== 0);
       // Age of the POSITION, matching isLive — "last seen 2:14 PM" has to mean when they were
       // last actually located, not when their app last checked in.
       const ageMin   = Math.floor((now - (data.fixTs || data.ts || 0)) / 60000);
