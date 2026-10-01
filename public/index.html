@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 811;
+var APP_BUILD = 812;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4396,8 +4396,20 @@ var MERGE_PX_MAX_M = 400;   // ~a quarter mile: same yard, same lot, same buildi
 // The oval renders one face per member and widens to fit, so nobody is hidden inside it. Four
 // is where the marker stops being readable on a phone; larger groups spread apart instead.
 var MERGE_MAX_IN_OVAL = 4;
-var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // ~3s of plausible inter-device fix-timing skew, in meters/mph
-var MERGE_SPEED_SLACK_CAP_M = 150;     // don't let fast-moving strangers merge just for being nearby
+var MERGE_SPEED_SLACK_M_PER_MPH = 1.5; // fallback when a report carries no usable timestamp
+var MERGE_SPEED_SLACK_CAP_M = 150;     // ...and the cap that goes with it
+// Two phones in one car are compared using two positions taken at different moments, because
+// their reporting cycles are not in step. Whoever reported longer ago is shown further back
+// along the road, and at speed that difference is large: at 79 mph an average 5-second offset
+// between cycles is 390 ft, and the old flat slack allowed 487 ft total — so a couple in one
+// car split apart and rejoined at random. The honest allowance is how far they could actually
+// have travelled in the time between the two fixes, which is a number we have rather than one
+// we guess. It also discriminates better than the old rule: two strangers on the same highway
+// both reporting currently have almost no gap between their fixes, so they get almost no slack,
+// where the flat rule handed every fast pair the full 487 ft.
+var MERGE_SKEW_CAP_M = 500;            // ceiling however stale the pair gets
+var MERGE_SKEW_MAX_S = 30;             // beyond this it is not a timing offset, it is absence
+var MERGE_SKEW_BOTH_FRESH_MS = 120000; // and both have to be genuinely current to earn it
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
 window._groupCandidate = window._groupCandidate || null;      // {sig, since} — whole-map grouping being timed
@@ -4733,7 +4745,15 @@ function _updateMarkerGrouping(immediate) {
       var pa = userMarkers[a]._ll, pb = userMarkers[b]._ll;
       var d = metersApart(pa[1], pa[0], pb[1], pb[0]);
       var maxSpd = Math.max(userMarkers[a]._spd || 0, userMarkers[b]._spd || 0);
-      var slack = Math.min(MERGE_SPEED_SLACK_CAP_M, maxSpd * MERGE_SPEED_SLACK_M_PER_MPH);
+      var _tA = userMarkers[a]._ts || 0, _tB = userMarkers[b]._ts || 0;
+      var _bothFresh = _tA && _tB && (Date.now() - Math.min(_tA, _tB)) < MERGE_SKEW_BOTH_FRESH_MS;
+      var slack;
+      if (_bothFresh) {
+        var _skewS = Math.min(MERGE_SKEW_MAX_S, Math.abs(_tA - _tB) / 1000);
+        slack = Math.min(MERGE_SKEW_CAP_M, (maxSpd * 0.44704) * _skewS);   // mph -> m/s, times the gap
+      } else {
+        slack = Math.min(MERGE_SPEED_SLACK_CAP_M, maxSpd * MERGE_SPEED_SLACK_M_PER_MPH);
+      }
       var wasTogether = window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b];
       if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M) + slack) { union(a, b); continue; }
       // SCREEN proximity, independent of real-world distance. Merging on meters alone is
@@ -16648,6 +16668,7 @@ function listenUsers() {
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
+        userMarkers[uid]._ts = data.fixTs || data.ts || 0;   // WHEN that position was taken — see the merge slack
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
             '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + window._displaySpeed(uid, data) + ' mph</span>'
