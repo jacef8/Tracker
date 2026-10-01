@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 814;
+var APP_BUILD = 815;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13682,7 +13682,17 @@ function initMap() {
   map.on('dragstart', function(e) {
     if (!e.originalEvent) return;               // ignore our own programmatic eases
     if (followUid && followUid !== userId) stopFollowing(); // panning away ends follow-me
-    if (window._pauseFollow) window._pauseFollow();          // and pauses group-follow
+    if (window._pauseFollow) window._pauseFollow();
+  });
+  // Released on dragEND, not dragstart: a drag that goes nowhere (a tap that wobbled, a pinch
+  // that started as one finger) shouldn't silently switch group-follow off.
+  map.on('dragend', function (e) {
+    try {
+      if (!e || !e.originalEvent) return;
+      if (!fitAllInterval) return;
+      _stopFitAll();
+      toast('Group follow off — tap locate to re-centre', 2600);
+    } catch (_e) {}
   });
   // Pinch-zoom / rotate are user interaction too — pause auto-recenter so the gesture isn't
   // fought and any open popup survives. (Programmatic eases have no originalEvent.)
@@ -24402,6 +24412,37 @@ var GROUP_TICK_MS = 1000;
 var GF_ZOOM_DEADZONE = 0.22;
 var GF_ZOOM_IN_DWELL_MS = 2500;
 window._gfZoomInSince = null;
+// Dead-band on the CENTRE target, in screen pixels. The ideal centre is the middle of
+// everyone's bounding box, recomputed every second from positions that each carry their own GPS
+// noise and land on their own reporting cycle — so with a group standing still, or two people in
+// one car, it hops a few yards in a different direction every tick. Chasing each hop is a map
+// that never stops shifting under you. Real travel clears 20px in a tick easily.
+var GF_CENTER_DEADZONE_PX = 20;
+
+// Every group-follow branch publishes its camera target through here, and the frame loop closes
+// the gap. Nothing in group-follow calls easeTo per tick any more: a 1300ms ease restarted every
+// 1000ms is interrupted at three-quarters and begins again from wherever it got to, which is
+// precisely the shudder this was all meant to remove.
+function _gfPublish(center, zoom, force) {
+  var c = { lng: center.lng != null ? center.lng : center[0],
+            lat: center.lat != null ? center.lat : center[1] };
+  var prev = window._gfTarget;
+  if (prev && !force) {
+    try {
+      var a = map.project([prev.center.lng, prev.center.lat]);
+      var b = map.project([c.lng, c.lat]);
+      var dpx = Math.sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+      if (dpx < GF_CENTER_DEADZONE_PX) c = prev.center;   // noise, not movement — stay put
+    } catch (e) {}
+  }
+  window._gfTarget = { center: c, zoom: zoom };
+  window._gfStartLoop();
+}
+// Hold whatever zoom the camera is already heading for. Reading map.getZoom() fresh each tick
+// instead lets the target creep along behind the loop's own easing, which never settles.
+function _gfHoldZoom(cur) {
+  return (window._gfTarget && window._gfTarget.zoom != null) ? window._gfTarget.zoom : cur;
+}
 // Follow modes yield to the user: any gesture or marker tap pauses auto-recenter for a
 // few seconds so it stops fighting a pinch-zoom or closing an open popup, then resumes.
 window._followPausedUntil = 0;
@@ -24856,16 +24897,14 @@ function _groupFollowTick(force) {
     var stillVisible = _allPointsVisible(pts, _followPadding());
     if (stillVisible) {
       window._groupFollowOutOfViewSince = null;
-      var c0 = map.getCenter();
-      var moved0 = Math.abs(cam.center.lng - c0.lng) + Math.abs(cam.center.lat - c0.lat);
-      if (moved0 > 0.00004) _gfEase({ center: cam.center, zoom: curZoom, duration: 1300, easing: _linEase });
+      _gfPublish(cam.center, _gfHoldZoom(curZoom), force);
       return true;
     }
     if (!window._groupFollowOutOfViewSince) window._groupFollowOutOfViewSince = Date.now();
     if (Date.now() - window._groupFollowOutOfViewSince < 3000) {
       // Grace period — try recentering at the same zoom first; that alone may bring everyone
       // back into frame without needing to zoom out at all.
-      _gfEase({ center: cam.center, zoom: curZoom, duration: 900, easing: _linEase });
+      _gfPublish(cam.center, _gfHoldZoom(curZoom), force);
       return true;
     }
     // Grace period expired and someone's still off-screen — fall through to the normal
@@ -24902,8 +24941,7 @@ function _groupFollowTick(force) {
   // The tick no longer animates anything: it publishes WHERE the camera should be heading, and
   // the frame loop closes the gap. That is what makes centre and zoom one motion instead of a
   // sequence of little ones.
-  window._gfTarget = { center: { lng: cam.center.lng, lat: cam.center.lat }, zoom: targetZoom };
-  window._gfStartLoop();
+  _gfPublish(cam.center, targetZoom, force);
   // Tapping the button should arrive promptly rather than drifting in over several seconds.
   if (force) {
     try { map.easeTo({ center: cam.center, zoom: targetZoom, duration: 850, easing: _linEase }); } catch (e) {}
