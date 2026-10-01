@@ -530,7 +530,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // The settings ride along, so a viewer can tell "fine" from "about to go quiet".
         body["oss"] = settingsDict()
         // The route since the last report, so viewers animate the corners instead of cutting them.
-        if let route = pathTake() { body["path"] = route }
+        // Always write the key. This is a PATCH, so omitting it leaves the LAST route in the
+        // row, and the map replays that stale route against every later position -- the dot
+        // flies out to where you were an hour ago and back on every fix. null clears it.
+        if let route = pathTake() { body["path"] = route } else { body["path"] = NSNull() }
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())

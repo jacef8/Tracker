@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 816;
+var APP_BUILD = 817;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4236,6 +4236,30 @@ function _animateMarker(marker, toLng, toLat, path) {
   // five seconds and then sit frozen for the rest — the stutter that reads as "it stopped".
   var dur = Math.max(700, Math.min(30000, _gap * 1.08));
   var start = _nowMs;
+  // A route is only meaningful as the line between where this dot is and where it is going.
+  // `path` is written only when there IS a route to write, and the iPhone reporter merges its
+  // writes (PATCH), so a report with no route of its own leaves the PREVIOUS route sitting in
+  // the row -- and it is then replayed against every new position from then on. Found in the
+  // live data: one route two miles from the position it was attached to, another nine hours
+  // old. The dot flies out to it and back on every fix, which is the bouncing. The endpoint has
+  // a teleport guard; the waypoints had none, so nothing stopped it.
+  if (path && path.length) {
+    try {
+      var _tripM = metersApart(fromLat, fromLng, toLat, toLng);
+      var _maxOff = Math.max(250, _tripM * 4);   // generous — a winding route is still the route
+      var _newest = 0, _badPath = false;
+      for (var _vi = 0; _vi < path.length; _vi++) {
+        var _v = path[_vi];
+        if (!_v || _v.length < 2) continue;
+        if (metersApart(+_v[0], +_v[1], toLat, toLng) > _maxOff) { _badPath = true; break; }
+        if (+_v[2] > _newest) _newest = +_v[2];
+      }
+      // Stale by the clock as well as by the map. A route from this morning says nothing about
+      // where the dot is now even when it happens to be nearby.
+      if (_newest && (Date.now() - _newest) > 10 * 60 * 1000) _badPath = true;
+      if (_badPath) path = null;                 // glide straight there instead
+    } catch (e) { path = null; }
+  }
   // Waypoints: where the dot is now, the route the phone actually took, then the new position.
   // Each leg gets a share of the glide proportional to its length, so the speed stays even.
   var _wp = [[fromLng, fromLat]];
