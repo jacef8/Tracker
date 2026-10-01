@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 810;
+var APP_BUILD = 811;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12180,24 +12180,14 @@ function enterMap(name, group, uid) {
     // tracking never stopped writing it), producing a real, visible gap on everyone else's map
     // until the fresh claiming placeholder/fix landed a moment later. Removed.
 
-    // Also scan for and remove any other ghost entries with same name + noGps
-    // (handles duplicate tabs/windows on same device)
-    waitForFirebase(function(fb) {
-      window._feedOn(fb.ref(fb.db, 'gl/' + groupName + '/users'), function(snap) {
-        var all = snap.val() || {};
-        Object.entries(all).forEach(function(entry) {
-          var uid = entry[0], d = entry[1];
-          // Remove ghosts: same name, no GPS, claiming, OR older than 15 min with no GPS
-          if (uid !== userId) {
-            var age = Date.now() - (d.ts || 0);
-            if ((d.claiming && age > 10000) ||
-                (d.noGps && d.name === userName && age > 60000)) {
-              fb.remove(fb.ref(fb.db, 'gl/' + groupName + '/users/' + uid));
-            }
-          }
-        });
-      }, { onlyOnce: true });
-    });
+    // Ghost sweep removed. It deleted other people's stale presence rows, and the roster
+    // lockdown has forbidden writing anyone's row but your own since commit 2ace010 — so every
+    // attempt was refused, on every snapshot, forever: 2,711 rejected writes in a day on one
+    // phone. It also cost a day of debugging, because the refusal counter reported them as
+    // failures against gl/<room>/users and that looked like this phone being unable to report
+    // its own position. Superseded by pruneSupersededDevices() in server.js, which does the same
+    // job with admin rights, keeps a backup, and only acts when the same account has a live row
+    // on the same kind of device.
 
     // Session log for the admin Users tab — persistent history (joined / where / how long).
     // One record per join; its `l` (last-active) is touched as you move, so duration = l - j.
