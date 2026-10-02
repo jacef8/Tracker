@@ -113,6 +113,13 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    '1.0.9': [
+      '- GroundLink no longer asks to use your location every time you open it',
+      '- Your own dot is sharper while the map is open, without using more battery',
+      '- Fixed a wrong reading that could report your location as "While Using" when it was set to Always',
+      '- The Crew can now see whether a phone is really sharing in the background, not just what its settings claim',
+      '- Fixed dots jumping back and forth on the map',
+    ],
     '1.0.2': [
       '- Much more detailed location trails on iPhone',
       '- Live walkie-talkie voice for your Crew',
