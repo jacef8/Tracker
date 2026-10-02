@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 817;
+var APP_BUILD = 818;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7843,6 +7843,10 @@ try {
 window._locReason = function (oss) {
   try {
     if (!oss || typeof oss !== 'object') return '';
+    // Evidence first. bgFixes counts fixes their phone produced with the app closed, so a
+    // positive count settles the question no setting can: background sharing works.
+    if (oss.bgFixes > 0 && oss.bgFixAt && (Date.now() - oss.bgFixAt) < 60 * 60 * 1000) return '';
+    if (oss.locRunning === false) return 'Background location isn’t running on their phone';
     if (oss.locServices === false) return 'Location Services are turned off on their phone';
     if (oss.locDenied) return 'GroundLink isn\u2019t allowed to use their location';
     if (oss.lowPower) return 'Low Power Mode is on, which pauses location';
@@ -7871,6 +7875,9 @@ window._locProblems = function () {
     }
   } catch (e) {}
   if (!s) return out;
+  // Same rule as _locReason: if their phone is actually reporting from the background, do not
+  // interrupt them about a setting, however it reads.
+  if (s.bgFixes > 0 && s.bgFixAt && (Date.now() - s.bgFixAt) < 60 * 60 * 1000) return out;
   if (s.locDenied) {
     out.push({ k: 'denied', t: 'GroundLink cannot see your location',
                f: 'Settings › GroundLink › Location › Always' });
@@ -14648,6 +14655,35 @@ function _iosShellAtLeast(maj, min, pat) {
 // iPhone shells from 1.0.6 handle location natively (AppDelegate requests permission and runs
 // one coarse background session). The plugin's second, navigation-grade session is skipped.
 function _iosPluginSkipped() { return _iosShellAtLeast(1, 0, 6); }
+// From 1.0.9 the iPhone shell hands its own fixes to the page (window.__nativeFix), so the page
+// does not call navigator.geolocation at all. That call is a SEPARATE web-origin permission
+// inside the WebView which iOS does not remember between launches -- it is why the app asked to
+// use your location every single time it was opened, and why tapping "Don't Allow" once left the
+// dot dead even with the app in front. It was also a second GPS session running beside the
+// native one, on a shell whose whole point is that there is only one.
+function _iosFixBridge() { return _iosShellAtLeast(1, 0, 9); }
+
+// Fixes arriving from the native side, shaped like a GeolocationPosition so everything
+// downstream is unchanged.
+window.__nativeFix = function (o) {
+  try {
+    if (!o || o.lat == null || o.lng == null) return;
+    window._nativeFixAt = Date.now();
+    window._gotNativeFix = true;
+    window._lastFixSrc = 'native';
+    if (typeof window._onGpsFix !== 'function') return;
+    window._onGpsFix({
+      timestamp: o.ts || Date.now(),
+      coords: {
+        latitude: +o.lat, longitude: +o.lng,
+        accuracy: +o.acc || 0,
+        altitude: (o.alt == null ? null : +o.alt),
+        speed:   (o.spd == null || o.spd < 0 ? null : +o.spd),
+        heading: (o.hdg == null || o.hdg < 0 ? null : +o.hdg)
+      }
+    });
+  } catch (e) {}
+};
 async function startNativeBackgroundTracking() {
   if (!_isNativeApp() || window._bgGeoStarted) return;
   if (_iosPluginSkipped()) return;
@@ -14911,7 +14947,9 @@ try {
 // works less while you're parked. No-op on web (foreground watch handles itself).
 function _bsApplyPower(idle) {
   // The in-page watch (web, PWA, iPhone foreground) follows the same idle/active state.
-  try { if (window._gpsWatchId != null && typeof window._armWebWatch === 'function') window._armWebWatch(!idle); } catch (e) {}
+  try {
+    if (window._gpsWatchId != null && typeof window._armWebWatch === 'function') window._armWebWatch(!idle);
+  } catch (e) {}
   try {
     if (!window._bgGeo || window._bgWatcherId == null || typeof window._bgWatcherCb !== 'function') return;
     var prev = window._bgWatcherId;
@@ -15694,8 +15732,28 @@ function startLocationSharing() {
   // Don't relabel the source as "web" once the native service has taken over (a late or
   // one-shot web fix shouldn't make the diagnostics flip back to web).
   var _webFix = function(p) { if (!window._gotNativeFix) window._lastFixSrc = 'web'; onGpsFix(p); };
-  navigator.geolocation.getCurrentPosition(_webFix, onGpsErr,
-    { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
+  // On a bridging shell the native side is already delivering fixes, so asking the web layer
+  // would re-raise the prompt this change exists to remove. Falling back is still wired up: if
+  // no native fix has arrived within 15 seconds the bridge is not working on this device, and a
+  // dot with one extra prompt beats no dot at all.
+  window._startWebGeo = function (why) {
+    if (window._webGeoStarted) return;
+    window._webGeoStarted = true;
+    try { if (why) window._evt('web geolocation started — ' + why); } catch (e) {}
+    navigator.geolocation.getCurrentPosition(_webFix, onGpsErr,
+      { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
+    try { window._armWebWatch(!window._bsIdle); } catch (e) {}
+  };
+  if (_iosFixBridge()) {
+    setTimeout(function () {
+      if (window._roomClosed) return;
+      if (window._nativeFixAt) return;                       // the bridge is feeding us
+      window._startWebGeo('no native fix after 15s');
+    }, 15000);
+  } else {
+    navigator.geolocation.getCurrentPosition(_webFix, onGpsErr,
+      { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
+  }
 
   // 2) Then a HIGH-accuracy watch for ongoing precision (refines the dot within seconds).
   // (Re)arm the in-page watch. Full GPS while moving; while parked, cell/Wi-Fi fixes are
@@ -15714,7 +15772,7 @@ function startLocationSharing() {
     try { if (window._gpsWatchId != null) navigator.geolocation.clearWatch(window._gpsWatchId); } catch (e) {}
     window._gpsWatchId = null;
   };
-  window._armWebWatch(!window._bsIdle);
+  if (!_iosFixBridge()) { window._webGeoStarted = true; window._armWebWatch(!window._bsIdle); }
 
   // ── Ongoing GPS liveness watchdog ───────────────────────────────────
   // The one-time startup watchdog above (T+40s/T+80s) only ever checks whether background GPS

@@ -37,6 +37,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // enough. This CLLocationManager instance must be created unconditionally on every launch
     // (including that relaunch) for the delegate callback below to actually fire.
     private var bgLocationManager: CLLocationManager?
+    /// Authorization as the DELEGATE last reported it. authorizationStatus is only meaningful on
+    /// a manager the app keeps and whose delegate has fired; a freshly built one has not been
+    /// told anything yet. settingsDict() used to construct one on the spot, so the "While Using"
+    /// the Crew saw was never trustworthy evidence about the real setting.
+    private var lastAuth: CLAuthorizationStatus?
+    /// Background-location health, so "why is this phone off the map" is a measurement rather
+    /// than a guess. Counts only fixes delivered while the app was NOT in the foreground —
+    /// foreground fixes prove nothing about whether background sharing works.
+    private var bgFixCount: Int = 0
+    private var lastBgFixAt: TimeInterval = 0
+    private var fgBridgeSent: Int = 0
     // The "you are here" region — deliberately NOT prefixed "GL-", so syncMonitoredRegions()
     // (which clears and rebuilds every GL- region from the saved-places cache) cannot delete it.
     private let hereRegionId = "GLHERE"
@@ -163,6 +174,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+        // Back to the coarse, cheap setting the battery budget is built around.
+        setLocationFidelity(foreground: false)
         // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
         // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
     }
@@ -280,6 +293,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // __nativeSync() returning a JSON snapshot. Cached in UserDefaults for launches where the
     // UI (and thus the web app) never starts, e.g. a location-triggered background relaunch.
     func applicationDidBecomeActive(_ application: UIApplication) {
+        setLocationFidelity(foreground: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self = self,
                   let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
@@ -322,18 +336,34 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func settingsDict() -> [String: Any] {
         var d: [String: Any] = [:]
         d["lowPower"] = ProcessInfo.processInfo.isLowPowerModeEnabled
-        let mgr = CLLocationManager()
+        // The RETAINED manager, never a fresh one: see lastAuth. Preference order is the value
+        // the delegate handed us, then the live manager, then (only if neither exists yet) the
+        // class-level call, which is the one API that is valid without an instance.
+        let mgr = bgLocationManager
         let auth: CLAuthorizationStatus
-        if #available(iOS 14.0, *) { auth = mgr.authorizationStatus } else { auth = CLLocationManager.authorizationStatus() }
+        if let a = lastAuth {
+            auth = a
+        } else if #available(iOS 14.0, *), let m = mgr {
+            auth = m.authorizationStatus
+        } else {
+            auth = CLLocationManager.authorizationStatus()
+        }
         // "Always" is the only setting that keeps fixes coming once the app is backgrounded;
         // "While Using" looks identical in the foreground and is the usual culprit.
         d["locAlways"] = (auth == .authorizedAlways)
         d["locWhenInUse"] = (auth == .authorizedWhenInUse)
         d["locDenied"] = (auth == .denied || auth == .restricted)
-        if #available(iOS 14.0, *) {
+        if #available(iOS 14.0, *), let m = mgr {
             // Precise Location off gives ~1-3 km fixes — the dot still moves, just uselessly.
-            d["precise"] = (mgr.accuracyAuthorization == .fullAccuracy)
+            d["precise"] = (m.accuracyAuthorization == .fullAccuracy)
         }
+        // Is the background session actually running, and has it ever produced a fix with the app
+        // closed? "Always" in Settings and a working background session are different claims, and
+        // only the second one puts anyone on the map.
+        d["locRunning"] = (bgLocationManager != nil)
+        d["bgFixes"] = bgFixCount
+        if lastBgFixAt > 0 { d["bgFixAt"] = Int(lastBgFixAt * 1000) }
+        d["fgBridge"] = fgBridgeSent
         d["locServices"] = CLLocationManager.locationServicesEnabled()
         let refresh = UIApplication.shared.backgroundRefreshStatus
         d["bgRefresh"] = (refresh == .available)
@@ -383,7 +413,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // Move the anchor with the device even while foregrounded: the point is to have a live
         // region in place BEFORE the app is terminated, and termination can happen at any time.
         updateHereRegion(loc)
-        if UIApplication.shared.applicationState == .active { pathBuf.removeAll(); return }
+        if UIApplication.shared.applicationState == .active {
+            pathBuf.removeAll()
+            // Hand the fix to the page instead of letting it run a SECOND location session of its
+            // own. navigator.geolocation inside a WKWebView is a separate web-origin permission
+            // that iOS does not remember between launches, so the page asking for it produced the
+            // "allow location" prompt on every single open — and a declined prompt left the dot
+            // dead even with the app in front. One session, asked for once, natively.
+            bridgeFixToWeb(loc)
+            return
+        }
+        bgFixCount += 1
+        lastBgFixAt = Date().timeIntervalSince1970
         for l in locations { pathPush(l) }
         reportFixInBackground(loc)
     }
@@ -391,9 +432,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // Granted While Using → ask for Always, once, so background sharing works without a trip
     // to Settings. iOS shows this as its own prompt (or defers it to a later moment it chooses).
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if #available(iOS 14.0, *), manager === bgLocationManager, manager.authorizationStatus == .authorizedWhenInUse {
-            manager.requestAlwaysAuthorization()
-        }
+        guard #available(iOS 14.0, *), manager === bgLocationManager else { return }
+        // This callback is the ONLY place the status is authoritative. Record it here and let
+        // everything else read the recording.
+        lastAuth = manager.authorizationStatus
+        if manager.authorizationStatus == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
+    }
+
+    /// Push a fix into the page as window.__nativeFix({...}). Foreground only — the WebView is
+    /// not reliably executing JS otherwise, which is the whole reason background fixes are
+    /// written natively instead.
+    private func bridgeFixToWeb(_ loc: CLLocation) {
+        guard let bridgeVC = window?.rootViewController as? CAPBridgeViewController,
+              let wv = bridgeVC.webView else { return }
+        let c = loc.coordinate
+        let acc = max(0, loc.horizontalAccuracy)
+        let spd = loc.speed >= 0 ? loc.speed : -1
+        let crs = loc.course >= 0 ? loc.course : -1
+        let alt = loc.verticalAccuracy >= 0 ? loc.altitude : Double.nan
+        let altJS = alt.isNaN ? "null" : String(alt)
+        let js = "window.__nativeFix && window.__nativeFix({lat:\(c.latitude),lng:\(c.longitude),"
+               + "acc:\(acc),spd:\(spd),hdg:\(crs),alt:\(altJS),ts:\(Int(loc.timestamp.timeIntervalSince1970 * 1000))})"
+        fgBridgeSent += 1
+        wv.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// One session, two jobs. In the foreground it draws someone's own dot as they walk, so it
+    /// needs to be sharp; in the background it only has to notice the phone moving, and sharp
+    /// costs battery around the clock. Same manager either way — a second session is what this
+    /// shell exists to avoid.
+    private func setLocationFidelity(foreground: Bool) {
+        guard let mgr = bgLocationManager else { return }
+        mgr.desiredAccuracy = foreground ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
+        mgr.distanceFilter = foreground ? 5 : 50
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
