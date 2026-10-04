@@ -416,6 +416,8 @@ async function _alertCrew(room, aboutUid, aboutName, reason) {
   let sent = 0;
   for (const [uid, rec] of Object.entries(subs)) {
     if (uid === aboutUid || !rec) continue;                  // never tell them about themselves
+    // Same per-type preference every other notification obeys, under the key 'crew'.
+    if (rec.prefs && (rec.prefs.crew === 0 || rec.prefs.crew === false)) continue;
     try {
       if (fcmAdmin && rec.fcm) {
         await fcmAdmin.messaging().send({
@@ -981,7 +983,8 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
             token: rec.fcm,
             notification: { title: b.title || 'GroundLink', body: b.body || '' },
             data: { type: String(b.type || 'info'), group: String(group), url: String(b.url || '/'), fromUid: String(senderId || '') },
-            android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink', tag: (b.type || 'gl') + '-' + group } }
+            android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink', tag: (b.type || 'gl') + '-' + group } },
+            apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } }
           });
           sent++;
         } catch (err) {
