@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 819;
+var APP_BUILD = 820;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7850,7 +7850,14 @@ window._locReason = function (oss) {
     if (oss.locServices === false) return 'Location Services are turned off on their phone';
     if (oss.locDenied) return 'GroundLink isn\u2019t allowed to use their location';
     if (oss.lowPower) return 'Low Power Mode is on, which pauses location';
-    if (oss.locWhenInUse && !oss.locAlways) return 'Location is set to \u201cWhile Using\u201d \u2014 it needs \u201cAlways\u201d';
+    if (oss.locWhenInUse && !oss.locAlways) {
+      // iPhone asks, now and then, whether an app may keep using location in the background,
+      // and one of the answers quietly sets it back to While Using. People do not experience
+      // that as changing a setting -- they dismissed a popup -- so say what actually happened.
+      return (oss.authDowns > 0)
+        ? 'Their iPhone set location back to \u201cWhile Using\u201d after asking about background use'
+        : 'Location is set to \u201cWhile Using\u201d \u2014 it needs \u201cAlways\u201d';
+    }
     if (oss.bgRefreshDenied || oss.bgRefresh === false) return 'Background App Refresh is off for GroundLink';
     if (oss.precise === false) return 'Precise Location is off, so positions are rough';
   } catch (e) {}
@@ -7882,7 +7889,10 @@ window._locProblems = function () {
     out.push({ k: 'denied', t: 'GroundLink cannot see your location',
                f: 'Settings › GroundLink › Location › Always' });
   } else if (s.locWhenInUse && !s.locAlways) {
-    out.push({ k: 'whenInUse', t: 'Your location stops when your phone locks',
+    out.push({ k: 'whenInUse',
+               t: (s.authDowns > 0)
+                  ? 'Your iPhone turned off background sharing'
+                  : 'Your location stops when your phone locks',
                f: 'Settings › GroundLink › Location › Always' });
   }
   if (s.precise === false) {

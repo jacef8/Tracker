@@ -1,6 +1,7 @@
 import UIKit
 import Capacitor
 import CoreLocation
+import UserNotifications
 import WebKit
 import AVFoundation
 import PushKit
@@ -48,6 +49,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var bgFixCount: Int = 0
     private var lastBgFixAt: TimeInterval = 0
     private var fgBridgeSent: Int = 0
+    /// iOS asks, every so often, whether an app may keep using location in the background --
+    /// showing a map of recent positions and offering to "Keep Only While Using". Answering that
+    /// silently downgrades Always to While Using, and nothing in the app is told. From the user's
+    /// side they dismissed a popup; from ours they vanish off the map for days. Count it and say
+    /// so, because the setting reverting on its own is the single hardest thing to explain here.
+    private var authDowngrades: Int = 0
+    private var lastAuthDowngradeAt: TimeInterval = 0
     // The "you are here" region — deliberately NOT prefixed "GL-", so syncMonitoredRegions()
     // (which clears and rebuilds every GL- region from the saved-places cache) cannot delete it.
     private let hereRegionId = "GLHERE"
@@ -365,6 +373,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // closed? "Always" in Settings and a working background session are different claims, and
         // only the second one puts anyone on the map.
         d["locRunning"] = (bgLocationManager != nil)
+        d["authDowns"] = authDowngrades
+        if lastAuthDowngradeAt > 0 { d["authDownAt"] = Int(lastAuthDowngradeAt * 1000) }
         d["bgFixes"] = bgFixCount
         if lastBgFixAt > 0 { d["bgFixAt"] = Int(lastBgFixAt * 1000) }
         d["fgBridge"] = fgBridgeSent
@@ -439,8 +449,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         guard #available(iOS 14.0, *), manager === bgLocationManager else { return }
         // This callback is the ONLY place the status is authoritative. Record it here and let
         // everything else read the recording.
-        lastAuth = manager.authorizationStatus
-        if manager.authorizationStatus == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
+        let prev = lastAuth
+        let now = manager.authorizationStatus
+        lastAuth = now
+        if prev == .authorizedAlways && now == .authorizedWhenInUse {
+            authDowngrades += 1
+            lastAuthDowngradeAt = Date().timeIntervalSince1970
+            notifyBackgroundSharingStopped()
+            pushSettingsNow()
+        }
+        if now == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
     }
 
     /// Push a fix into the page as window.__nativeFix({...}). Foreground only — the WebView is
@@ -481,6 +499,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func bridgeLastKnownFix() {
         guard let loc = bgLocationManager?.location, !isLeftover(loc) else { return }
         bridgeFixToWeb(loc)
+    }
+
+    /// Tell them at the moment it happens. Waiting for someone to notice they have been missing
+    /// from the map, and then to go hunting through Settings, is how this went unexplained for a
+    /// fortnight.
+    private func notifyBackgroundSharingStopped() {
+        let c = UNMutableNotificationContent()
+        c.title = "GroundLink stopped sharing in the background"
+        c.body = "iPhone set your location to \"While Using\". Open GroundLink and tap the warning to put it back to Always."
+        c.sound = .default
+        let req = UNNotificationRequest(identifier: "gl-loc-downgrade-\(Int(Date().timeIntervalSince1970))",
+                                        content: c, trigger: nil)
+        UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
+    }
+
+    /// Write the settings snapshot straight away rather than waiting for the next fix -- a phone
+    /// that has just lost background permission may not produce another one for a long time.
+    private func pushSettingsNow() {
+        // Past the five-minute throttle on purpose: losing background permission is exactly the
+        // moment the Crew needs to know, and this phone may not produce another fix for hours.
+        lastStatusAt = .distantPast
+        writeStatusNatively()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
