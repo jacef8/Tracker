@@ -2274,6 +2274,8 @@
   <button id="zoom-in-btn" title="Zoom in" type="button"><svg class="licon"><use href="#ic-plus"/></svg></button>
   <!-- Zoom Out — desktop only -->
   <button id="zoom-out-btn" title="Zoom out" type="button"><svg class="licon"><use href="#ic-minus"/></svg></button>
+  <!-- Hunt mode -->
+  <button id="hunt-btn" title="Hunt mode" type="button" onclick="window._setToggleHunt()"><svg class="licon"><use href="#ic-footprints"/></svg></button>
   <!-- Layers -->
   <button id="layer-btn" title="Map layers" type="button"><svg class="licon"><use href="#ic-layers"/></svg></button>
   <!-- North arrow — tap to reveal: North Up or Heading Up -->
@@ -3839,7 +3841,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 824;
+var APP_BUILD = 825;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7185,6 +7187,17 @@ window._renderHuntBar = function () {
       document.body.appendChild(el);
     }
     el.style.display = on ? 'block' : 'none';
+    try {
+      var btn = document.getElementById('hunt-btn');
+      if (btn) {
+        btn.style.background    = on ? '#f0a500' : '';
+        btn.style.color         = on ? '#1a1206' : '';
+        btn.style.borderColor   = on ? '#f0a500' : '';
+        btn.style.boxShadow     = on ? '0 0 15px rgba(240,165,0,.6)' : '';
+        var _m = on ? Math.max(0, Math.round((window._huntUntilTs() - Date.now()) / 60000)) : 0;
+        btn.title = on ? ('Hunt mode on, ' + (_m >= 60 ? (Math.floor(_m / 60) + 'h ' + (_m % 60) + 'm') : (_m + 'm')) + ' left') : 'Hunt mode';
+      }
+    } catch (e) {}
     var lbl = document.getElementById('hunt-edge-label');
     if (on) {
       var mins = Math.max(0, Math.round((window._huntUntilTs() - Date.now()) / 60000));
