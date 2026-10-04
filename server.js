@@ -389,9 +389,15 @@ const wakeLastSent = new Map();               // uid -> ts
 // to announce it, and may not run again for hours.
 const SHARE_ALERT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
+// How current a settings snapshot has to be before it is worth waking the Crew over. A phone
+// that has not spoken in days is dormant, not broken, and its last known settings say nothing
+// about now -- a dormant row was about to send everyone an alert about a week-old reading.
+const SHARE_STATE_FRESH_MS = 2 * 60 * 60 * 1000;
+
 function _shareBroken(u) {
   const o = (u && u.oss) || {};
   if (!o.iosVer) return '';                                  // Android does not have this failure
+  if (!o.at || (Date.now() - o.at) > SHARE_STATE_FRESH_MS) return '';
   if (o.locDenied) return 'turned location off for GroundLink';
   if (o.locWhenInUse && !o.locAlways) {
     return o.authDowns > 0
