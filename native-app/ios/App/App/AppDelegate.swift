@@ -294,6 +294,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // UI (and thus the web app) never starts, e.g. a location-triggered background relaunch.
     func applicationDidBecomeActive(_ application: UIApplication) {
         setLocationFidelity(foreground: true)
+        // Once the page exists, and again shortly after, so the map has a position in hand well
+        // inside the window where it would otherwise fall back to asking the WebView itself.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.bridgeLastKnownFix() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.bridgeLastKnownFix() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self = self,
                   let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
@@ -464,7 +468,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func setLocationFidelity(foreground: Bool) {
         guard let mgr = bgLocationManager else { return }
         mgr.desiredAccuracy = foreground ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
-        mgr.distanceFilter = foreground ? 5 : 50
+        // No distance filter while the app is open. A filter only lets a fix through once the
+        // phone has MOVED that far, so a phone sitting on a table delivers nothing at all --
+        // which is why opening the app while standing still looked like the bridge was dead and
+        // sent the page back to asking the WebView for location (the prompt on every launch).
+        mgr.distanceFilter = foreground ? kCLDistanceFilterNone : 50
+    }
+
+    /// Hand the page the fix we already have, immediately. CoreLocation keeps the last known
+    /// location on the manager, so there is no reason to make the map wait for the device to
+    /// move before it can draw someone's own dot.
+    private func bridgeLastKnownFix() {
+        guard let loc = bgLocationManager?.location, !isLeftover(loc) else { return }
+        bridgeFixToWeb(loc)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -919,6 +935,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         if !glAudioBridgeInstalled {
             let ucc = wv.configuration.userContentController
             ucc.add(self, name: "glAudioRouter")
+            // Opening iOS Settings needs native code. Without it the app can only print a path
+            // and hope; Android has had a button for this all along.
+            ucc.add(self, name: "glOpenSettings")
+            ucc.addUserScript(WKUserScript(source: AppDelegate.glSettingsShim,
+                                           injectionTime: .atDocumentStart, forMainFrameOnly: true))
             // Document-start user script so the shim is re-defined on EVERY page load — including a
             // force-reload or web update — before voice.js ever looks for window.GLAudioRouter.
             ucc.addUserScript(WKUserScript(source: AppDelegate.glAudioShim,
@@ -952,8 +973,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     })();
     """
 
+    static let glSettingsShim = """
+    window.GLOpenSettings = function () {
+      try { window.webkit.messageHandlers.glOpenSettings.postMessage(''); return true; } catch (e) { return false; }
+    };
+    """
+
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
+        if message.name == "glOpenSettings" {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            return
+        }
         // Push to Talk control from the web (iOS 16+).
         if message.name == "glPtt" {
             guard let body = message.body as? [String: Any], let fn = body["fn"] as? String else { return }

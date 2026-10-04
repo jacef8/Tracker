@@ -113,6 +113,11 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    '1.0.10': [
+      '- Really fixes the "allow location" prompt appearing every time you open the app',
+      '- A button that takes you straight to the location settings for this app',
+      '- Your own dot updates smoothly again while the map is open',
+    ],
     '1.0.9': [
       '- GroundLink no longer asks to use your location every time you open it',
       '- Your own dot is sharper while the map is open, without using more battery',

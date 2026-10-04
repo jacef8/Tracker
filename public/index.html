@@ -3828,7 +3828,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 818;
+var APP_BUILD = 819;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7916,11 +7916,18 @@ window._checkLocNudge = function () {
     bar.innerHTML =
       '<div style="font-weight:800;font-size:14px;color:#f0a500;margin-bottom:4px">' + escapeHtmlJs(top.t) + '</div>' +
       '<div style="font-size:13px;line-height:1.35;color:#ffe9bd">Fix it here:<br><b>' + escapeHtmlJs(top.f) + '</b></div>' +
+      (window.GLOpenSettings
+        ? '<button type="button" id="loc-nudge-open" style="width:100%;margin-top:10px;background:#f0a500;border:none;color:#1a1206;border-radius:9px;padding:11px;font-size:14px;font-weight:800">Open GroundLink settings</button>'
+        : '') +
       '<div style="display:flex;gap:8px;margin-top:10px">' +
       '<button type="button" id="loc-nudge-later" style="flex:1;background:#2a2113;border:1px solid #6b5320;color:#ffe9bd;border-radius:9px;padding:9px;font-size:13px;font-weight:700">Later</button>' +
       '<button type="button" id="loc-nudge-done" style="flex:1;background:#f0a500;border:none;color:#1a1206;border-radius:9px;padding:9px;font-size:13px;font-weight:800">I fixed it</button>' +
       '</div>';
     document.body.appendChild(bar);
+    try {
+      var _ob = document.getElementById('loc-nudge-open');
+      if (_ob) _ob.onclick = function () { try { window.GLOpenSettings(); } catch (e) {} };
+    } catch (e) {}
     var snooze = function (ms, clearEvidence) {
       try { localStorage.setItem('gl_locnudge_' + top.k, String(Date.now() + ms)); } catch (e) {}
       // Reset the measured count on "I fixed it" so the next background stretch judges the new
@@ -15748,8 +15755,8 @@ function startLocationSharing() {
     setTimeout(function () {
       if (window._roomClosed) return;
       if (window._nativeFixAt) return;                       // the bridge is feeding us
-      window._startWebGeo('no native fix after 15s');
-    }, 15000);
+      window._startWebGeo('no native fix after 25s');
+    }, 25000);
   } else {
     navigator.geolocation.getCurrentPosition(_webFix, onGpsErr,
       { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 });
