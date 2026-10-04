@@ -376,6 +376,85 @@ function _wakeCooldown(u, age) {
 }
 const wakeLastSent = new Map();               // uid -> ts
 
+// Tell the REST of the Crew when someone's background sharing breaks.
+//
+// The person it happens to is the one least able to notice. iOS asks, periodically, whether an
+// app may keep using location in the background and offers "Keep Only While Using"; answering
+// that silently downgrades the permission. From their side they dismissed a popup. They are not
+// looking at the map, so they never see themselves go missing -- in the case that prompted this,
+// two days passed before anyone worked out what had happened. The people who DO notice, and who
+// actually go and fix it, are the others in the Crew.
+//
+// Server-side on purpose: a phone that has just lost background permission cannot be relied on
+// to announce it, and may not run again for hours.
+const SHARE_ALERT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+
+function _shareBroken(u) {
+  const o = (u && u.oss) || {};
+  if (!o.iosVer) return '';                                  // Android does not have this failure
+  if (o.locDenied) return 'turned location off for GroundLink';
+  if (o.locWhenInUse && !o.locAlways) {
+    return o.authDowns > 0
+      ? 'iPhone set their location back to "While Using"'
+      : 'location is set to "While Using" instead of "Always"';
+  }
+  return '';
+}
+
+async function _alertCrew(room, aboutUid, aboutName, reason) {
+  let subs = null;
+  try { subs = await _dbGet('gl/' + room + '/pushSubs'); } catch (e) { return 0; }
+  if (!subs) return 0;
+  const title = aboutName + ' stopped sharing';
+  const body = aboutName + ' is off the map -- ' + reason + '. They need to set it back to Always.';
+  let sent = 0;
+  for (const [uid, rec] of Object.entries(subs)) {
+    if (uid === aboutUid || !rec) continue;                  // never tell them about themselves
+    try {
+      if (fcmAdmin && rec.fcm) {
+        await fcmAdmin.messaging().send({
+          token: rec.fcm,
+          notification: { title: title, body: body },
+          data: { type: 'info', url: '/' },
+          android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+          apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } }
+        });
+        sent++;
+      } else if (pushReady && rec.sub) {
+        await webpush.sendNotification(JSON.parse(rec.sub),
+          JSON.stringify({ title: title, body: body, url: '/' }), { TTL: 3600, urgency: 'high' });
+        sent++;
+      }
+    } catch (e) {}
+  }
+  return sent;
+}
+
+// Fires on the TRANSITION into a broken state, not on the state itself, so a phone that stays
+// wrong is reported once rather than every sweep. The cooldown covers a setting that flaps.
+async function shareWatchPass(room, users) {
+  for (const [uid, u] of Object.entries(users || {})) {
+    if (!u || !u.name) continue;
+    const reason = _shareBroken(u);
+    const path = 'gl/_shareState/' + room + '/' + uid;
+    let prev = null;
+    try { prev = await _dbGet(path); } catch (e) { continue; }
+    const wasBroken = !!(prev && prev.broken);
+    if (!reason) {
+      if (wasBroken) { try { await _dbSet(path, { broken: false, at: Date.now() }); } catch (e) {} }
+      continue;
+    }
+    const lastAlert = (prev && prev.alertedAt) || 0;
+    if (wasBroken || (Date.now() - lastAlert) < SHARE_ALERT_COOLDOWN_MS) {
+      if (!wasBroken) { try { await _dbSet(path, { broken: true, at: Date.now(), alertedAt: lastAlert }); } catch (e) {} }
+      continue;
+    }
+    const sent = await _alertCrew(room, uid, u.name, reason);
+    try { await _dbSet(path, { broken: true, at: Date.now(), alertedAt: Date.now(), reason: reason }); } catch (e) {}
+    if (sent) console.log('share-watch: ' + u.name + ' in ' + room + ' -- ' + reason + ' -- told ' + sent + ' crew member(s)');
+  }
+}
+
 async function keepAliveSweep() {
   if (!fcmAdmin || !adminDb) return;
   let rooms;
@@ -394,6 +473,7 @@ async function keepAliveSweep() {
     // the only thing that justifies waking someone's phone on a timer. A quick-join room is not.
     if (!cfg || !cfg.circle) continue;
     try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { continue; }
+    try { await shareWatchPass(room, users); } catch (e) {}
     for (const [uid, u] of Object.entries(users || {})) {
       if (!u || !u.name) continue;
       if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
