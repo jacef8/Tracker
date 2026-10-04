@@ -412,7 +412,12 @@ async function _alertCrew(room, aboutUid, aboutName, reason) {
   try { subs = await _dbGet('gl/' + room + '/pushSubs'); } catch (e) { return 0; }
   if (!subs) return 0;
   const title = aboutName + ' stopped sharing';
-  const body = aboutName + ' is off the map -- ' + reason + '. They need to set it back to Always.';
+  // Say how to switch these off, in the alert itself. Someone who does not want them should not
+  // have to go hunting through Settings to find out whether it is even possible, and an alert
+  // with no off switch in sight is the kind people silence at the operating system level --
+  // which would also silence the ones that matter.
+  const body = aboutName + ' is off the map. ' + reason + '. They need to set location back to '
+             + 'Always. You can turn these off in GroundLink Settings, under Notifications.';
   let sent = 0;
   for (const [uid, rec] of Object.entries(subs)) {
     if (uid === aboutUid || !rec) continue;                  // never tell them about themselves
