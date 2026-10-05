@@ -707,6 +707,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // reported, that claim is false, so clear it and let the web layer set it again.
         if let prev = lastReportedLoc, prev.distance(from: loc) > 60 { body["hereSince"] = NSNull() }
         lastReportedLoc = loc
+        // Everything else the web layer writes that is a CLAIM ABOUT THE PRESENT rather than a
+        // setting. This is a PATCH, so anything not named here survives untouched -- which is
+        // right for a chosen colour or a privacy flag, and wrong for an assertion that this
+        // phone is parked, still starting up, or failing to get background fixes. The web layer
+        // cannot correct them while it is not running, and this write is proof they are out of
+        // date, so they go. It sets them again the moment it has something true to say.
+        //
+        // Audited 2026-10-05 after three separate bugs of exactly this shape: a route two miles
+        // from the position carrying it, a noGps flag hiding a phone that was reporting, and a
+        // "Here 2h 40m" that outlived a six mile drive.
+        body["rest"] = NSNull()          // parked flag
+        body["claiming"] = NSNull()      // startup placeholder
+        body["bgf"] = NSNull()           // background-failure tally
+        // Deliberately NOT cleared, because they are settings and not claims:
+        //   color, priv, hidden, spdH  -- chosen by the user, must outlive any single report
+        //   hunt                       -- a future expiry, which times out on its own
+        //   fgTs                       -- a timestamp that can only age, never read too fresh
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())
