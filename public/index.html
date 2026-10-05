@@ -3843,7 +3843,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 828;
+var APP_BUILD = 829;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7054,6 +7054,21 @@ window._motionOf = function (uid, data) {
     if (!last || last.ts !== stamp) h.push({ ts: stamp, spd: data.spd || 0 });
     while (h.length && (now - h[0].ts) > 120000) h.shift();   // right now, not five minutes ago
     if (h.length > 8) h.splice(0, h.length - 8);
+    // The phone's own motion chip, when it has an answer. It reads the step-counter
+    // coprocessor rather than GPS, which is the difference between knowing someone is walking
+    // and inferring it from a dot that moved: 3 mph is a walk or an idling truck, and the GPS
+    // trace is identical either way. Needs iOS 1.0.11+, so the speed estimate below stays as
+    // the fallback for every other phone and for anyone who declines the Motion permission.
+    try {
+      var _a = data.oss && data.oss.act;
+      if (_a && (now - (data.oss.actAt || 0)) < 10 * 60 * 1000) {
+        if (_a === 'still')   return null;
+        if (_a === 'walking') return { icon: '🚶', label: 'Walking', spd: Math.round(data.spd || 0), src: 'chip' };
+        if (_a === 'running') return { icon: '🏃', label: 'Running', spd: Math.round(data.spd || 0), src: 'chip' };
+        if (_a === 'cycling') return { icon: '🚲', label: 'Cycling', spd: Math.round(data.spd || 0), src: 'chip' };
+        if (_a === 'driving') return { icon: '🚗', label: 'Driving', spd: Math.round(data.spd || 0), src: 'chip' };
+      }
+    } catch (_me) {}
     if (h.length < MOTION_MIN_SAMPLES) return null;
     // Median, not average: one bogus 90 mph sample from a bad fix cannot promote a walk.
     var v = h.map(function (x) { return x.spd || 0; }).sort(function (a, b) { return a - b; });

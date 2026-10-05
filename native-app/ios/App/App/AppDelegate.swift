@@ -1,6 +1,7 @@
 import UIKit
 import Capacitor
 import CoreLocation
+import CoreMotion
 import UserNotifications
 import WebKit
 import AVFoundation
@@ -49,6 +50,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var bgFixCount: Int = 0
     private var lastBgFixAt: TimeInterval = 0
     private var fgBridgeSent: Int = 0
+    /// What the phone's motion chip says this person is doing: still, walking, running, cycling
+    /// or driving. This is the step-counter coprocessor, not GPS -- it costs almost nothing and
+    /// answers a question GPS is bad at. Three miles an hour is a walk or an idling truck, and
+    /// the dot moves identically either way; the chip knows which.
+    private let activityManager = CMMotionActivityManager()
+    private var currentActivity = ""
+    private var activityStartedAt: TimeInterval = 0
     /// iOS asks, every so often, whether an app may keep using location in the background --
     /// showing a map of recent positions and offering to "Keep Only While Using". Answering that
     /// silently downgrades Always to While Using, and nothing in the app is told. From the user's
@@ -149,6 +157,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             mgr.startMonitoringSignificantLocationChanges()
         }
         bgLocationManager = mgr
+        startActivityUpdates()
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
         restoreHereRegion()      // and the anchor on the last known position, before any fix lands
         setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
@@ -341,6 +350,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
+    /// Ask the motion coprocessor what this person is doing, and keep the answer current.
+    /// Low-confidence readings are ignored rather than published: a wrong label is worse than
+    /// none, and the chip says "maybe walking" fairly often when someone shifts in a seat.
+    private func startActivityUpdates() {
+        guard CMMotionActivityManager.isActivityAvailable() else { return }
+        activityManager.startActivityUpdates(to: .main) { [weak self] act in
+            guard let self = self, let a = act else { return }
+            if a.confidence == .low { return }
+            var label = ""
+            if a.stationary { label = "still" }
+            if a.walking    { label = "walking" }
+            if a.running    { label = "running" }
+            if a.cycling    { label = "cycling" }
+            if a.automotive { label = "driving" }
+            if label.isEmpty || label == self.currentActivity { return }
+            self.currentActivity = label
+            self.activityStartedAt = Date().timeIntervalSince1970
+        }
+    }
+
     /// Read-only snapshot of the iOS settings that govern background location. Written with every
     /// background fix (and on its own when there is no fix) so the Crew can see WHY a phone has
     /// gone quiet: Low Power Mode, "While Using" instead of "Always", Precise Location off,
@@ -378,6 +407,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         d["bgFixes"] = bgFixCount
         if lastBgFixAt > 0 { d["bgFixAt"] = Int(lastBgFixAt * 1000) }
         d["fgBridge"] = fgBridgeSent
+        if !currentActivity.isEmpty {
+            d["act"] = currentActivity
+            d["actAt"] = Int(activityStartedAt * 1000)
+        }
         d["locServices"] = CLLocationManager.locationServicesEnabled()
         let refresh = UIApplication.shared.backgroundRefreshStatus
         d["bgRefresh"] = (refresh == .available)
