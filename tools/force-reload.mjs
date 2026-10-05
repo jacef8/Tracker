@@ -6,10 +6,6 @@ admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',
 });
-<<<<<<< Updated upstream
-await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-829' });
-=======
-await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-831' });
->>>>>>> Stashed changes
+await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-832' });
 console.log('force reload sent');
 process.exit(0);
