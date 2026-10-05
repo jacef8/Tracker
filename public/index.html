@@ -3843,7 +3843,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 829;
+var APP_BUILD = 830;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14030,7 +14030,13 @@ function initMap() {
       var _cl = document.getElementById('pin-coords-label'); if (_cl) _cl.textContent = e.lngLat.lat.toFixed(5) + ', ' + e.lngLat.lng.toFixed(5);
       return;
     }
-    if (_pm && _pm.classList.contains('show')) return;
+    // Only swallow the tap for a sheet that is actually in front of someone. In 'placing' the
+    // modal is deliberately transparent and click-through, so this guard could leave the map
+    // silently dead to every tap while looking completely normal -- no sheet, no feedback,
+    // nothing to dismiss. If it is see-through, it is not taking this click.
+    if (_pm && _pm.classList.contains('show') && !_pm.classList.contains('placing')) {
+      try { if (getComputedStyle(_pm).display !== 'none') return; } catch (e) { return; }
+    }
     // ── 1. Measure mode — always first priority ───────────────────
     if (measureMode) {
       if (_measureSuppressClick) { _measureSuppressClick = false; return; }
@@ -18695,6 +18701,22 @@ document.getElementById('pin-cats').addEventListener('click', e => {
 
 document.getElementById('pin-cancel').addEventListener('click', _closePinModal);
 
+// Escape and the hardware/gesture back button close the pin sheet too. Without these the only
+// ways out were the Cancel button and a backdrop tap, and the backdrop stops accepting taps in
+// placing mode -- so a sheet reached that way had no exit that works from a phone.
+try {
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape') return;
+    var m = document.getElementById('pin-modal');
+    if (m && m.classList.contains('show')) { _closePinModal(); ev.preventDefault(); }
+  });
+  window.addEventListener('popstate', function () {
+    try {
+      var m = document.getElementById('pin-modal');
+      if (m && m.classList.contains('show')) _closePinModal();
+    } catch (e) {}
+  });
+} catch (e) {}
 // Tap the dimmed area outside the sheet to dismiss — no need to reach the Cancel
 // button on a phone. Clicking the sheet itself does nothing.
 document.getElementById('pin-modal').addEventListener('click', e => {
