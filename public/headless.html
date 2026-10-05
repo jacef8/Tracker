@@ -129,7 +129,21 @@
     if (!_pl || metersApart(_pl[0], _pl[1], c.latitude, c.longitude) >= 2) _pb.push([c.latitude, c.longitude, Date.now()]);
     if (_pb.length > 400) _pb.splice(0, _pb.length - 400);
     var _rp = window._lastReport;
-    if (_rp && !pos._heartbeat && Date.now() - _rp.ts < 10000) return;
+    // Batch the writes when nobody is looking at the map. The fixes above are still recorded
+    // either way -- this only decides how often they are sent -- and each report carries the
+    // route since the last one, so the trail arrives complete, just in clumps. The radio is
+    // what costs battery here, especially on one bar, which is where this crew lives.
+    //
+    // This WebView has no subscriptions, so it cannot see who is watching. The main app leaves
+    // the answer in localStorage, which is shared because both are the same origin. Absent or
+    // stale means nobody, which is the safe default: it only ever slows reporting down for a
+    // phone nobody is looking at, and the parked heartbeat below is exempt regardless.
+    var _gap = 10000;
+    try {
+      var _wu = parseInt(localStorage.getItem('gl_watch_until') || '0', 10) || 0;
+      if (Date.now() > _wu) _gap = 5 * 60 * 1000;
+    } catch (e) {}
+    if (_rp && !pos._heartbeat && Date.now() - _rp.ts < _gap) return;
     window._lastReport = { lat: c.latitude, lng: c.longitude, ts: Date.now() };
     // Doppler speed when the fix has one, else distance-over-time from the previous fix —
     // Android fixes intermittently arrive with speed:null mid-drive, and writing 0 for
