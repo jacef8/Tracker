@@ -50,6 +50,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var bgFixCount: Int = 0
     private var lastBgFixAt: TimeInterval = 0
     private var fgBridgeSent: Int = 0
+    /// Where this phone was when it last reported, so a write can tell whether it has moved.
+    private var lastReportedLoc: CLLocation?
     /// What the phone's motion chip says this person is doing: still, walking, running, cycling
     /// or driving. This is the step-counter coprocessor, not GPS -- it costs almost nothing and
     /// answers a question GPS is bad at. Three miles an hour is a walk or an idling truck, and
@@ -698,6 +700,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // could not get a fix stays on the row forever otherwise, and the map hides anyone
         // carrying it -- while this very write is proof the phone knows where it is.
         body["noGps"] = NSNull()
+        // hereSince is the web layer's "sitting at this spot since" anchor. This PATCH was
+        // written to preserve fields it does not manage, which is right for a colour and wrong
+        // for a claim about the present: the anchor survived while the phone drove six miles and
+        // the card read "Here 2h 40m". If this fix is a real distance from the last one we
+        // reported, that claim is false, so clear it and let the web layer set it again.
+        if let prev = lastReportedLoc, prev.distance(from: loc) > 60 { body["hereSince"] = NSNull() }
+        lastReportedLoc = loc
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())
