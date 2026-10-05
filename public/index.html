@@ -3843,7 +3843,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 831;
+var APP_BUILD = 830;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4143,36 +4143,7 @@ function _checkMarkerAlignment() {
 // Cost is a few hundred bytes on ONE write instead of ten separate writes, and the shape is
 // simplified first, so a straight highway stretch collapses to its two ends while a corner
 // keeps the points that make it a corner.
-// Batched reporting.
-//
-// Recording and transmitting are different costs, and almost all of the battery is the second
-// one. A radio on one bar ramps its transmit power up and retries, which is exactly the
-// situation a hunting crew spends its day in, and writing a position every ten seconds over
-// that link is close to the worst thing you can ask of a phone. The GPS chip is cheap by
-// comparison.
-//
-// So the fix cadence never changes -- every fix is still recorded, and the trail stays
-// complete -- but when nobody is looking at the map the writes are batched. Each report
-// already carries the route travelled since the last one, so a longer gap simply means a
-// longer route rides along with it; the history arrives in clumps instead of a drip.
-var REPORT_WATCHED_MS   = 10 * 1000;        // someone has the map open
-var REPORT_UNWATCHED_MS = 5 * 60 * 1000;    // nobody is looking: batch it up
-// Someone counts as watching for this long after their last foreground moment, so putting the
-// phone down for a few seconds does not drop everyone back to batching.
-var WATCHER_FRESH_MS    = 2 * 60 * 1000;
-window._lastWatcherTs = 0;
-function _someoneWatching() {
-  try {
-    // You, right now, are the most certain watcher there is.
-    if (typeof document !== 'undefined' && document.visibilityState === 'visible') return true;
-    return (Date.now() - (window._lastWatcherTs || 0)) < WATCHER_FRESH_MS;
-  } catch (e) { return true; }   // in doubt, report as though watched
-}
-function _reportGapMs() {
-  if (window._huntOn && window._huntOn()) return HUNT_REPORT_MS;
-  return _someoneWatching() ? REPORT_WATCHED_MS : REPORT_UNWATCHED_MS;
-}
-var PATH_MAX_PTS = 14;          // ceiling on points per report (per-report; see _pathCap)
+var PATH_MAX_PTS = 14;          // ceiling on points per report
 var PATH_SIMPLIFY_M = 6;        // drop a point sitting within ~20 ft of the line through its neighbours
 var PATH_MIN_STEP_M = 2;        // ignore GPS jitter while standing still
 window._pathBuf = window._pathBuf || [];
@@ -4224,13 +4195,9 @@ window._pathTake = function () {
     if (b.length < 3) return null;                     // two points IS a straight line — nothing to add
     var sp = _pathSimplify(b, PATH_SIMPLIFY_M);
     if (sp.length < 3) return null;
-    // 14 points describes ten seconds of travel perfectly well and five minutes of it badly.
-    // When the gap is long the route IS the history, so thinning it to a handful of points
-    // would throw away the very thing batching is supposed to preserve.
-    var _cap = (window._reportGapMs && _reportGapMs() > 60000) ? 180 : PATH_MAX_PTS;
-    if (sp.length > _cap) {                            // thin the middle, always keep both ends
-      var out = [sp[0]], step = (sp.length - 2) / (_cap - 2);
-      for (var i = 1; i < _cap - 1; i++) out.push(sp[Math.round(i * step)]);
+    if (sp.length > PATH_MAX_PTS) {                    // thin the middle, always keep both ends
+      var out = [sp[0]], step = (sp.length - 2) / (PATH_MAX_PTS - 2);
+      for (var i = 1; i < PATH_MAX_PTS - 1; i++) out.push(sp[Math.round(i * step)]);
       out.push(sp[sp.length - 1]);
       sp = out;
     }
@@ -15664,7 +15631,7 @@ function startLocationSharing() {
     var _rpAge = now - (window._lastReportTs || 0);
     // Time only. A distance clause ("or every 300 ft") was tried first and at 60 mph it fired
     // every 3 s — measured, not guessed. _rpMoved is kept for diagnostics.
-    var _gapMs = _reportGapMs();
+    var _gapMs = (window._huntOn && window._huntOn()) ? HUNT_REPORT_MS : REPORT_MOVE_MS;
     if (window._lastReportTs && !window._forceReport && _rpAge < _gapMs) return;
     window._forceReport = false;
     window._lastReportTs = now;
@@ -16665,16 +16632,6 @@ function listenUsers() {
     if (!usersInitialLoad) {
       Object.entries(users).forEach(([uid, data]) => {
         const isLive = (now - (data.ts || 0)) < LIVE_MS;
-        // fgTs is "last moment this member had the app in front of them", and every row already
-        // carries it -- so working out whether anyone is watching needs no new field, no extra
-        // listener and no write. Somebody with the map open reports at full rate, which keeps
-        // their own fgTs fresh, which keeps everyone else reporting at full rate for them.
-        if (!isMine && (data.fgTs || 0) > (window._lastWatcherTs || 0)) {
-          window._lastWatcherTs = data.fgTs;
-          // headless.html runs in its own WebView with no subscriptions, so it cannot work this
-          // out for itself. Same origin, so the answer can simply be left where it will find it.
-          try { localStorage.setItem('gl_watch_until', String(data.fgTs + WATCHER_FRESH_MS)); } catch (e) {}
-        }
         if (!knownUsers[uid] && uid !== userId && isLive && data.name) {
           showJoinAlert(data.name);
         }
