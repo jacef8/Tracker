@@ -900,6 +900,31 @@ app.post('/voip', rateLimit(60, 60000), requireUser, async function (req, res) {
   res.json({ ok: sent > 0, sent: sent, results: results });
 });
 
+// One alert per person per event, however many Crews they share with the sender.
+//
+// The client fans a notification out Crew by Crew, which is right -- each Crew has its own
+// membership. But the same people are usually in several of them together, so a phone crossing
+// 15% sent its low-battery alert once per Crew and arrived three times on the same laptop.
+// Collapsing it at the recipient fixes it for every type at once rather than for battery alone.
+//
+// Keyed on who, what kind, and the exact words, so two genuinely different events inside the
+// window still both arrive. In memory on purpose: this only has to span the few milliseconds
+// between the client's back-to-back calls, and it is not worth a database write.
+const PUSH_DEDUPE_MS = 90 * 1000;
+const _pushSeen = new Map();
+function _pushDuplicate(uid, type, body) {
+  const key = uid + '|' + (type || '') + '|' + String(body || '').slice(0, 120);
+  const now = Date.now();
+  const prev = _pushSeen.get(key);
+  if (prev && (now - prev) < PUSH_DEDUPE_MS) return true;
+  _pushSeen.set(key, now);
+  // Keep the map from growing without bound on a long-lived process.
+  if (_pushSeen.size > 500) {
+    for (const [k, t] of _pushSeen) { if (now - t > PUSH_DEDUPE_MS) _pushSeen.delete(k); }
+  }
+  return false;
+}
+
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
 app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
@@ -965,6 +990,9 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
       }
       // Respect the recipient's per-type notification prefs (SOS always goes through).
       if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) return;
+      // Already told this person about this, via another Crew they share with the sender.
+      // SOS is exempt: a repeat there is far cheaper than a miss.
+      if (b.type !== 'sos' && _pushDuplicate(uid, b.type, b.body)) { decisions.push(uid.slice(0, 10) + ':DUP'); return; }
       // Web Push — installed PWA (browser-backed)
       if (pushReady && rec.sub) {
         let subscription = null;
