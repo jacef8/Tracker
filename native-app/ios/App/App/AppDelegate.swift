@@ -661,6 +661,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // row, and the map replays that stale route against every later position -- the dot
         // flies out to where you were an hour ago and back on every fix. null clears it.
         if let route = pathTake() { body["path"] = route } else { body["path"] = NSNull() }
+        // Same reason as path: this is a PATCH. A noGps set during a launch where the web layer
+        // could not get a fix stays on the row forever otherwise, and the map hides anyone
+        // carrying it -- while this very write is proof the phone knows where it is.
+        body["noGps"] = NSNull()
         let lvl = UIDevice.current.batteryLevel
         if lvl >= 0 {
             body["batt"] = Int((lvl * 100).rounded())

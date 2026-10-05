@@ -3843,7 +3843,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 827;
+var APP_BUILD = 828;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16690,7 +16690,13 @@ function listenUsers() {
       // Age of the POSITION, matching isLive — "last seen 2:14 PM" has to mean when they were
       // last actually located, not when their app last checked in.
       const ageMin   = Math.floor((now - (data.fixTs || data.ts || 0)) / 60000);
-      const hasGps   = !data.noGps && (data.lat !== 0 || data.lng !== 0);
+      // A real position outranks the flag. markNoGps only ever writes lat:0,lng:0 beside
+      // noGps:true, so a genuine coordinate carrying noGps is a contradiction -- and the iOS
+      // reporter PATCHes its writes, so a flag set once during a failed launch is never cleared
+      // by the fixes that follow. Lexi vanished off the map for exactly this: reporting every
+      // few minutes with a stale noGps from hours earlier still attached. Same trap as the
+      // stale route in 817.
+      const hasGps   = (data.lat !== 0 || data.lng !== 0);
       const _ago      = ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago';
       // Plain value — callers add their own prefix. It used to embed "Resting · " for resting
       // members, which every caller then prefixed again ("Last seen: Resting · 14m ago").
