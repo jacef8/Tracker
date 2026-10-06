@@ -2582,8 +2582,32 @@ function _verifyFbRead() {
 }
 function waitForFirebase(cb) {
   if (window._fb && _fbAuthReady()) { _verifyFbRead().then(function () { cb(window._fb); }); return; }
+  // Never wait forever. This gate only proceeds once there is a signed-in user, and since the
+  // page stopped signing in anonymously over the top of a Google session, "no user yet" is a
+  // state it can legitimately sit in -- waiting for someone to press the button. Hanging there
+  // showed a bare "Connecting to Firebase" with no listener registered, so not even the
+  // permission error could be reported. Go ahead after a few seconds regardless: a denied read
+  // reports itself, which is far more use than silence.
+  var waited = 0;
   var t = setInterval(function () {
-    if (window._fb && _fbAuthReady()) { clearInterval(t); _verifyFbRead().then(function () { cb(window._fb); }); }
+    waited += 80;
+    if (window._fb && _fbAuthReady()) {
+      clearInterval(t);
+      _verifyFbRead().then(function () { cb(window._fb); });
+      return;
+    }
+    if (waited === 2400) {
+      try {
+        var el = document.getElementById('admin-list');
+        if (el) el.innerHTML = '<div class="loading" style="color:#f0a500">Waiting for Google sign-in…<br>' +
+          '<span style="color:#8b949e;font-size:12px">Use the button at the top of the page.</span></div>';
+      } catch (e) {}
+      try { window._glShowSignIn && window._glShowSignIn(); } catch (e) {}
+    }
+    if (waited >= 6000 && window._fb) {
+      clearInterval(t);
+      _verifyFbRead().then(function () { cb(window._fb); });
+    }
   }, 80);
 }
 
