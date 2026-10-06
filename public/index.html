@@ -1872,7 +1872,12 @@
              list: tap to drop down your circles and jump straight into one, invite, or leave.
              Replaces the old full "My Circles" section AND the separate Account-page Circles
              management block — this is now the one place both live. Hidden with zero circles. -->
-        <div id="circle-switcher" style="display:none;margin-bottom:2px">
+        <!-- Retired from the home screen. Crews were listed TWICE: in this pill above the hub,
+             and again in the Crews tab below it, while Rooms only ever appeared below. The two
+             things you choose between sat in different places, in different shapes, behaving
+             differently. Crews now appear in exactly one place, the Crews tab, in the same
+             position and the same card as Rooms. Code stays: the in-room switcher shares it. -->
+        <div id="circle-switcher" style="display:none !important;margin-bottom:2px">
           <button id="circle-switcher-btn" type="button" onclick="window._toggleCircleSwitcher()" style="width:100%;display:flex;align-items:center;gap:8px;background:rgba(240,165,0,.10);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:10px 12px;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:left">
             <svg class="licon licon-sm" style="color:var(--accent);flex-shrink:0"><use href="#ic-users"/></svg>
             <span id="circle-switcher-label" style="flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">My Crews</span>
@@ -3850,7 +3855,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 837;
+var APP_BUILD = 838;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10658,15 +10663,20 @@ window._renderCrewsSection = function () {
     var label = _cleanName(circles[k]) || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k);
     var d = detail[k] || {};
     var on = (d.people || []).filter(function (p) { return p.sharing; }).length;
-    return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
-      '<div onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex:1;min-width:0;cursor:pointer">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
+    // The same .room-item card the Rooms list uses: same height, same border, same name
+    // and meta type, and the whole row opens it. A Crew and a Room are the two things you
+    // pick between on this screen; they should not look like they came from different apps.
+    return '<div class="room-item" onclick="window._openCrew(\'' + _escHtml(k) + '\')">' +
+      '<div class="room-item-left">' +
+        '<div class="room-name">' + _escHtml(label) +
           (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
         '</div>' +
-        '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' sharing now' : 'Nobody sharing right now')) + '</div>' +
+        '<div class="room-meta">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' sharing now' : 'Nobody sharing right now')) + '</div>' +
       '</div>' +
-      '<button onclick="window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" title="Talk to everyone" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-size:12px;font-weight:800;padding:7px 11px;cursor:pointer"><svg class="licon licon-sm" style="width:13px;height:13px"><use href="#ic-mic"/></svg>Talk</button>' +
-      '<button onclick="window._openCrew(\'' + _escHtml(k) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:12px;font-weight:800;padding:7px 12px;cursor:pointer">Open</button>' +
+      // Talk stays: reaching the Crew by voice in one tap is the point of a Crew. It stops
+      // the row's own click so tapping Talk does not also open the map.
+      '<button onclick="event.stopPropagation();window._talkToCrew(\'' + _escHtml(k) + '\',\'' + _escHtml(label) + '\')" title="Talk to everyone" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--accent);border-radius:9px;color:var(--accent);font-size:12px;font-weight:800;padding:7px 11px;cursor:pointer"><svg class="licon licon-sm" style="width:13px;height:13px"><use href="#ic-mic"/></svg>Talk</button>' +
+      '<span class="room-join-arrow" aria-hidden="true" style="color:var(--muted);font-size:24px;line-height:1;flex-shrink:0">&#8250;</span>' +
     '</div>';
   }).join('');
 };
