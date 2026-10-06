@@ -3324,6 +3324,10 @@
       <button class="panel-close" onclick="closePinHub()"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;padding:8px 16px">
+      <div onclick="window._toggleMyPins()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+        <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-star"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Show my saved pins here</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Puts your own pins on this Crew's map. Only you see them, and nothing is added to the Crew.</div></div></div>
+        <span id="mypins-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+      </div>
       <!-- Drop a pin -->
       <button onclick="closePinHub();enablePinMode();" style="display:flex;align-items:center;gap:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;width:100%;text-align:left">
         <svg class="licon licon-lg" style="color:var(--accent)"><use href="#ic-plus"/></svg>
@@ -3843,7 +3847,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 835;
+var APP_BUILD = 836;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13908,14 +13912,43 @@ function initMap() {
     }
     // Add pin source and layer
     if (!map.getSource('pins')) {
-      map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      // Clustered. Pins used to be hidden below zoom 11, which was a blunt answer to a real
+      // problem: dozens of full-size icons at county zoom buried the imagery. But hiding them
+      // also removed the only clue about where anything IS, so finding a spot meant zooming
+      // around blind. Bundling them into one bubble with a count keeps the map readable AND
+      // keeps the clue, so the zoom gate is gone and pins exist at every zoom now.
+      map.addSource('pins', {
+        type: 'geojson', data: { type: 'FeatureCollection', features: [] },
+        cluster: true,
+        clusterMaxZoom: 14,     // past this everything stands alone
+        clusterRadius: 55       // screen pixels, so it adapts as you zoom
+      });
+      map.addLayer({
+        id: 'pin-clusters', type: 'circle', source: 'pins',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': '#f0a500',
+          'circle-opacity': 0.92,
+          // Grows with how many it holds, so a big bundle reads as big at a glance.
+          'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': 'rgba(13,17,23,0.85)'
+        }
+      });
+      map.addLayer({
+        id: 'pin-cluster-count', type: 'symbol', source: 'pins',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': ['get', 'point_count_abbreviated'],
+          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15],
+          'text-allow-overlap': true, 'text-ignore-placement': true
+        },
+        paint: { 'text-color': '#1a1206' }
+      });
       map.addLayer({
         id: 'pins-layer', type: 'symbol', source: 'pins',
-        // Pins gated to zoom >= 11 and scaled down from the old flat 1.0 — at county zoom
-        // dozens of full-size icons buried the imagery ("they clutter the map"). Zoomed out
-        // past the gate they simply vanish; inside it they grow with zoom so close-up work
-        // keeps readable icons.
-        minzoom: 11,
+        filter: ['!', ['has', 'point_count']],
         layout: {
           'icon-image': ['get', 'imageId'],
           'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
@@ -14090,6 +14123,22 @@ function initMap() {
       // up the keyboard on every pin drop. User can tap the field to type.
       disablePinMode();
       return;
+    }
+
+    // ── 2a. Tapped a cluster → zoom to exactly where it splits, rather than guessing ──
+    if (map.getLayer('pin-clusters')) {
+      var _cl = map.queryRenderedFeatures(e.point, { layers: ['pin-clusters'] });
+      if (_cl.length) {
+        var _cid = _cl[0].properties.cluster_id;
+        var _src = map.getSource('pins');
+        try {
+          _src.getClusterExpansionZoom(_cid, function (err, zoom) {
+            if (err) return;
+            map.easeTo({ center: _cl[0].geometry.coordinates, zoom: zoom + 0.25, duration: 600 });
+          });
+        } catch (_ce) {}
+        return;
+      }
     }
 
     // ── 2b. Tapped an existing pin → show its info card (edit / save / delete) ──
@@ -14397,6 +14446,23 @@ function updatePinSource(pins) {
     window._queuedPins = pins; // will be applied once map is ready
     return;
   }
+  // Your own saved pins, drawn on top of whatever Crew you are in, for your eyes only. They
+  // live in this device's storage and are never written to the Crew, so joining a friend's
+  // room to help find something no longer means re-dropping your own marks into their map --
+  // and they never see them.
+  try {
+    if (window._myPinsOn && window._myPinsOn()) {
+      var _mine = (typeof getSavedPins === 'function') ? getSavedPins() : [];
+      pins = Object.assign({}, pins);
+      _mine.forEach(function (sp) {
+        if (!sp || typeof sp.lat !== 'number' || typeof sp.lng !== 'number') return;
+        var _k = 'mypin_' + (sp.pid || (sp.lat + ',' + sp.lng));
+        if (pins[_k]) return;
+        pins[_k] = { lat: sp.lat, lng: sp.lng, cat: sp.cat || 'Waypoint', label: sp.label || '',
+                     name: 'My pin', droppedBy: userId, ts: sp.savedAt || Date.now(), _private: true };
+      });
+    }
+  } catch (_mp) {}
   const features = Object.entries(pins).filter(([pid, pin]) => {
     return pin.droppedBy === userId || !window._isPinMuted(pin.droppedBy);
   }).map(([pid, pin]) => {
@@ -18013,7 +18079,16 @@ window._saveMovedPin = function(){
     try { var arr=getSavedPins(); for(var i=0;i<arr.length;i++){ if(arr[i].pid===pid){ arr[i].lat=ll.lat; arr[i].lng=ll.lng; break; } } setSavedPins(arr); } catch(e){}
     if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; } try{ updatePinSource(lastPins); }catch(e){}
   } else {
-    try { fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
+    if (window._isPrivatePin(pid)) {
+      try {
+        var _sp2 = getSavedPins();
+        var _h2 = _sp2.filter(function (x) { return ('mypin_' + x.pid) === pid; })[0];
+        if (_h2) { _h2.lat = ll.lat; _h2.lng = ll.lng; setSavedPins(_sp2); }
+        updatePinSource(lastPins);
+      } catch (e) {}
+    } else {
+      try { fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
+    }
     if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; }
   }
   _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none';
@@ -18797,6 +18872,18 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   // Edit mode — update the existing pin's type + description in place.
   if (_editingPid) {
     var existing = lastPins[_editingPid];
+    if (window._isPrivatePin(_editingPid)) {
+      // Yours alone: keep the change on this device and tell them plainly where it went.
+      try {
+        var _sp = getSavedPins();
+        var _hit = _sp.filter(function (x) { return ('mypin_' + x.pid) === _editingPid; })[0];
+        if (_hit) { _hit.label = label; _hit.cat = finalCat; setSavedPins(_sp); }
+      } catch (e) {}
+      try { updatePinSource(lastPins); } catch (e) {}
+      _closePinModal();
+      toast('Saved to your own pins — the Crew cannot see it', 3000);
+      return;
+    }
     if (existing && db && groupName) {
       fbSet(fbRef(db, `gl/${groupName}/pins/${_editingPid}`), {
         lat: existing.lat, lng: existing.lng,
@@ -20778,14 +20865,43 @@ function setBaseLayer(btn) {
       } catch (e) { console.warn('pin image failed (other)', cat, e); }
     }
     if (!map.getSource('pins')) {
-      map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      // Clustered. Pins used to be hidden below zoom 11, which was a blunt answer to a real
+      // problem: dozens of full-size icons at county zoom buried the imagery. But hiding them
+      // also removed the only clue about where anything IS, so finding a spot meant zooming
+      // around blind. Bundling them into one bubble with a count keeps the map readable AND
+      // keeps the clue, so the zoom gate is gone and pins exist at every zoom now.
+      map.addSource('pins', {
+        type: 'geojson', data: { type: 'FeatureCollection', features: [] },
+        cluster: true,
+        clusterMaxZoom: 14,     // past this everything stands alone
+        clusterRadius: 55       // screen pixels, so it adapts as you zoom
+      });
+      map.addLayer({
+        id: 'pin-clusters', type: 'circle', source: 'pins',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': '#f0a500',
+          'circle-opacity': 0.92,
+          // Grows with how many it holds, so a big bundle reads as big at a glance.
+          'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': 'rgba(13,17,23,0.85)'
+        }
+      });
+      map.addLayer({
+        id: 'pin-cluster-count', type: 'symbol', source: 'pins',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': ['get', 'point_count_abbreviated'],
+          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15],
+          'text-allow-overlap': true, 'text-ignore-placement': true
+        },
+        paint: { 'text-color': '#1a1206' }
+      });
       map.addLayer({
         id: 'pins-layer', type: 'symbol', source: 'pins',
-        // Pins gated to zoom >= 11 and scaled down from the old flat 1.0 — at county zoom
-        // dozens of full-size icons buried the imagery ("they clutter the map"). Zoomed out
-        // past the gate they simply vanish; inside it they grow with zoom so close-up work
-        // keeps readable icons.
-        minzoom: 11,
+        filter: ['!', ['has', 'point_count']],
         layout: {
           'icon-image': ['get', 'imageId'],
           'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
@@ -21682,6 +21798,39 @@ function loadParcelLabels() {
 // NOTE: moveend/zoomend hooks added inside initMap() below
 
 // == SAVED PINS ===================================================
+// Show my own saved pins on top of whatever Crew I am in. Per device and per nothing else:
+// these pins are not in the Crew, are never written to it, and nobody else can see them. It
+// exists so that joining someone's room to help them find something does not mean copying your
+// own marks into their map, where they would then be stuck with them.
+// A private pin carries this prefix and must never reach the Crew's database. Edit, move and
+// delete all write by pid, and without this a tap on one of your own overlaid pins would push
+// it into someone else's room -- the exact thing this feature exists to avoid.
+window._isPrivatePin = function (pid) { return String(pid || '').indexOf('mypin_') === 0; };
+window._myPinsOn = function () {
+  try { return localStorage.getItem('gl_mypins_overlay') === '1'; } catch (e) { return false; }
+};
+window._toggleMyPins = function () {
+  var on = !window._myPinsOn();
+  try { localStorage.setItem('gl_mypins_overlay', on ? '1' : '0'); } catch (e) {}
+  try { updatePinSource(lastPins); } catch (e) {}
+  try { _syncMyPinsBtn(); } catch (e) {}
+  try {
+    var n = (typeof getSavedPins === 'function') ? getSavedPins().length : 0;
+    toast(on ? ('Showing your ' + n + ' saved pin' + (n === 1 ? '' : 's') + ' — only you can see them')
+             : 'Your saved pins hidden', 3000);
+  } catch (e) {}
+};
+function _syncMyPinsBtn() {
+  try {
+    var el = document.getElementById('mypins-pill');
+    if (!el) return;
+    var on = window._myPinsOn();
+    el.textContent = on ? 'ON' : 'OFF';
+    el.style.background = on ? 'var(--accent)' : 'var(--border)';
+    el.style.color = on ? '#1a1206' : 'var(--muted)';
+  } catch (e) {}
+}
+
 function getSavedPins() {
   try { return JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch(e) { return []; }
 }
@@ -24446,6 +24595,7 @@ function openPinHub() {
   var countEl = document.getElementById('pin-hub-count');
   if (countEl) countEl.textContent = count ? '(' + count + ')' : '';
   try { _syncRecHubBtn(); } catch (e) {}   // shows Live stats, with the numbers as they stand now
+  try { _syncMyPinsBtn(); } catch (e) {}
 }
 function closePinHub() {
   document.getElementById('pin-hub-sheet').style.display = 'none';
