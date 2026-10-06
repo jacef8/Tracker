@@ -3843,7 +3843,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 833;
+var APP_BUILD = 834;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16475,8 +16475,27 @@ function listenUsers() {
       if (_d > window._snapMax) window._snapMax = _d;
     }
   }
+  // Settle contradictions ONCE, where the data arrives, instead of letting every screen decide
+  // for itself. The map stopped trusting a stale noGps in 828, but the People list kept its own
+  // check and went on showing "Offline, not sharing right now" for a phone that was reporting
+  // with Always on and a full battery. One rule, one place, so the screens cannot disagree.
+  //
+  // The rule: a real coordinate outranks the flag. markNoGps only ever writes lat:0,lng:0 beside
+  // noGps:true, so a genuine position carrying that flag means the flag is left over -- the iOS
+  // reporter PATCHes, so a noGps set during one failed launch is never cleared by the hundreds of
+  // good fixes that follow. See the field audit in AppDelegate.
+  function _settleMemberRow(d) {
+    try {
+      if (d && d.noGps && typeof d.lat === 'number' && typeof d.lng === 'number' && (d.lat !== 0 || d.lng !== 0)) {
+        d.noGps = false;
+      }
+    } catch (e) {}
+    return d;
+  }
+
   function _processUsersSnapInner(snap) {
     const allUsers = snap.val() || {};
+    try { Object.keys(allUsers).forEach(function (k) { _settleMemberRow(allUsers[k]); }); } catch (e) {}
     const now = Date.now();
     // Feed the room-index writer: this is the freshest read of the current room's presence,
     // and the writer derives live/resting counts + a few names from it. Throttled inside the
