@@ -49,36 +49,48 @@
       .then((res) => { if (res && res.user) location.reload(); })
       .catch((e) => { try { alert('Google sign-in failed: ' + (e && e.message)); } catch (_) {} });
 
-    onAuthStateChanged(auth, (u) => {
-      if (!u) { signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e)); return; }
-      if (!u.isAnonymous) return;
+    // Reading gl as a whole is restricted to the admin Google account, so ANY other state --
+    // signed out, anonymous, or a different Google account -- cannot load this page. Offer the
+    // button in all of them. Previously it appeared only for an anonymous session, so a failed
+    // anonymous sign-in left no button, no error, and a page that said "Connecting" forever.
+    // One function, callable from anywhere, so the button can be offered whether we are
+    // anonymous, signed out, or denied by the rules -- not only in the one case it used to cover.
+    window._glShowSignIn = function () {
       if (document.getElementById('admin-signin')) return;
       const b = document.createElement('button');
       b.id = 'admin-signin';
       b.textContent = 'Sign in with Google for admin tools';
-      b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:#f0a500;color:#0d1117;border:none;border-radius:10px;padding:10px 16px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5)';
-      // A popup is the wrong tool on a phone. Mobile browsers routinely open and immediately
-      // close it, which lands you back on the page with no error and no session -- it looks
-      // exactly like the sign-in "didn't take". Redirect instead on anything touch-sized, and
-      // keep the popup for a desktop browser where it genuinely is nicer.
+      b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;' +
+        'background:#f0a500;color:#0d1117;border:none;border-radius:10px;padding:10px 16px;' +
+        'font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5)';
+      // A popup is the wrong tool on a phone: mobile browsers routinely open and immediately
+      // close it, landing you back with no error and no session, which reads as "it did not
+      // take". Redirect on touch, popup on desktop where it genuinely is nicer.
       b.onclick = () => {
         const provider = new GoogleAuthProvider();
         const isPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
                         (navigator.maxTouchPoints > 1 && window.innerWidth < 1100);
         b.textContent = 'Opening Google sign-in…';
-        if (isPhone) {
-          signInWithRedirect(auth, provider).catch((e) => {
-            b.textContent = 'Sign in with Google for admin tools';
-            alert('Sign-in failed: ' + (e && e.message));
-          });
-          return;
-        }
-        signInWithPopup(auth, provider).then(() => location.reload()).catch((e) => {
+        const fail = (e) => {
           b.textContent = 'Sign in with Google for admin tools';
           alert('Sign-in failed: ' + (e && e.message));
-        });
+        };
+        if (isPhone) { signInWithRedirect(auth, provider).catch(fail); return; }
+        signInWithPopup(auth, provider).then(() => location.reload()).catch(fail);
       };
       (document.body || document.documentElement).appendChild(b);
+    };
+
+    onAuthStateChanged(auth, (u) => {
+      if (!u) {
+        signInAnonymously(auth).catch((e) => {
+          window._glAuthErr = 'Anonymous sign-in failed: ' + (e && e.message);
+          window._glShowSignIn();
+        });
+        return;
+      }
+      if (!u.isAnonymous) return;      // already the admin identity: nothing to offer
+      window._glShowSignIn();
     });
   } catch (e) { console.warn('auth init', e); }
 </script>
@@ -2548,6 +2560,23 @@ function waitForFirebase(cb) {
   }, 80);
 }
 
+// Turn a silent permission failure into a sentence. Reading gl requires the admin Google
+// account; anonymous can read one room but cannot list them, and Firebase does not cascade
+// read permission upward. Without this the listener was simply never called back.
+function _glDenied(msg) {
+  try {
+    var el = document.getElementById('admin-list');
+    if (el) {
+      el.innerHTML = '<div class="loading" style="color:#f0a500;line-height:1.6">' +
+        '<b>Not signed in as the admin account.</b><br>' +
+        'This page needs the Google account that owns GroundLink before it can read anything.<br>' +
+        '<span style="color:#8b949e;font-size:12px">' + (msg || '') + '</span></div>';
+    }
+    var st = document.getElementById('conn-status');
+    if (st) st.textContent = 'Needs admin sign-in';
+  } catch (e) {}
+}
+
 function loadAdmin() {
   waitForFirebase(function(fb) {
     addLog('Connected to Firebase', 'ok');
@@ -2563,6 +2592,11 @@ function loadAdmin() {
     fb.onValue(fb.ref(fb.db, 'gl'), function(snap) {
       clearTimeout(_adminRenderTimer);
       _adminRenderTimer = setTimeout(function() { _adminRenderSnapshot(snap); }, 400);
+    }, function (err) {
+      // The error callback nobody passed before, which is why this failed in silence.
+      addLog('Cannot read gl: ' + (err && err.message), 'error');
+      _glDenied((window._glAuthErr ? window._glAuthErr + ' · ' : '') + (err && err.message || 'permission denied'));
+      try { _glShowSignIn(); } catch (_) {}
     });
     function _adminRenderSnapshot(snap) {
       var all = snap.val() || {};
