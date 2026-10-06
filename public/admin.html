@@ -81,15 +81,42 @@
       (document.body || document.documentElement).appendChild(b);
     };
 
+    // Why this is not simply "sign in anonymously whenever there is no user":
+    //
+    // Firebase can report null briefly while it restores a saved session, and the popup flow
+    // reloads the page immediately after signing in. Calling signInAnonymously on that null
+    // CREATES an anonymous session, which then becomes the restored identity -- so every Google
+    // sign-in was being thrown away a moment after it succeeded, and the page asked again.
+    // Perfectly circular, and it looked exactly like the sign-in failing.
+    //
+    // So: once we have seen a real Google session on this browser, never anonymously sign in
+    // again. Offer the button and wait. And even on a first visit, give restoration a moment
+    // before falling back.
+    const GOOGLE_SEEN = 'gl_admin_google_seen';
+    let _anonTimer = null;
     onAuthStateChanged(auth, (u) => {
+      if (u && !u.isAnonymous) {
+        try { localStorage.setItem(GOOGLE_SEEN, '1'); } catch (e) {}
+        clearTimeout(_anonTimer);
+        window._glAuthUser = u.email || u.uid;
+        const b = document.getElementById('admin-signin');
+        if (b) b.remove();
+        return;                        // the identity the rules want: nothing to offer
+      }
+      let seen = false;
+      try { seen = localStorage.getItem(GOOGLE_SEEN) === '1'; } catch (e) {}
       if (!u) {
-        signInAnonymously(auth).catch((e) => {
-          window._glAuthErr = 'Anonymous sign-in failed: ' + (e && e.message);
-          window._glShowSignIn();
-        });
+        if (seen) { window._glShowSignIn(); return; }   // do NOT clobber a pending restore
+        clearTimeout(_anonTimer);
+        _anonTimer = setTimeout(function () {
+          signInAnonymously(auth).catch((e) => {
+            window._glAuthErr = 'Anonymous sign-in failed: ' + (e && e.message);
+            window._glShowSignIn();
+          });
+        }, 1500);
         return;
       }
-      if (!u.isAnonymous) return;      // already the admin identity: nothing to offer
+      window._glAuthUser = 'anonymous';
       window._glShowSignIn();
     });
   } catch (e) { console.warn('auth init', e); }
@@ -2570,6 +2597,7 @@ function _glDenied(msg) {
       el.innerHTML = '<div class="loading" style="color:#f0a500;line-height:1.6">' +
         '<b>Not signed in as the admin account.</b><br>' +
         'This page needs the Google account that owns GroundLink before it can read anything.<br>' +
+        'Signed in as: <b>' + (window._glAuthUser || 'nobody') + '</b><br>' +
         '<span style="color:#8b949e;font-size:12px">' + (msg || '') + '</span></div>';
     }
     var st = document.getElementById('conn-status');
