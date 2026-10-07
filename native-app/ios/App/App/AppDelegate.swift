@@ -44,6 +44,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     /// told anything yet. settingsDict() used to construct one on the spot, so the "While Using"
     /// the Crew saw was never trustworthy evidence about the real setting.
     private var lastAuth: CLAuthorizationStatus?
+    /// lastAuth lives only as long as the process, and iOS suspends or kills the app the moment
+    /// the user changes its location permission in Settings. So the one case that matters most --
+    /// Always being turned back to While Using from Settings, between launches -- produced a nil
+    /// `prev` on the next launch's first callback and could never be counted. Persist the last
+    /// status seen so the comparison survives relaunch and that downgrade is actually detected.
+    private static let kLastAuthKey = "gl_last_auth_status"
+    private var persistedAuth: CLAuthorizationStatus? {
+        get {
+            let d = UserDefaults.standard
+            guard d.object(forKey: AppDelegate.kLastAuthKey) != nil else { return nil }
+            return CLAuthorizationStatus(rawValue: Int32(d.integer(forKey: AppDelegate.kLastAuthKey)))
+        }
+        set {
+            if let v = newValue { UserDefaults.standard.set(Int(v.rawValue), forKey: AppDelegate.kLastAuthKey) }
+            else { UserDefaults.standard.removeObject(forKey: AppDelegate.kLastAuthKey) }
+        }
+    }
     /// Background-location health, so "why is this phone off the map" is a measurement rather
     /// than a guess. Counts only fixes delivered while the app was NOT in the foreground —
     /// foreground fixes prove nothing about whether background sharing works.
@@ -484,9 +501,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         guard #available(iOS 14.0, *), manager === bgLocationManager else { return }
         // This callback is the ONLY place the status is authoritative. Record it here and let
         // everything else read the recording.
-        let prev = lastAuth
+        // In-memory first (this launch), falling back to the stored value (previous launch).
+        let prev = lastAuth ?? persistedAuth
         let now = manager.authorizationStatus
         lastAuth = now
+        persistedAuth = now
         if prev == .authorizedAlways && now == .authorizedWhenInUse {
             authDowngrades += 1
             lastAuthDowngradeAt = Date().timeIntervalSince1970
