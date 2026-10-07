@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 840;
+var APP_BUILD = 841;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4468,6 +4468,9 @@ var MERGE_SPEED_SLACK_CAP_M = 150;     // ...and the cap that goes with it
 var MERGE_SKEW_CAP_M = 500;            // ceiling however stale the pair gets
 var MERGE_SKEW_MAX_S = 30;             // beyond this it is not a timing offset, it is absence
 var MERGE_SKEW_BOTH_FRESH_MS = 120000; // and both have to be genuinely current to earn it
+// Position error, the other reason two points differ. Capped so a pair of bad fixes cannot
+// merge two people who are really a block apart; 60 m covers ordinary phone GPS in a car.
+var MERGE_ACC_SLACK_CAP_M = 60;
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
 window._groupCandidate = window._groupCandidate || null;      // {sig, since} — whole-map grouping being timed
@@ -4814,6 +4817,14 @@ function _updateMarkerGrouping(immediate) {
       } else {
         slack = Math.min(MERGE_SPEED_SLACK_CAP_M, maxSpd * MERGE_SPEED_SLACK_M_PER_MPH);
       }
+      // Two reported points can also differ simply because neither is exact. If the accuracy
+      // circles overlap, the two phones MAY be standing on the same spot, and when they are in
+      // one car they are. Timing skew and position error are independent explanations for the
+      // same gap, so the tolerance is whichever is larger -- not their sum, which would merge
+      // people who are genuinely apart.
+      var _accSlack = Math.min(MERGE_ACC_SLACK_CAP_M,
+        (userMarkers[a]._acc || 0) + (userMarkers[b]._acc || 0));
+      if (_accSlack > slack) slack = _accSlack;
       var wasTogether = window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b];
       if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M) + slack) { union(a, b); continue; }
       // SCREEN proximity, independent of real-world distance. Merging on meters alone is
@@ -17168,6 +17179,7 @@ function listenUsers() {
         userMarkers[uid]._isLive = isLive;
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._ts = data.fixTs || data.ts || 0;   // WHEN that position was taken — see the merge slack
+        userMarkers[uid]._acc = +data.accuracy || 0;        // HOW precisely — see the merge slack
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
             '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + window._displaySpeed(uid, data) + ' mph</span>'
