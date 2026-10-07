@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 841;
+var APP_BUILD = 842;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14289,7 +14289,65 @@ function initMap() {
         }
       }
     }
+
+    // ── 6. Basemap point-of-interest tap ──────────────────────────
+    // The satellite-streets style draws gas stations, boat ramps, ball fields, restrooms and
+    // the rest as small glyphs, but the click handler only ever asked about OUR layers, so
+    // every one of them was inert -- you could see a landmark and not act on it. Checked LAST,
+    // after pins, clusters, parcels and government land, so it can never steal a tap from
+    // anything the app itself drew.
+    try {
+      var _poiLayers = ['poi-label', 'airport-label', 'natural-point-label', 'water-point-label']
+        .filter(function (id) { return map.getLayer(id); });
+      if (_poiLayers.length) {
+        var _poi = map.queryRenderedFeatures(e.point, { layers: _poiLayers });
+        if (_poi.length) {
+          var _pp = _poi[0].properties || {};
+          var _pname = _pp.name || _pp.name_en || '';
+          if (_pname) {
+            // class is Mapbox's coarse grouping ("park", "fuel", "food_and_drink"). Make it
+            // readable rather than inventing a category list that would drift from the style.
+            var _pcat = String(_pp.class || _pp.maki || '').replace(/[_-]+/g, ' ').trim();
+            if (_pcat) _pcat = _pcat.charAt(0).toUpperCase() + _pcat.slice(1);
+            var _pc = _poi[0].geometry && _poi[0].geometry.coordinates
+              ? _poi[0].geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
+            if (window._activeParcelPopup) { window._activeParcelPopup.remove(); window._activeParcelPopup = null; }
+            // Stash the target so the button does not have to carry coordinates and a name
+            // through an onclick string -- a name with a quote in it would break the handler.
+            window._poiPending = { lng: +_pc[0], lat: +_pc[1], name: _pname };
+            window._activeParcelPopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '280px' })
+              .setLngLat(_pc)
+              .setHTML(
+                '<div style="position:relative;padding-right:20px">' +
+                '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#58a6ff;margin-bottom:6px">&#128205; Map place</div>' +
+                '<div style="font-size:13px;font-weight:700;color:#e6edf3;margin-bottom:' + (_pcat ? '3px' : '8px') + '">' + escapeHtmlJs(_pname) + '</div>' +
+                (_pcat ? '<div style="font-size:12px;color:#a9b4bf;margin-bottom:8px">' + escapeHtmlJs(_pcat) + '</div>' : '') +
+                '<button type="button" onclick="window._poiSavePin()" style="width:100%;padding:9px;background:#f0a500;border:none;border-radius:8px;color:#0d1117;font-size:13px;font-weight:800;cursor:pointer">Save this spot</button>' +
+                '<div onclick="if(window._activeParcelPopup){window._activeParcelPopup.remove();window._activeParcelPopup=null;}" style="position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#a9b4bf;font-size:16px;line-height:1">&times;</div>' +
+                '</div>'
+              ).addTo(map);
+            _keepPopupInView(window._activeParcelPopup);
+            window._activeParcelPopup.on('close', function () { window._activeParcelPopup = null; });
+            return;
+          }
+        }
+      }
+    } catch (_poiErr) {}
   });
+
+  // Turn the tapped basemap place into a real GroundLink pin, with its name already filled in
+  // so the common case is two taps and done.
+  window._poiSavePin = function () {
+    try {
+      var t = window._poiPending; if (!t) return;
+      if (window._activeParcelPopup) { window._activeParcelPopup.remove(); window._activeParcelPopup = null; }
+      window._openPinAt(t.lng, t.lat, t.name);
+      try {
+        var li = document.getElementById('pin-label-input');
+        if (li && !li.value) li.value = t.name;
+      } catch (e) {}
+    } catch (e) {}
+  };
 
   var canvas = map.getCanvas();
   canvas.addEventListener('touchstart', function(e) {
@@ -26128,6 +26186,48 @@ try {
         .catch(function () { cb && cb(null); });
     } catch (e) { cb && cb(null); }
   }
+  // The crew list only ever arrived at sign-in, via pullProfile below. iOS resumes a suspended
+  // app for days without re-running that, so a crew added to someone's account (by an owner, or
+  // by another of their devices) could sit unseen until the next genuine cold start -- which is
+  // exactly how a member ends up staring at "You're not in any Crews yet" while the server says
+  // otherwise. Keep a live subscription on just that one field instead.
+  window._acctCirclesUnsub = window._acctCirclesUnsub || null;
+  window._listenAccountCircles = function (uid) {
+    try {
+      var f = window._fb; if (!f || !f.db || !f.onValue || !uid) return;
+      if (window._acctCirclesUid === uid && window._acctCirclesUnsub) return;  // already watching
+      try { if (window._acctCirclesUnsub) window._acctCirclesUnsub(); } catch (e) {}
+      window._acctCirclesUid = uid;
+      window._acctCirclesUnsub = f.onValue(f.ref(f.db, 'gl/_users/' + uid + '/circles'), function (snap) {
+        try {
+          var v = snap && snap.exists() ? snap.val() : null;
+          if (v === null || v === undefined) return;        // absent != empty; never wipe on a miss
+          var str = (typeof v === 'string') ? v : JSON.stringify(v);
+          // Only touch localStorage when it genuinely changed. This fires on every reconnect,
+          // and rewriting an identical value would call _setCircles -> _glSync -> pushProfile
+          // in a loop against our own listener.
+          var cur = '';
+          try { cur = localStorage.getItem('gl_circles') || '{}'; } catch (e) {}
+          var a = {}, b = {};
+          try { a = JSON.parse(cur || '{}'); } catch (e) {}
+          try { b = JSON.parse(str || '{}'); } catch (e) { return; }   // unparseable -> ignore
+          if (JSON.stringify(a) === JSON.stringify(b)) return;
+          try { localStorage.setItem('gl_circles', str); } catch (e) {}
+          try { window._listenCircles && window._listenCircles(); } catch (e) {}
+          try { window._renderCrewsSection && window._renderCrewsSection(); } catch (e) {}
+          try { window._renderHomeAnchor && window._renderHomeAnchor(); } catch (e) {}
+          // Joining is the direction worth announcing; a removal explains itself by vanishing.
+          try {
+            var added = Object.keys(b).filter(function (k) { return !a[k]; });
+            if (added.length === 1 && typeof toast === 'function') {
+              toast('Added to ' + (b[added[0]] || added[0]), 3200);
+            }
+          } catch (e) {}
+        } catch (e) {}
+      });
+    } catch (e) {}
+  };
+
   function applyProfile(p) {
     if (!p) return;
     try {
@@ -26468,6 +26568,7 @@ try {
       try { var ni = document.getElementById('inp-name'); if (ni && name()) ni.value = name(); } catch (e) {}
       try { if (typeof renderRoomList === 'function' && window._lastGlSnap) renderRoomList(window._lastGlSnap); } catch (e) {}
       try { if (window._watchInvites) window._watchInvites(); } catch (e) {}
+      try { window._listenAccountCircles && window._listenAccountCircles(user.uid); } catch (e) {}
       // If they signed in to accept a shared device (opened a share link), grant it now.
       try { if (window._maybeAcceptPendingDshare) window._maybeAcceptPendingDshare(); } catch (e) {}
       try { if (window._renderMyDevices) window._renderMyDevices(); } catch (e) {}
