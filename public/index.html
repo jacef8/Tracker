@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 844;
+var APP_BUILD = 845;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4471,6 +4471,9 @@ var MERGE_SKEW_BOTH_FRESH_MS = 120000; // and both have to be genuinely current 
 // Position error, the other reason two points differ. Capped so a pair of bad fixes cannot
 // merge two people who are really a block apart; 60 m covers ordinary phone GPS in a car.
 var MERGE_ACC_SLACK_CAP_M = 60;
+// Screen-space overlap. A marker is 44px, so dots closer than this are burying each other.
+var MERGE_SCREEN_JOIN_PX = 54;
+var MERGE_SCREEN_SPLIT_PX = 76;   // must get this far apart before the group breaks up
 window._prevGroupOf = window._prevGroupOf || {};        // uid -> cluster root from last pass
 window._markerGroupMembers = window._markerGroupMembers || {}; // primaryUid -> [uids] (size>1 only)
 window._groupCandidate = window._groupCandidate || null;      // {sig, since} — whole-map grouping being timed
@@ -4495,6 +4498,15 @@ function _setGroupBadge(el, extraCount) {
 // markers that were never grouped and ones that just split back apart.
 function _applyMarkerSolo(mk) {
   var el = mk && mk._el; if (!el) return;
+  // Coming out of a merge: the oval was drawn at the group's centroid, so put this marker back
+  // on its owner's real coordinates before it is shown on its own.
+  try {
+    if (mk._mergeTrueLL && mk.setLngLat) {
+      var _t = mk._ll || mk._mergeTrueLL;
+      mk.setLngLat([_t[0], _t[1]]);
+      mk._mergeTrueLL = null;
+    }
+  } catch (e) {}
   el.style.display = 'flex';
   el.style.width = '44px';
   el.style.borderRadius = '50%';
@@ -4827,34 +4839,32 @@ function _updateMarkerGrouping(immediate) {
       if (_accSlack > slack) slack = _accSlack;
       var wasTogether = window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b];
       if (d < (wasTogether ? MERGE_SPLIT_M : MERGE_JOIN_M) + slack) { union(a, b); continue; }
-      // SCREEN proximity, independent of real-world distance. Merging on meters alone is
-      // correct for "riding together" but says nothing about whether the dots COLLIDE: at
-      // county zoom two people 8 miles apart still render on top of each other, burying
-      // one dot and stacking both speed chips into an unreadable pile (observed with
-      // R/J/JF near Blountstown, and two speed labels overlapping on one T). Markers are
-      // 44px, so anything closer than ~54px on screen is overlapping — group those too and
-      // let the existing merged-oval + "+N" badge present them cleanly. Zoom in and they
-      // separate on their own, because this is recomputed on every zoom.
-      // No screen-overlap merging. Two dots colliding says something about the zoom level, not
-      // about where the people are; _spreadOverlappingMarkers handles that without claiming
-      // they are together. Only the real-distance test above may make that claim.
+      // SCREEN proximity, independent of real-world distance. The previous rule refused this
+      // and let _spreadOverlappingMarkers nudge colliding dots apart instead, with a leader
+      // line back to the true spot. In practice that was the worse lie: zoomed out to the
+      // whole country it put Laura's dot visibly in Alabama when she is in Florida. A merged
+      // shape placed at the group's centre says "these people are too close to separate at
+      // this zoom", which is true; a displaced dot says "this person is here", which is not.
+      // Recomputed on every zoom, so they come apart again as soon as there is room.
+      try {
+        var _sa = map.project({ lng: pa[0], lat: pa[1] });
+        var _sb = map.project({ lng: pb[0], lat: pb[1] });
+        var _sdx = _sa.x - _sb.x, _sdy = _sa.y - _sb.y;
+        var _spx = Math.sqrt(_sdx * _sdx + _sdy * _sdy);
+        // Same join/split hysteresis as the distance test, so a dot sitting exactly on the
+        // threshold cannot flicker between merged and separate every pass.
+        if (_spx < (wasTogether ? MERGE_SCREEN_SPLIT_PX : MERGE_SCREEN_JOIN_PX)) { union(a, b); continue; }
+      } catch (_spe) {}
     }
   }
 
   var rawGroups = {};
   uids.forEach(function (u) { var r = find(u); (rawGroups[r] = rawGroups[r] || []).push(u); });
-  // A merged oval has room for exactly two faces. Two people in one car is what it is for, and
-  // both of them stay visible in it. Three or more would mean two faces and a "+N" badge hiding
-  // the rest, so those spread apart instead -- nobody is ever behind a shape they have to tap.
-  try {
-    Object.keys(rawGroups).forEach(function (r) {
-      var g = rawGroups[r];
-      if (g.length > MERGE_MAX_IN_OVAL) {
-        delete rawGroups[r];
-        g.forEach(function (u) { rawGroups['solo:' + u] = [u]; });
-      }
-    });
-  } catch (e) {}
+  // Groups larger than the oval can show used to be exploded back into separate dots so that
+  // nobody sat behind a "+N" badge. Zoomed out that just recreated the problem it was avoiding:
+  // the dots land on top of each other anyway and get nudged to positions nobody is standing in.
+  // Keep the group, show the first few faces and a "+N", and let a tap spiderfy it -- every
+  // member stays reachable, and the shape stays where the group actually is.
   var newPrev = {};
   Object.keys(rawGroups).forEach(function (r) { rawGroups[r].forEach(function (u) { newPrev[u] = r; }); });
   window._prevGroupOf = newPrev;
@@ -4910,6 +4920,25 @@ function _updateMarkerGrouping(immediate) {
     members.forEach(function (u) { if (u !== primary) userMarkers[u]._el.style.display = 'none'; });
     _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
+    // The oval used to render wherever the PRIMARY happened to be, which quietly asserted the
+    // whole group was standing on one member. Put it at the centre of the people in it instead,
+    // so the shape marks the group rather than an arbitrary member of it. _ll is left alone --
+    // it is the member's own true position and the next grouping pass must keep measuring from
+    // it, not from where the oval was drawn.
+    try {
+      var _pmk = userMarkers[primary];
+      if (_pmk && _pmk.setLngLat) {
+        var _sx = 0, _sy = 0, _n = 0;
+        members.forEach(function (u) {
+          var l = userMarkers[u] && userMarkers[u]._ll;
+          if (l && isFinite(l[0]) && isFinite(l[1])) { _sx += +l[0]; _sy += +l[1]; _n++; }
+        });
+        if (_n) {
+          if (!_pmk._mergeTrueLL) _pmk._mergeTrueLL = _pmk._ll ? _pmk._ll.slice() : null;
+          _pmk.setLngLat([_sx / _n, _sy / _n]);
+        }
+      }
+    } catch (_ce) {}
   });
   // Belt and braces: any marker NOT in a merged group gets the canonical solo layout, every
   // pass. Earlier fixes each depended on a particular call site running -- the grouping pass,
