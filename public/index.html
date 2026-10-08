@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 845;
+var APP_BUILD = 846;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23839,14 +23839,13 @@ window._paintAllCrews = function () {
 // Frame every drawn marker, the same rule the group-follow fit uses.
 window._fitAllCrews = function () {
   try {
-    var pts = [], _ptTs = {};
+    var pts = [];
     Object.keys(userMarkers || {}).forEach(function (uid) {
       var mk = userMarkers[uid], el = mk && (mk._el || (mk.getElement && mk.getElement()));
       if (!el || el.style.display === 'none') return;
       try {
         var g = mk.getLngLat();
         pts.push([g.lng, g.lat]);
-        _ptTs[g.lng + ',' + g.lat] = mk._ts || 0;   // freshness, to tell a real traveller from a bad fix
       } catch (e) {}
     });
     if (!pts.length) {
@@ -23854,23 +23853,24 @@ window._fitAllCrews = function () {
       return;
     }
     if (pts.length === 1) { map.easeTo({ center: pts[0], zoom: 14, duration: 700 }); return; }
-    // Median, not mean: one point on the far side of the world drags a mean with it, which is
-    // the whole failure being guarded against.
-    var mid = function (arr) { var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; };
-    var cLng = mid(pts.map(function (q) { return q[0]; })), cLat = mid(pts.map(function (q) { return q[1]; }));
-    // The 500-mile ring exists to stop ONE bogus coordinate dragging the view across the planet.
-    // But a member who is genuinely 2,400 miles away is not a bad fix, and dropping them meant
-    // the map quietly refused to zoom out far enough to show them at all (Vanesa in Seattle,
-    // the rest of Our Crew in Florida). Distance alone cannot tell those apart -- freshness can.
-    // Keep anyone inside the ring, and keep anyone outside it whose fix is recent enough to
-    // believe. A stale far-away point is still treated as the outlier it probably is.
-    var FAR_TRUST_MS = 30 * 60 * 1000;
-    var _now = Date.now();
+    // This used to drop anyone more than 500 miles from the median, to stop one bogus
+    // coordinate dragging the view across the planet. Build 843 tried to rescue real
+    // travellers by keeping far points whose fix was under 30 minutes old -- which was still
+    // wrong, because it assumed someone far away reports often. Vanesa sat parked in Seattle
+    // with a 15-hour-old fix and was excluded again, so "Everyone on one map" framed only
+    // Florida and left her off the screen entirely.
+    //
+    // Neither distance nor staleness identifies a bad fix: a wrong reading does not sit on the
+    // same coordinates for 15 hours. And silently hiding a real member from the one action
+    // whose whole purpose is to show everybody is a worse failure than a wide zoom, which is
+    // visible and which the user can correct with one pinch. So frame everyone, and exclude
+    // only coordinates that are not real positions at all.
     var near = pts.filter(function (q) {
-      var dLat = (q[1] - cLat) * 69, dLng = (q[0] - cLng) * 69 * Math.cos(cLat * Math.PI / 180);
-      if (Math.sqrt(dLat * dLat + dLng * dLng) < 500) return true;   // miles — one region
-      var ts = _ptTs[q[0] + ',' + q[1]] || 0;
-      return ts > 0 && (_now - ts) < FAR_TRUST_MS;                   // far, but reporting right now
+      if (!isFinite(q[0]) || !isFinite(q[1])) return false;
+      if (Math.abs(q[0]) > 180 || Math.abs(q[1]) > 85) return false;
+      // Null island: a missing fix written as zeroes, never somewhere a person is.
+      if (Math.abs(q[0]) < 0.0001 && Math.abs(q[1]) < 0.0001) return false;
+      return true;
     });
     if (near.length < 2) near = pts;
     var b = new mapboxgl.LngLatBounds();
