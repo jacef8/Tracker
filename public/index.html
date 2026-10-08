@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 843;
+var APP_BUILD = 844;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13439,7 +13439,13 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   // Check Firebase for group existence before deciding
   waitForFirebase(function(fb) {
     var groupKey = s.group.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
-    fb.onValue(fb.ref(fb.db, 'gl/' + groupKey), function(snap) {
+    // Existence only -- and it used to ask for the ENTIRE crew node to learn one boolean, as a
+    // LIVE subscription. For Our Crew that is 2.3 MB (debug history, trails, placeEvents), parsed
+    // on the main thread at launch and then AGAIN on every change to the node -- and every member's
+    // every location report is a change. That is the map locking up and refusing to pan for
+    // seconds at a time. config is 1.5 KB and exists on every room, and a one-shot get is all an
+    // existence check ever needed.
+    fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config')).then(function(snap) {
       var groupExists = snap.exists();
       // Reverted 2026-07-20: favorited/Crew rooms used to bypass the 2-hour window entirely
       // (auto-rejoin forever), which meant the app opened straight into that room's map on
@@ -13462,7 +13468,11 @@ function _showNativeUpdateBar(msg, url, mine, need) {
           toast('Group "' + s.group + '" no longer exists', 3000);
         }
       }
-    }, { onlyOnce: true });
+    }).catch(function () {
+      // A refused or failed read must not leave the launch hanging on a blank screen. It is not
+      // evidence the group is gone, so do NOT clear the saved group -- just show Home.
+      try { showJoinScreen(); prefillName(); } catch (e) {}
+    });
   });
 })();
 
