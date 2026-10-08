@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 846;
+var APP_BUILD = 847;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14067,6 +14067,15 @@ function initMap() {
   map.on('dragend', function (e) {
     try {
       if (!e || !e.originalEvent) return;
+      // Dragging away while following YOURSELF used to only pause the camera for 7 seconds,
+      // then yank the map back -- and it did that on every drag, which reads as "the map won't
+      // let me pan". Panning away from a member already ends that follow (see dragstart); doing
+      // the same for follow-me makes one rule instead of two, and matches every other map app.
+      // On dragEND, not dragstart, so a tap that wobbles cannot switch it off by accident.
+      if (followUid && followUid === userId && typeof stopFollowing === 'function') {
+        stopFollowing();
+        toast('Follow off — tap locate to re-centre', 2400);
+      }
       if (!fitAllInterval) return;
       _stopFitAll();
       toast('Group follow off — tap locate to re-centre', 2600);
@@ -25200,7 +25209,9 @@ function _sheetPad() {
     return { top: top, left: 0, right: 0, bottom: bottom };
   } catch (e) { return { top: 0, left: 0, right: 0, bottom: 240 }; }
 }
-window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 7000); };
+// 7s was short enough that letting go of the map and looking at something for a moment was
+// already long enough for the camera to take it back.
+window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 20000); };
 
 // Member info card (full-width bottom bar) — opened by tapping a person's dot. Flies to
 // the dot keeping it visible ABOVE the card (map bottom-padding), and follows if they're live.
