@@ -424,6 +424,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         d["authDowns"] = authDowngrades
         if lastAuthDowngradeAt > 0 { d["authDownAt"] = Int(lastAuthDowngradeAt * 1000) }
         d["bgFixes"] = bgFixCount
+        d["bgMoving"] = bgMoving      // tightened fidelity while driving (see setLocationFidelity)
         if lastBgFixAt > 0 { d["bgFixAt"] = Int(lastBgFixAt * 1000) }
         d["fgBridge"] = fgBridgeSent
         if !currentActivity.isEmpty {
@@ -491,6 +492,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
         bgFixCount += 1
         lastBgFixAt = Date().timeIntervalSince1970
+        updateBgMotion(loc)
         for l in locations { pathPush(l) }
         reportFixInBackground(loc)
     }
@@ -537,14 +539,45 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     /// needs to be sharp; in the background it only has to notice the phone moving, and sharp
     /// costs battery around the clock. Same manager either way — a second session is what this
     /// shell exists to avoid.
+    /// Backgrounded and moving: tighten up so iOS actually delivers a route.
+    ///
+    /// Measured on a real drive (2026-10-08): at HundredMeters/50 m, iOS handed over about three
+    /// fixes per minute, roughly 500 ft apart, while the phone covered 1,556 ft in 68 s. The
+    /// breadcrumb buffer shipped in 1.0.8 works, but three near-collinear points simplify to a
+    /// straight line, so the map drew one -- straight across several blocks of houses. The limit
+    /// was never the buffer; it was how rarely iOS delivers at that accuracy.
+    ///
+    /// Coarse while still is the right default and stays: a parked phone asking for ten-metre
+    /// fixes is pure battery burn for no information. Only a phone that is actually moving pays
+    /// the higher rate, and it drops back as soon as it stops.
+    private var bgMoving = false
     private func setLocationFidelity(foreground: Bool) {
         guard let mgr = bgLocationManager else { return }
-        mgr.desiredAccuracy = foreground ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
-        // No distance filter while the app is open. A filter only lets a fix through once the
-        // phone has MOVED that far, so a phone sitting on a table delivers nothing at all --
-        // which is why opening the app while standing still looked like the bridge was dead and
-        // sent the page back to asking the WebView for location (the prompt on every launch).
-        mgr.distanceFilter = foreground ? kCLDistanceFilterNone : 50
+        if foreground {
+            mgr.desiredAccuracy = kCLLocationAccuracyBest
+            // No distance filter while the app is open. A filter only lets a fix through once the
+            // phone has MOVED that far, so a phone sitting on a table delivers nothing at all --
+            // which is why opening the app while standing still looked like the bridge was dead and
+            // sent the page back to asking the WebView for location (the prompt on every launch).
+            mgr.distanceFilter = kCLDistanceFilterNone
+            return
+        }
+        mgr.desiredAccuracy = bgMoving ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyHundredMeters
+        mgr.distanceFilter  = bgMoving ? 25 : 50
+    }
+
+    /// Flip the background fidelity from the phone's own speed. Hysteresis (above 8 mph to start,
+    /// below 3 mph to stop) so a GPS wobble at a traffic light cannot oscillate the setting, and
+    /// a negative speed -- iOS for "unknown" -- is not treated as stopped.
+    private func updateBgMotion(_ loc: CLLocation) {
+        let mph = loc.speed >= 0 ? loc.speed * 2.2369363 : -1
+        if mph < 0 { return }
+        let was = bgMoving
+        if !bgMoving && mph > 8 { bgMoving = true }
+        else if bgMoving && mph < 3 { bgMoving = false }
+        if was != bgMoving && UIApplication.shared.applicationState != .active {
+            setLocationFidelity(foreground: false)
+        }
     }
 
     /// Hand the page the fix we already have, immediately. CoreLocation keeps the last known
