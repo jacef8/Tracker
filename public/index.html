@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 847;
+var APP_BUILD = 848;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4250,6 +4250,24 @@ function _writeRun(base, route, endRec, extra) {
 
 function _animateMarker(marker, toLng, toLat, path) {
   if (!marker) return;
+  // A merged oval's POSITION is owned by the grouping pass, which puts it at the centroid of the
+  // people in it (845). Animating this same marker to one member's own coordinates fights that:
+  // the oval glides off toward that member across the whole gap between fixes, the next grouping
+  // pass drops it back on the centroid, and the result is a dot that wanders and lurches --
+  // "odd and delayed movements". Record where this member actually is and let grouping place the
+  // shape. Non-primaries are display:none, so their animation is invisible either way.
+  try {
+    var _gu = marker._uid;
+    var _grp = _gu && window._markerGroupMembers && window._markerGroupMembers[_gu];
+    if (_grp && _grp.length > 1) {
+      if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
+      marker._curLngLat = [toLng, toLat];
+      marker._ll = [toLng, toLat];
+      try { if (window._updateTrailTip) window._updateTrailTip(_gu, toLng, toLat); } catch (e) {}
+      try { _updateMarkerGrouping(true); } catch (e) {}   // re-centre the oval on the new centroid
+      return;
+    }
+  } catch (e) {}
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
   var cur = marker._curLngLat;
   if (!cur) { var l = marker.getLngLat(); cur = [l.lng, l.lat]; }
