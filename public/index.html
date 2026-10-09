@@ -3870,7 +3870,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 853;
+var APP_BUILD = 854;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14097,6 +14097,10 @@ function initMap() {
     if (!e.originalEvent) return;               // ignore our own programmatic eases
     if (followUid && followUid !== userId) stopFollowing(); // panning away ends follow-me
     if (window._pauseFollow) window._pauseFollow();
+    // Let go of the camera the INSTANT a finger lands, not when the pause happens to lapse.
+    // The group-follow loop nudges the view every frame at 60fps; leaving it armed means it is
+    // competing with the drag for the same map.
+    try { window._gfTarget = null; if (window._gfStopLoop) window._gfStopLoop(); } catch (_e) {}
   });
   // Released on dragEND, not dragstart: a drag that goes nowhere (a tap that wobbled, a pinch
   // that started as one finger) shouldn't silently switch group-follow off.
@@ -14112,9 +14116,14 @@ function initMap() {
         stopFollowing();
         toast('Follow off — tap locate to re-centre', 2400);
       }
-      if (!fitAllInterval) return;
+      // Was `if (!fitAllInterval) return;` -- which skipped the whole teardown whenever the
+      // camera loop was running WITHOUT that interval set. The drag then only paused it, and it
+      // seized the view back the moment the pause lapsed: "a really long time before it will
+      // allow me to pan". _stopFitAll is idempotent, so just always run it; only say so out
+      // loud when group follow was actually the thing being switched off.
+      var _wasOn = !!fitAllInterval;
       _stopFitAll();
-      toast('Group follow off — tap locate to re-centre', 2600);
+      if (_wasOn) toast('Group follow off — tap locate to re-centre', 2600);
     } catch (_e) {}
   });
   // Pinch-zoom / rotate are user interaction too — pause auto-recenter so the gesture isn't
@@ -25300,7 +25309,10 @@ function _sheetPad() {
 }
 // 7s was short enough that letting go of the map and looking at something for a moment was
 // already long enough for the camera to take it back.
-window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 20000); };
+// 847 raised this to 20s because a drag only paused the camera. A drag now releases it
+// outright, so this only covers the paths that pause rather than stop (pinch, rotate, a
+// per-fix recentre) -- and 20s of dead camera after a pinch was itself the complaint.
+window._pauseFollow = function(ms) { window._followPausedUntil = Date.now() + (ms || 8000); };
 
 // Member info card (full-width bottom bar) — opened by tapping a person's dot. Flies to
 // the dot keeping it visible ABOVE the card (map bottom-padding), and follows if they're live.
