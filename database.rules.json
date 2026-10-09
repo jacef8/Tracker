@@ -265,7 +265,18 @@
         "voicelog": {
           ".write": "auth != null"
         },
-        ".read": "auth != null"
+        // Reading a room is reading everyone's live position in it. This used to be open to any
+        // signed-in user, so a Crew was protected only by nobody guessing its name -- and the
+        // home screen search explicitly finds private rooms by name. Approving someone decided
+        // who could APPEAR on the map, never who could WATCH it.
+        //
+        // A CREW (config/circle === true) is now readable only by its acl and its owner. Quick
+        // non-circle rooms are untouched, because walking into one is the point of them.
+        // Account uids were added alongside device uids first, so a phone signed in with Google
+        // matches; every active member was verified covered before this went live. Child rules
+        // still grant on their own (joinReq/$uid stays readable by its requester), so asking to
+        // join a room you cannot see continues to work.
+        ".read": "auth != null && (root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
       }
     },
     "$other": {
