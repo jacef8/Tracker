@@ -2292,6 +2292,8 @@
   <button id="zoom-out-btn" title="Zoom out" type="button"><svg class="licon"><use href="#ic-minus"/></svg></button>
   <!-- Hunt mode -->
   <button id="hunt-btn" title="Hunt mode" type="button" onclick="window._setToggleHunt()"><svg class="licon"><use href="#ic-binoculars"/></svg></button>
+  <!-- 2D / 3D terrain -->
+  <button id="d3-btn" title="3D terrain" type="button" onclick="window._toggle3D()" style="font-weight:800;font-size:13px;letter-spacing:.02em">3D</button>
   <!-- Layers -->
   <button id="layer-btn" title="Map layers" type="button"><svg class="licon"><use href="#ic-layers"/></svg></button>
   <!-- North arrow — tap to reveal: North Up or Heading Up -->
@@ -3870,7 +3872,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 855;
+var APP_BUILD = 856;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8220,6 +8222,74 @@ window._huntSet = function (untilTs) {
   try { window._renderHuntBar && window._renderHuntBar(); } catch (e) {}
 };
 try { setTimeout(function () { window._renderHuntBar && window._renderHuntBar(); }, 1200); } catch (e) {}
+// ══ 3D TERRAIN ══════════════════════════════════════════════════════════════════════════
+// GroundLink is already Mapbox GL v3, which does real terrain natively -- no second map
+// library, and the existing markers, pins, clusters and parcel layers all keep working.
+// Mapbox's own elevation source is used rather than a third-party DEM: one provider, one
+// set of tiles, nothing new to go down.
+//
+// OFF by default, and a per-DEVICE choice. Terrain costs GPU continuously, and the people
+// most likely to want it are sitting still for hours on a phone they cannot charge.
+var D3_PITCH = 62, D3_EXAG = 1.35;
+window._d3On = function () { try { return localStorage.getItem('gl_3d') === '1'; } catch (e) { return false; } };
+window._d3Choice = function () { try { return localStorage.getItem('gl_3d'); } catch (e) { return null; } };
+// Re-applied after EVERY style swap: setStyle wipes sources and layers, so switching
+// Satellite -> Topo would silently drop the terrain and leave the map tilted and flat.
+window._applyTerrain = function () {
+  try {
+    if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    var on = window._d3On();
+    if (on) {
+      if (!map.getSource('mapbox-dem')) {
+        map.addSource('mapbox-dem', {
+          type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+          // 512 tiles at a capped zoom: the detail beyond this is invisible at the ranges
+          // this app is used over, and it is the cheapest lever if a phone struggles.
+          tileSize: 512, maxzoom: 14
+        });
+      }
+      map.setTerrain({ source: 'mapbox-dem', exaggeration: D3_EXAG });
+    } else {
+      try { map.setTerrain(null); } catch (e) {}
+    }
+  } catch (e) {}
+};
+window._toggle3D = function (force) {
+  var on = (typeof force === 'boolean') ? force : !window._d3On();
+  try { localStorage.setItem('gl_3d', on ? '1' : '0'); } catch (e) {}
+  try {
+    // The group camera's fit math assumes a flat, untilted map -- a pitched view changes what
+    // "fits on screen" means entirely. Rather than make both work at once, 3D stands group
+    // follow down; the button is there to turn it back on.
+    if (on) { try { if (typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {} }
+    window._applyTerrain();
+    map.easeTo({ pitch: on ? D3_PITCH : 0, bearing: on ? map.getBearing() : 0, duration: 700 });
+  } catch (e) {}
+  try { window._render3DBtn(); } catch (e) {}
+  try { toast(on ? '3D terrain on' : 'Back to flat', 1800); } catch (e) {}
+  return on;
+};
+window._render3DBtn = function () {
+  try {
+    var b = document.getElementById('d3-btn'); if (!b) return;
+    var on = window._d3On();
+    b.textContent = on ? '2D' : '3D';
+    b.title = on ? 'Back to flat' : '3D terrain';
+    b.style.background = on ? 'var(--accent)' : '';
+    b.style.color = on ? '#0d1117' : '';
+  } catch (e) {}
+};
+// Ground height under a point, in FEET (see imperial rule). Null when terrain is off or the
+// tile for that spot has not loaded -- callers must treat null as "unknown", never as zero,
+// or someone on a bluff reads as sea level.
+window._elevFt = function (lng, lat) {
+  try {
+    if (!map || !map.queryTerrainElevation) return null;
+    var m = map.queryTerrainElevation([lng, lat], { exaggerated: false });
+    return (m === null || m === undefined || !isFinite(m)) ? null : (m * 3.28084);
+  } catch (e) { return null; }
+};
+
 window._setToggleHunt = function () {
   if (window._huntOn()) {
     window._huntSet(0);
@@ -8227,6 +8297,12 @@ window._setToggleHunt = function () {
   } else {
     window._huntSet(Date.now() + HUNT_MS);
     try { toast('Hunt mode on for 6 hours — position every 3 seconds, every 10 ft', 4200); } catch (e) {}
+    // Terrain is what hunt mode is FOR -- a bluff or a creek bottom is the whole question when
+    // the group is spread out. So switch 3D on with it, but only if this device has never
+    // expressed a preference: hunt mode already reports every 3 seconds for six hours, and
+    // forcing continuous terrain rendering on top of that, on a phone nobody can charge from a
+    // stand, is the one place the battery cost actually lands. An explicit 2D stays 2D.
+    try { if (window._d3Choice() === null && window._toggle3D) window._toggle3D(true); } catch (e) {}
   }
 };
 // Expiry watch. Runs on a slow timer because nothing here is urgent to the second.
@@ -17215,6 +17291,19 @@ function listenUsers() {
           const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
           const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
           _distLine = _d + ' from you · ' + _b;
+          // How far above or below you they are, in feet. Only while 3D terrain is on: the
+          // ground height comes from the loaded elevation tiles, so with terrain off there is
+          // nothing to read. A tile that has not arrived yet returns null, which must stay
+          // silent -- printing 0 would put someone on a bluff at your own height.
+          try {
+            var _eT = window._elevFt && window._elevFt(data.lng, data.lat);
+            var _eM = window._elevFt && window._elevFt(_gps.lng, _gps.lat);
+            if (_eT !== null && _eT !== undefined && _eM !== null && _eM !== undefined) {
+              var _dz = Math.round((_eT - _eM) / 5) * 5;        // 5 ft steps; the data is not finer than that
+              _distLine += ' · ' + (Math.abs(_dz) < 10 ? 'same height as you'
+                : (_dz > 0 ? _dz + ' ft above you' : (-_dz) + ' ft below you'));
+            }
+          } catch (e) {}
         }
         // Stale with a last-known highway speed is NOT "resting". RESTING claims "parked
         // somewhere known", but a phone that stopped reporting at 64 mph was driving when it
@@ -20980,6 +21069,9 @@ function _hookFpStyle() {           // base-layer switch rebuilds the style → 
   if (_fpStyleHooked || !window.map || !map.on) return;
   _fpStyleHooked = true;
   map.on('styledata', function () { if (_offlineFpShown) { try { _ensureFootprintLayer(); _renderOfflineFootprints(); } catch (e) {} } });
+  // Switching Satellite -> Topo drops every source, terrain included, which would leave the
+  // map tilted over flat ground. Put it back on each style load.
+  map.on('style.load', function () { try { window._applyTerrain(); window._render3DBtn(); } catch (e) {} });
 }
 function _fitToBoxes(boxes) {
   if (!boxes.length || !window.map) return;
