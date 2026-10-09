@@ -2726,6 +2726,14 @@
     </div>
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Find people</div>
     <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Type a name — finds anyone, even offline…" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
+    <!-- Inviting a family one at a time is the common case and it was six taps per person.
+         These invites are addressed to an ACCOUNT, not carried in a link, so there is no
+         wrong-person risk in sending them in bulk -- each one can only be accepted by the
+         person it names. -->
+    <button type="button" id="invite-all-friends" onclick="window._inviteAllFriends()"
+            style="display:none;width:100%;padding:11px;margin-bottom:10px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:13.5px;font-weight:800;cursor:pointer;align-items:center;justify-content:center;gap:8px">
+      <svg class="licon licon-sm"><use href="#ic-users"/></svg><span id="invite-all-label">Invite all my people</span>
+    </button>
     <div id="invite-pick-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
     <button onclick="window._closeInvitePicker(false)" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Close</button>
   </div>
@@ -3862,7 +3870,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 849;
+var APP_BUILD = 850;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19983,6 +19991,25 @@ function _renderInvitePeople(q) {
   var listEl = document.getElementById('invite-pick-list');
   if (!listEl) return;
   q = String(q || '').trim().toLowerCase();
+  // Show "Invite all my people" only when it would actually do something: you have favourites,
+  // some of them are not already in or invited, and you are not mid-search (while searching,
+  // the list is about one specific person and a bulk button is noise). Count on the label, so
+  // it is clear how many it would send before it is pressed.
+  try {
+    var _ab = document.getElementById('invite-all-friends');
+    if (_ab) {
+      var _fr = {}; try { _fr = _getFriends() || {}; } catch (e) {}
+      var _al = window._circleInviteMembers || {};
+      var _n = Object.keys(_fr).filter(function (u) {
+        if (!u || u === userId) return false;
+        var a = _al[u];
+        return !(a && (a.member || a.pending));
+      }).length;
+      _ab.style.display = (!q && _n) ? 'flex' : 'none';
+      var _lb = document.getElementById('invite-all-label');
+      if (_lb) _lb.textContent = 'Invite all my people (' + _n + ')';
+    }
+  } catch (e) {}
   // Lazy-load the directory so offline people are findable by name even if it hasn't streamed in.
   if (q && (!window._dirAll || !Object.keys(window._dirAll).length) && window._fb && window._fb.get && !window._dirLoading) {
     window._dirLoading = true;
@@ -20245,6 +20272,34 @@ window._inviteToCrewHere = function () {
   window._circleInviteTarget = { key: groupName, name: (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName };
   if (!window._circleInviteMembers) window._circleInviteMembers = {};
   window._sendCircleInvite(uid);
+};
+// Invite every one of your favourites to this Crew in one tap. Reuses _sendCircleInvite
+// unchanged -- each invite is addressed to that person's account, so bulk sending carries
+// none of the risk a shared link would: an invite can only be accepted by the person it
+// names. Skips anyone already in the Crew or already invited, so pressing it twice is safe.
+window._inviteAllFriends = function () {
+  var t = window._circleInviteTarget;
+  if (!t || !t.key) { toast('Open a Crew first', 2200); return; }
+  var friends = {};
+  try { friends = _getFriends() || {}; } catch (e) {}
+  var already = window._circleInviteMembers || {};
+  var todo = Object.keys(friends).filter(function (uid) {
+    if (!uid || uid === userId) return false;
+    var a = already[uid];
+    return !(a && (a.member || a.pending));
+  });
+  if (!todo.length) { toast('Everyone in your people list is already in or invited', 3000); return; }
+  var who = todo.length === 1 ? '1 person' : todo.length + ' people';
+  _confirm('Invite ' + who + ' to ' + (t.name || 'this Crew') + '?' + '\n\n'
+    + 'They each get their own invite and have to accept it. Nobody is added without tapping it.',
+    function () {
+      var sent = 0;
+      todo.forEach(function (uid) {
+        try { window._sendCircleInvite(uid); sent++; } catch (e) {}
+      });
+      try { toast('Invited ' + sent + (sent === 1 ? ' person' : ' people'), 3000); } catch (e) {}
+      try { window._evt('invited all friends'); } catch (e) {}
+    }, { yes: 'Send invites' });
 };
 window._sendCircleInvite = function(uid) {
   var t = window._circleInviteTarget; var fb = window._fb;

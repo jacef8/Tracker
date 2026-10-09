@@ -6,6 +6,6 @@ admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',
 });
-await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-848' });
+await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-849' });
 console.log('force reload sent');
 process.exit(0);

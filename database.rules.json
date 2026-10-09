@@ -137,8 +137,19 @@
       "$room": {
         ".write": "auth != null && !newData.exists() && (data.child('config').child('owner').val() === auth.uid || (!data.child('users').exists() && !data.child('members').exists() && !data.child('acl').exists() && !data.child('pins').exists() && !data.child('chat').exists() && !data.child('trails').exists()))",
         "users": {
+          // Writing a users row is what puts a dot on a Crew's map. The rule only ever asked
+          // "is this your own row", so ANY signed-in person who opened a Crew link or typed the
+          // group name appeared on it, roster or not -- confirmed 2026-10-09 with a tester
+          // reporting live into our_crew while absent from both its roster and its acl.
+          //
+          // For a CREW (config/circle === true) the acl is now required. The acl rule below
+          // already lets an invited person add themselves with the room's inviteKey, so an
+          // invite still works end to end; what no longer works is walking in without one.
+          // Deletes stay open (!newData.exists()) so leaving and being removed still work, and
+          // non-circle quick rooms are deliberately untouched -- joining those is the point.
+          // Everyone already present was grandfathered into acl first, so this locks nobody out.
           "$uid": {
-            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid)"
+            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid) && (!newData.exists() || root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child($uid).exists())"
           }
         },
         "members": {
