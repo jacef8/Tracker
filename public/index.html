@@ -3870,7 +3870,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 854;
+var APP_BUILD = 855;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14101,6 +14101,7 @@ function initMap() {
     // The group-follow loop nudges the view every frame at 60fps; leaving it armed means it is
     // competing with the drag for the same map.
     try { window._gfTarget = null; if (window._gfStopLoop) window._gfStopLoop(); } catch (_e) {}
+    try { window._dragCount = (window._dragCount || 0) + 1; } catch (_e) {}
   });
   // Released on dragEND, not dragstart: a drag that goes nowhere (a tap that wobbled, a pinch
   // that started as one finger) shouldn't silently switch group-follow off.
@@ -25549,6 +25550,29 @@ function _followPadding() {
 // what was on screen. The same span on a 360x780 phone returned 2.50 and looked correct,
 // because a tall narrow canvas hid the error. Give it the real padding.
 function _camPadding() { try { return _followPadding(); } catch (e) { return 0; } }
+// cameraForBounds DISCARDS the padding it is given here -- proved 2026-10-09 by arithmetic
+// against the live reading: box lat[30.42..47.62] lng[-122.38..-84.96] on a 1422x800 canvas
+// needs z3.95 with the real padding and z4.65 with none, and the app was using 4.53. Seattle
+// fell off the top by exactly that difference. Passing the padding (853) changed nothing,
+// because the option is being ignored, so compute the fit directly instead of asking.
+// Web Mercator: a tile world is 512px at z0; x is linear in longitude, y is the log-tangent
+// projection. The zoom that fits is whichever axis runs out of room first.
+function _zoomForBounds(b, pad, cw, ch) {
+  try {
+    var merc = function (lat) {
+      var s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180);
+      return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+    };
+    var dx = Math.abs(b.getEast() - b.getWest()) / 360;
+    var dy = Math.abs(merc(b.getSouth()) - merc(b.getNorth()));
+    var uw = Math.max(60, cw - (pad.left || 0) - (pad.right || 0));
+    var uh = Math.max(60, ch - (pad.top || 0) - (pad.bottom || 0));
+    var zx = dx > 1e-9 ? Math.log(uw / (512 * dx)) / Math.LN2 : 22;
+    var zy = dy > 1e-9 ? Math.log(uh / (512 * dy)) / Math.LN2 : 22;
+    var z = Math.min(zx, zy);
+    return isFinite(z) ? z : null;
+  } catch (e) { return null; }
+}
 function _groupFollowTick(force) {
   if (!force && Date.now() < (window._followPausedUntil || 0)) return true; // user is interacting — don't stomp
   // ACTIVE members drive the fit; stale ones are collected separately as a fallback only.
@@ -25718,7 +25742,7 @@ function _groupFollowTick(force) {
     var _p = _followPadding();
     window._gfDbg = 'cv=' + Math.round(map.getCanvas().clientWidth) + 'x' + Math.round(map.getCanvas().clientHeight)
       + ' pad=' + Math.round(_p.top) + '/' + Math.round(_p.bottom) + '/' + Math.round(_p.left) + '/' + Math.round(_p.right)
-      + ' cur=' + map.getZoom().toFixed(2);
+      + ' cur=' + map.getZoom().toFixed(2) + ' drags=' + (window._dragCount || 0);
     // The verdict log says who the camera INCLUDED; this says what box it actually built from
     // them. Those two disagreed on 2026-10-09 -- Vanesa logged IN from Seattle while the target
     // zoom stayed at 4.53, which is a box a tenth that size -- and without the span there is no
@@ -25761,7 +25785,12 @@ function _groupFollowTick(force) {
   window._gfLastFail = cam ? '' : 'cameraForBounds';
   if (!cam) return true;
   var curZoom = map.getZoom();
-  var targetZoom = Math.min(cam.zoom, 16);
+  // Our own fit when we can compute one; cameraForBounds' centre is still fine, it is only the
+  // zoom that comes back unpadded.
+  var _own = null;
+  try { _own = _zoomForBounds(b, _followPadding(), map.getCanvas().clientWidth, map.getCanvas().clientHeight); } catch (e) {}
+  var targetZoom = Math.min((_own != null ? _own : cam.zoom), 16);
+  try { if (_own != null) window._gfDbg = (window._gfDbg || '') + ' own=' + _own.toFixed(2) + ' cfb=' + cam.zoom.toFixed(2); } catch (e) {}
   try { window._gfDbg = (window._gfDbg || '') + ' tgt=' + targetZoom.toFixed(2) + (force ? ' F' : ''); } catch (e) {}
   // targetZoom is the padded "everyone comfortably fits" ideal zoom — anything tighter than
   // that MIGHT clip someone, but doesn't necessarily (the padding is generous on purpose).
