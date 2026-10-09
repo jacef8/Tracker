@@ -8231,6 +8231,7 @@ try { setTimeout(function () { window._renderHuntBar && window._renderHuntBar();
 // OFF by default, and a per-DEVICE choice. Terrain costs GPU continuously, and the people
 // most likely to want it are sitting still for hours on a phone they cannot charge.
 var D3_PITCH = 62, D3_EXAG = 1.35;
+var D3_HUNT_AUTO = false;   // see _setToggleHunt: held until the cost is measured on a phone
 window._d3On = function () { try { return localStorage.getItem('gl_3d') === '1'; } catch (e) { return false; } };
 window._d3Choice = function () { try { return localStorage.getItem('gl_3d'); } catch (e) { return null; } };
 // Re-applied after EVERY style swap: setStyle wipes sources and layers, so switching
@@ -8302,7 +8303,11 @@ window._setToggleHunt = function () {
     // expressed a preference: hunt mode already reports every 3 seconds for six hours, and
     // forcing continuous terrain rendering on top of that, on a phone nobody can charge from a
     // stand, is the one place the battery cost actually lands. An explicit 2D stays 2D.
-    try { if (window._d3Choice() === null && window._toggle3D) window._toggle3D(true); } catch (e) {}
+    // HELD until the GPU cost is measured on a real phone. Hunt mode is used by other people
+    // on phones sitting in a stand with no charger, so switching terrain on for them before
+    // anyone has seen the frame cost is the one change here that could land badly on someone
+    // who did not ask for it. Flip D3_HUNT_AUTO to true once the numbers are in.
+    try { if (D3_HUNT_AUTO && window._d3Choice() === null && window._toggle3D) window._toggle3D(true); } catch (e) {}
   }
 };
 // Expiry watch. Runs on a slow timer because nothing here is urgent to the second.
