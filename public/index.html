@@ -3862,7 +3862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 848;
+var APP_BUILD = 849;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24838,6 +24838,11 @@ var followInterval = null;
 window._followUser = function(uid, name) {
   // Always start/restart follow — don't toggle off on tap
   if (typeof _stopFitAll === 'function') _stopFitAll();
+  // Deliberately asking to follow someone outranks a pause left over from panning or pinching
+  // to find them -- which is exactly how you select a person in the first place. 847 raised that
+  // pause to 20s, so without this the camera sat still for up to 20 seconds after the tap and
+  // follow looked broken. The first centre already bypassed it; the ticks after it did not.
+  window._followPausedUntil = 0;
   followUid = uid;
   clearInterval(followInterval);
   var isSelf = uid === userId;
@@ -25490,7 +25495,13 @@ function _groupFollowTick(force) {
       var u = _ru[uid] || {};
       var _nm = (u.name || uid.slice(0, 6));
       if (window._groupFollowExcluded(uid)) { if (_dbgR) _dbgR.push(_nm + ':excluded-pref'); return; }
-      if (!u.name || u.claiming || u.hidden || u.noGps) { if (_dbgR) _dbgR.push(_nm + ':row-filter' + (u.hidden ? '(hidden)' : u.noGps ? '(noGps)' : '')); return; }   // same test the renderer uses
+      // noGps is a CLAIM about the present, and it goes stale: the renderer already ignores it
+      // when the row carries a real coordinate (_settleMemberRow), so members were being drawn
+      // on the map and then left out of the fit -- "all people are not being shown at the follow
+      // group setting". Apply the same settling here so the camera frames what the map shows.
+      var _hasFix = isFinite(+u.lat) && isFinite(+u.lng) && !(+u.lat === 0 && +u.lng === 0);
+      var _noGps = u.noGps && !_hasFix;
+      if (!u.name || u.claiming || u.hidden || _noGps) { if (_dbgR) _dbgR.push(_nm + ':row-filter' + (u.hidden ? '(hidden)' : _noGps ? '(noGps)' : '')); return; }   // same test the renderer uses
       if (window._isPrivateOther && window._isPrivateOther(uid, u)) { if (_dbgR) _dbgR.push(_nm + ':private'); return; }   // someone else's private device
       // ...and skip anyone whose DOT ISN'T ON THIS MAP: hidden by this viewer, or hidden
       // room-wide by the owner/an admin. The camera was still framing them, so a hidden
