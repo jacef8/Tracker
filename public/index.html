@@ -3870,7 +3870,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 850;
+var APP_BUILD = 851;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -7359,6 +7359,16 @@ function _applyRing(el, cls) {
 function _updateMarkerAge(el, isLive, isMine, ageMin, hidden, noGps) {
   var a = el && el.querySelector ? el.querySelector('.mk-age') : null;
   if (!a) return;
+  // This chip is one person's fix age. A merged oval is several people with different ages, so
+  // whatever number it showed belonged to whichever member happened to be primary -- it read
+  // "49h 14m" over a shape containing a live phone and a two-day-stale one, which says nothing
+  // true about either. No honest single number exists for a group, so show none; tapping the
+  // shape still lists each person with their own age.
+  try {
+    var _mu = el.__uid || (el.dataset && el.dataset.uid);
+    var _mg = _mu && window._markerGroupMembers && window._markerGroupMembers[_mu];
+    if (_mg && _mg.length > 1) { a.style.display = 'none'; el.style.filter = ''; return; }
+  } catch (e) {}
   // Live, yours, or already labelled some other way — nothing to say.
   if (isLive || isMine || hidden || noGps || !isFinite(ageMin) || ageMin < 5) {
     a.style.display = 'none';
@@ -17084,6 +17094,7 @@ function listenUsers() {
           .addTo(map);
         userMarkers[uid]._el = el;
         userMarkers[uid]._uid = uid;   // lets _animateMarker drag this member's trail tip along
+        try { if (userMarkers[uid]._el) userMarkers[uid]._el.__uid = uid; } catch (e) {}   // and lets the chip helpers see whose marker this is
         userMarkers[uid]._fillColor = fillColor;
         userMarkers[uid]._soloOpacity = '1';   // markers are never see-through
         userMarkers[uid]._borderShorthand = isMine ? ('4px solid ' + borderColor) : ('3px solid ' + borderColor);
@@ -25678,6 +25689,16 @@ function _groupFollowTick(force) {
     window._gfDbg = 'cv=' + Math.round(map.getCanvas().clientWidth) + 'x' + Math.round(map.getCanvas().clientHeight)
       + ' pad=' + Math.round(_p.top) + '/' + Math.round(_p.bottom) + '/' + Math.round(_p.left) + '/' + Math.round(_p.right)
       + ' cur=' + map.getZoom().toFixed(2);
+    // The verdict log says who the camera INCLUDED; this says what box it actually built from
+    // them. Those two disagreed on 2026-10-09 -- Vanesa logged IN from Seattle while the target
+    // zoom stayed at 4.53, which is a box a tenth that size -- and without the span there is no
+    // way to tell which half is wrong.
+    try {
+      var _la = pts.map(function (q) { return q[1]; }), _lo = pts.map(function (q) { return q[0]; });
+      window._gfDbg += ' n=' + pts.length
+        + ' lat[' + Math.min.apply(null, _la).toFixed(2) + '..' + Math.max.apply(null, _la).toFixed(2) + ']'
+        + ' lng[' + Math.min.apply(null, _lo).toFixed(2) + '..' + Math.max.apply(null, _lo).toFixed(2) + ']';
+    } catch (e2) {}
   } catch (e) {}
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
   // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
