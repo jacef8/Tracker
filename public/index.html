@@ -2293,7 +2293,7 @@
   <!-- Hunt mode -->
   <button id="hunt-btn" title="Hunt mode" type="button" onclick="window._setToggleHunt()"><svg class="licon"><use href="#ic-binoculars"/></svg></button>
   <!-- 2D / 3D terrain -->
-  <button id="d3-btn" title="3D terrain" type="button" onclick="window._toggle3D()" style="font-weight:800;font-size:13px;letter-spacing:.02em">3D</button>
+  <button id="d3-btn" title="3D terrain" type="button" onclick="window._toggle3D()" oncontextmenu="event.preventDefault();window._cycle3DExag();return false" style="font-weight:800;font-size:13px;letter-spacing:.02em">3D</button>
   <!-- Layers -->
   <button id="layer-btn" title="Map layers" type="button"><svg class="licon"><use href="#ic-layers"/></svg></button>
   <!-- North arrow — tap to reveal: North Up or Heading Up -->
@@ -3872,7 +3872,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 856;
+var APP_BUILD = 857;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8230,7 +8230,27 @@ try { setTimeout(function () { window._renderHuntBar && window._renderHuntBar();
 //
 // OFF by default, and a per-DEVICE choice. Terrain costs GPU continuously, and the people
 // most likely to want it are sitting still for hours on a phone they cannot charge.
-var D3_PITCH = 62, D3_EXAG = 1.35;
+var D3_PITCH = 62;
+// Exaggeration is not decoration here, it is the difference between useful and pointless.
+// Liberty County runs about 140-160 ft across a two-mile view -- roughly 20 ft of relief. At
+// 1.35x that renders as 27 ft and is invisible, which is exactly what the first look showed.
+// The ground people actually care about locally is a creek bottom or a river bluff, and those
+// ARE the 20 ft. Lift it enough to read them. Hill country (the Illinois pins sit in 300 ft+
+// of relief) looks overdone at this setting, so it is a toggle, not a constant: tap and hold
+// the 3D button to cycle gentle / normal / strong.
+var D3_EXAG_STEPS = [1.5, 3.5, 6];
+window._d3Exag = function () {
+  try { var v = parseFloat(localStorage.getItem('gl_3d_exag')); return isFinite(v) ? v : D3_EXAG_STEPS[1]; }
+  catch (e) { return D3_EXAG_STEPS[1]; }
+};
+window._cycle3DExag = function () {
+  var cur = window._d3Exag();
+  var i = D3_EXAG_STEPS.indexOf(cur); if (i < 0) i = 1;
+  var next = D3_EXAG_STEPS[(i + 1) % D3_EXAG_STEPS.length];
+  try { localStorage.setItem('gl_3d_exag', String(next)); } catch (e) {}
+  try { if (!window._d3On()) window._toggle3D(true); else window._applyTerrain(); } catch (e) {}
+  try { toast('Terrain relief: ' + (next <= 1.5 ? 'gentle' : next <= 3.5 ? 'normal' : 'strong') + ' (' + next + 'x)', 2200); } catch (e) {}
+};
 var D3_HUNT_AUTO = false;   // see _setToggleHunt: held until the cost is measured on a phone
 window._d3On = function () { try { return localStorage.getItem('gl_3d') === '1'; } catch (e) { return false; } };
 window._d3Choice = function () { try { return localStorage.getItem('gl_3d'); } catch (e) { return null; } };
@@ -8249,7 +8269,7 @@ window._applyTerrain = function () {
           tileSize: 512, maxzoom: 14
         });
       }
-      map.setTerrain({ source: 'mapbox-dem', exaggeration: D3_EXAG });
+      map.setTerrain({ source: 'mapbox-dem', exaggeration: window._d3Exag() });
     } else {
       try { map.setTerrain(null); } catch (e) {}
     }
@@ -8270,6 +8290,19 @@ window._toggle3D = function (force) {
   try { toast(on ? '3D terrain on' : 'Back to flat', 1800); } catch (e) {}
   return on;
 };
+// Phones have no right-click, so bind a real long-press for the relief cycle.
+(function () {
+  try {
+    var t = null;
+    document.addEventListener('touchstart', function (e) {
+      var b = e.target && e.target.closest && e.target.closest('#d3-btn');
+      if (!b) return;
+      t = setTimeout(function () { t = null; try { window._cycle3DExag(); } catch (_e) {} }, 550);
+    }, { passive: true });
+    document.addEventListener('touchend', function () { if (t) { clearTimeout(t); t = null; } }, { passive: true });
+    document.addEventListener('touchmove', function () { if (t) { clearTimeout(t); t = null; } }, { passive: true });
+  } catch (e) {}
+})();
 window._render3DBtn = function () {
   try {
     var b = document.getElementById('d3-btn'); if (!b) return;
