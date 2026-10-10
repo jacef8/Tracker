@@ -242,19 +242,27 @@ async function _cachedGet(path, ttl) {
 }
 // Is `a` (an auth uid) a member of `room`? Every id form counts: the access list, the roster, the
 // owner/admins, a presence row under that id, or a device row whose owning account is `a`.
+// Who counts as "in this room" for the purposes of the push/wake endpoints.
+//
+// This used to accept FOUR proofs, and three of them were self-writable. `members/$uid` and
+// `users/$uid` can both be written by the person they name -- that is by design, it is how you
+// join -- so presenting one of them proved only that the caller had asked to be a member, not
+// that anyone had agreed. A stranger could PUT one row and then reach /push, /freshen, /bump,
+// /nudge, /pushTo and /voip against a real family: arbitrary notification text to every member,
+// and silent device wakes. The `_devOwner` fallback was worse, being a client-written index any
+// signed-in user could forge for any uid (now locked in the rules, but it has no business being
+// an authorization input regardless).
+//
+// Only two things represent a DECISION by someone who already had authority: the acl (an owner
+// or admin approved you, or you presented the room's invite key) and config.owner/admins. That
+// is the whole list now.
 async function roomAccess(room, a) {
   if (!room || !a || room.charAt(0) === '_') return false;
   try {
     const acl = await _cachedGet('gl/' + room + '/acl');
     if (acl && acl[a]) return true;
-    const members = await _cachedGet('gl/' + room + '/members');
-    if (members && members[a]) return true;
     const cfg = await _cachedGet('gl/' + room + '/config');
     if (cfg && (cfg.owner === a || (cfg.admins && cfg.admins[a]))) return true;
-    const users = await _cachedGet('gl/' + room + '/users');
-    if (users && users[a]) return true;
-    const own = await _cachedGet('gl/_devOwner', 60000);
-    for (const u of Object.keys(users || {})) if (own && own[u] && own[u].acct === a) return true;
   } catch (e) {}
   return false;
 }

@@ -7,20 +7,38 @@
       // Firebase" indefinitely. Grants the whole subtree to one uid. No other identity gains
       // anything, and every child rule below is unchanged.
       ".read": "auth != null && auth.uid === '1RwPgdSdOEgp3lhlGly5I71EkY73'",
+      // A claimed device is a child's watch reporting live GPS. Read is now its owner and the
+      // people it was shared with; an UNCLAIMED device stays readable so the claim flow can
+      // still find it. The "live" subtree keeps an open write because the watch firmware posts
+      // without an account -- narrowing that needs a firmware change and is tracked separately.
+      // Everything carrying AUTHORITY is locked: owner (server.js trusts it for /wake-device),
+      // sched, fcmToken, shareCode. Before this an UNAUTHENTICATED PUT to owner was accepted,
+      // verified 2026-10-10, which handed over device-wake rights to anyone at all.
       "_devices": {
-        ".write": true,
         "$id": {
-          "sched": {
-            ".read": true
+          ".read": "auth != null && (!data.child('owner').exists() || data.child('owner').val() === auth.uid || data.child('sharedWith').child(auth.uid).exists() || root.child('gl').child('_deviceOwners').child(auth.uid).child($id).exists())",
+          "live": {
+            ".write": true
           },
-          "ownerName": {
-            ".read": true
-          }
-        },
-        ".read": "auth != null"
+          "owner": {
+            ".write": "auth != null && (!data.exists() || data.val() === auth.uid)"
+          },
+          "sched": {
+            ".write": "auth != null && data.parent().child('owner').val() === auth.uid"
+          },
+          "fcmToken": {
+            ".write": "auth != null && (!data.parent().child('owner').exists() || data.parent().child('owner').val() === auth.uid)"
+          },
+          "shareCode": {
+            ".write": "auth != null && data.parent().child('owner').val() === auth.uid"
+          },
+          ".write": "auth != null && (!data.child('owner').exists() || data.child('owner').val() === auth.uid)"
+        }
       },
       "_deviceShares": {
-        ".write": true,
+        "$code": {
+          ".write": "auth != null"
+        },
         ".read": "auth != null"
       },
       "_debug": {
@@ -55,9 +73,16 @@
         },
         ".read": "auth != null"
       },
+      // Maps a device id to the account signed in on it, and it is an AUTHORIZATION input --
+      // users/$uid, config, _avatars and server.js roomAccess all read it, and the fixes above
+      // now lean on it too. It accepted a write from any signed-in user for ANY uid, so one
+      // forged entry impersonated another member: enough to seize a room's config, flip
+      // circle to false, and undo today's read lock entirely. A device may now only claim
+      // ITSELF, and only onto the account doing the claiming.
       "_devOwner": {
         "$uid": {
-          ".write": "auth != null"
+          ".write": "auth != null && (auth.uid === $uid || (newData.child('acct').val() === auth.uid && (!data.child('acct').exists() || data.child('acct').val() === auth.uid)))",
+          ".validate": "!newData.exists() || newData.child('acct').isString()"
         },
         ".read": "auth != null"
       },
@@ -105,11 +130,16 @@
         },
         ".read": "auth != null"
       },
+      // The read was on the PARENT, so one request returned every pending invite in the
+      // product -- each carrying the room's inviteKey and its plaintext pin. That key is the
+      // only thing the acl self-add clause asks for, so this was a direct path into any crew,
+      // and today's new room read-lock would then admit the attacker as a legitimate member.
+      // Verified exploitable 2026-10-10. Read is now the recipient's own inbox only.
       "_invites": {
         "$acct": {
+          ".read": "auth != null && (auth.uid === $acct || root.child('gl').child('_devOwner').child($acct).child('acct').val() === auth.uid)",
           ".write": "auth != null"
-        },
-        ".read": "auth != null"
+        }
       },
       "_presence": {
         "$uid": {
@@ -124,11 +154,15 @@
         },
         ".read": "auth != null"
       },
+      // Saved pins and tracks live here, which for most people means home and work. The parent
+      // .read exposed every account's; the parent .write let any signed-in user overwrite
+      // another account's profile, friends and pins. Cross-account people search already uses
+      // _directory (name + device id only), which is deliberately minimal and stays readable.
       "_users": {
         "$acct": {
-          ".write": "auth != null"
-        },
-        ".read": "auth != null"
+          ".read": "auth != null && (auth.uid === $acct || root.child('gl').child('_devOwner').child($acct).child('acct').val() === auth.uid)",
+          ".write": "auth != null && (auth.uid === $acct || root.child('gl').child('_devOwner').child($acct).child('acct').val() === auth.uid)"
+        }
       },
       "_deadRooms": {
         ".read": "auth != null",
@@ -241,7 +275,7 @@
             ".write": "auth != null && !data.exists() && newData.isNumber() && !data.parent().child('persistent').exists()"
           },
           "inviteKey": {
-            ".write": "auth != null && !data.exists() && newData.isString() && newData.val().length >= 12"
+            ".write": "auth != null && newData.isString() && newData.val().length >= 12 && (!data.exists() || data.parent().child('owner').val() === auth.uid || data.parent().child('admins').child(auth.uid).exists())"
           }
         },
         "debug": {
@@ -295,11 +329,18 @@
       ".read": true,
       ".write": "auth != null && auth.uid === '1RwPgdSdOEgp3lhlGly5I71EkY73'"
     },
+    // Trail history. It lives OUTSIDE gl/ for write throughput, which also put it outside
+    // every access rule gl/$room has -- one root ".read": "auth != null" handed every family's
+    // day-by-day movement track to any signed-in account, including one created seconds
+    // earlier. Verified exploitable 2026-10-10 before this change. Gated per room on the SAME
+    // predicate as gl/$room so the two cannot drift apart again, and writes narrowed to the
+    // person the trail belongs to -- it was "any signed-in user", so anyone could forge
+    // anyone's history.
     "glh": {
-      ".read": "auth != null",
       "$room": {
+        ".read": "auth != null && (root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)",
         "$uid": {
-          ".write": "auth != null"
+          ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid)"
         }
       }
     }
