@@ -3895,7 +3895,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 861;
+var APP_BUILD = 862;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4613,8 +4613,7 @@ function _applyMarkerMerged(primary, members) {
   // 860 made the whole ring red if anyone inside was dark. Per-cell bars say the same thing
   // and say WHO, so the outer ring drops back to neutral rather than shouting a summary over
   // the detail. One signal, at the granularity that is actually useful.
-  var allLive = ordered.every(function (u) { var m = userMarkers[u]; return !!(m && m._isLive); });
-  el.style.border = '3px solid ' + (allLive ? '#ffffff' : '#c9d1d9');
+  el.style.border = '3px solid #c9d1d9';
   _applyRing(el, null);
   // Always 1: each cell below carries its own member's liveness, and dimming here as well
   // multiplied the two together -- .65 x .45 = .29, and the map showed through the marker.
@@ -4636,7 +4635,21 @@ function _applyMarkerMerged(primary, members) {
     var widest = labels.reduce(function (w, l) { return Math.max(w, l.txt.length + (l.sub ? 1 : 0)); }, 1);
     if (widest >= 3) el.style.width = ((34 * shown.length) + 16) + 'px';   // 3-char labels need room
     initEl.style.fontSize = widest >= 3 ? '12px' : '';
-    initEl.innerHTML = shown.map(function (u, i) {
+    // Rebuilding the cells destroys and recreates every span, which RESTARTS the 2.6s pulse
+    // from zero. This runs once per incoming fix for any member of the group -- in hunt mode
+    // (3s reports, several phones) that is roughly twice a second, so the animation never got
+    // near its peak and the bars read as static while still paying full animation setup and
+    // style recalc on a fresh subtree. Rebuild only when something a cell actually shows has
+    // changed; otherwise flip the live/stale class on the spans already there, which keeps the
+    // pulse continuous and costs two classList writes.
+    var _sig = shown.join(',') + '|' + labels.map(function (l) { return l.txt + (l.sub || ''); }).join(',')
+             + '|' + shown.map(function (u) {
+                 var m = userMarkers[u];
+                 return (m && m._isLive ? '1' : '0') + ((m && m._fillColor) || '');
+               }).join(',');
+    var _cellsUnchanged = (el.__cellSig === _sig && initEl.children.length === shown.length);
+    el.__cellSig = _sig;
+    if (!_cellsUnchanged) initEl.innerHTML = shown.map(function (u, i) {
       var m = userMarkers[u];
       var col = (m && m._fillColor) || '#a9b4bf';
       var txt = escapeHtmlJs(labels[i].txt);
@@ -8309,14 +8322,7 @@ window._applyTerrain = function () {
     if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
     var on = window._d3On();
     if (on) {
-      if (!map.getSource('mapbox-dem')) {
-        map.addSource('mapbox-dem', {
-          type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-          // 512 tiles at a capped zoom: the detail beyond this is invisible at the ranges
-          // this app is used over, and it is the cheapest lever if a phone struggles.
-          tileSize: 512, maxzoom: 14
-        });
-      }
+      _ensureDem();
       map.setTerrain({ source: 'mapbox-dem', exaggeration: window._d3Exag() });
     } else {
       try { map.setTerrain(null); } catch (e) {}
@@ -8367,6 +8373,9 @@ function _firstSymbolLayer() {
   } catch (e) {}
   return undefined;
 }
+// The ONE place the elevation source is defined: 3D terrain, hillshade and contours all want
+// it, and maxzoom is the cheapest lever if a phone struggles, so it must be turnable in a
+// single spot rather than found in two.
 function _ensureDem() {
   if (map.getSource('mapbox-dem')) return;
   map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
@@ -8374,9 +8383,17 @@ function _ensureDem() {
 window._applyTerrainOverlays = function () {
   try {
     if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    var hs = window._hsOn(), ct = window._ctOn();
+    // _firstSymbolLayer calls map.getStyle(), which deep-serializes every layer in the style
+    // (~150 for streets). With both overlays off and nothing to tear down, this function's
+    // whole job is to do nothing -- so don't pay for the style dump to find that out.
+    if (!hs && !ct && !map.getLayer('gl-hillshade') && !map.getLayer('gl-contours')) {
+      try { window._renderOverlayPills(); } catch (e) {}
+      return;
+    }
     var before = _firstSymbolLayer();
     // Hillshade
-    if (window._hsOn()) {
+    if (hs) {
       _ensureDem();
       if (!map.getLayer('gl-hillshade')) {
         map.addLayer({ id: 'gl-hillshade', type: 'hillshade', source: 'mapbox-dem',
@@ -8391,12 +8408,16 @@ window._applyTerrainOverlays = function () {
       }
     } else if (map.getLayer('gl-hillshade')) { map.removeLayer('gl-hillshade'); }
     // Contours — a vector source, separate from the DEM
-    if (window._ctOn()) {
+    if (ct) {
       if (!map.getSource('gl-terrain-v2')) {
         map.addSource('gl-terrain-v2', { type: 'vector', url: 'mapbox://mapbox.mapbox-terrain-v2' });
       }
       if (!map.getLayer('gl-contours')) {
-        map.addLayer({ id: 'gl-contours', type: 'line', source: 'gl-terrain-v2', 'source-layer': 'contour',
+        // minzoom, not just a zero opacity ramp: below minzoom GL JS does not request the tile
+        // for the layer at all, so the fetch, the parse and (for the labels) the along-line
+        // placement are all skipped rather than merely painted invisibly. contour is one of
+        // the densest layers in that tileset and this runs on every pan.
+        map.addLayer({ id: 'gl-contours', type: 'line', source: 'gl-terrain-v2', 'source-layer': 'contour', minzoom: 11,
           paint: {
             // Amber, not grey: these go over satellite imagery as often as over a pale topo,
             // and grey disappears into both tree canopy and shadow.
@@ -8407,9 +8428,9 @@ window._applyTerrainOverlays = function () {
           } }, before);
       }
       if (!map.getLayer('gl-contour-labels')) {
-        map.addLayer({ id: 'gl-contour-labels', type: 'symbol', source: 'gl-terrain-v2', 'source-layer': 'contour',
+        map.addLayer({ id: 'gl-contour-labels', type: 'symbol', source: 'gl-terrain-v2', 'source-layer': 'contour', minzoom: 12.5,
           filter: ['any', ['==', ['get', 'index'], 5], ['==', ['get', 'index'], 10]],
-          layout: { 'symbol-placement': 'line', 'text-field': ['concat', ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]], ' ft'],
+          layout: { 'symbol-placement': 'line', 'text-field': ['concat', ['to-string', ['round', ['*', ['get', 'ele'], FEET_PER_METER]]], ' ft'],
                     'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Regular'], 'text-size': 10, 'symbol-spacing': 320 },
           paint: { 'text-color': '#ffd79a', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.4 } });
       }
@@ -8421,14 +8442,9 @@ window._applyTerrainOverlays = function () {
   try { window._renderOverlayPills(); } catch (e) {}
 };
 window._renderOverlayPills = function () {
-  try {
-    [['hillshade-pill', window._hsOn()], ['contours-pill', window._ctOn()]].forEach(function (r) {
-      var el = document.getElementById(r[0]); if (!el) return;
-      el.textContent = r[1] ? 'ON' : 'OFF';
-      el.style.background = r[1] ? 'var(--accent)' : 'var(--border)';
-      el.style.color = r[1] ? '#0d1117' : 'var(--muted)';
-    });
-  } catch (e) {}
+  // _setPill is the file's single pill renderer (~35 call sites). Hand-rolling these two made
+  // them the only ON pills in the app in a different colour.
+  try { _setPill('hillshade-pill', window._hsOn()); _setPill('contours-pill', window._ctOn()); } catch (e) {}
 };
 window._toggleHillshade = function () {
   try { localStorage.setItem('gl_hillshade', window._hsOn() ? '0' : '1'); } catch (e) {}
@@ -8455,7 +8471,7 @@ window._elevFt = function (lng, lat) {
   try {
     if (!map || !map.queryTerrainElevation) return null;
     var m = map.queryTerrainElevation([lng, lat], { exaggerated: false });
-    return (m === null || m === undefined || !isFinite(m)) ? null : (m * 3.28084);
+    return (m === null || m === undefined || !isFinite(m)) ? null : (m * FEET_PER_METER);
   } catch (e) { return null; }
 };
 
@@ -14349,9 +14365,10 @@ function initMap() {
     if (window._pauseFollow) window._pauseFollow();
     // Let go of the camera the INSTANT a finger lands, not when the pause happens to lapse.
     // The group-follow loop nudges the view every frame at 60fps; leaving it armed means it is
-    // competing with the drag for the same map.
-    try { window._gfTarget = null; if (window._gfStopLoop) window._gfStopLoop(); } catch (_e) {}
-    try { window._dragCount = (window._dragCount || 0) + 1; } catch (_e) {}
+    // competing with the drag for the same map. _stopFitAll is the one teardown (it stops the
+    // loop, clears the target and releases the single-member lock) and is idempotent -- a third
+    // hand-rolled variant here is exactly the drift these fixes keep chasing.
+    try { if (typeof _stopFitAll === 'function') _stopFitAll(); } catch (_e) {}
   });
   // Released on dragEND, not dragstart: a drag that goes nowhere (a tap that wobbled, a pinch
   // that started as one finger) shouldn't silently switch group-follow off.
@@ -17469,13 +17486,20 @@ function listenUsers() {
           // ground height comes from the loaded elevation tiles, so with terrain off there is
           // nothing to read. A tile that has not arrived yet returns null, which must stay
           // silent -- printing 0 would put someone on a bluff at your own height.
+          // Guarded on terrain actually being on -- the comment above promised that and the code
+          // did not, so with 3D off this ran two DEM lookups per member to get two nulls. Your
+          // OWN height is also the same value for every row, so it is read once per snapshot
+          // (_meElevFt) rather than once per person.
           try {
+            if (window._d3On && window._d3On()) {
             var _eT = window._elevFt && window._elevFt(data.lng, data.lat);
-            var _eM = window._elevFt && window._elevFt(_gps.lng, _gps.lat);
+            var _eM = (window.__meElevTs === now) ? window.__meElevFt
+                    : (window.__meElevTs = now, window.__meElevFt = (window._elevFt && window._elevFt(_gps.lng, _gps.lat)));
             if (_eT !== null && _eT !== undefined && _eM !== null && _eM !== undefined) {
               var _dz = Math.round((_eT - _eM) / 5) * 5;        // 5 ft steps; the data is not finer than that
               _distLine += ' · ' + (Math.abs(_dz) < 10 ? 'same height as you'
                 : (_dz > 0 ? _dz + ' ft above you' : (-_dz) + ' ft below you'));
+            }
             }
           } catch (e) {}
         }
@@ -20282,13 +20306,7 @@ function _renderInvitePeople(q) {
   try {
     var _ab = document.getElementById('invite-all-friends');
     if (_ab) {
-      var _fr = {}; try { _fr = _getFriends() || {}; } catch (e) {}
-      var _al = window._circleInviteMembers || {};
-      var _n = Object.keys(_fr).filter(function (u) {
-        if (!u || u === userId) return false;
-        var a = _al[u];
-        return !(a && (a.member || a.pending));
-      }).length;
+      var _n = window._invitableFriends().length;
       _ab.style.display = (!q && _n) ? 'flex' : 'none';
       var _lb = document.getElementById('invite-all-label');
       if (_lb) _lb.textContent = 'Invite all my people (' + _n + ')';
@@ -20561,17 +20579,22 @@ window._inviteToCrewHere = function () {
 // unchanged -- each invite is addressed to that person's account, so bulk sending carries
 // none of the risk a shared link would: an invite can only be accepted by the person it
 // names. Skips anyone already in the Crew or already invited, so pressing it twice is safe.
-window._inviteAllFriends = function () {
-  var t = window._circleInviteTarget;
-  if (!t || !t.key) { toast('Open a Crew first', 2200); return; }
-  var friends = {};
-  try { friends = _getFriends() || {}; } catch (e) {}
+// The one definition of "which of my people can still be invited to this Crew". It was
+// written out twice -- once for the button's count, once for what the button actually sends --
+// so the label and the action could drift apart and claim different numbers.
+window._invitableFriends = function () {
+  var fr = {}; try { fr = _getFriends() || {}; } catch (e) {}
   var already = window._circleInviteMembers || {};
-  var todo = Object.keys(friends).filter(function (uid) {
+  return Object.keys(fr).filter(function (uid) {
     if (!uid || uid === userId) return false;
     var a = already[uid];
     return !(a && (a.member || a.pending));
   });
+};
+window._inviteAllFriends = function () {
+  var t = window._circleInviteTarget;
+  if (!t || !t.key) { toast('Open a Crew first', 2200); return; }
+  var todo = window._invitableFriends();
   if (!todo.length) { toast('Everyone in your people list is already in or invited', 3000); return; }
   var who = todo.length === 1 ? '1 person' : todo.length + ' people';
   _confirm('Invite ' + who + ' to ' + (t.name || 'this Crew') + '?' + '\n\n'
@@ -25792,35 +25815,13 @@ function _followPadding() {
   } catch (e) {}
   return pad;
 }
-// The chrome padding is ALREADY applied to the map, permanently: initMap calls
-// map.setPadding(_followPadding()) (and again on load/resize). cameraForBounds ADDS its own
-// `padding` option on top of that transform padding — so handing it _followPadding() a second
-// time charged every margin twice and cost roughly a full zoom level of needless zoom-out.
-//
-// Confirmed from live telemetry rather than inferred. Modelling usable width as
-// W - trPadding - optionsPadding reproduces all three measurements exactly:
-//   475, phone 360px, tr 104 + opts 104 -> 152px usable, zoom 7.20 (asked 7.21)
-//   475, PC 1707px,   tr 204 + opts 204 -> 1299px,       zoom 10.29 (asked 10.29)
-//   476, PC 1707px,   tr 204 + opts 102 -> 1401px,       zoom 10.40 (asked 10.40)
-// The 476 halving was therefore only half a fix — it shrank the duplicate instead of removing
-// it. Passing nothing here lets the transform padding be the single source of truth, which is
-// what setPadding is for and what every other camera move in the app already respects.
-// _allPointsVisible still uses the raw _followPadding values: it compares projected pixel
-// positions against real screen edges, where the numbers mean what they say.
-// cameraForBounds does NOT infer the map's transform padding -- handing it 0 told it to fit the
-// box to the WHOLE canvas, and the transform padding then shifted that result afterwards,
-// pushing the top of the box up under the topbar. Measured 2026-10-09: box
-// lat[30.42..47.62] lng[-122.38..-84.96] on a 1422x800 canvas returned tgt=4.53, a zoom whose
-// 490px of usable height holds about 11 degrees of latitude against the 17 the box needs --
-// Seattle ended up off the top edge while the longitude span fitted fine, which is exactly
-// what was on screen. The same span on a 360x780 phone returned 2.50 and looked correct,
-// because a tall narrow canvas hid the error. Give it the real padding.
-function _camPadding() { try { return _followPadding(); } catch (e) { return 0; } }
-// cameraForBounds DISCARDS the padding it is given here -- proved 2026-10-09 by arithmetic
-// against the live reading: box lat[30.42..47.62] lng[-122.38..-84.96] on a 1422x800 canvas
-// needs z3.95 with the real padding and z4.65 with none, and the app was using 4.53. Seattle
-// fell off the top by exactly that difference. Passing the padding (853) changed nothing,
-// because the option is being ignored, so compute the fit directly instead of asking.
+// Why the fit is computed here rather than asked for: Mapbox's cameraForBounds discards the
+// padding option at this call site. Proved 2026-10-09 by arithmetic against a live reading --
+// box lat[30.42..47.62] lng[-122.38..-84.96] on a 1422x800 canvas needs z3.95 with the real
+// padding and z4.65 with none, and it returned 4.53. A distant member fell off the top edge by
+// exactly that difference while the east-west span fitted fine, which is what was on screen.
+// Three earlier attempts (pass nothing / pass half / pass the real padding) all failed on the
+// same cause, so _zoomForBounds below owns the fit outright and cameraForBounds is not used.
 // Web Mercator: a tile world is 512px at z0; x is linear in longitude, y is the log-tangent
 // projection. The zoom that fits is whichever axis runs out of room first.
 function _zoomForBounds(b, pad, cw, ch) {
@@ -26001,24 +26002,19 @@ function _groupFollowTick(force) {
   if (window._camLockUid) window._camLockUid = null;
   var b = new mapboxgl.LngLatBounds(pts[0], pts[0]);
   pts.forEach(function(p) { b.extend(p); });
-  var cam;
   // Record what the camera math actually saw. Reverse-engineering these numbers by measuring
   // pixel margins in a screenshot is guesswork with big error bars; this is the ground truth.
+  // ONE padding read for the whole tick. It was being computed five separate times -- debug,
+  // the transform re-assert, _camPadding, _zoomForBounds and _allPointsVisible -- and each
+  // call does two getBoundingClientRect()s. That is ten forced layout flushes a second, on
+  // the same thread as the 60fps camera loop. Nothing in the tick changes layout between
+  // them, and three independent reads could legitimately disagree.
+  var _pad = _followPadding();
   try {
-    var _p = _followPadding();
     window._gfDbg = 'cv=' + Math.round(map.getCanvas().clientWidth) + 'x' + Math.round(map.getCanvas().clientHeight)
-      + ' pad=' + Math.round(_p.top) + '/' + Math.round(_p.bottom) + '/' + Math.round(_p.left) + '/' + Math.round(_p.right)
-      + ' cur=' + map.getZoom().toFixed(2) + ' drags=' + (window._dragCount || 0);
-    // The verdict log says who the camera INCLUDED; this says what box it actually built from
-    // them. Those two disagreed on 2026-10-09 -- Vanesa logged IN from Seattle while the target
-    // zoom stayed at 4.53, which is a box a tenth that size -- and without the span there is no
-    // way to tell which half is wrong.
-    try {
-      var _la = pts.map(function (q) { return q[1]; }), _lo = pts.map(function (q) { return q[0]; });
-      window._gfDbg += ' n=' + pts.length
-        + ' lat[' + Math.min.apply(null, _la).toFixed(2) + '..' + Math.max.apply(null, _la).toFixed(2) + ']'
-        + ' lng[' + Math.min.apply(null, _lo).toFixed(2) + '..' + Math.max.apply(null, _lo).toFixed(2) + ']';
-    } catch (e2) {}
+      + ' pad=' + Math.round(_pad.top) + '/' + Math.round(_pad.bottom) + '/' + Math.round(_pad.left) + '/' + Math.round(_pad.right)
+      + ' cur=' + map.getZoom().toFixed(2);
+    window._gfDbg += ' n=' + pts.length;
   } catch (e) {}
   // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
   // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
@@ -26035,28 +26031,24 @@ function _groupFollowTick(force) {
   // Only written when it has actually drifted: setPadding triggers a transform update, and
   // doing that every second would fight the eased camera.
   try {
-    var _wantPad = _followPadding();
     var _havePad = (typeof map.getPadding === 'function') ? map.getPadding() : null;
     var _off = !_havePad || ['top', 'bottom', 'left', 'right'].some(function (k) {
-      return Math.abs((_havePad[k] || 0) - _wantPad[k]) > 1;
+      return Math.abs((_havePad[k] || 0) - _pad[k]) > 1;
     });
-    if (_off) map.setPadding(_wantPad);
+    if (_off) map.setPadding(_pad);
   } catch (e) {}
-  try { cam = map.cameraForBounds(b, { padding: _camPadding(), maxZoom: 16 }); } catch (e) {}
-  // Last-ditch: retry with a flat, small padding. cameraForBounds returning nothing used to
-  // mean the camera simply never moved — group-follow silently did nothing while its button
-  // sat lit. A slightly tight fit beats no fit at all.
-  if (!cam) { try { cam = map.cameraForBounds(b, { padding: 20, maxZoom: 16 }); } catch (e) {} }   // on top of the transform padding
+  // cameraForBounds is gone. Once _zoomForBounds computed the fit directly, the only thing
+  // still taken from it was cam.center -- and because the chrome padding is already on the map
+  // transform above, that centre is simply the midpoint of the box. So a full iterative camera
+  // solve ran every second, the expensive half of the tick, and its answer was discarded.
+  var center = b.getCenter();
   window._gfLastPts = pts.length;
-  window._gfLastFail = cam ? '' : 'cameraForBounds';
-  if (!cam) return true;
+  window._gfLastFail = '';
   var curZoom = map.getZoom();
-  // Our own fit when we can compute one; cameraForBounds' centre is still fine, it is only the
-  // zoom that comes back unpadded.
   var _own = null;
-  try { _own = _zoomForBounds(b, _followPadding(), map.getCanvas().clientWidth, map.getCanvas().clientHeight); } catch (e) {}
-  var targetZoom = Math.min((_own != null ? _own : cam.zoom), 16);
-  try { if (_own != null) window._gfDbg = (window._gfDbg || '') + ' own=' + _own.toFixed(2) + ' cfb=' + cam.zoom.toFixed(2); } catch (e) {}
+  try { _own = _zoomForBounds(b, _pad, map.getCanvas().clientWidth, map.getCanvas().clientHeight); } catch (e) {}
+  if (_own == null) return true;                     // no fit we can trust: leave the camera alone
+  var targetZoom = Math.min(_own, 16);
   try { window._gfDbg = (window._gfDbg || '') + ' tgt=' + targetZoom.toFixed(2) + (force ? ' F' : ''); } catch (e) {}
   // targetZoom is the padded "everyone comfortably fits" ideal zoom — anything tighter than
   // that MIGHT clip someone, but doesn't necessarily (the padding is generous on purpose).
@@ -26064,17 +26056,17 @@ function _groupFollowTick(force) {
   // ACTUALLY still on screen — only give up the manual zoom, after a few seconds' grace, once
   // someone genuinely falls out of view.
   if (!force && window._groupFollowUserZoomed && targetZoom < curZoom - 0.05) {
-    var stillVisible = _allPointsVisible(pts, _followPadding());
+    var stillVisible = _allPointsVisible(pts, _pad);
     if (stillVisible) {
       window._groupFollowOutOfViewSince = null;
-      _gfPublish(cam.center, _gfHoldZoom(curZoom), force);
+      _gfPublish(center, _gfHoldZoom(curZoom), force);
       return true;
     }
     if (!window._groupFollowOutOfViewSince) window._groupFollowOutOfViewSince = Date.now();
     if (Date.now() - window._groupFollowOutOfViewSince < 3000) {
       // Grace period — try recentering at the same zoom first; that alone may bring everyone
       // back into frame without needing to zoom out at all.
-      _gfPublish(cam.center, _gfHoldZoom(curZoom), force);
+      _gfPublish(center, _gfHoldZoom(curZoom), force);
       return true;
     }
     // Grace period expired and someone's still off-screen — fall through to the normal
@@ -26111,10 +26103,10 @@ function _groupFollowTick(force) {
   // The tick no longer animates anything: it publishes WHERE the camera should be heading, and
   // the frame loop closes the gap. That is what makes centre and zoom one motion instead of a
   // sequence of little ones.
-  _gfPublish(cam.center, targetZoom, force);
+  _gfPublish(center, targetZoom, force);
   // Tapping the button should arrive promptly rather than drifting in over several seconds.
   if (force) {
-    try { map.easeTo({ center: cam.center, zoom: targetZoom, duration: 850, easing: _linEase }); } catch (e) {}
+    try { map.easeTo({ center: center, zoom: targetZoom, duration: 850, easing: _linEase }); } catch (e) {}
   }
   return true;
 }
@@ -27771,12 +27763,19 @@ window._listenVoiceEverywhere = function () {
     Object.keys(rooms).forEach(function (k) { try { window._listenVoiceInvites(k); } catch (e) {} });
   } catch (e) {}
 };
-try { setInterval(function () { try { window._listenVoiceEverywhere(); } catch (e) {} }, 20000); } catch (e) {}
+// No forever-interval. The two moments the Crew set can gain a key both already call this --
+// entering a map, and the live circles-changed handler -- so a 20s timer only re-walked two
+// localStorage JSON parses, ~4,300 times a day, to find nothing new. One delayed run after
+// startup covers the cold case where neither has fired yet.
+try { setTimeout(function () { try { window._listenVoiceEverywhere(); } catch (e) {} }, 4000); } catch (e) {}
 window._voiceInviteSubs = window._voiceInviteSubs || {};
 window._listenVoiceInvites = function (roomKeyOpt) {
   var _rk = roomKeyOpt || groupName;
   if (!db || !_rk || !userId) return;
   if (window._voiceInviteSubs[_rk]) return;   // already watching this room — don't stack listeners
+  // Marked before the listeners attach so a re-entrant call cannot double-subscribe. Stored as
+  // a token for now; the device registry (_ensureDeviceSub) keeps the unsubscribe function
+  // instead, which is what a future "leave a Crew and stop listening" needs.
   window._voiceInviteSubs[_rk] = 1;
   try {
     fbOnValue(fbRef(db, 'gl/' + _rk + '/voice/' + userId), async function (snap) {
