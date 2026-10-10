@@ -589,6 +589,259 @@
   }
   body.ui-v2 #join-screen > * { position: relative; z-index: 1; }
 
+
+  /* ══════════════════════════════════════════════════════════════════════════════════════
+     ui-v2 DESIGN SYSTEM — one pass over every screen.
+     Everything here is scoped to body.ui-v2, so the classic look is untouched.
+
+     THE DIAGNOSIS, before any paint. Every screen was one narrow centre column: a header, a
+     row of equal grey boxes, then a list underneath. On a 1422px window that is a ribbon down
+     the middle with empty space either side, and the controls sit ABOVE the thing they
+     control -- so tapping "Crews" changes something you are not looking at. That is why Rooms
+     and Crews read as inconsistent (the list lives somewhere else entirely) and why the
+     buttons feel inert (they do not visibly own anything). Restyling that column would have
+     been a costume. The skeleton changes instead: controls BESIDE content at desktop width,
+     and the tab row becomes a dock of circular controls that carry their own state.
+
+     DELIBERATE DEVIATION from the standard: text-bearing panels stay OPAQUE rather than
+     frosted. This file already found that translucency + backdrop-filter forces the browser
+     to composite and drop to grayscale antialiasing, which reads as permanently fuzzy text on
+     Windows. The standard also demands text be sharp and carry no glow; where the two
+     conflict, sharp wins. Translucency is used only on surfaces that hold no body text.
+     ══════════════════════════════════════════════════════════════════════════════════════ */
+  body.ui-v2 {
+    /* Elevation ladder — lighter is closer. Never freehand a surface colour. */
+    --v2-e0: #0A0C11;              /* canvas */
+    --v2-e1: #151922;              /* panel */
+    --v2-e1h: #1B2029;             /* panel, top of its gradient */
+    --v2-e2: #232936;              /* interactive widget sitting ON a panel */
+    --v2-e2h: #2C3443;
+    --v2-recess: #06080B;          /* engraved: tracks, segmented wells */
+    --v2-line: rgba(255,255,255,.07);
+    --v2-ink: #FFFFFF;
+    --v2-ink2: rgba(255,255,255,.82);
+    --v2-ink3: rgba(255,255,255,.66);   /* floor is 64% — never dimmer */
+    /* GroundLink's amber is the product's identity, so it stays the primary rather than being
+       rotated out. Ice-blue is the secondary, used for data and distance readouts so status
+       green/red stays unambiguous. */
+    --v2-acc: #F5A524;
+    --v2-acc2: #FFD166;
+    --v2-cool: #6FD3FF;
+    --v2-ok: #00E676;
+    --v2-bad: #FF453A;
+    --v2-r: 20px; --v2-rs: 14px;
+    --v2-raise:
+      inset 0 1px 0 rgba(255,255,255,.10),
+      inset 0 -1px 0 rgba(0,0,0,.55),
+      0 1px 2px rgba(0,0,0,.6),
+      0 6px 14px -8px rgba(0,0,0,.9);
+    --v2-well:
+      inset 0 3px 8px rgba(0,0,0,.9),
+      inset 0 -1px 0 rgba(255,255,255,.05);
+  }
+
+  /* ── Panels: raised housings, opaque, with a real bevel ───────────────────────────────── */
+  body.ui-v2 .join-section,
+  body.ui-v2 #member-sheet,
+  body.ui-v2 #layer-sheet .sheet-body,
+  body.ui-v2 .pin-sheet,
+  body.ui-v2 #chat-panel,
+  body.ui-v2 #user-drawer,
+  body.ui-v2 #saved-pins-drawer,
+  body.ui-v2 #tracks-drawer,
+  body.ui-v2 #track-detail-drawer,
+  body.ui-v2 #places-drawer {
+    background: linear-gradient(158deg, var(--v2-e1h), var(--v2-e1) 70%) !important;
+    border: 1px solid var(--v2-line) !important;
+    border-radius: var(--v2-r) !important;
+    box-shadow: var(--v2-raise) !important;
+  }
+  /* Drawers are anchored to an edge, so square off the side that touches it. */
+  body.ui-v2 #user-drawer, body.ui-v2 #saved-pins-drawer, body.ui-v2 #tracks-drawer,
+  body.ui-v2 #track-detail-drawer, body.ui-v2 #places-drawer, body.ui-v2 #member-sheet {
+    border-radius: var(--v2-r) var(--v2-r) 0 0 !important;
+  }
+
+  /* ── Rows and list items: raised widgets, a step lighter than the panel ───────────────── */
+  body.ui-v2 .room-item,
+  body.ui-v2 #crews-list > div,
+  body.ui-v2 #people-list > div,
+  body.ui-v2 #talk-list > div,
+  body.ui-v2 .trk-row,
+  body.ui-v2 #saved-pins-list > div {
+    background: linear-gradient(160deg, var(--v2-e2h), var(--v2-e2)) !important;
+    border: 1px solid rgba(255,255,255,.06) !important;
+    border-radius: var(--v2-rs) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.12),
+      inset 0 -1px 0 rgba(0,0,0,.5),
+      0 6px 14px -10px rgba(0,0,0,.95) !important;
+    transition: transform .14s ease, box-shadow .14s ease;
+  }
+  body.ui-v2 .room-item:hover, body.ui-v2 .trk-row:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.16),
+      0 10px 20px -10px rgba(0,0,0,.95) !important;
+  }
+
+  /* ── The dock: the five hub buttons become circular controls that carry their own state ── */
+  body.ui-v2 #home-hub {
+    display: flex !important; gap: 10px; justify-content: space-between;
+    padding: 7px !important; border-radius: 999px !important;
+    background: var(--v2-recess) !important;
+    box-shadow: var(--v2-well) !important;
+    border: none !important;
+  }
+  body.ui-v2 .hub-btn {
+    flex: 1; display: flex !important; flex-direction: column; align-items: center; gap: 4px;
+    padding: 10px 4px !important; border: none !important; border-radius: 999px !important;
+    background: transparent !important; color: var(--v2-ink3) !important;
+    font-size: 12px !important; font-weight: 700 !important; letter-spacing: .01em;
+    position: relative; transition: color .16s ease, background .16s ease;
+  }
+  body.ui-v2 .hub-btn .licon { width: 20px !important; height: 20px !important; }
+  body.ui-v2 .hub-btn.active {
+    color: #1A1204 !important;
+    background: linear-gradient(150deg, var(--v2-acc2), var(--v2-acc)) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 4px 10px -4px rgba(245,165,36,.5) !important;
+  }
+  body.ui-v2 .hub-btn.active .licon { color: #1A1204 !important; }
+  /* A count belongs ON the control, not discovered after tapping it. */
+  body.ui-v2 .hub-btn .hub-count {
+    position: absolute; top: 4px; right: calc(50% - 22px);
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+    background: var(--v2-ok); color: #04210F;
+    font-size: 11px; font-weight: 800; line-height: 17px; text-align: center;
+  }
+  body.ui-v2 .hub-btn.active .hub-count { background: #1A1204; color: var(--v2-acc2); }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────────────────────── */
+  body.ui-v2 .btn-primary,
+  body.ui-v2 #all-crews-btn,
+  body.ui-v2 #front-share-btn {
+    border: none !important; border-radius: var(--v2-rs) !important;
+    background: linear-gradient(150deg, var(--v2-acc2), var(--v2-acc)) !important;
+    color: #1A1204 !important; font-weight: 800 !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 6px 14px -8px rgba(245,165,36,.55) !important;
+  }
+  body.ui-v2 .btn-primary:active, body.ui-v2 #all-crews-btn:active { transform: translateY(1px); }
+  /* Secondary: raised, not an outline. An outlined button on dark reads as disabled. */
+  body.ui-v2 #new-group-section button,
+  body.ui-v2 #hunt-btn, body.ui-v2 #d3-btn,
+  body.ui-v2 #zoom-in-btn, body.ui-v2 #zoom-out-btn, body.ui-v2 #layer-btn {
+    background: linear-gradient(160deg, var(--v2-e2h), var(--v2-e2)) !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    color: var(--v2-ink2) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 4px 10px -6px rgba(0,0,0,.9) !important;
+  }
+
+  /* ── Segmented controls sink INTO the surface ────────────────────────────────────────── */
+  body.ui-v2 #home-filter, body.ui-v2 #join-tabs,
+  body.ui-v2 .seg-row, body.ui-v2 #map-controls {
+    background: var(--v2-recess) !important;
+    box-shadow: var(--v2-well) !important;
+    border: none !important; border-radius: 999px !important; padding: 4px !important;
+  }
+  body.ui-v2 #home-filter button, body.ui-v2 #join-tabs .jtab {
+    border: none !important; border-radius: 999px !important; background: transparent !important;
+    color: var(--v2-ink3) !important; font-weight: 700 !important;
+  }
+  body.ui-v2 #home-filter button.active, body.ui-v2 #join-tabs .jtab.active {
+    color: #1A1204 !important;
+    background: linear-gradient(150deg, var(--v2-acc2), var(--v2-acc)) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55) !important;
+  }
+
+  /* ── Top bar ─────────────────────────────────────────────────────────────────────────── */
+  body.ui-v2 #topbar {
+    background: linear-gradient(180deg, rgba(10,12,17,.97), rgba(10,12,17,.86)) !important;
+    border-bottom: 1px solid var(--v2-line) !important;
+    box-shadow: 0 6px 18px -12px rgba(0,0,0,.95) !important;
+  }
+  body.ui-v2 .icon-btn {
+    border-radius: 50% !important;
+    background: linear-gradient(160deg, var(--v2-e2h), var(--v2-e2)) !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12) !important;
+  }
+  body.ui-v2 .icon-btn.active, body.ui-v2 .icon-btn[aria-pressed="true"] {
+    background: linear-gradient(150deg, var(--v2-acc2), var(--v2-acc)) !important;
+    border-color: transparent !important;
+  }
+
+  /* ── Typography floor. Nothing under 12px; no secondary text dimmer than 64%. ─────────── */
+  body.ui-v2 .join-section-title, body.ui-v2 .field-label, body.ui-v2 .section-title {
+    font-size: 12px !important; font-weight: 700 !important;
+    letter-spacing: .13em !important; text-transform: uppercase !important;
+    color: var(--v2-ink3) !important;
+  }
+  body.ui-v2 .room-name, body.ui-v2 .pname { font-size: 15px !important; font-weight: 700 !important; color: var(--v2-ink) !important; }
+  body.ui-v2 .room-meta, body.ui-v2 .pmeta { font-size: 13px !important; color: var(--v2-ink3) !important; }
+
+  /* ── Keyboard focus. The standard requires it and there was none. ────────────────────── */
+  body.ui-v2 button:focus-visible, body.ui-v2 input:focus-visible, body.ui-v2 [tabindex]:focus-visible {
+    outline: 2px solid var(--v2-acc2) !important; outline-offset: 2px !important;
+  }
+
+  /* ══ THE SKELETON CHANGE ═══════════════════════════════════════════════════════════════
+     At desktop width the home card stops being a narrow column. The gauge and the dock move
+     into a left rail; the list the dock controls fills the main area and is ALWAYS visible.
+     Tapping a dock button changes what you are already looking at, instead of changing
+     something further down the page. This is also the "fill the space" fix: the card grows to
+     use the window rather than leaving two empty gutters.
+     ════════════════════════════════════════════════════════════════════════════════════ */
+  @media (min-width: 1100px) {
+    body.ui-v2 #join-screen .join-card,
+    body.ui-v2 #join-screen #panel-join {
+      max-width: min(1180px, 94vw) !important;
+      width: min(1180px, 94vw) !important;
+    }
+    body.ui-v2 #panel-join {
+      display: grid !important;
+      grid-template-columns: minmax(0, 330px) minmax(0, 1fr);
+      grid-template-areas:
+        "rail  main"
+        "rail  main";
+      align-items: start;
+      column-gap: 18px; row-gap: 12px;
+    }
+    /* Rail: identity, the anchor gauge, the dock. */
+    body.ui-v2 #panel-join > #home-name-row,
+    body.ui-v2 #panel-join > #home-anchor,
+    body.ui-v2 #panel-join > #acct-status,
+    body.ui-v2 #panel-join > #home-hub { grid-column: 1; }
+    /* Main: whatever the dock selected, plus the always-available actions. */
+    body.ui-v2 #panel-join > #talk-section,
+    body.ui-v2 #panel-join > #people-section,
+    body.ui-v2 #panel-join > #crews-section,
+    body.ui-v2 #panel-join > #room-list-section,
+    body.ui-v2 #panel-join > #home-or,
+    body.ui-v2 #panel-join > #new-group-section,
+    body.ui-v2 #panel-join > #front-share-btn { grid-column: 2; }
+    /* The selected list owns the height rather than the card growing and shrinking as you
+       switch tabs, which is what made the layout feel unstable. */
+    body.ui-v2 #crews-section, body.ui-v2 #room-list-section,
+    body.ui-v2 #people-section, body.ui-v2 #talk-section {
+      min-height: 320px;
+    }
+    body.ui-v2 #crews-list, body.ui-v2 #room-list, body.ui-v2 #people-list, body.ui-v2 #talk-list {
+      max-height: 46vh; overflow-y: auto; overscroll-behavior: contain;
+    }
+    /* The dock is vertical in the rail: five labelled controls, not five cramped boxes. */
+    body.ui-v2 #home-hub { flex-direction: column !important; border-radius: var(--v2-r) !important; }
+    body.ui-v2 .hub-btn {
+      flex-direction: row !important; justify-content: flex-start; gap: 11px;
+      padding: 12px 14px !important; border-radius: var(--v2-rs) !important; font-size: 14px !important;
+    }
+    body.ui-v2 .hub-btn .hub-count { position: static; margin-left: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body.ui-v2 .room-item, body.ui-v2 .trk-row { transition: none !important; }
+    body.ui-v2 .room-item:hover, body.ui-v2 .trk-row:hover { transform: none !important; }
+  }
+
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg) url('/icons/splash.png') center/cover fixed no-repeat; background-blend-mode: overlay; }
   /* TEXT SHARPNESS. The panels were translucent (`background: rgba(22,27,34,.62)`) with a
      `backdrop-filter: blur()`. Both of those force the browser to composite the panel into
@@ -1907,10 +2160,10 @@
                without a room, which is why it can share a row with Rooms without duplicating
                it the way the old "Map" button did. -->
           <button type="button" onclick="window._homeGo('talk')"   class="hub-btn"><svg class="licon"><use href="#ic-mic"/></svg><span>Talk</span><span id="hub-talk-badge" class="hub-badge" style="display:none"></span></button>
-          <button type="button" onclick="window._homeGo('rooms')"  class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span></button>
+          <button type="button" onclick="window._homeGo('rooms')"  class="hub-btn"><svg class="licon"><use href="#ic-search"/></svg><span>Rooms</span><span id="hub-rooms-count" class="hub-count" style="display:none"></span></button>
           <button type="button" onclick="window._homeGo('mymap')"  class="hub-btn"><svg class="licon"><use href="#ic-map"/></svg><span>My Map</span></button>
-          <button type="button" onclick="window._homeGo('people')" class="hub-btn"><svg class="licon"><use href="#ic-users"/></svg><span>People</span></button>
-          <button type="button" onclick="window._homeGo('crews')"  class="hub-btn"><svg class="licon" style="color:var(--accent)"><use href="#ic-users"/></svg><span>Crews</span></button>
+          <button type="button" onclick="window._homeGo('people')" class="hub-btn"><svg class="licon"><use href="#ic-users"/></svg><span>People</span><span id="hub-people-count" class="hub-count" style="display:none"></span></button>
+          <button type="button" onclick="window._homeGo('crews')"  class="hub-btn"><svg class="licon" style="color:var(--accent)"><use href="#ic-users"/></svg><span>Crews</span><span id="hub-crews-count" class="hub-count" style="display:none"></span></button>
         </div>
 
         <!-- ══ TALK — voice without going through the map ══════════════════════
@@ -3895,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 862;
+var APP_BUILD = 863;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10997,8 +11250,35 @@ window._anchorGo = function () {
     else if (window._homeGo) window._homeGo('crews');
   } catch (e) {}
 };
+// Counts live ON the dock buttons, so the shape of your world is readable without pressing
+// anything. Only drawn when there is something to say -- a zero badge is noise.
+window._renderHubCounts = function () {
+  try {
+    var set = function (id, n) {
+      var el = document.getElementById(id); if (!el) return;
+      if (!n) { el.style.display = 'none'; return; }
+      el.textContent = n > 99 ? '99+' : String(n);
+      el.style.display = '';
+    };
+    var crews = 0; try { crews = Object.keys(_getCircles() || {}).length; } catch (e) {}
+    set('hub-crews-count', crews);
+    var favs = 0; try { favs = Object.keys(_getFriends() || {}).length; } catch (e) {}
+    set('hub-people-count', favs);
+    // Rooms counts people who are LIVE across your crews -- the one number worth glancing at
+    // on a home screen, and the same figure the anchor gauge is showing.
+    var live = 0;
+    try {
+      var d = window._talkDetail || {};
+      Object.keys(d).forEach(function (k) {
+        ((d[k] || {}).people || []).forEach(function (pp) { if (pp && pp.live) live++; });
+      });
+    } catch (e) {}
+    set('hub-rooms-count', live);
+  } catch (e) {}
+};
 window._renderCrewsSection = function () {
   try { window._renderHomeAnchor(); } catch (e) {}
+  try { window._renderHubCounts(); } catch (e) {}
   var list = document.getElementById('crews-list'); if (!list) return;
   var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
   var keys = Object.keys(circles);
