@@ -3895,7 +3895,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 860;
+var APP_BUILD = 861;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -4610,9 +4610,12 @@ function _applyMarkerMerged(primary, members) {
   //
   // Erring green would hide someone who has gone dark; erring red costs a glance at the faces
   // to see who. In a safety app that trade only goes one way.
+  // 860 made the whole ring red if anyone inside was dark. Per-cell bars say the same thing
+  // and say WHO, so the outer ring drops back to neutral rather than shouting a summary over
+  // the detail. One signal, at the granularity that is actually useful.
   var allLive = ordered.every(function (u) { var m = userMarkers[u]; return !!(m && m._isLive); });
-  el.style.border = '3px solid ' + (allLive ? '#00e676' : '#ff453a');
-  _applyRing(el, allLive ? 'mk-ring-live' : 'mk-ring-stale');
+  el.style.border = '3px solid ' + (allLive ? '#ffffff' : '#c9d1d9');
+  _applyRing(el, null);
   // Always 1: each cell below carries its own member's liveness, and dimming here as well
   // multiplied the two together -- .65 x .45 = .29, and the map showed through the marker.
   el.style.opacity = '1';
@@ -4651,12 +4654,13 @@ function _applyMarkerMerged(primary, members) {
       // .65 is the same fade a stale dot gets standing alone, so a person looks equally
       // faded whether or not someone is beside them. Greyscale is the extra cue.
       var dim = liveU ? '' : 'filter:grayscale(1) brightness(.78);';
+      var cellCls = 'mk-cell ' + (liveU ? 'live' : 'stale');
       if (ava) {
-        return '<span style="flex:1;height:100%;' + dim + 'background-color:' + col +
+        return '<span class="' + cellCls + '" style="flex:1;height:100%;' + dim + 'background-color:' + col +
           ';background-image:url(&quot;' + ava +
           '&quot;);background-size:cover;background-position:center"></span>';
       }
-      return '<span style="flex:1;height:100%;' + dim + 'display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
+      return '<span class="' + cellCls + '" style="flex:1;height:100%;' + dim + 'display:flex;align-items:center;justify-content:center;background:' + col + '">' + txt + '</span>';
     }).join('');
   }
   // The corner badge belongs to the primary marker alone; on a merged oval it would label
@@ -7370,6 +7374,17 @@ window._ringCss = (function () {
       'background:rgba(240,165,0,.92);color:#1a1206;font-size:10px;font-weight:800;letter-spacing:.12em;' +
       'padding:3px 10px;border-radius:999px;font-family:system-ui,sans-serif}' +
       '@media (prefers-reduced-motion:reduce){#hunt-edge{animation:none;opacity:.85}}' +
+      // Each cell of a merged oval carries its OWN status bar along the bottom, so a shape
+      // holding four people says four things instead of one. Same two colours and the same
+      // 2.6s beat as the solo rings, so a person reads identically whether they are standing
+      // alone or beside someone.
+      '@keyframes glCellLive{0%,100%{opacity:.55}50%{opacity:1}}' +
+      '@keyframes glCellStale{0%,100%{opacity:.5}50%{opacity:1}}' +
+      '.mk-cell{position:relative}' +
+      '.mk-cell::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px}' +
+      '.mk-cell.live::after{background:#00e676;animation:glCellLive 2.6s ease-in-out infinite}' +
+      '.mk-cell.stale::after{background:#ff453a;animation:glCellStale 2.6s ease-in-out infinite}' +
+      '@media (prefers-reduced-motion:reduce){.mk-cell.live::after,.mk-cell.stale::after{animation:none;opacity:1}}' +
       '.mk-ring-live{animation:glRingLive 2.6s ease-in-out infinite}' +
       '.mk-ring-stale{animation:glRingStale 2.6s ease-in-out infinite}' +
       // A ring that cannot move still has to say the same thing, so it keeps a solid halo.
