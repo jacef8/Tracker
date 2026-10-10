@@ -6,7 +6,7 @@
 // Cache name auto-versions from the ?v=<build> query the page registers us with, so every
 // deploy gets a brand-new cache and the activate handler purges all the old ones. This is
 // what stops an installed PWA from getting stuck on an old build.
-const SW_V = (function(){ try { return new URL(self.location).searchParams.get('v') || '11'; } catch (e) { return '11'; } })();
+const SW_V = (function(){ try { return new URL(self.location).searchParams.get('v') || '12'; } catch (e) { return '12'; } })();
 const CACHE = 'groundlink-' + SW_V;
 const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
@@ -49,6 +49,24 @@ self.addEventListener('message', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   const href = e.request.url;
+
+  // DOWNLOADS NEVER GO THROUGH THE SERVICE WORKER.
+  //
+  // Reported 2026-10-10: a new Android phone tapped "Install the Android app" and nothing
+  // happened -- nothing in Chrome's download tray either, while the server returned the file
+  // correctly (200, 4.5 MB, application/vnd.android.package-archive). The catch-all handler
+  // at the bottom of this file was answering the request, and two things go wrong when it
+  // does. A download started by <a download> that is served from a ServiceWorker can lose its
+  // Content-Disposition filename and be dropped silently by Chrome, and the generic branch
+  // ALSO does `clone.blob()` on the way past, buffering the entire 4.5 MB APK into the app
+  // cache on every single tap.
+  //
+  // Returning without calling respondWith() hands the request back to the browser, which
+  // fetches and saves it natively -- the behaviour it had before this app was a PWA at all.
+  if (/\.(apk|aab|ipa|zip|gpx|csv)$/i.test(url.pathname) || url.searchParams.has('dl')) return;
+  // Range requests are for media seeking and partial downloads. A SW that answers one with a
+  // full 200 body breaks the player (or the resume) outright; let those through too.
+  if (e.request.headers.get('range')) return;
 
   // Offline-downloaded map tiles (USGS National Map) — serve from the offline-tiles
   // cache first so a downloaded hunting area works with NO signal; otherwise fall
