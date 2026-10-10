@@ -3895,7 +3895,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 858;
+var APP_BUILD = 859;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -13227,6 +13227,7 @@ function enterMap(name, group, uid) {
     listenChat();
     listenTrails();
     if (window._listenVoiceInvites) window._listenVoiceInvites();
+    if (window._listenVoiceEverywhere) window._listenVoiceEverywhere();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { if (window._registerVoipToken) window._registerVoipToken(); } catch (e) {}   // (re)file iOS VoIP token now that db+uid are ready
     try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}     // (re)file iOS 16 Push-to-Talk ephemeral token
@@ -26683,6 +26684,7 @@ try {
           try { localStorage.setItem('gl_circles', str); } catch (e) {}
           try { window._listenCircles && window._listenCircles(); } catch (e) {}
           try { window._renderCrewsSection && window._renderCrewsSection(); } catch (e) {}
+          try { window._listenVoiceEverywhere && window._listenVoiceEverywhere(); } catch (e) {}
           try { window._renderHomeAnchor && window._renderHomeAnchor(); } catch (e) {}
           // Joining is the direction worth announcing; a removal explains itself by vanishing.
           try {
@@ -27724,10 +27726,35 @@ try {
   });
 } catch (e) {}
 
-window._listenVoiceInvites = function () {
-  if (!db || !groupName || !userId) return;
+// Watch for someone calling YOU. This used to bail unless you were already inside a room,
+// and only ever watched that one room -- so a call placed from the home screen, or to someone
+// sitting in a different Crew, delivered the push notification and nothing else: no window, no
+// toolbar, no way to tell who was talking or to answer. Now it attaches per room, and
+// _listenVoiceEverywhere attaches it for every Crew you belong to.
+// Attach the invite listener for EVERY Crew this account belongs to, not just the room
+// currently open. A call is placed into a specific Crew's node, so if the person being called
+// is anywhere else -- the home screen, another Crew -- nobody is listening and the call lands
+// as a silent notification. Re-run whenever the Crew list changes; the per-room guard above
+// makes repeat calls free.
+window._listenVoiceEverywhere = function () {
   try {
-    fbOnValue(fbRef(db, 'gl/' + groupName + '/voice/' + userId), async function (snap) {
+    if (!db || !userId) return;
+    var rooms = {};
+    try { Object.keys(_getCircles() || {}).forEach(function (k) { if (k) rooms[k] = 1; }); } catch (e) {}
+    try { Object.keys(_getJoinedRooms() || {}).forEach(function (k) { if (k) rooms[k] = 1; }); } catch (e) {}
+    try { if (typeof groupName !== 'undefined' && groupName) rooms[groupName] = 1; } catch (e) {}
+    Object.keys(rooms).forEach(function (k) { try { window._listenVoiceInvites(k); } catch (e) {} });
+  } catch (e) {}
+};
+try { setInterval(function () { try { window._listenVoiceEverywhere(); } catch (e) {} }, 20000); } catch (e) {}
+window._voiceInviteSubs = window._voiceInviteSubs || {};
+window._listenVoiceInvites = function (roomKeyOpt) {
+  var _rk = roomKeyOpt || groupName;
+  if (!db || !_rk || !userId) return;
+  if (window._voiceInviteSubs[_rk]) return;   // already watching this room — don't stack listeners
+  window._voiceInviteSubs[_rk] = 1;
+  try {
+    fbOnValue(fbRef(db, 'gl/' + _rk + '/voice/' + userId), async function (snap) {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;     // voice off here
@@ -27766,7 +27793,7 @@ window._listenVoiceInvites = function () {
       } catch (e) { console.error('[voice] auto-join failed', e); window._showIncomingVoice(inv.room, inv.fromName); }
     });
     // Group all-call broadcast — every member auto-joins the one shared group room.
-    fbOnValue(fbRef(db, 'gl/' + groupName + '/voiceAll'), async function (snap) {
+    fbOnValue(fbRef(db, 'gl/' + _rk + '/voiceAll'), async function (snap) {
       var inv = snap.val();
       if (!inv || !inv.room) return;
       if (document.body.classList.contains('voice-off')) return;
