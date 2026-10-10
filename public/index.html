@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 863;
+var APP_BUILD = 864;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11276,6 +11276,18 @@ window._renderHubCounts = function () {
     set('hub-rooms-count', live);
   } catch (e) {}
 };
+window._retryCrewSync = function (btn) {
+  try { if (btn) { btn.disabled = true; btn.textContent = 'Checking\u2026'; } } catch (e) {}
+  var done = function (found) {
+    try {
+      if (btn) { btn.disabled = false; btn.textContent = 'Had crews before? Re-sync this device'; }
+      var n = 0; try { n = Object.keys(_getCircles() || {}).length; } catch (e) {}
+      if (n) toast('Found ' + n + (n === 1 ? ' crew' : ' crews'), 2600);
+      else toast(found ? 'Your account has no crews saved yet' : 'Could not reach the server \u2014 try again in a moment', 3400);
+    } catch (e) {}
+  };
+  if (window._pullAccountNow) window._pullAccountNow(done); else done(false);
+};
 window._renderCrewsSection = function () {
   try { window._renderHomeAnchor(); } catch (e) {}
   try { window._renderHubCounts(); } catch (e) {}
@@ -11283,7 +11295,11 @@ window._renderCrewsSection = function () {
   var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
   var keys = Object.keys(circles);
   if (!keys.length) {
-    list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>';
+    // "You have no crews" and "your crews have not downloaded yet" look identical from here,
+    // and telling someone with four crews that they have none -- with no way to argue -- is
+    // the worst version of this. Offer the retry.
+    list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>'
+      + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>';
     return;
   }
   var detail = window._talkDetail || {};
@@ -27155,6 +27171,43 @@ try {
   window._applyProfilePublic = applyProfile;
   // Let other parts of the app push prefs up after a change.
   window._glSync = pushProfile;
+  // Pull the account profile DOWN on demand, and at startup.
+  //
+  // Crews, favourites and saved pins all live on the account profile, and the pull that
+  // fetches them only ever ran on the auth-state TRANSITION -- the moment of signing in. A
+  // phone that is ALREADY signed in never re-ran it. That is a real gap, hit twice in two
+  // days: Vanesa 2026-10-09 and a brand-new phone 2026-10-10, both correctly signed in, both
+  // showing "You're not in any Crews yet" while the server held four crews and every read was
+  // permitted. Nothing was broken except that nobody asked.
+  //
+  // Idempotent and cheap: one read of gl/_users/<acct>, and applyProfile only writes a key
+  // when the value actually differs.
+  window._pullAccountNow = function (cb) {
+    try {
+      var u = profileKey();
+      if (!u) { cb && cb(false); return; }
+      pullProfile(u, function (prof) {
+        if (prof) { try { applyProfile(prof); } catch (e) {} }
+        try { if (window._listenAccountCircles) window._listenAccountCircles(u); } catch (e) {}
+        try { if (window._renderCrewsSection) window._renderCrewsSection(); } catch (e) {}
+        try { if (window._renderHomeAnchor) window._renderHomeAnchor(); } catch (e) {}
+        try { if (window._listenCircles) window._listenCircles(); } catch (e) {}
+        cb && cb(!!prof);
+      });
+    } catch (e) { cb && cb(false); }
+  };
+  // Once at startup, and again when the app comes back to the foreground -- a phone that has
+  // been shut for a day is exactly when the local cache is most likely to be behind.
+  try {
+    setTimeout(function () { try { window._pullAccountNow(); } catch (e) {} }, 2500);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      var now = Date.now();
+      if (now - (window._lastAcctPull || 0) < 60000) return;   // not on every glance
+      window._lastAcctPull = now;
+      try { window._pullAccountNow(); } catch (e) {}
+    });
+  } catch (e) {}
 
   // "Am I ACTUALLY signed in?" — not just "does the gl_account flag say so." Two legacy bugs
   // leave the flag set on a device that never completed a real sign-in, and the flag alone
