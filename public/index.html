@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 874;
+var APP_BUILD = 875;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14044,6 +14044,19 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   // ?dshare=<code> — a family member opened a device share link. Stash it; it's accepted
   // once we know they're signed in (from _listenDevices / sign-in success).
   try { var _dsc = new URLSearchParams(window.location.search).get('dshare'); if (_dsc) localStorage.setItem('gl_pending_dshare', _dsc); } catch (e) {}
+  // ?pin=lat,lng from a shared pin link. Held in memory only -- a shared pin is a one-time
+  // "come look at this", not a preference, and persisting it would re-hijack the camera on
+  // every later launch.
+  try {
+    var _pp = new URLSearchParams(window.location.search).get('pin');
+    if (_pp) {
+      var _pa = _pp.split(',');
+      var _plat = parseFloat(_pa[0]), _plng = parseFloat(_pa[1]);
+      if (isFinite(_plat) && isFinite(_plng) && Math.abs(_plat) <= 90 && Math.abs(_plng) <= 180) {
+        window._pendingPinFocus = { lat: _plat, lng: _plng };
+      }
+    }
+  } catch (e) {}
 
   // ?fresh=1 — always show join screen, no group pre-fill
   if (new URLSearchParams(window.location.search).get('fresh')) {
@@ -14684,6 +14697,7 @@ function initMap() {
     // Signal ready and flush queued pins. Deliberately AFTER the source/layer above but
     // reachable even if an icon failed — the whole point of the isolation up there.
     window._mapReady = true;
+    try { window._focusSharedPin && window._focusSharedPin(); } catch (e) {}
     // Restore personal saved-pin markers if the user left "Show on map" on.
     try { if (window._showSavedOnMap && typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch(e){}
     if (window._queuedPins) {
@@ -14708,6 +14722,38 @@ function initMap() {
   // it snaps back — tap the locate button to stop). But panning while following ANOTHER
   // member hands control back to you and stops the snap-back, which is what you expect
   // when you drag the map away from someone you're watching.
+  // Gesture watch that does not depend on Mapbox recognising a drag. See the _gfPointerDown
+  // comment in _gfLoop: while group-follow is driving the camera, 'dragstart' never fires at
+  // all, so every teardown hung off it was unreachable exactly when it was needed most.
+  // pointerdown stops the loop immediately; only real MOVEMENT (past a small slop radius)
+  // counts as "I want the camera", so tapping a marker still opens it without ending follow.
+  (function _wirePanRelease() {
+    var cv; try { cv = map.getCanvas(); } catch (e) { return; }
+    if (!cv) return;
+    var sx = 0, sy = 0, armed = false, released = false;
+    var SLOP_PX = 8;
+    cv.addEventListener('pointerdown', function (ev) {
+      window._gfPointerDown = true;
+      sx = ev.clientX; sy = ev.clientY; armed = true; released = false;
+    }, { passive: true });
+    cv.addEventListener('pointermove', function (ev) {
+      if (!armed || released) return;
+      if (Math.abs(ev.clientX - sx) < SLOP_PX && Math.abs(ev.clientY - sy) < SLOP_PX) return;
+      released = true;
+      try { if (window._pauseFollow) window._pauseFollow(); } catch (e) {}
+      try { if (typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {}
+      try {
+        // Panning away from someone you are following ends that follow, the same rule the
+        // old dragstart handler applied -- it just never got the chance to run.
+        if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
+      } catch (e) {}
+    }, { passive: true });
+    var up = function () { window._gfPointerDown = false; armed = false; };
+    cv.addEventListener('pointerup', up, { passive: true });
+    cv.addEventListener('pointercancel', up, { passive: true });
+    cv.addEventListener('pointerleave', up, { passive: true });
+  })();
+
   map.on('dragstart', function(e) {
     if (!e.originalEvent) return;               // ignore our own programmatic eases
     if (followUid && followUid !== userId) stopFollowing(); // panning away ends follow-me
@@ -18787,6 +18833,44 @@ window.deletePin = pid => {
 window._closePinPopup = function() {
   if (window._pinInfoPopup) { try { window._pinInfoPopup.remove(); } catch (e) {} window._pinInfoPopup = null; }
 };
+// Send a pin to somebody. There was no way to pass one on at all -- a pin could be dropped,
+// saved, navigated to and deleted, but never shared, which is most of the point of marking a
+// spot. The link carries the room AND the coordinate, so a crew member who taps it lands on
+// the spot; the plain coordinates and a maps link ride along in the text so it is still
+// useful to someone without the app, or without access to that Crew.
+window._sharePin = function (pid) {
+  try {
+    var pin = lastPins[pid];
+    if (!pin) { toast('That pin is gone'); return; }
+    var lat = +pin.lat, lng = +pin.lng;
+    if (!isFinite(lat) || !isFinite(lng)) { toast('That pin has no location'); return; }
+    var NL = String.fromCharCode(10);
+    var what = (pin.label || '') || (pin.cat || 'Pin');
+    var url = INVITE_BASE + '?room=' + encodeURIComponent(groupName || '') +
+              '&pin=' + encodeURIComponent(lat.toFixed(6) + ',' + lng.toFixed(6));
+    var text = what + ' (' + (pin.cat || 'Pin') + ')' + NL + lat.toFixed(5) + ', ' + lng.toFixed(5) +
+               NL + 'https://maps.google.com/?q=' + lat.toFixed(6) + ',' + lng.toFixed(6);
+    window._nativeShare({ title: 'GroundLink pin - ' + what, text: text, url: url }, 'Pin link copied');
+  } catch (e) { try { toast('Could not share that pin'); } catch (_e) {} }
+};
+// Receiving end of that link. Called from BOTH places that finish building the map (first
+// load and a style rebuild), which is why it is a named function rather than inline: the two
+// blocks are near-duplicates already and a second copy of this would be a third.
+window._focusSharedPin = function () {
+  try {
+    var pf = window._pendingPinFocus;
+    if (!pf) return;
+    window._pendingPinFocus = null;
+    setTimeout(function () {
+      try {
+        if (typeof _stopFitAll === 'function') _stopFitAll();   // an explicit link beats group-follow
+        if (window._pauseFollow) window._pauseFollow(20000);
+        map.flyTo({ center: [pf.lng, pf.lat], zoom: 16 });
+        toast('Showing the shared pin', 2600);
+      } catch (e) {}
+    }, 900);
+  } catch (e) {}
+};
 window._showPinPopup = function(pid, lngLat) {
   var pin = lastPins[pid];
   if (!pin) return;
@@ -18808,6 +18892,7 @@ window._showPinPopup = function(pid, lngLat) {
       '<button class="pop-btn pop-edit" onclick="window._navigateTo(' + pin.lat + ',' + pin.lng + ',\'' + (pin.cat||'Pin').replace(/'/g,'') + '\')">Navigate</button>' +
       '<button class="pop-btn" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
       '<button class="pop-btn" onclick="window._openRadar(\'' + pid + '\')">Radar</button>' +
+      '<button class="pop-btn" onclick="window._sharePin(\'' + pid + '\')">Share</button>' +
       '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
       (isMine ? '<button class="pop-btn" onclick="window._movePin(\'' + pid + '\')">Move</button>' : '') +
       (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
@@ -21799,6 +21884,7 @@ function setBaseLayer(btn) {
     if (radarOn) { _buildRadarFrames(); if (_radarPlaying) _radarPlay(); }
     if (window._queuedPins || lastPins) updatePinSource(window._queuedPins || lastPins);
     window._mapReady = true;
+    try { window._focusSharedPin && window._focusSharedPin(); } catch (e) {}
   });
 }
 
@@ -26508,6 +26594,15 @@ function _gfLoop() {
   try {
     var t = window._gfTarget;
     if (!t || !map) return;
+    // A finger is down on the map RIGHT NOW: stand down this instant, before deciding anything
+    // else. map.jumpTo() internally calls map.stop(), which cancels an in-progress gesture
+    // before Mapbox ever recognises it as a drag -- so while this loop is driving, 'dragstart'
+    // NEVER FIRES, and the dragstart handler that releases the camera never runs. The map then
+    // stays locked until group-follow happens to settle on its own, which is the reported
+    // "frozen for the first 20 to 30 seconds". Measured in a v3.3.0 harness: with the loop
+    // driving, mousedown fired and dragstart did not (0 of 1); with the loop settled, both
+    // fired. Yielding on pointerdown is what lets the very first drag through.
+    if (window._gfPointerDown) return;
     if (Date.now() < (window._followPausedUntil || 0)) return;   // yield to a manual pan
     if (document.visibilityState !== 'visible') return;
     var c = map.getCenter(), z = map.getZoom();
