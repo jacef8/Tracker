@@ -160,8 +160,16 @@
       // _directory (name + device id only), which is deliberately minimal and stays readable.
       "_users": {
         "$acct": {
-          ".read": "auth != null && (auth.uid === $acct || root.child('gl').child('_devOwner').child($acct).child('acct').val() === auth.uid)",
-          ".write": "auth != null && (auth.uid === $acct || root.child('gl').child('_devOwner').child($acct).child('acct').val() === auth.uid)"
+          // The _devOwner clause is gone from BOTH sides. A stranger can still create a missing
+          // _devOwner entry naming themselves (verified 2026-10-11), and while that no longer
+          // buys a room takeover, here it would have bought read AND write on somebody's
+          // profile -- their saved pins, which for most people are home and work, and the
+          // ability to empty their crews. auth.uid is the only identity here that cannot be
+          // forged, so it is the only one this trusts. Nothing legitimate is lost: every
+          // signed-in device now authenticates AS the account (see /authbridge), and a device
+          // that is not signed in reads its own profile under its own id.
+          ".read": "auth != null && auth.uid === $acct",
+          ".write": "auth != null && auth.uid === $acct"
         }
       },
       "_deadRooms": {
@@ -248,7 +256,17 @@
           ".write": "auth != null"
         },
         "config": {
-          ".write": "auth != null && (!data.child('owner').exists() || data.child('owner').val() === auth.uid || root.child('gl').child('_devOwner').child(data.child('owner').val() + '').child('acct').val() === auth.uid || data.child('admins').child(auth.uid).exists())",
+          // The _devOwner clause is GONE. It read "whoever _devOwner says owns the owner's id
+          // may rewrite this room", and _devOwner lets anyone create a MISSING entry for any
+          // uid as long as they name themselves. Three rooms had owners with no entry --
+          // mom_and_dad_trip, roberts_fam, testroom -- so a stranger could claim the owner,
+          // pass this test, rewrite config and set circle:false, which turns off the read lock
+          // and exposes the whole crew. Found 2026-10-11 while auditing for the same
+          // device-versus-account mistake that broke two things earlier the same night.
+          //
+          // Nothing legitimate is lost: a device of the owner now signs the WebView in AS the
+          // account (see /authbridge), so auth.uid IS the owner and the direct test passes.
+          ".write": "auth != null && (!data.child('owner').exists() || data.child('owner').val() === auth.uid || data.child('admins').child(auth.uid).exists())",
           "invited": {
             "$uid": {
               ".write": "auth != null"
