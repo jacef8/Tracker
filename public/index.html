@@ -2625,6 +2625,7 @@
      mode at all on a phone (no hardware Back). Reported 2026-10-11. -->
 <div id="pending-pin-bar">
   <svg class="licon licon-sm"><use href="#ic-pin"/></svg><span>Placing a pin</span>
+  <button class="pin-mode-act" id="finish-pending-pin">Finish</button>
   <button class="cancel-mode" id="cancel-pending-pin">Cancel</button>
 </div>
 
@@ -4166,7 +4167,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 878;
+var APP_BUILD = 879;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19065,9 +19066,26 @@ function _showPendingMarker(lngLat){
       _b.classList.add('active');
       if (!_b._wired) {
         _b._wired = 1;
-        // The whole chip cancels, not just the word on the end of it -- someone trying to get
-        // out aims at the thing telling them they are in a mode.
-        _b.addEventListener('click', function () { try { _closePinModal(); } catch (e) {} });
+        var _fin = document.getElementById('finish-pending-pin');
+        if (_fin) _fin.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          // Bring the sheet back rather than assuming it is up. Same two classes _openPinAt
+          // sets, so a sheet that never appeared -- or was closed while the marker stayed --
+          // returns with the pending coordinates intact and the pin can be committed.
+          try {
+            var m = document.getElementById('pin-modal');
+            if (m) { m.classList.add('show'); m.classList.add('placing'); }
+            try { _syncPinPrivateRow(); } catch (e) {}
+            var _c = window._pendingMarker && window._pendingMarker.getLngLat();
+            if (_c) {
+              pendingCoords = _c;
+              var _l = document.getElementById('pin-coords-label');
+              if (_l) _l.textContent = _c.lat.toFixed(5) + ', ' + _c.lng.toFixed(5);
+            }
+          } catch (e) {}
+        });
+        var _can = document.getElementById('cancel-pending-pin');
+        if (_can) _can.addEventListener('click', function (ev) { ev.stopPropagation(); try { _closePinModal(); } catch (e) {} });
       }
     }
   } catch (e) {}
