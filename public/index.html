@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 869;
+var APP_BUILD = 870;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -26934,6 +26934,23 @@ try {
       // Never overwrite the cloud pin library with an empty list; omit pins when we have none, use update().
       try { if (!JSON.parse(prof.pins || '[]').length) delete prof.pins; } catch (e) { delete prof.pins; }
       try { if (!JSON.parse(prof.tracks || '[]').length) delete prof.tracks; } catch (e) { delete prof.tracks; }
+      // The same protection, for the collections that did not have it.
+      //
+      // A device that has not yet LEARNED the account state must never be able to erase it.
+      // A fresh install starts with an empty crews list, and this push merges, so pushing that
+      // empty object replaced a real one. Confirmed on a new phone 2026-10-11: its profile
+      // came back as "{}" -- two characters -- and the rosters still listed seven crews. Seven
+      // other accounts were found in the same state. Each time, the account had been emptied
+      // by one of its own devices before that device had read what was there.
+      //
+      // Gated on having pulled, not on being empty, because leaving your LAST crew is a real
+      // thing that must still save. Once this device has seen the account, its empty is
+      // meaningful; before that, it is just ignorance.
+      if (!window._profilePulled) {
+        try { if (!Object.keys(JSON.parse(prof.circles || '{}')).length) delete prof.circles; } catch (e) { delete prof.circles; }
+        try { if (!JSON.parse(prof.favs || '[]').length) delete prof.favs; } catch (e) { delete prof.favs; }
+        try { if (!Object.keys(JSON.parse(prof.friends || '{}')).length) delete prof.friends; } catch (e) { delete prof.friends; }
+      }
       // Union the pin/track libraries with whatever the cloud already holds before writing, so
       // this device cannot delete entries it has simply never seen. Everything else in the
       // profile is last-writer-wins by design; these two are cumulative collections.
@@ -27056,6 +27073,9 @@ try {
 
   function applyProfile(p) {
     if (!p) return;
+    // This device has now SEEN the account, so from here its empty collections mean "I removed
+    // them", not "I never knew". pushProfile reads this before it is allowed to clear anything.
+    try { window._profilePulled = true; } catch (e) {}
     try {
       // Ignore a device-label name coming down from the cloud (see pushProfile) — restoring it
       // would just re-trigger the wipe-and-reprompt loop on this device.
