@@ -1238,6 +1238,13 @@
     box-shadow: 0 4px 20px rgba(240,165,0,.45); white-space: nowrap;
   }
   #pending-pin-bar.active { display: flex; }
+  /* Four actions plus the icon is close to a narrow phone's width, and the bar is nowrap --
+     tighten it rather than let Cancel run off the edge. */
+  @media (max-width: 420px) {
+    #pending-pin-bar { padding: 7px 10px; gap: 6px; font-size: 12px; }
+    #pending-pin-bar .pin-mode-act, #pending-pin-bar .cancel-mode { padding: 5px 8px; font-size: 11px; }
+    #pending-pin-bar > svg { display: none; }
+  }
   /* The whole bar cancels, not just the small chip on the end of it: someone trying to get out
      of this mode aims at the thing telling them they are in it. */
   #pin-mode-bar { cursor: pointer; }
@@ -2001,6 +2008,7 @@
   <symbol id="ic-arrow-right" viewBox="0 0 24 24"><line x1="4" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
   <symbol id="ic-exit" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
   <symbol id="ic-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><line x1="12" y1="1.5" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22.5" y2="12"/></symbol>
+  <symbol id="ic-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="12" x2="19" y2="7"/><circle cx="16.5" cy="9" r="1.4"/></symbol>
   <symbol id="ic-layers" viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></symbol>
   <symbol id="ic-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
   <symbol id="ic-minus" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></symbol>
@@ -2557,6 +2565,8 @@
   <button id="hunt-btn" title="Hunt mode" type="button" onclick="window._setToggleHunt()"><svg class="licon"><use href="#ic-binoculars"/></svg></button>
   <!-- 2D / 3D terrain -->
   <button id="d3-btn" title="3D terrain" type="button" onclick="window._toggle3D()" oncontextmenu="event.preventDefault();window._cycle3DExag();return false" style="font-weight:800;font-size:13px;letter-spacing:.02em">3D</button>
+  <!-- Radar — walk-to-a-waypoint finder -->
+  <button id="radar-btn" title="Radar — find a waypoint" type="button" onclick="window._openRadar()"><svg class="licon"><use href="#ic-radar"/></svg></button>
   <!-- Layers -->
   <button id="layer-btn" title="Map layers" type="button"><svg class="licon"><use href="#ic-layers"/></svg></button>
   <!-- North arrow — tap to reveal: North Up or Heading Up -->
@@ -2624,8 +2634,10 @@
      end up gone while the yellow marker stays on the map, and then there is no way out of the
      mode at all on a phone (no hardware Back). Reported 2026-10-11. -->
 <div id="pending-pin-bar">
-  <svg class="licon licon-sm"><use href="#ic-pin"/></svg><span>Placing a pin</span>
-  <button class="pin-mode-act" id="finish-pending-pin">Finish</button>
+  <svg class="licon licon-sm"><use href="#ic-pin"/></svg>
+  <button class="pin-mode-act" id="keep-pending-pin" title="Save this spot to your pins">Keep</button>
+  <button class="pin-mode-act" id="quick-pending-pin" title="Tell the crew to meet here">Quick</button>
+  <button class="pin-mode-act" id="finish-pending-pin" title="Name it and pick a type">Name&hellip;</button>
   <button class="cancel-mode" id="cancel-pending-pin">Cancel</button>
 </div>
 
@@ -4167,7 +4179,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 879;
+var APP_BUILD = 880;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19084,6 +19096,25 @@ function _showPendingMarker(lngLat){
             }
           } catch (e) {}
         });
+        // Both of these go through the SAME commit the sheet uses -- the confirm handler --
+        // rather than a second copy of the save logic. Two code paths writing pins is how the
+        // kinds drift apart.
+        var _commit = function (kind) {
+          try {
+            var m = document.getElementById('pin-modal');
+            if (m) { m.classList.add('show'); m.classList.add('placing'); }
+            var _c = window._pendingMarker && window._pendingMarker.getLngLat();
+            if (_c) pendingCoords = _c;
+            var _li = document.getElementById('pin-label-input'); if (_li) _li.value = '';
+            if (window._setPinKind) window._setPinKind(kind);
+            var _btn = document.getElementById('pin-confirm');
+            if (_btn) _btn.click();
+          } catch (e) {}
+        };
+        var _keep = document.getElementById('keep-pending-pin');
+        if (_keep) _keep.addEventListener('click', function (ev) { ev.stopPropagation(); _commit('save'); });
+        var _quick = document.getElementById('quick-pending-pin');
+        if (_quick) _quick.addEventListener('click', function (ev) { ev.stopPropagation(); _commit('meet'); });
         var _can = document.getElementById('cancel-pending-pin');
         if (_can) _can.addEventListener('click', function (ev) { ev.stopPropagation(); try { _closePinModal(); } catch (e) {} });
       }
