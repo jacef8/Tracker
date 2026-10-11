@@ -1228,6 +1228,16 @@
     box-shadow: 0 4px 20px rgba(240,165,0,.45); white-space: nowrap;
   }
   #pin-mode-bar.active { display: flex; }
+  /* Same chip, same place, same rules as the pin-mode bar above. */
+  #pending-pin-bar {
+    position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); left: 50%; transform: translateX(-50%);
+    z-index: 401;
+    background: var(--accent); border-radius: 20px;
+    padding: 8px 18px; font-size: 13px; font-weight: 700; color: #0d1117;
+    display: none; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(240,165,0,.45); white-space: nowrap;
+  }
+  #pending-pin-bar.active { display: flex; }
   /* The whole bar cancels, not just the small chip on the end of it: someone trying to get out
      of this mode aims at the thing telling them they are in it. */
   #pin-mode-bar { cursor: pointer; }
@@ -2608,6 +2618,14 @@
   <button class="pin-mode-act" id="pin-here-btn">Here (GPS)</button>
   <button class="pin-mode-act" id="pin-cross-btn">Crosshair</button>
   <button class="cancel-mode" id="cancel-pin-mode">Cancel</button>
+</div>
+
+<!-- Shown whenever a pin is pending placement. The sheet has its own Cancel, but the sheet can
+     end up gone while the yellow marker stays on the map, and then there is no way out of the
+     mode at all on a phone (no hardware Back). Reported 2026-10-11. -->
+<div id="pending-pin-bar">
+  <svg class="licon licon-sm"><use href="#ic-pin"/></svg><span>Placing a pin</span>
+  <button class="cancel-mode" id="cancel-pending-pin">Cancel</button>
 </div>
 
 <div id="place-mode-bar">
@@ -4027,7 +4045,7 @@
       </label>
     </div>
     <div class="pin-cats" id="pin-cats" style="display:block;max-height:30vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
-    <input class="pin-input" id="pin-label-input" placeholder="Description (optional)" maxlength="140" />
+    <input class="pin-input" id="pin-label-input" placeholder="Name (optional)" maxlength="140" />
     <div id="custom-cat-row" style="display:none;margin-top:6px">
       <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
     </div>
@@ -4148,7 +4166,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 875;
+var APP_BUILD = 876;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15303,6 +15321,20 @@ function updatePinSource(pins) {
         if (!sp || typeof sp.lat !== 'number' || typeof sp.lng !== 'number') return;
         var _k = 'mypin_' + (sp.pid || (sp.lat + ',' + sp.lng));
         if (pins[_k]) return;
+        // Already on this map as a room pin? Then this is just your saved COPY of it. Drawing
+        // it again stacks a second, untappable marker on the real one.
+        if (sp.pid && pins[sp.pid]) return;
+        var _dupe = false;
+        try {
+          for (var _rk in pins) {
+            var _rp = pins[_rk];
+            if (!_rp || _rp._private) continue;
+            // ~10 m. A saved copy carries the same coordinates as the pin it came from; this
+            // catches the older saves that were stored before pids were kept.
+            if (Math.abs(_rp.lat - sp.lat) < 0.0001 && Math.abs(_rp.lng - sp.lng) < 0.0001) { _dupe = true; break; }
+          }
+        } catch (_de) {}
+        if (_dupe) return;
         pins[_k] = { lat: sp.lat, lng: sp.lng, cat: sp.cat || 'Waypoint', label: sp.label || '',
                      name: 'My pin', droppedBy: userId, ts: sp.savedAt || Date.now(), _private: true };
       });
@@ -18775,6 +18807,24 @@ function maybeShowIosInstallNudge() {
   if (xBtn)  xBtn.onclick  = function () { dismiss(true); };
 }
 
+// Run fn once the style can actually accept layers. Unlike map.once('load') this still works
+// on the second and every later style build -- a resume, a basemap switch, a 3D toggle.
+function _whenStyleReady(fn) {
+  try {
+    if (map && map.isStyleLoaded && map.isStyleLoaded()) { fn(); return; }
+    var tries = 0;
+    var go = function () {
+      try {
+        if (!map) return;
+        if (map.isStyleLoaded && map.isStyleLoaded()) { map.off('styledata', go); fn(); return; }
+        if (++tries > 60) { map.off('styledata', go); fn(); }   // give up waiting, try anyway
+      } catch (e) {}
+    };
+    map.on('styledata', go);
+    // styledata can have already passed for a style that is loaded but idle, so poke it once.
+    setTimeout(go, 250);
+  } catch (e) { try { fn(); } catch (_e) {} }
+}
 function listenPins() {
   fbOnValue(fbRef(db, `gl/${groupName}/pins`), snap => {
     const pins = snap.val() || {};
@@ -18812,8 +18862,13 @@ function listenPins() {
       pinBadge.style.display = 'none';
     }
 
-    if (map.isStyleLoaded()) updatePinSource(pins);
-    else map.once('load', () => updatePinSource(pins));
+    // 'load' fires ONCE in a map's lifetime. Parking the pins on it when the style happens to
+    // be busy means waiting for an event that already fired and will never fire again -- the
+    // pins are then silently never drawn. That is the reported "I backgrounded the app, came
+    // back, and all three pins are completely gone": on resume the style is mid-rebuild, this
+    // snapshot lands, isStyleLoaded() is false, and the data goes into a callback with no
+    // event behind it. 'styledata' fires on every style change, so it still has one.
+    _whenStyleReady(function () { updatePinSource(pins); });
     // Saved-pin markers dedupe against the room pins (same spot = already on the map, skip
     // the library copy) — re-evaluate whenever the room's pin set changes.
     try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
@@ -18873,6 +18928,25 @@ window._focusSharedPin = function () {
 };
 window._showPinPopup = function(pid, lngLat) {
   var pin = lastPins[pid];
+  // 'mypin_*' features come from your own saved library, not from the room, so they are not in
+  // lastPins and this used to return silently -- a pin you could see and not open. Reported as
+  // "the deer stand in the middle will not let me click it to share it".
+  if (!pin && String(pid).indexOf('mypin_') === 0) {
+    try {
+      var _want = String(pid).slice(6);
+      var _sp = (typeof getSavedPins === 'function') ? getSavedPins() : [];
+      for (var _i = 0; _i < _sp.length; _i++) {
+        var _c = _sp[_i];
+        if (!_c) continue;
+        if (String(_c.pid) === _want || (_c.lat + ',' + _c.lng) === _want) {
+          pin = { lat: _c.lat, lng: _c.lng, cat: _c.cat || 'Waypoint', label: _c.label || '',
+                  name: _c.name || 'My pin', ts: _c.ts || _c.savedAt || Date.now(), droppedBy: userId };
+          lastPins[pid] = pin;   // so Navigate / Edit / Share can find it too
+          break;
+        }
+      }
+    } catch (e) {}
+  }
   if (!pin) return;
   var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
   var color  = def.color;
@@ -18971,11 +19045,24 @@ window._pendingMarker = null;
 function _showPendingMarker(lngLat){
   _clearPendingMarker();
   try {
+    var _b = document.getElementById('pending-pin-bar');
+    if (_b) {
+      _b.classList.add('active');
+      if (!_b._wired) {
+        _b._wired = 1;
+        // The whole chip cancels, not just the word on the end of it -- someone trying to get
+        // out aims at the thing telling them they are in a mode.
+        _b.addEventListener('click', function () { try { _closePinModal(); } catch (e) {} });
+      }
+    }
+  } catch (e) {}
+  try {
     window._pendingMarker = new mapboxgl.Marker({ color:'#f0a500' }).setLngLat(lngLat).addTo(map);
     try { map.easeTo({ center: lngLat, offset: [0, -110], duration: 400 }); } catch(e){}
   } catch(e){}
 }
-function _clearPendingMarker(){ try { if(window._pendingMarker){ window._pendingMarker.remove(); window._pendingMarker=null; } } catch(e){} }
+function _clearPendingMarker(){ try { var _b=document.getElementById('pending-pin-bar'); if(_b) _b.classList.remove('active'); } catch(e){}
+  try { if(window._pendingMarker){ window._pendingMarker.remove(); window._pendingMarker=null; } } catch(e){} }
 // Move / reposition an existing pin (yours).
 function _clearMoveMarker(){ try { if(window._moveMarker){ window._moveMarker.remove(); window._moveMarker=null; } } catch(e){} window._movePinId=null; }
 window._movePin = function(pid){
@@ -19802,6 +19889,16 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       toast('Saved to your own pins — the Crew cannot see it', 3000);
       return;
     }
+    // Keep your saved copy in step with the rename. Without this the library shows whatever
+    // the pin was called at the moment it was saved -- usually nothing at all. The private
+    // branch just above has always done this; the room branch never did.
+    try {
+      var _sv = getSavedPins(), _touched = false;
+      for (var _i = 0; _i < _sv.length; _i++) {
+        if (_sv[_i] && _sv[_i].pid === _editingPid) { _sv[_i].label = label; _sv[_i].cat = finalCat; _touched = true; }
+      }
+      if (_touched) { setSavedPins(_sv); try { renderSavedPins(); } catch (e) {} }
+    } catch (e) {}
     if (existing && db && groupName) {
       fbSet(fbRef(db, `gl/${groupName}/pins/${_editingPid}`), {
         lat: existing.lat, lng: existing.lng,
@@ -25484,6 +25581,13 @@ function renderSavedPins() {
   entries.forEach(function(e) {
     var pin = e.pin, idx = e.idx;
     shown++;
+    // The live pin wins on the name. A saved copy is a snapshot taken at save time, so a pin
+    // named AFTERWARDS is stuck showing the bare category for ever -- which is exactly what
+    // "my saved pins just shows the generic name like Deer Stand" was.
+    try {
+      var _live = pin.pid && typeof lastPins !== 'undefined' && lastPins[pin.pid];
+      if (_live && (_live.label || '') !== (pin.label || '')) pin = Object.assign({}, pin, { label: _live.label, cat: _live.cat || pin.cat });
+    } catch (e) {}
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
     var card = document.createElement('div');
