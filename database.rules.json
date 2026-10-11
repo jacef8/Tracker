@@ -182,8 +182,15 @@
           // Deletes stay open (!newData.exists()) so leaving and being removed still work, and
           // non-circle quick rooms are deliberately untouched -- joining those is the point.
           // Everyone already present was grandfathered into acl first, so this locks nobody out.
+          // Access is checked against the SIGNED-IN ACCOUNT as well as the device id. A position
+          // row is keyed by DEVICE, but people are added to a Crew by ACCOUNT -- so a member's
+          // new phone had no acl entry of its own, could not write its dot, and the app read
+          // that as "ask for permission to join" on a Crew the person OWNS. Reported
+          // 2026-10-11 by the owner of our_crew, on a new handset. Checking auth.uid is safe:
+          // it is the cryptographically verified account, not a client-written claim, and the
+          // identity half of this rule has already established that this device belongs to it.
           "$uid": {
-            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid) && (!newData.exists() || root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child($uid).exists())"
+            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid) && (!newData.exists() || root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child($uid).exists() || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
           }
         },
         "members": {
