@@ -172,11 +172,27 @@ function _iosNative() {
 // silent auto-listen monitors), not just during active speech bursts, since the point is
 // reliable reception for the whole session. No debounce needed — unlike car-audio mode there's
 // no per-flicker teardown cost, and a connected room doesn't flap the way "is talking" does.
-function _syncVoiceService() {
+// What the native audio session is currently set to, so we only touch it when it must CHANGE.
+// Without this latch every call below re-issued its native calls, and _syncVoiceService is
+// called from _syncCarAudio -- which fires on every ActiveSpeakersChanged transition, every
+// connect, disconnect and PTT press. On iOS startClipPlayback() ACTIVATES AVAudioSession and
+// stopClipPlayback()/stopVoiceService() DEACTIVATE it, so a run of those calls ducks other
+// audio, releases it, and ducks it again: music fading out every few seconds (reported
+// 2026-10-10, and the same symptom the _carAudioWantOn latch fixed for the routing poll in
+// August -- that fix never reached this function). The 'off' branch was the worst of it: with
+// no room connected at all, every single event still re-issued a deactivation.
+let _voiceServiceMode = null;   // null = unknown, then 'ios-playback' | 'android-service' | 'off'
+function _syncVoiceService(force) {
   try {
     const a = (typeof window !== 'undefined') && window.GLAudioRouter;
     if (!a) return;
     const anyRoomConnected = !!(session && room) || Object.keys(monRooms).some((id) => monRooms[id] && monRooms[id].room);
+    const want = !anyRoomConnected ? 'off' : (_iosNative() ? 'ios-playback' : 'android-service');
+    // `force` is for the one case where the session changed underneath us: clip playback takes
+    // the session over and hands it back, so resyncAudio() must re-assert even though nothing
+    // in OUR state moved.
+    if (!force && want === _voiceServiceMode) return;
+    _voiceServiceMode = want;
     // iOS: startVoiceService maps to a RECORD reason, which puts AVAudioSession into
     // .playAndRecord and holds it there for the whole session. iOS then shows the blue/orange
     // microphone indicator permanently — even sitting idle, never transmitting — because the
@@ -863,4 +879,4 @@ function escapeHtml(s) {
 
 // Re-assert the audio session after something else releases it (clip playback finishing shares
 // the same 'clip' reason as the iOS idle-listen session).
-export function resyncAudio() { try { _syncVoiceService(); } catch (e) {} }
+export function resyncAudio() { try { _syncVoiceService(true); } catch (e) {} }
