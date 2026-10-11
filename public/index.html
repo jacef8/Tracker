@@ -3474,10 +3474,10 @@
           </div>
           <span id="contours-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">OFF</span>
         </div>
-        <div onclick="window._toggleAllTracks && window._toggleAllTracks()" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+        <div onclick="window._openTrackPicker && window._openTrackPicker()" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
           <div style="flex:1">
             <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-footprints"/></svg>My tracks</div>
-            <div style="font-size:11px;color:var(--muted)">Every track you have saved, drawn as lines &mdash; your roads and trails, always there</div>
+            <div style="font-size:11px;color:var(--muted)">Pick which saved tracks draw as lines &mdash; your roads and trails, always there</div>
           </div>
           <span id="alltracks-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">OFF</span>
         </div>
@@ -4221,7 +4221,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 884;
+var APP_BUILD = 885;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8806,17 +8806,106 @@ window._toggleContours = function () {
 // Deliberately NOT the saved-track viewer's layers. That one owns the camera, draws stops and
 // endpoints and opens a stats bar, because it means "look at this one thing". Reusing it would
 // have made every track fight for the camera. These are quiet lines under the pins.
-window._allTracksOn = function () { try { return localStorage.getItem('gl_tracks_overlay') === '1'; } catch (e) { return false; } };
-window._toggleAllTracks = function () {
-  var on = !window._allTracksOn();
-  try { localStorage.setItem('gl_tracks_overlay', on ? '1' : '0'); } catch (e) {}
+// WHICH tracks are drawn, not whether all of them are. All-or-nothing was the wrong shape for
+// a library this size -- 151 saved pins and two imported onX folders means "show everything"
+// is a thicket, and the useful answer is almost always two or three known roads.
+// Stored as a list of ids. Empty list = nothing drawn, which IS the off state; there is no
+// separate master switch to disagree with it.
+window._shownTrackIds = function () {
+  try {
+    var raw = localStorage.getItem('gl_tracks_shown');
+    if (raw == null) {
+      // Carry over the old single switch once, so anyone who had it on this morning does not
+      // open the map to find their lines silently gone.
+      if (localStorage.getItem('gl_tracks_overlay') === '1') {
+        var all = (typeof getSavedTracks === 'function' ? getSavedTracks() : []).map(function (t) { return t.id; });
+        localStorage.setItem('gl_tracks_shown', JSON.stringify(all));
+        return all;
+      }
+      return [];
+    }
+    var a = JSON.parse(raw);
+    return Array.isArray(a) ? a : [];
+  } catch (e) { return []; }
+};
+window._setShownTrackIds = function (ids) {
+  try { localStorage.setItem('gl_tracks_shown', JSON.stringify(ids || [])); } catch (e) {}
+  try { localStorage.removeItem('gl_tracks_overlay'); } catch (e) {}   // migrated; do not re-read it
   window._renderAllTracks();
-  try { toast(on ? 'Your tracks are on the map' : 'Track lines off', 2000); } catch (e) {}
+  try { window._renderTrackPickerRows(); } catch (e) {}
+};
+window._allTracksOn = function () { return window._shownTrackIds().length > 0; };
+window._toggleTrackShown = function (id) {
+  var ids = window._shownTrackIds();
+  var i = ids.indexOf(id);
+  if (i >= 0) ids.splice(i, 1); else ids.push(id);
+  window._setShownTrackIds(ids);
+};
+window._openTrackPicker = function () {
+  var tracks = (typeof getSavedTracks === 'function') ? (getSavedTracks() || []) : [];
+  if (!tracks.length) { try { toast('No saved tracks yet - record one first', 2600); } catch (e) {} return; }
+  var ov = document.getElementById('track-picker');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'track-picker';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2500;background:rgba(0,0,0,.66);display:flex;align-items:flex-end;justify-content:center;padding:16px';
+  ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+  ov.innerHTML =
+    '<div style="width:100%;max-width:460px;max-height:76vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:16px;padding-bottom:calc(16px + var(--safe-bot))">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+        '<div style="flex:1;font-size:16px;font-weight:800;color:var(--text)">Which tracks to show</div>' +
+        '<button type="button" onclick="document.getElementById(\'track-picker\').remove()" style="width:34px;height:34px;border-radius:50%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:16px;cursor:pointer">&#10005;</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+        '<button type="button" class="fi-btn" style="flex:1" onclick="window._showAllTracks(true)">Show all</button>' +
+        '<button type="button" class="fi-btn" style="flex:1" onclick="window._showAllTracks(false)">Hide all</button>' +
+      '</div>' +
+      '<div id="track-picker-rows" style="flex:1;min-height:0;overflow-y:auto"></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  window._renderTrackPickerRows();
+};
+window._showAllTracks = function (on) {
+  var tracks = (typeof getSavedTracks === 'function') ? (getSavedTracks() || []) : [];
+  window._setShownTrackIds(on ? tracks.map(function (t) { return t.id; }) : []);
+};
+window._renderTrackPickerRows = function () {
+  var host = document.getElementById('track-picker-rows'); if (!host) return;
+  var tracks = (typeof getSavedTracks === 'function') ? (getSavedTracks() || []) : [];
+  var shown = window._shownTrackIds();
+  host.innerHTML = tracks.map(function (t) {
+    var on = shown.indexOf(t.id) !== -1;
+    var st = t.stats || (typeof _trackStats === 'function' ? _trackStats(t.pts || []) : {});
+    var sub = [];
+    try { if (t.ts) sub.push(_trkFmtDate(t.ts)); } catch (e) {}
+    try { if (st.distM) sub.push(_trkFmtDist(st.distM)); } catch (e) {}
+    var pts = ((t.pts || []).length);
+    if (pts < 2) sub.push('too short to draw');
+    return '<div onclick="window._toggleTrackShown(' + JSON.stringify(String(t.id)) + ')" ' +
+      'style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid ' +
+      (on ? 'var(--accent)' : 'var(--border)') + ';border-radius:10px;padding:11px 13px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(t.name || 'Track') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + _escHtml(sub.join(' \u00b7 ')) + '</div>' +
+      '</div>' +
+      '<span style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;white-space:nowrap;background:' +
+      (on ? '#13361f' : 'var(--border)') + ';color:' + (on ? '#3fb950' : 'var(--muted)') + '">' + (on ? 'ON' : 'OFF') + '</span>' +
+    '</div>';
+  }).join('');
 };
 window._renderAllTracks = function () {
   try {
     if (!map) return;
-    try { _setPill('alltracks-pill', window._allTracksOn()); } catch (e) {}
+    var _sel = window._shownTrackIds();
+    try {
+      var _pill = document.getElementById('alltracks-pill');
+      if (_pill) {
+        var _tot = (typeof getSavedTracks === 'function' ? (getSavedTracks() || []).length : 0);
+        _pill.textContent = _sel.length ? (_sel.length + ' of ' + _tot) : 'OFF';
+        _pill.style.background = _sel.length ? '#13361f' : 'var(--border)';
+        _pill.style.color = _sel.length ? '#3fb950' : 'var(--muted)';
+      }
+    } catch (e) {}
     // Style not ready? Come back when it is. map.once('load') would be wrong here for the same
     // reason it was wrong for the pins (build 876): it fires once per map, never again.
     if (!map.isStyleLoaded || !map.isStyleLoaded()) {
@@ -8824,7 +8913,7 @@ window._renderAllTracks = function () {
       return;
     }
     var ids = ['gl-alltracks-line', 'gl-alltracks-casing', 'gl-alltracks-label'];
-    if (!window._allTracksOn()) {
+    if (!_sel.length) {
       ids.forEach(function (id) { try { if (map.getLayer(id)) map.removeLayer(id); } catch (e) {} });
       try { if (map.getSource('gl-alltracks')) map.removeSource('gl-alltracks'); } catch (e) {}
       return;
@@ -8832,6 +8921,7 @@ window._renderAllTracks = function () {
     var tracks = (typeof getSavedTracks === 'function') ? (getSavedTracks() || []) : [];
     var feats = [];
     tracks.forEach(function (t) {
+      if (_sel.indexOf(t.id) === -1) return;            // not picked
       var pts = (t && t.pts) || [];
       if (pts.length < 2) return;                       // a single point is not a line
       var coords = [];
