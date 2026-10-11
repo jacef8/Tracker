@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 866;
+var APP_BUILD = 867;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -11299,7 +11299,21 @@ window._renderCrewsSection = function () {
     // and telling someone with four crews that they have none -- with no way to argue -- is
     // the worst version of this. Offer the retry.
     list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>'
-      + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>';
+      + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>'
+      + '<div style="margin-top:9px;font-size:11.5px;line-height:1.6;color:var(--muted);font-family:ui-monospace,monospace;white-space:pre-wrap">'
+        + (function () {
+            var L = [];
+            try {
+              var cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
+              L.push('signed in : ' + (cu ? (cu.isAnonymous ? 'anonymous' : (cu.email || cu.uid.slice(0, 8))) : 'no'));
+              L.push('account id: ' + (cu && cu.uid ? cu.uid.slice(0, 10) : '(none)'));
+              L.push('pull fn   : ' + (window._pullAccountNow ? 'ready' : 'MISSING'));
+              var lg = window._syncLog || [];
+              L.push(lg.length ? lg.join('\n') : 'no sync attempt recorded yet');
+            } catch (e) { L.push('diag error: ' + (e && e.message)); }
+            return _escHtml(L.join('\n'));
+          })()
+      + '</div>';
     return;
   }
   var detail = window._talkDetail || {};
@@ -27192,6 +27206,14 @@ try {
   //
   // Idempotent and cheap: one read of gl/_users/<acct>, and applyProfile only writes a key
   // when the value actually differs.
+  window._syncLog = window._syncLog || [];
+  function _syncNote(t) {
+    try {
+      window._syncLog.push(new Date().toLocaleTimeString() + ' ' + t);
+      if (window._syncLog.length > 6) window._syncLog.shift();
+      if (window._renderCrewsSection) window._renderCrewsSection();
+    } catch (e) {}
+  }
   window._pullAccountNow = function (cb) {
     try {
       // Ask the auth SDK who we are, not localStorage. profileKey() reads gl_account_uid,
@@ -27205,9 +27227,15 @@ try {
         if (cu && cu.uid && !cu.isAnonymous) u = cu.uid;
       } catch (e) {}
       if (!u) u = profileKey();
-      if (!u) { cb && cb(false); return; }
+      if (!u) { _syncNote('no account id yet'); cb && cb(false); return; }
+      _syncNote('reading profile ' + String(u).slice(0, 8) + '\u2026');
       pullProfile(u, function (prof) {
-        if (prof) { try { applyProfile(prof); } catch (e) {} }
+        if (prof) { try { applyProfile(prof); } catch (e) { _syncNote('apply failed: ' + (e && e.message)); } }
+        try {
+          var _n = 0; try { _n = Object.keys(_getCircles() || {}).length; } catch (e) {}
+          _syncNote(!prof ? 'no profile found for that id'
+                   : (prof.circles ? ('profile has crews, local now ' + _n) : 'profile had no crews field'));
+        } catch (e) {}
         try { if (window._listenAccountCircles) window._listenAccountCircles(u); } catch (e) {}
         try { if (window._renderCrewsSection) window._renderCrewsSection(); } catch (e) {}
         try { if (window._renderHomeAnchor) window._renderHomeAnchor(); } catch (e) {}
