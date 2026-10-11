@@ -4179,7 +4179,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 880;
+var APP_BUILD = 881;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23356,6 +23356,7 @@ window._openRadar = function (pinId) {
   if (pinId) window._radarTargetId = pinId;
   el.classList.add('show');
   _radarPills();
+  try { window._radarWireTaps(); } catch (e) {}
   window._compassStart().then(function (ok) {
     var n = document.getElementById('radar-note');
     if (!ok && n) n.textContent = 'No compass — the scope will point the way you are moving instead. Walk a few steps to set it.';
@@ -23364,7 +23365,13 @@ window._openRadar = function (pinId) {
     if (!el.classList.contains('show')) return;
     window._radarRaf = requestAnimationFrame(loop);
     var now = Date.now();
-    if (now - (window._radarLast || 0) < 100) return;   // 10 a second is plenty for a compass
+    // 10 a second was plenty for a compass needle, but the sweep added in 881 turns once every
+    // 3 s -- at 10fps that is a 12-degree jump per frame and it reads as a stuttering hand, not
+    // a sweep. 25fps while the scope is actually open and moving; back to 10 when the phone has
+    // been asked for less motion, where there is no sweep to be smooth about anyway.
+    var _rmin = 40;
+    try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) _rmin = 100; } catch (e) {}
+    if (now - (window._radarLast || 0) < _rmin) return;
     window._radarLast = now;
     if (document.visibilityState !== 'visible') return;
     _radarDraw();
@@ -23389,6 +23396,30 @@ function _radarPills() {
   box.innerHTML = html;
 }
 window._radarSetRange = function (i) { window._radarRange = i; _radarPills(); _radarDraw(); };
+// Tap a blip to walk to that one instead. The scope already drew every pin in range; until now
+// the only way to change target was the "Choose pin" list, which means knowing its name before
+// you can point at it -- on a scope where you can already SEE where it is.
+window._radarHits = [];
+window._radarWireTaps = function () {
+  var cv = document.getElementById('radar-scope');
+  if (!cv || cv._tapWired) return;
+  cv._tapWired = 1;
+  cv.addEventListener('click', function (ev) {
+    try {
+      var r = cv.getBoundingClientRect();
+      var x = ev.clientX - r.left, y = ev.clientY - r.top;
+      var best = null, bd = 30;
+      (window._radarHits || []).forEach(function (h) {
+        var d = Math.sqrt((h.x - x) * (h.x - x) + (h.y - y) * (h.y - y));
+        if (d < bd) { bd = d; best = h.id; }
+      });
+      if (!best) return;
+      window._radarTargetId = best;
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) {}
+      _radarDraw();
+    } catch (e) {}
+  });
+};
 window._radarPickTarget = function () {
   var all = _radarTargets();
   if (!all.length) { try { toast('Drop a pin first, then come back'); } catch (e) {} return; }
@@ -23478,12 +23509,46 @@ function _radarDraw() {
   c.strokeStyle = 'rgba(255,255,255,.10)';
   c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
 
+  // Rim ticks every 30 degrees, heavier on the cardinals, north in red. Ported from the Vector
+  // app's scope -- without them a facing-up radar gives no sense of how far you have turned,
+  // because every mark on it rotates together with you.
+  for (var _d = 0; _d < 360; _d += 30) {
+    var _a = (_d - ref - 90) * Math.PI / 180, _r1 = R - 2, _r2 = R - (_d % 90 === 0 ? 14 : 8);
+    c.beginPath();
+    c.moveTo(cx + Math.cos(_a) * _r1, cy + Math.sin(_a) * _r1);
+    c.lineTo(cx + Math.cos(_a) * _r2, cy + Math.sin(_a) * _r2);
+    c.strokeStyle = _d === 0 ? '#e74c3c' : MUT; c.lineWidth = _d % 90 === 0 ? 3 : 1.6; c.stroke();
+  }
+
+  // Sweep. What makes a scope read as live rather than as a diagram, and the blip flash below
+  // is timed off it. Held still for anyone who has asked the phone for less motion.
+  var _sweep = (performance.now() % 3000) / 3000 * 360;
+  var _reduced = false;
+  try { _reduced = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  if (!_reduced) {
+    c.save();
+    c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.clip();
+    // createConicGradient is recent. Without it the trailing wedge is skipped and the sweep
+    // LINE still draws, rather than the whole scope throwing.
+    if (c.createConicGradient) {
+      var _gr = c.createConicGradient((_sweep - 90 - 60) * Math.PI / 180, cx, cy);
+      _gr.addColorStop(0, 'rgba(0,0,0,0)');
+      _gr.addColorStop(60 / 360, 'rgba(240,165,0,.30)');
+      _gr.addColorStop(60 / 360 + 0.0001, 'rgba(0,0,0,0)');
+      c.fillStyle = _gr; c.fillRect(cx - R, cy - R, R * 2, R * 2);
+    }
+    c.restore();
+    var _sa = (_sweep - 90) * Math.PI / 180;
+    c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(_sa) * R, cy + Math.sin(_sa) * R);
+    c.strokeStyle = ACC; c.lineWidth = 2; c.stroke();
+  }
+
   // ring labels, in yards or feet
   c.font = '700 12px ui-monospace, monospace'; c.fillStyle = MUT;
   c.textAlign = 'center'; c.textBaseline = 'middle';
   for (var k = 2; k <= 4; k += 2) {
     var rm = rangeM * k / 4, lbl = rm < 91 ? Math.round(rm * 3.28084) + ' ft' : Math.round(rm / 0.9144) + ' yd';
-    var lx = cx + R * k / 4 * 0.7071, ly = cy + R * k / 4 * 0.7071;
+    var lx = cx + R * k / 4 * 0.7071, ly = cy + R * k / 4 * 0.7071 - (k === 4 ? 13 : 0);
     c.fillStyle = 'rgba(6,8,12,.85)'; var tw = c.measureText(lbl).width + 10;
     // roundRect is missing on older Safari; without the guard one absent method throws and the
     // whole scope draws blank.
@@ -23495,26 +23560,87 @@ function _radarDraw() {
   }
 
   // north marker, so the scope reads as facing-up
-  // Placed by the heading but drawn upright — rotating the glyph itself left it on its side.
-  var nA = (-ref) * Math.PI / 180, nR = R - 13;
-  c.fillStyle = MUT; c.font = '800 13px ui-monospace, monospace'; c.textBaseline = 'middle';
+  // Placed by the heading but drawn upright -- rotating the glyph itself left it on its side.
+  var nA = (-ref) * Math.PI / 180, nR = R - 28;
+  c.fillStyle = '#e74c3c'; c.font = '800 15px ui-monospace, monospace'; c.textBaseline = 'middle';
+  c.textAlign = 'center';
   c.fillText('N', cx + Math.sin(nA) * nR, cy - Math.cos(nA) * nR);
 
-  // blips for every pin
+  // How good your OWN fix is, drawn to the same scale as everything else. A sixty-foot circle
+  // under your feet is the explanation for a target that will not settle down.
+  if (me && me.accuracy) {
+    var _ar = Math.min(R, (me.accuracy / rangeM) * R);
+    if (_ar > 4) {
+      c.beginPath(); c.arc(cx, cy, _ar, 0, Math.PI * 2);
+      c.globalAlpha = 0.14; c.fillStyle = '#fff'; c.fill(); c.globalAlpha = 1;
+    }
+  }
+
+  // Blips, their names, and the hit boxes that make them tappable.
+  window._radarHits = [];
   var all = _radarTargets();
-  if (me) all.forEach(function (o) {
-    var d = metersApart(me.lat, me.lng, o.lat, o.lng);
-    if (d > rangeM) return;
-    var rel = (_bearingDeg(me.lat, me.lng, o.lat, o.lng) - ref) * Math.PI / 180;
-    var rr = (d / rangeM) * R;
-    var x = cx + Math.sin(rel) * rr, y = cy - Math.cos(rel) * rr;
-    var isF = f && o.id === f.id;
-    c.beginPath(); c.arc(x, y, isF ? 8 : 4.5, 0, Math.PI * 2);
-    c.fillStyle = isF ? ACC : 'rgba(255,255,255,.45)';
-    if (isF) { c.shadowColor = ACC; c.shadowBlur = 10; }
-    c.fill(); c.shadowBlur = 0;
-    if (isF) { c.strokeStyle = '#1a1200'; c.lineWidth = 1.5; c.stroke(); }
-  });
+  if (me) {
+    // Focus LAST, so it draws over the others and gets first claim on label space.
+    var _ord = all.slice().sort(function (a, b) {
+      return ((f && a.id === f.id) ? 1 : 0) - ((f && b.id === f.id) ? 1 : 0);
+    });
+    var _dots = [], _labels = [];
+    _ord.forEach(function (o) {
+      var d = metersApart(me.lat, me.lng, o.lat, o.lng);
+      var relDeg = _bearingDeg(me.lat, me.lng, o.lat, o.lng) - ref;
+      var isF = f && o.id === f.id;
+      if (d > rangeM) {
+        // Off the scope. The old code simply skipped it -- so the one pin you are walking to
+        // vanished at exactly the moment it mattered. The focus now gets an arrow on the rim
+        // pointing the way it lies.
+        if (!isF) return;
+        c.save(); c.translate(cx, cy); c.rotate(relDeg * Math.PI / 180);
+        c.beginPath(); c.moveTo(0, -R + 4); c.lineTo(12, -R + 25); c.lineTo(-12, -R + 25); c.closePath();
+        c.fillStyle = ACC; c.fill(); c.strokeStyle = '#000'; c.lineWidth = 1.5; c.stroke();
+        c.restore();
+        return;
+      }
+      var rel = relDeg * Math.PI / 180, rr = (d / rangeM) * R;
+      var x = cx + Math.sin(rel) * rr, y = cy - Math.cos(rel) * rr;
+      // Brighten as the sweep goes past, the way a real scope repaints a contact.
+      var since = ((_sweep - relDeg) % 360 + 360) % 360;
+      var flash = _reduced ? 0 : Math.max(0, 1 - since / 300);
+      var br = (isF ? 8 : 4.5) + 3 * flash;
+      c.beginPath(); c.arc(x, y, br + 2, 0, Math.PI * 2); c.fillStyle = '#000'; c.fill();
+      c.beginPath(); c.arc(x, y, br, 0, Math.PI * 2);
+      c.fillStyle = isF ? ACC : 'rgba(255,255,255,.55)'; c.fill();
+      _dots.push([x, y, br]); _labels.push([o, x, y, br, isF]);
+      window._radarHits.push({ x: x, y: y, id: o.id });
+    });
+
+    // Names on the blips, skipped rather than stacked when they would collide. A scope full of
+    // identical dots cannot tell you WHICH stand you are looking at, which is the whole job.
+    var used = [];
+    c.font = '800 12px ui-monospace, monospace'; c.textAlign = 'left'; c.textBaseline = 'middle';
+    _labels.forEach(function (L) {
+      var o = L[0], x = L[1], y = L[2], br = L[3], isF = L[4];
+      var nm = String(o.name || 'Pin');
+      if (nm.length > 16) nm = nm.slice(0, 15) + '\u2026';
+      var tw = c.measureText(nm).width + 12;
+      var lb = [x + br + 5, y - 10, tw, 20];
+      if (lb[0] + tw > cx + R) lb[0] = x - br - 5 - tw;     // would run off the rim: swap sides
+      var hits = function (q) {
+        return lb[0] < q[0] + q[2] && lb[0] + lb[2] > q[0] && lb[1] < q[1] + q[3] && lb[1] + lb[3] > q[1];
+      };
+      var clash = used.some(hits) || _dots.some(function (dd) { return hits([dd[0] - dd[2], dd[1] - dd[2], dd[2] * 2, dd[2] * 2]); });
+      if (clash && isF) { lb[1] -= 24; clash = false; }     // the focus always gets its name
+      if (clash) return;
+      used.push(lb);
+      c.fillStyle = 'rgba(6,8,12,.88)';
+      c.beginPath();
+      if (c.roundRect) c.roundRect(lb[0], lb[1], lb[2], lb[3], 10);
+      else c.rect(lb[0], lb[1], lb[2], lb[3]);
+      c.fill();
+      c.strokeStyle = 'rgba(255,255,255,.14)'; c.lineWidth = 1; c.stroke();
+      c.fillStyle = isF ? ACC : '#e6edf3';
+      c.fillText(nm, lb[0] + 6, lb[1] + 10);
+    });
+  }
 
   // you, in the middle, pointing the way you face
   c.save(); c.translate(cx, cy);
