@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 865;
+var APP_BUILD = 866;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -27194,7 +27194,17 @@ try {
   // when the value actually differs.
   window._pullAccountNow = function (cb) {
     try {
-      var u = profileKey();
+      // Ask the auth SDK who we are, not localStorage. profileKey() reads gl_account_uid,
+      // which the sign-in handler writes -- so on a cold start, before sign-in has finished,
+      // it is empty and profileKey() falls back to the DEVICE id. That reads a profile which
+      // does not exist, gets null, and applies nothing. The 2.5s startup pull shipped in 864
+      // did exactly that on a fresh install and looked identical to the bug it was fixing.
+      var u = '';
+      try {
+        var cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
+        if (cu && cu.uid && !cu.isAnonymous) u = cu.uid;
+      } catch (e) {}
+      if (!u) u = profileKey();
       if (!u) { cb && cb(false); return; }
       pullProfile(u, function (prof) {
         if (prof) { try { applyProfile(prof); } catch (e) {} }
@@ -27209,7 +27219,22 @@ try {
   // Once at startup, and again when the app comes back to the foreground -- a phone that has
   // been shut for a day is exactly when the local cache is most likely to be behind.
   try {
-    setTimeout(function () { try { window._pullAccountNow(); } catch (e) {} }, 2500);
+    // Sign-in can land well after the page does, so one shot at 2.5s is a coin flip. Try a few
+    // times, stopping as soon as a real account profile comes back. Each attempt is one read.
+    (function () {
+      var tries = 0;
+      var go = function () {
+        tries++;
+        try {
+          window._pullAccountNow(function (got) {
+            var n = 0; try { n = Object.keys(_getCircles() || {}).length; } catch (e) {}
+            if ((got && n) || tries >= 6) return;         // got the profile, or give up quietly
+            setTimeout(go, tries * 2500);                 // 2.5s, 5s, 7.5s, 10s, 12.5s
+          });
+        } catch (e) {}
+      };
+      setTimeout(go, 2500);
+    })();
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState !== 'visible') return;
       var now = Date.now();
