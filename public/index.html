@@ -4166,7 +4166,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 877;
+var APP_BUILD = 878;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5754,6 +5754,21 @@ window._isPrivateOther = function (uid, data) {
 //
 // gl/_devOwner (device -> account, written by pushProfile) is the authoritative index and is
 // already cached client-side as _devOwnerAll.
+// Is this pin mine? Compared by PERSON, not by handset. pin.droppedBy is whatever uid dropped
+// it, and a new phone mints a new uid -- so every pin dropped from an older handset read as
+// somebody else's. That is why the popup on Jace's own Double Draw offered "Hide Jace pins"
+// (mute yourself) and showed no Delete at all: Delete is gated on isMine. Reported
+// 2026-10-11. The database rule was never in the way -- gl/<room>/pins accepts a write from
+// any signed-in member, so the delete would always have succeeded; only the button was gone.
+window._pinIsMine = function (pin) {
+  try {
+    var who = pin && (pin.droppedBy || pin.by);
+    if (!who) return false;
+    if (who === userId) return true;
+    var f = window._personId;
+    return !!(f && f(who) && f(who) === f(userId));
+  } catch (e) { return false; }
+};
 window._personId = function (uid) {
   if (!uid) return uid;
   try {
@@ -15341,9 +15356,9 @@ function updatePinSource(pins) {
     }
   } catch (_mp) {}
   const features = Object.entries(pins).filter(([pid, pin]) => {
-    return pin.droppedBy === userId || !window._isPinMuted(pin.droppedBy);
+    return window._pinIsMine(pin) || !window._isPinMuted(pin.droppedBy);
   }).map(([pid, pin]) => {
-    const isMine   = pin.droppedBy === userId;
+    const isMine   = window._pinIsMine(pin);
     const cat      = pin.cat || 'Waypoint';
     // Use known category image or fall back to Custom
     const safeCat  = (cat in PIN_DEFS) ? cat : 'Custom';
@@ -18950,7 +18965,7 @@ window._showPinPopup = function(pid, lngLat) {
   if (!pin) return;
   var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
   var color  = def.color;
-  var isMine = pin.droppedBy === userId;
+  var isMine = window._pinIsMine(pin);
   var gps    = window._lastGPS;
   var distHTML = gps
     ? '<div class="pop-dist">' + distanceMiles(gps.lat, gps.lng, pin.lat, pin.lng) + ' &middot; ' + getBearing(gps.lat, gps.lng, pin.lat, pin.lng) + '</div>'
@@ -19148,7 +19163,7 @@ function renderPinFeed(pins) {
   entries.forEach(function(entry) {
     var pid = entry[0], pin = entry[1];
     var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
-    var isMine = pin.droppedBy === userId;
+    var isMine = window._pinIsMine(pin);
     var isNew  = (now - pin.ts) < 300000;
     var distStr = '', bearStr = '';
     if (gps) {
@@ -25608,7 +25623,13 @@ function renderSavedPins() {
     // "my saved pins just shows the generic name like Deer Stand" was.
     try {
       var _live = pin.pid && typeof lastPins !== 'undefined' && lastPins[pin.pid];
-      if (_live && (_live.label || '') !== (pin.label || '')) pin = Object.assign({}, pin, { label: _live.label, cat: _live.cat || pin.cat });
+      // Either field can be stale: 876 healed the NAME only, so a pin whose TYPE was changed
+      // afterwards (Deer Stand -> Game Trail) still showed the old type in My Saved while the
+      // map showed the new one -- "one is a game trail and one is a tree stand, but on one of
+      // the pages they both show tree stand".
+      if (_live && ((_live.label || '') !== (pin.label || '') || (_live.cat || '') !== (pin.cat || ''))) {
+        pin = Object.assign({}, pin, { label: _live.label, cat: _live.cat || pin.cat });
+      }
     } catch (e) {}
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     var dist = gps ? (distanceMiles(gps.lat,gps.lng,pin.lat,pin.lng) + ' ' + getBearing(gps.lat,gps.lng,pin.lat,pin.lng)) : '';
