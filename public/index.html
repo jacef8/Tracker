@@ -2574,6 +2574,7 @@
     <div id="north-menu" style="display:none">
       <button class="north-opt" type="button" onclick="window._chooseNorthUp(event)"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>North Up</button>
       <button class="north-opt" type="button" onclick="window._chooseHeadingUp(event)"><svg class="licon licon-sm"><use href="#ic-arrow-right"/></svg>Heading Up</button>
+      <button class="north-opt" type="button" onclick="window._openInstruments(event)"><svg class="licon licon-sm"><use href="#ic-compass"/></svg>Compass &amp; speed</button>
     </div>
     <button id="north-up-btn" title="Map orientation" type="button" onclick="window._northBtnTapped()">
       <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
@@ -3287,6 +3288,39 @@
   <div class="fi-acts">
     <button class="fi-btn" type="button" id="act-pause" onclick="window._actPause()">Pause</button>
     <button class="fi-btn dan" type="button" onclick="window._actStop()">Finish</button>
+  </div>
+</div>
+
+<!-- ══ COMPASS & SPEED — the Vector instrument panel, ported ══
+     Everything here comes from what the phone already reports to the web: heading from the
+     compass (or course over ground when there is no magnetometer), speed and accuracy from
+     the GPS fix. Vector's satellite, barometer and sensor screens are NOT here and cannot be:
+     they read Android's GnssStatus and SensorManager, which no WebView can reach, and iOS
+     does not expose raw satellite data to any app at all. -->
+<div id="instr-panel" class="fi">
+  <div class="fi-head">
+    <h3>Compass &amp; speed</h3>
+    <button class="fi-x" type="button" onclick="window._closeInstruments()" aria-label="Close">&#10005;</button>
+  </div>
+  <div class="fi-body">
+    <div class="fi-anchor">
+      <canvas id="instr-dial"></canvas>
+      <div class="fi-read">
+        <b id="instr-deg" style="font-size:38px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums">--</b>
+        <span id="instr-card" style="font-size:15px;font-weight:800;letter-spacing:.14em;color:var(--accent);margin-top:4px">&mdash;</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:center">
+        <div style="font-size:26px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums" id="instr-mph">--</div>
+        <div style="font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--muted)">MPH NOW</div>
+      </div>
+      <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:center">
+        <div style="font-size:26px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums" id="instr-max">--</div>
+        <div style="font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--muted)">MAX TODAY</div>
+      </div>
+    </div>
+    <div class="fi-note" id="instr-note" style="margin-top:10px"></div>
   </div>
 </div>
 
@@ -4187,7 +4221,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 883;
+var APP_BUILD = 884;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23442,6 +23476,112 @@ function _radarRangeM(distM) {
   for (var i = 0; i < steps.length; i++) if (steps[i] * 0.9144 >= need) return steps[i] * 0.9144;
   return 2500 * 0.9144;
 }
+// ── COMPASS & SPEED ───────────────────────────────────────────────────────────────────────
+// The instrument half of the Vector merge. A rotating compass card, the heading in degrees
+// and as a point, and what the GPS says about your speed. Nothing here needs native code, so
+// it works the same on Jace's Android and on the iPhones in the family -- which is exactly
+// why Vector's satellite and barometer screens stayed behind.
+window._instrMaxMph = 0;
+window._openInstruments = function (ev) {
+  if (ev) ev.stopPropagation();
+  try { _toggleNorthMenu(false); } catch (e) {}
+  var el = document.getElementById('instr-panel'); if (!el) return;
+  el.classList.add('show');
+  window._compassStart().then(function (ok) {
+    var n = document.getElementById('instr-note');
+    if (!ok && n) n.textContent = 'No compass on this phone - the dial follows the way you are MOVING instead. Walk a few steps to set it.';
+  });
+  var loop = function () {
+    if (!el.classList.contains('show')) return;
+    window._instrRaf = requestAnimationFrame(loop);
+    var now = Date.now();
+    if (now - (window._instrLast || 0) < 60) return;
+    window._instrLast = now;
+    _instrDraw();
+  };
+  loop();
+};
+window._closeInstruments = function () {
+  var el = document.getElementById('instr-panel'); if (el) el.classList.remove('show');
+  try { cancelAnimationFrame(window._instrRaf); } catch (e) {}
+};
+function _instrDraw() {
+  var cv = document.getElementById('instr-dial'); if (!cv) return;
+  var dpr = Math.min(3, window.devicePixelRatio || 1);
+  var w = cv.clientWidth || 300;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr); }
+  var c = cv.getContext('2d'); if (!c) return;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, w);
+  var cx = w / 2, cy = w / 2, R = w / 2 - 6;
+  var css = getComputedStyle(document.documentElement);
+  var ACC = (css.getPropertyValue('--accent') || '#f0a500').trim();
+  var MUT = (css.getPropertyValue('--muted') || '#a9b4bf').trim();
+
+  // face
+  c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2);
+  var g = c.createRadialGradient(cx, cy - R * 0.3, R * 0.1, cx, cy, R);
+  g.addColorStop(0, '#11161d'); g.addColorStop(1, '#06080c');
+  c.fillStyle = g; c.fill();
+  c.strokeStyle = 'rgba(255,255,255,.07)'; c.lineWidth = 1; c.stroke();
+
+  var hd = _facingDeg();
+  var ref = hd == null ? 0 : hd;
+
+  // The CARD turns, not the needle -- the way a real compass reads. Your heading is whatever
+  // sits under the fixed mark at the top.
+  for (var d = 0; d < 360; d += 15) {
+    var a = (d - ref - 90) * Math.PI / 180;
+    var major = d % 90 === 0, mid = d % 45 === 0;
+    var r2 = R - (major ? 18 : mid ? 13 : 8);
+    c.beginPath();
+    c.moveTo(cx + Math.cos(a) * (R - 3), cy + Math.sin(a) * (R - 3));
+    c.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+    c.strokeStyle = d === 0 ? '#e74c3c' : (major ? '#e6edf3' : MUT);
+    c.lineWidth = major ? 3 : mid ? 2 : 1.2;
+    c.stroke();
+  }
+  var pts = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = '800 17px ui-monospace, monospace';
+  pts.forEach(function (P2) {
+    var a2 = (P2[1] - ref - 90) * Math.PI / 180, rr = R - 34;
+    c.fillStyle = P2[0] === 'N' ? '#e74c3c' : '#e6edf3';
+    c.fillText(P2[0], cx + Math.cos(a2) * rr, cy + Math.sin(a2) * rr);
+  });
+
+  // the fixed index mark at the top: where you are actually pointed
+  c.beginPath(); c.moveTo(cx, cy - R + 1); c.lineTo(cx - 9, cy - R + 18); c.lineTo(cx + 9, cy - R + 18); c.closePath();
+  c.fillStyle = ACC; c.fill();
+
+  var degEl = document.getElementById('instr-deg'), cardEl = document.getElementById('instr-card');
+  if (degEl) degEl.textContent = hd == null ? '--' : Math.round(hd) + '\u00b0';
+  if (cardEl) cardEl.textContent = hd == null ? '\u2014' : _compassPoint(hd);
+
+  var mph = window._lastSpeedMph || 0;
+  if (mph > window._instrMaxMph) window._instrMaxMph = mph;
+  var mEl = document.getElementById('instr-mph'), xEl = document.getElementById('instr-max');
+  if (mEl) mEl.textContent = mph > 0 ? mph.toFixed(mph < 10 ? 1 : 0) : '0';
+  if (xEl) xEl.textContent = window._instrMaxMph > 0 ? window._instrMaxMph.toFixed(window._instrMaxMph < 10 ? 1 : 0) : '0';
+
+  var nEl2 = document.getElementById('instr-note');
+  if (nEl2 && hd != null) {
+    var acc = window._lastAccM || 0;
+    var bits = [];
+    bits.push(acc ? 'GPS accurate to about ' + Math.round(acc * 3.28084) + ' ft' : 'Waiting for GPS');
+    // Ground height, but only when the terrain data for this spot is actually loaded. A null
+    // here means "not known", never zero -- reading sea level to someone on a bluff is worse
+    // than showing nothing.
+    try {
+      var me2 = window._lastGPS;
+      if (me2 && window._elevFt) {
+        var ft = window._elevFt(me2.lng, me2.lat);
+        if (ft != null) bits.push(Math.round(ft) + ' ft elevation');
+      }
+    } catch (e) {}
+    bits.push(window._compassDeg != null ? 'magnetic compass' : 'direction of travel');
+    nEl2.textContent = bits.join(' \u00b7 ');
+  }
+}
 window._openRadar = function (pinId) {
   var el = document.getElementById('radar-panel'); if (!el) return;
   if (pinId) window._radarTargetId = pinId;
@@ -29023,6 +29163,11 @@ window._voiceMod().then(function (m) {
 
   // Overlays needing a real close fn (cleanup); everything else is hidden generically.
   var SPECIAL = {
+    // Both of these run an animation loop while open. hide() alone would stop the loop (it
+    // checks for .show every frame) but would not cancel the pending frame or the compass
+    // listener, so route Back through their own closers.
+    'radar-panel': function () { if (window._closeRadar) window._closeRadar(); else hide('radar-panel'); },
+    'instr-panel': function () { if (window._closeInstruments) window._closeInstruments(); else hide('instr-panel'); },
     'layer-sheet': function () { if (typeof closeLayerSheet === 'function') closeLayerSheet(); else hide('layer-sheet'); },
     'offline-mode-bar': function () { if (window._cancelOfflineMode) window._cancelOfflineMode(); else hide('offline-mode-bar'); },
     'member-sheet': function () { if (window._closeMemberSheet) window._closeMemberSheet(); else hide('member-sheet'); },
@@ -29039,7 +29184,8 @@ window._voiceMod().then(function (m) {
     'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','voice-log-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
     'pin-modal','place-modal','quick-trail-sheet','status-legend-sheet','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
-    'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup'];
+    'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup',
+    'radar-panel','instr-panel'];
   function g(id) { return document.getElementById(id); }
   // On-screen ⟺ has real size AND overlaps the viewport. Handles BOTH display-toggled
   // modals (display:none → 0 size) and transform-slide drawers (closed → off-screen rect).
