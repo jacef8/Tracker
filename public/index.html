@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 870;
+var APP_BUILD = 871;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -26743,8 +26743,25 @@ function checkGroupPasscode(name, group, uid, invitePin) {
           var code = (err && (err.code || err.message) || '').toString().toUpperCase();
           denied = code.indexOf('PERMISSION_DENIED') !== -1 || code.indexOf('PERMISSION DENIED') !== -1;
         } catch (e) {}
-        if (denied) { window._showAccessRequestScreen(groupKey, group); return; }
-        _checkBanned();
+        if (!denied) { _checkBanned(); return; }
+        // A refusal here is read as "you are not a member" -- but it is equally what an
+        // ANONYMOUS session gets, and on the native app the WebView starts anonymous and only
+        // becomes the account once /authbridge completes. Opening a room before that lands
+        // therefore showed "Ask to join" on Crews the person owns. Reported 2026-10-11 by the
+        // owner of our_crew. Bridge, then ask ONCE more; only a second refusal is real.
+        var _cu = null;
+        try { _cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+        var _canBridge = (!_cu || _cu.isAnonymous) && window._bridgeNativeAuth;
+        if (!_canBridge) { window._showAccessRequestScreen(groupKey, group); return; }
+        window._authBridged = false;
+        window._bridgeNativeAuth(function (ok) {
+          if (!ok) { window._showAccessRequestScreen(groupKey, group); return; }
+          var retry = null;
+          try { retry = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) {}
+          if (!retry || !retry.then) { window._showAccessRequestScreen(groupKey, group); return; }
+          retry.then(function () { _checkBanned(); })
+               .catch(function () { window._showAccessRequestScreen(groupKey, group); });
+        });
       });
     });
     return;
