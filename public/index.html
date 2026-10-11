@@ -3307,6 +3307,7 @@
   </div>
   <div class="fi-acts">
     <button class="fi-btn" type="button" id="radar-ping-btn" onclick="window._radarTogglePing()">Sound on</button>
+    <button class="fi-btn" type="button" onclick="window._radarMarkHere()">Mark here</button>
     <button class="fi-btn pri" type="button" onclick="window._radarPickTarget()">Choose pin</button>
   </div>
 </div>
@@ -3438,6 +3439,13 @@
             <div style="font-size:11px;color:var(--muted)">Height lines over any map &mdash; including satellite</div>
           </div>
           <span id="contours-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">OFF</span>
+        </div>
+        <div onclick="window._toggleAllTracks && window._toggleAllTracks()" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-footprints"/></svg>My tracks</div>
+            <div style="font-size:11px;color:var(--muted)">Every track you have saved, drawn as lines &mdash; your roads and trails, always there</div>
+          </div>
+          <span id="alltracks-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted)">OFF</span>
         </div>
         <!-- Weather radar (RainViewer) -->
         <div onclick="var cb=document.getElementById('toggle-radar');cb.checked=!cb.checked;toggleRadar(cb.checked);" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
@@ -4179,7 +4187,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 881;
+var APP_BUILD = 883;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8752,6 +8760,88 @@ window._toggleHillshade = function () {
 window._toggleContours = function () {
   try { localStorage.setItem('gl_contours', window._ctOn() ? '0' : '1'); } catch (e) {}
   window._applyTerrainOverlays();
+};
+// ── EVERY SAVED TRACK, AS LINES ───────────────────────────────────────────────────────────
+// Asked for 2026-10-11: "if I just want to have lines on the map like a track but not be in
+// the track editor or specific viewer -- how do I just turn on all of my tracks so I can see
+// different roads and things that I have". Until now the only way to see a track was
+// _showTrackOnMap, which draws exactly ONE and replaces whatever was up. This is the other
+// thing a track is for: the roads and trails you already walked, sitting under everything
+// else as background, with nothing to open or dismiss.
+//
+// Deliberately NOT the saved-track viewer's layers. That one owns the camera, draws stops and
+// endpoints and opens a stats bar, because it means "look at this one thing". Reusing it would
+// have made every track fight for the camera. These are quiet lines under the pins.
+window._allTracksOn = function () { try { return localStorage.getItem('gl_tracks_overlay') === '1'; } catch (e) { return false; } };
+window._toggleAllTracks = function () {
+  var on = !window._allTracksOn();
+  try { localStorage.setItem('gl_tracks_overlay', on ? '1' : '0'); } catch (e) {}
+  window._renderAllTracks();
+  try { toast(on ? 'Your tracks are on the map' : 'Track lines off', 2000); } catch (e) {}
+};
+window._renderAllTracks = function () {
+  try {
+    if (!map) return;
+    try { _setPill('alltracks-pill', window._allTracksOn()); } catch (e) {}
+    // Style not ready? Come back when it is. map.once('load') would be wrong here for the same
+    // reason it was wrong for the pins (build 876): it fires once per map, never again.
+    if (!map.isStyleLoaded || !map.isStyleLoaded()) {
+      if (typeof _whenStyleReady === 'function') _whenStyleReady(function () { window._renderAllTracks(); });
+      return;
+    }
+    var ids = ['gl-alltracks-line', 'gl-alltracks-casing', 'gl-alltracks-label'];
+    if (!window._allTracksOn()) {
+      ids.forEach(function (id) { try { if (map.getLayer(id)) map.removeLayer(id); } catch (e) {} });
+      try { if (map.getSource('gl-alltracks')) map.removeSource('gl-alltracks'); } catch (e) {}
+      return;
+    }
+    var tracks = (typeof getSavedTracks === 'function') ? (getSavedTracks() || []) : [];
+    var feats = [];
+    tracks.forEach(function (t) {
+      var pts = (t && t.pts) || [];
+      if (pts.length < 2) return;                       // a single point is not a line
+      var coords = [];
+      for (var i = 0; i < pts.length; i++) {
+        var q = pts[i];
+        if (!q || !isFinite(q.lng) || !isFinite(q.lat)) continue;
+        coords.push([q.lng, q.lat]);
+      }
+      if (coords.length < 2) return;
+      feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
+                   properties: { id: t.id, name: t.name || 'Track' } });
+    });
+    var data = { type: 'FeatureCollection', features: feats };
+    var src = map.getSource('gl-alltracks');
+    if (src) { src.setData(data); return; }
+    map.addSource('gl-alltracks', { type: 'geojson', data: data });
+    // Under the pins and the people, so it never covers what you are actually chasing.
+    var before = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
+    // A dark casing under a light line keeps it readable over both snow-bright fields and
+    // black timber -- one colour alone disappears into one or the other.
+    map.addLayer({ id: 'gl-alltracks-casing', type: 'line', source: 'gl-alltracks',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': 'rgba(0,0,0,.55)', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 7] } }, before);
+    map.addLayer({ id: 'gl-alltracks-line', type: 'line', source: 'gl-alltracks',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#7ee787', 'line-opacity': 0.9,
+               'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.4, 16, 3.4] } }, before);
+    // Names ride along the line, and only close in -- at county zoom they would be a hedge of
+    // text over the whole map.
+    map.addLayer({ id: 'gl-alltracks-label', type: 'symbol', source: 'gl-alltracks', minzoom: 13,
+      layout: { 'symbol-placement': 'line', 'text-field': ['get', 'name'],
+                'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Regular'],
+                'text-size': 11, 'symbol-spacing': 260 },
+      paint: { 'text-color': '#b6f7c0', 'text-halo-color': 'rgba(0,0,0,.85)', 'text-halo-width': 1.4 } }, before);
+    if (!window._allTracksTapWired) {
+      window._allTracksTapWired = 1;
+      map.on('click', 'gl-alltracks-line', function (e) {
+        try {
+          var f = e.features && e.features[0]; if (!f) return;
+          toast(f.properties.name || 'Track', 2200);
+        } catch (_e) {}
+      });
+    }
+  } catch (e) {}
 };
 window._render3DBtn = function () {
   try {
@@ -14746,6 +14836,7 @@ function initMap() {
     try { window._focusSharedPin && window._focusSharedPin(); } catch (e) {}
     // Restore personal saved-pin markers if the user left "Show on map" on.
     try { if (window._showSavedOnMap && typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch(e){}
+    try { if (window._renderAllTracks) window._renderAllTracks(); } catch (e) {}
     if (window._queuedPins) {
       updatePinSource(window._queuedPins);
       window._queuedPins = null;
@@ -23420,13 +23511,25 @@ window._radarWireTaps = function () {
     } catch (e) {}
   });
 };
+// Mark where you stand from inside the scope. Reuses the ordinary "Here (GPS)" drop -- the
+// one that already warns you when the fix is too poor to trust -- rather than writing a second
+// pin-creation path that would quietly skip that check.
+window._radarMarkHere = function () {
+  try {
+    if (!window._lastGPS) { toast('No GPS fix yet - try again in a moment', 2600); return; }
+    var el = document.getElementById('radar-panel');
+    if (el) el.classList.remove('show');      // the pin sheet needs the screen
+    window._dropPinHere();
+  } catch (e) {}
+};
 window._radarPickTarget = function () {
   var all = _radarTargets();
   if (!all.length) { try { toast('Drop a pin first, then come back'); } catch (e) {} return; }
   var me = window._lastGPS;
   if (me) all.sort(function (a, b) { return metersApart(me.lat, me.lng, a.lat, a.lng) - metersApart(me.lat, me.lng, b.lat, b.lng); });
   var rows = all.slice(0, 40).map(function (o) {
-    var d = me ? ' · ' + _trkFmtDist(metersApart(me.lat, me.lng, o.lat, o.lng)) : '';
+    var d = me ? ' · ' + _trkFmtDist(metersApart(me.lat, me.lng, o.lat, o.lng)) +
+                 ' ' + _compassPoint(_bearingDeg(me.lat, me.lng, o.lat, o.lng)) : '';
     return '<button type="button" class="fi-btn" style="width:100%;text-align:left;margin-bottom:8px" ' +
            'onclick="window._radarChoose(\'' + String(o.id).replace(/'/g, "\\'") + '\')">' +
            _escHtml(o.name) + '<span style="color:var(--muted);font-weight:700">' + d + '</span></button>';
@@ -23675,8 +23778,17 @@ function _radarDraw() {
       else { tEl.textContent = 'Turn ' + (rel2 > 0 ? 'right ' : 'left ') + Math.round(Math.abs(rel2)) + '°'; tEl.style.color = '#fff'; }
     }
   }
+  var _eta = '';
+  try {
+    var _mph = window._lastSpeedMph || 0;
+    if (_mph > 0.4 && dist > 10) {
+      var _mins = (dist / 1609.34) / _mph * 60;
+      _eta = _mins < 1 ? ' · under a minute at this pace'
+           : ' · about ' + (_mins < 60 ? Math.round(_mins) + ' min' : (_mins / 60).toFixed(1) + ' hr') + ' at this pace';
+    }
+  } catch (e) {}
   if (nEl) nEl.textContent = 'GPS accurate to about ' + Math.round((acc || 0) * 3.28084) + ' ft' +
-    (face == null ? ' · no compass yet' : '') + ' · ring ' + Math.round(rangeM / 0.9144) + ' yd';
+    (face == null ? ' · no compass yet' : '') + ' · ring ' + Math.round(rangeM / 0.9144) + ' yd' + _eta;
   _radarPing(dist, rangeM);
 }
 function _trkFmtDate(ts){ try { return new Date(ts).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}); } catch(e){ return ''; } }
