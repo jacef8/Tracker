@@ -26,7 +26,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  import { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut, signInAnonymously }
+  import { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signInWithCustomToken, onAuthStateChanged, signOut, signInAnonymously }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ─── CONFIGURE YOUR FIREBASE PROJECT HERE ──────────────────────────
@@ -120,7 +120,7 @@
   try {
     const auth = getAuth(app);
     window._fb.auth = auth;
-    window._fb.authApi = { GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, onAuthStateChanged, signOut };
+    window._fb.authApi = { GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signInWithCustomToken, onAuthStateChanged, signOut };
     // Silent anonymous auth — kicked off as early as possible so it has the best chance of
     // resolving before the user reaches the join screen. This gives every device a REAL,
     // cryptographically-issued Firebase uid with zero visible change to the join flow (no
@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 867;
+var APP_BUILD = 868;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -27214,6 +27214,50 @@ try {
       if (window._renderCrewsSection) window._renderCrewsSection();
     } catch (e) {}
   }
+  // ── AUTH BRIDGE (native only) ─────────────────────────────────────────────────────────────
+  // The Capacitor plugin signs in the NATIVE Firebase SDK. The JS SDK -- which the Realtime
+  // Database authenticates with -- is left anonymous, so every read goes out as the device
+  // while the UI says "Signed in as <email>". Harmless until profiles were locked to their
+  // owner, at which point the app could not read its own account: observed on a new phone
+  // 2026-10-10 as "signed in : anonymous" with "no profile found for that id", and reproduced
+  // server-side as a 401.
+  //
+  // Fix: take the ID token the native SDK already holds, have our server verify it and mint a
+  // custom token for the same uid, and sign the JS SDK in with that. The provider credential
+  // is never re-redeemed (Firebase rejects that), and no privilege is created -- only someone
+  // who is already that user can produce the ID token in the first place.
+  window._authBridged = window._authBridged || false;
+  window._bridgeNativeAuth = function (cb) {
+    var done = function (ok) { try { cb && cb(ok); } catch (e) {} };
+    try {
+      var f = window._fb;
+      if (!f || !f.auth || !f.authApi || !f.authApi.signInWithCustomToken) return done(false);
+      var cur = f.auth.currentUser;
+      if (cur && !cur.isAnonymous) { window._authBridged = true; return done(true); }   // already right
+      var cap = window.Capacitor;
+      var FA = cap && cap.Plugins && cap.Plugins.FirebaseAuthentication;
+      if (!FA || !FA.getIdToken) return done(false);                                   // web: nothing to bridge
+      FA.getIdToken().then(function (r) {
+        var idt = r && (r.token || r.idToken);
+        if (!idt) return done(false);
+        return fetch('/authbridge', { method: 'POST', headers: { 'Authorization': 'Bearer ' + idt } })
+          .then(function (resp) { return resp.ok ? resp.json() : null; })
+          .then(function (j) {
+            if (!j || !j.token) return done(false);
+            return f.authApi.signInWithCustomToken(f.auth, j.token).then(function (uc) {
+              window._authBridged = true;
+              try { LS.set('gl_account_uid', (uc && uc.user && uc.user.uid) || j.uid); } catch (e) {}
+              try { _syncNote('signed the app in as ' + String(j.uid).slice(0, 8) + '\u2026'); } catch (e) {}
+              done(true);
+            });
+          });
+      }).catch(function (e) {
+        try { _syncNote('auth bridge failed: ' + ((e && e.message) || e)); } catch (e2) {}
+        done(false);
+      });
+    } catch (e) { done(false); }
+  };
+
   window._pullAccountNow = function (cb) {
     try {
       // Ask the auth SDK who we are, not localStorage. profileKey() reads gl_account_uid,
@@ -27221,6 +27265,14 @@ try {
       // it is empty and profileKey() falls back to the DEVICE id. That reads a profile which
       // does not exist, gets null, and applies nothing. The 2.5s startup pull shipped in 864
       // did exactly that on a fresh install and looked identical to the bug it was fixing.
+      var cu0 = null;
+      try { cu0 = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+      // Anonymous JS session but a native sign-in behind it: bridge first, then come back.
+      if ((!cu0 || cu0.isAnonymous) && !window._authBridged && window._bridgeNativeAuth) {
+        window._authBridged = true;                       // one attempt, not a loop
+        window._bridgeNativeAuth(function () { try { window._pullAccountNow(cb); } catch (e) {} });
+        return;
+      }
       var u = '';
       try {
         var cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
@@ -27492,6 +27544,9 @@ try {
           _appleLog('google-native-returned', 'user=' + !!(res && res.user) + ' uid=' + (res && res.user && res.user.uid));
           if (!res || !res.user) throw new Error('no user returned');
           afterFirebaseUser(res.user);
+          // The plugin signed in the NATIVE SDK only; bring the JS SDK along or every database
+          // read keeps going out as the anonymous device. See _bridgeNativeAuth.
+          try { window._authBridged = false; if (window._bridgeNativeAuth) window._bridgeNativeAuth(function () { try { window._pullAccountNow && window._pullAccountNow(); } catch (e) {} }); } catch (e) {}
           _appleLog('google-success', res.user.uid);
         }).catch(function (e) {
           _appleLog('google-error', ((e && e.code) || '') + ' ' + ((e && e.message) || e));

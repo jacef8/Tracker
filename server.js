@@ -231,6 +231,36 @@ function requireUser(req, res, next) {
   }).catch(function () { res.status(401).json({ ok: false, reason: 'sign-in-required' }); });
 }
 
+// ── AUTH BRIDGE ─────────────────────────────────────────────────────────────────────────────
+// The native app signs in through the Capacitor Firebase plugin, which completes a full
+// sign-in in the NATIVE Firebase SDK. The WebView's JavaScript SDK -- the one the Realtime
+// Database client actually authenticates with -- is never signed in, so every read and write
+// from the page goes out as the ANONYMOUS device session while the UI says "Signed in as
+// <email>". That mismatch was harmless only because profiles used to be readable by any
+// signed-in user; once they were locked to their owner (2026-10-10) the app could no longer
+// read its own account and crews stopped arriving on new installs.
+//
+// Re-exchanging the provider credential in the JS SDK is not an option: it is a one-time
+// credential and Firebase rejects the second redemption (confirmed for Apple). So the page
+// hands us the ID TOKEN the native SDK already holds, we verify it, and we mint a custom
+// token for the SAME uid that the JS SDK can sign in with. Nothing is re-redeemed and no
+// provider is involved.
+//
+// No privilege is created here. The caller must already present a valid, unexpired Firebase
+// ID token, which only that signed-in user can obtain; we hand back a token for exactly the
+// uid inside it and nothing else. An attacker who could call this successfully would already
+// be the user.
+app.post('/authbridge', rateLimit(30, 60000), requireUser, async function (req, res) {
+  try {
+    if (!fcmAdmin) return res.status(503).json({ ok: false, reason: 'auth-unavailable' });
+    const token = await fcmAdmin.auth().createCustomToken(req.authUid);
+    res.json({ ok: true, token: token, uid: req.authUid });
+  } catch (e) {
+    console.warn('[authbridge]', (e && e.message) || e);
+    res.status(500).json({ ok: false, reason: 'mint-failed' });
+  }
+});
+
 // Short-lived cache of the few nodes these checks read, so a burst of pushes costs one read.
 const _accCache = new Map();
 async function _cachedGet(path, ttl) {
