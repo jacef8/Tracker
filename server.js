@@ -376,6 +376,46 @@ async function sendBump(uid) {
   } catch (e) { return { ok: false, reason: e.message }; }
 }
 
+// ─── DELETE A ROOM, FOR GOOD ─────────────────────────────────────────────────
+// Deleting a room from the app never stuck. The client removed gl/<room> itself, but any
+// device still in the room recreates the node with its very next position write -- Firebase
+// re-creates parents on write -- so the room came back, and because it was back, every
+// member's self-heal saw it as alive and kept it in their crew list. Reported 2026-10-11:
+// "I deleted this room but back on the crew screen it's still listed." Confirmed in the data:
+// gl/hunting had lost its config but still held diag, favSubs, members, trails and users, and
+// four accounts still listed it.
+//
+// The client already reads gl/_deadRooms/<key> as the authoritative "this room is gone"
+// tombstone and prunes its crews from it. Nothing could ever WRITE one: the rules grant no
+// client write there (deliberately -- a tombstone another member could forge would delete a
+// room out from under its owner). So it has to happen here, where the admin SDK runs.
+//
+// Ownership is checked against config, not asserted by the caller: window._isRoomOwner is a
+// client-side flag and means nothing on this side of the wire.
+app.post('/room/delete', rateLimit(10, 60000), requireUser, async function (req, res) {
+  const room = String(((req.body || {}).room) || '').trim();
+  if (!room || !/^[a-z0-9_-]{1,64}$/i.test(room) || room.charAt(0) === '_') {
+    return res.status(400).json({ ok: false, reason: 'bad-room' });
+  }
+  let cfg = null;
+  try { cfg = (await adminDb.ref('gl/' + room + '/config').get()).val(); } catch (e) {}
+  const uid = req.authUid;
+  const allowed = !!(cfg && (cfg.owner === uid || (cfg.admins && cfg.admins[uid])));
+  if (!allowed) return res.status(403).json({ ok: false, reason: 'not-owner' });
+  try {
+    // Tombstone FIRST. If anything below fails, or a straggler device rebuilds the node a
+    // second later, the marker is already in place and every client still treats the room as
+    // gone. The other order leaves a window where the room is back and nothing says otherwise.
+    await adminDb.ref('gl/_deadRooms/' + room).set({ ts: Date.now(), by: uid });
+    await adminDb.ref('gl/' + room).remove();
+    await adminDb.ref('glh/' + room).remove();
+    await adminDb.ref('gl/_roomIndex/' + room).remove();
+  } catch (e) {
+    return res.status(500).json({ ok: false, reason: 'delete-failed' });
+  }
+  res.json({ ok: true, room: room });
+});
+
 app.post('/bump', rateLimit(30, 60000), requireUser, async function(req, res) {
   const uid = String((req.body || {}).uid || '');
   if (!(await sharesRoom(req.authUid, uid))) return res.status(403).json({ ok: false, reason: 'not-in-your-rooms' });

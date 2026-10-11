@@ -4166,7 +4166,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 876;
+var APP_BUILD = 877;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20742,10 +20742,32 @@ window._confirmDeleteRoom = function() {
   try { fbRemove(fbRef(db, 'gl/' + gk + '/users/' + userId)); } catch (e) {}
   toast('Deleting group…', 4500);
   // 2) After members have had a few seconds to receive the close, remove everything.
+  //
+  // The removal has to happen on the SERVER. Deleting gl/<room> from here never stuck: any
+  // device still in the room recreates the node with its very next position write, and once
+  // the node is back every member's self-heal reads the room as alive and keeps it in their
+  // crew list -- "I deleted this room but it's still listed". Only the server can write the
+  // gl/_deadRooms tombstone that clients already treat as final, so the server does the whole
+  // job. The local removes below are belt and braces for this device only.
   setTimeout(function() {
-    try { fbRemove(fbRef(db, 'gl/' + gk)); } catch (e) {}
-    try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
-    setTimeout(function() { location.reload(); }, 900);
+    var _done = function (ok) {
+      // Drop it from THIS device's own lists immediately, whatever the server said. Even a
+      // clean delete used to leave the name sitting in your own crew list until a reconcile
+      // happened to run, which is the part actually being looked at when the sheet closes.
+      try { var c = _getCircles(); if (c[gk]) { delete c[gk]; _setCircles(c); } } catch (e) {}
+      try { var f = _getFavs(); if (f.indexOf(gk) !== -1) _setFavs(f.filter(function (k) { return k !== gk; })); } catch (e) {}
+      try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
+      if (!ok) { try { toast('Could not finish deleting that crew — nothing was lost, try again', 5000); } catch (e) {} }
+      setTimeout(function() { location.reload(); }, 900);
+    };
+    try {
+      window._glFetch('/room/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: gk })
+      }).then(function (r) { return r.json().catch(function () { return { ok: false }; }); })
+        .then(function (j) { _done(!!(j && j.ok)); })
+        .catch(function () { _done(false); });
+    } catch (e) { _done(false); }
   }, 4000);
 };
 
