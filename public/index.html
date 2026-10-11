@@ -4148,7 +4148,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 871;
+var APP_BUILD = 872;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14558,6 +14558,17 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    // Mapbox GL v3 defaults to the GLOBE projection, and that default caused both halves of
+    // the 2026-10-10 report: "every time I open the map it will not pan" plus "weird rounded
+    // corners". The corners are the globe's own limb curving away at the bottom of the screen.
+    // The pan failure is the same cause one step removed -- _zoomForBounds computes a Web
+    // Mercator fit, a globe renders that zoom MUCH wider, so group-follow parked the camera at
+    // roughly whole-world zoom, and at whole-world zoom Mapbox pins the centre and no drag
+    // moves it. Measured in a v3.3.0 harness at this canvas size: globe z=1.4 flung the centre
+    // to the south pole clamp on one drag; mercator z=2.05 did not move at all (38 -> 0, pinned);
+    // mercator z=2.8 panned normally. Flat projection makes the fit math honest and the corners
+    // square; the pan-safe zoom floor below keeps the camera out of the pinned band.
+    projection: 'mercator',
     bounds: LIBERTY_COUNTY_BOUNDS,
     fitBoundsOptions: { padding: 24 },
     attributionControl: false
@@ -14580,8 +14591,17 @@ function initMap() {
   // or any fitBounds call elsewhere in the app could still land a pin/marker directly under the
   // fixed UI chrome, since map.setPadding was never set at all before this. Re-applied on resize
   // (orientation change, etc.) so it stays accurate as the chrome's real on-screen size changes.
-  try { map.setPadding(_followPadding()); } catch (e) {}
-  window.addEventListener('resize', function () { try { if (map) map.setPadding(_followPadding()); } catch (e) {} });
+  var _applyChromePadding = function () {
+    try {
+      if (!map) return;
+      map.setPadding(_followPadding());
+      // Same floor as _zoomForBounds, enforced on the map so a two-finger pinch-out cannot
+      // strand the camera in the band where it refuses to pan.
+      map.setMinZoom(_panSafeMinZoom());
+    } catch (e) {}
+  };
+  _applyChromePadding();
+  window.addEventListener('resize', _applyChromePadding);
 
   // Initial map load — set up pins, images, _mapReady
   map.on('load', function() {
@@ -26163,6 +26183,21 @@ function _followPadding() {
 // same cause, so _zoomForBounds below owns the fit outright and cameraForBounds is not used.
 // Web Mercator: a tile world is 512px at z0; x is linear in longitude, y is the log-tangent
 // projection. The zoom that fits is whichever axis runs out of room first.
+// The zoom below which this canvas cannot pan. Mapbox constrains the camera so the world
+// never leaves the viewport, and the padding counts against that: once 512*2^z (the world's
+// height in CSS pixels) is no bigger than the canvas plus its top/bottom padding, the centre
+// is pinned and a drag does nothing. 1.35 keeps a third of a screen of slack so panning still
+// feels free rather than rubber-banding at the first inch. Recomputed live, because the
+// padding tracks the real on-screen size of the topbar and toolbar.
+function _panSafeMinZoom() {
+  try {
+    var ch = map.getCanvas().clientHeight || window.innerHeight;
+    var p = _followPadding();
+    var need = (ch + (p.top || 0) + (p.bottom || 0)) * 1.35;
+    var z = Math.log(need / 512) / Math.LN2;
+    return isFinite(z) ? Math.max(0, z) : 0;
+  } catch (e) { return 0; }
+}
 function _zoomForBounds(b, pad, cw, ch) {
   try {
     var merc = function (lat) {
@@ -26176,6 +26211,9 @@ function _zoomForBounds(b, pad, cw, ch) {
     var zx = dx > 1e-9 ? Math.log(uw / (512 * dx)) / Math.LN2 : 22;
     var zy = dy > 1e-9 ? Math.log(uh / (512 * dy)) / Math.LN2 : 22;
     var z = Math.min(zx, zy);
+    // Never hand back a zoom the camera cannot pan at. A group spread across a continent can
+    // ask for one; framing them perfectly is worth less than being able to move the map.
+    z = Math.max(z, _panSafeMinZoom());
     return isFinite(z) ? z : null;
   } catch (e) { return null; }
 }
