@@ -4240,7 +4240,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 888;
+var APP_BUILD = 889;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24213,7 +24213,8 @@ function _drawSavedTrack(t, fit){
     _showTrackViewBar(t, t.stats||_trackStats(t.pts||[]));
   } catch(e){}
 }
-function _clearSavedTrack(){ try { ['saved-track','saved-track-glow','saved-track-stops','saved-track-ends'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); ['saved-track','saved-track-stops','saved-track-ends'].forEach(function(id){ if (map.getSource(id)) map.removeSource(id); }); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
+function _clearSavedTrack(){ try { var _b3 = document.getElementById('t3d-bar'); if (_b3) { _b3.remove(); window._track3DOn = null; } } catch(e){}
+  try { ['saved-track','saved-track-glow','saved-track-stops','saved-track-ends'].forEach(function(id){ if(map.getLayer(id)) map.removeLayer(id); }); ['saved-track','saved-track-stops','saved-track-ends'].forEach(function(id){ if (map.getSource(id)) map.removeSource(id); }); } catch(e){} _hideTrackViewBar(); window._shownTrackId=null; }
 
 // — tracks library list —
 function openTracks(){
@@ -24896,6 +24897,7 @@ function _openTrackDetail(id){
   html += '<div style="padding:4px 12px 6px;font-size:11px;color:var(--muted)">Recorded '+_trkFmtDate(t.ts)+' at '+_trkFmtTime(st.startTs||t.ts)+' · '+st.n+' points · min '+(st.minAlt!=null?_trkFmtElev(st.minAlt):'—')+' / max '+(st.maxAlt!=null?_trkFmtElev(st.maxAlt):'—')+'</div>';
   html += '<div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px 18px">'+
     '<button onclick="window._showTrackOnMap(\''+t.id+'\')" style="width:100%;padding:11px;background:var(--accent);border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer">Show on map</button>'+
+    '<button onclick="window._showTrack3D(\''+t.id+'\')" style="width:100%;padding:11px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:800;cursor:pointer;margin-top:8px">Walk it in 3D</button>'+
     '<button onclick="window._renameTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Rename</button>'+
     '<button onclick="window._shareTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer">Share</button>'+
     '<button onclick="window._deleteTrack(\''+t.id+'\')" style="width:100%;padding:10px;background:transparent;border:1px solid var(--danger);border-radius:10px;color:var(--danger);font-size:13px;font-weight:700;cursor:pointer">Delete</button>'+
@@ -24925,6 +24927,94 @@ window._showTrackOnMap = function(id){
   try { window._releaseCamera(); } catch(e){}
   _drawSavedTrack(t, true);
   try { toast('Showing "'+t.name+'"'); } catch(e){}
+};
+// ── WALK A TRACK IN 3D ────────────────────────────────────────────────────────────────────
+// The last piece of the Vector merge. Vector draws this with three.js: a tube over a ground
+// plane built from map tiles, with its own orbit camera. Importing that would put a second
+// WebGL engine and a whole 3D library into a page that is already 29,000 lines, next to the
+// Mapbox renderer that is ALREADY drawing terrain for hillshade and contours.
+//
+// So this is the same view built on what is here. Terrain on, the track draped on the ground
+// by the renderer, camera pitched and turned to look along the walk. It costs no new library,
+// and unlike a standalone canvas it keeps the satellite imagery, the contour lines and every
+// pin you dropped -- which is most of what makes looking at a track in 3D worth doing.
+window._showTrack3D = function (id) {
+  try {
+    var arr = (typeof getSavedTracks === 'function') ? getSavedTracks() : [];
+    var t = null;
+    for (var i = 0; i < arr.length; i++) { if (arr[i].id === id) { t = arr[i]; break; } }
+    if (!t || !(t.pts || []).length) { toast('That track has no points'); return; }
+    var pts = t.pts.filter(function (q) { return q && isFinite(q.lat) && isFinite(q.lng); });
+    if (pts.length < 2) { toast('Too short to show in 3D', 2600); return; }
+
+    // Draw it the ordinary way first: that already stops group-follow, clears the previous
+    // track and puts down the line, the stop squares and the end caps. No second drawing path.
+    _drawSavedTrack(t, false);
+
+    // Terrain on. Without it a pitched camera is just a tilted flat map, which looks like
+    // nothing at all and is the easiest way for this feature to seem broken.
+    try { localStorage.setItem('gl_3d', '1'); } catch (e) {}
+    try { window._applyTerrain(); } catch (e) {}
+    try { window._render3DBtn(); } catch (e) {}
+
+    // Look ALONG the walk, not at it from the north. Bearing from the first point to the last
+    // puts the route running away from the viewer, which is how you read a ridge line.
+    var a = pts[0], b = pts[pts.length - 1];
+    var brg = 0;
+    try { brg = _bearingDeg(a.lat, a.lng, b.lat, b.lng); } catch (e) {}
+
+    var bb = new mapboxgl.LngLatBounds([a.lng, a.lat], [a.lng, a.lat]);
+    pts.forEach(function (q) { bb.extend([q.lng, q.lat]); });
+
+    // Fit flat first to get the right zoom for the extent, then pitch and turn about that
+    // centre. Fitting bounds with a pitch already applied gives Mapbox an impossible problem
+    // and it answers with a zoom that is always slightly wrong.
+    try {
+      map.fitBounds(bb, { padding: { top: 120, bottom: 200, left: 60, right: 60 }, duration: 0, maxZoom: 16.5 });
+    } catch (e) {}
+    setTimeout(function () {
+      try {
+        map.easeTo({ pitch: 68, bearing: brg, duration: 1400,
+                     zoom: Math.max(13.2, (map.getZoom() || 14) - 0.35) });
+      } catch (e) {}
+    }, 60);
+
+    try { document.getElementById('track-detail-drawer').classList.remove('open'); } catch (e) {}
+    try { document.getElementById('tracks-drawer').classList.remove('open'); } catch (e) {}
+    window._track3DOn = t.id;
+    _showTrack3DBar(t);
+  } catch (e) { try { toast('Could not open the 3D view'); } catch (_e) {} }
+};
+function _showTrack3DBar(t) {
+  var old = document.getElementById('t3d-bar'); if (old) old.remove();
+  var bar = document.createElement('div');
+  bar.id = 't3d-bar';
+  bar.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot) + 96px);' +
+    'z-index:420;display:flex;align-items:center;gap:8px;white-space:nowrap;' +
+    'background:rgba(13,17,23,.95);border:1px solid rgba(240,165,0,.55);border-radius:20px;' +
+    'padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,.6);max-width:calc(100vw - 24px)';
+  bar.innerHTML =
+    '<span style="font-size:12px;font-weight:800;color:var(--accent);overflow:hidden;text-overflow:ellipsis">' +
+      _escHtml(t.name || 'Track') + '</span>' +
+    '<button type="button" class="pin-mode-act" onclick="window._track3DStretch()">Height</button>' +
+    '<button type="button" class="pin-mode-act" onclick="window._track3DFlat()">Flat</button>' +
+    '<button type="button" class="cancel-mode" onclick="window._exitTrack3D()">Done</button>';
+  document.body.appendChild(bar);
+}
+// Reuses the map's own exaggeration cycle, so the 3D view and the 3D button cannot disagree
+// about how tall the ground is.
+window._track3DStretch = function () {
+  try { window._cycle3DExag(); } catch (e) {}
+};
+window._track3DFlat = function () {
+  try { map.easeTo({ pitch: 0, duration: 700 }); } catch (e) {}
+};
+window._exitTrack3D = function () {
+  var b = document.getElementById('t3d-bar'); if (b) b.remove();
+  window._track3DOn = null;
+  try { map.easeTo({ pitch: 0, bearing: 0, duration: 700 }); } catch (e) {}
+  // The track itself stays drawn. Leaving 3D is "stop tilting", not "throw away what I was
+  // looking at" -- clearing the line here would mean re-opening the drawer to get it back.
 };
 window._renameTrack = function(id){
   var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
