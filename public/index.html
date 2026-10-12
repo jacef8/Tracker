@@ -1776,6 +1776,20 @@
     padding-top: var(--safe-top); padding-bottom: var(--safe-bot);
   }
   .fi.show { display: flex; }
+  /* Split view: scope below, live map above. */
+  .fi.fi-split {
+    top: 50%;
+    border-top: 1px solid rgba(240,165,0,.5);
+    box-shadow: 0 -10px 30px rgba(0,0,0,.65);
+    padding-top: 0;
+  }
+  .fi.fi-split .fi-head { padding: 8px 14px 4px; }
+  .fi.fi-split .fi-head h3 { font-size: 15px; }
+  /* The scope has to fit the half it has left, so size it off the HEIGHT as well as the
+     width -- 92vw square is taller than half a phone screen and would simply be clipped. */
+  #radar-panel.fi-split #radar-scope { width: min(86vw, 34vh); }
+  #radar-panel.fi-split .fi-note { display: none; }
+  #radar-panel.fi-split .fi-turn { margin-top: 2px; }
   .fi-head { display:flex; align-items:center; gap:12px; padding:12px 14px 10px; flex-shrink:0; }
   .fi-head h3 { flex:1; min-width:0; font-size:17px; font-weight:800; color:var(--text);
                 letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -3390,6 +3404,7 @@
 <div id="radar-panel" class="fi">
   <div class="fi-head">
     <h3 id="radar-title">Radar</h3>
+    <button class="fi-x" type="button" id="radar-split-btn" onclick="window._toggleRadarSplit()" aria-label="Show the map with the scope" title="Map and scope together" style="width:auto;padding:0 13px;font-size:13px;font-weight:800">Map</button>
     <button class="fi-x" type="button" onclick="window._closeRadar()" aria-label="Close">&#10005;</button>
   </div>
   <div class="fi-body">
@@ -4283,7 +4298,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 901;
+var APP_BUILD = 902;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14948,7 +14963,11 @@ function initMap() {
   // or any fitBounds call elsewhere in the app could still land a pin/marker directly under the
   // fixed UI chrome, since map.setPadding was never set at all before this. Re-applied on resize
   // (orientation change, etc.) so it stays accurate as the chrome's real on-screen size changes.
-  var _applyChromePadding = function () {
+  // On window: the radar's split view has to put this padding back when it closes, and it
+  // lives outside initMap. A local-only helper meant those calls silently did nothing --
+  // caught by `typeof`, so it would have failed quietly and left the map's padding wrong
+  // for every later fit.
+  var _applyChromePadding = window._applyChromePadding = function () {
     try {
       if (!map) return;
       map.setPadding(_followPadding());
@@ -24113,6 +24132,13 @@ window._openRadar = function (pinId) {
   el.classList.add('show');
   _radarPills();
   try { window._radarWireTaps(); } catch (e) {}
+  try {
+    window._radarSplit = localStorage.getItem('gl_radar_split') === '1';
+    el.classList.toggle('fi-split', window._radarSplit);
+    var _sb = document.getElementById('radar-split-btn');
+    if (_sb) _sb.textContent = window._radarSplit ? 'Full' : 'Map';
+    if (window._radarSplit) setTimeout(_radarFrameMap, 120);
+  } catch (e) {}
   window._compassStart().then(function (ok) {
     var n = document.getElementById('radar-note');
     if (!ok && n) n.textContent = 'No compass — the scope will point the way you are moving instead. Walk a few steps to set it.';
@@ -24134,7 +24160,53 @@ window._openRadar = function (pinId) {
   };
   cancelAnimationFrame(window._radarRaf); loop();
 };
+// Half map, half scope. The scope tells you which way to turn; the map tells you what is
+// between you and the spot -- a creek, a fence line, the fact that the straight line crosses
+// somebody else's field. Asked for 2026-10-11.
+window._radarSplit = false;
+window._toggleRadarSplit = function () {
+  window._radarSplit = !window._radarSplit;
+  var el = document.getElementById('radar-panel');
+  var b = document.getElementById('radar-split-btn');
+  if (el) el.classList.toggle('fi-split', window._radarSplit);
+  if (b) b.textContent = window._radarSplit ? 'Full' : 'Map';
+  try { localStorage.setItem('gl_radar_split', window._radarSplit ? '1' : '0'); } catch (e) {}
+  if (window._radarSplit) _radarFrameMap();
+  else { try { if (window._applyChromePadding) window._applyChromePadding(); } catch (e) {} }
+  // The canvas is sized by CSS and read back on the next draw, so one forced frame avoids a
+  // scope drawn at the old size for a beat.
+  try { _radarDraw(); } catch (e) {}
+};
+// Put you and the target in the half of the screen that is actually showing. Mapbox's own
+// padding is the right tool: it keeps the fit inside the visible band instead of centring on
+// a point that the scope is sitting on top of.
+function _radarFrameMap() {
+  try {
+    if (!map) return;
+    var me = window._lastGPS, f = _radarFocus();
+    var pad = { top: 70, bottom: Math.round(window.innerHeight * 0.5) + 20, left: 50, right: 50 };
+    if (me && f) {
+      var b = new mapboxgl.LngLatBounds([me.lng, me.lat], [me.lng, me.lat]);
+      b.extend([f.lng, f.lat]);
+      map.fitBounds(b, { padding: pad, duration: 700, maxZoom: 17 });
+    } else if (me) {
+      map.setPadding(pad);
+      map.easeTo({ center: [me.lng, me.lat], zoom: Math.max(map.getZoom(), 15), duration: 700 });
+    }
+  } catch (e) {}
+}
 window._closeRadar = function () {
+  // Hand the map back exactly as it was. The split leaves a half-screen bottom padding on
+  // the map, and anything that fits bounds afterwards -- group follow, show a track, a
+  // shared pin link -- would quietly aim at the wrong half of the screen for ever.
+  try {
+    if (window._radarSplit) {
+      window._radarSplit = false;
+      var _rp = document.getElementById('radar-panel'); if (_rp) _rp.classList.remove('fi-split');
+      var _rb = document.getElementById('radar-split-btn'); if (_rb) _rb.textContent = 'Map';
+      if (window._applyChromePadding) window._applyChromePadding();
+    }
+  } catch (e) {}
   cancelAnimationFrame(window._radarRaf); window._radarRaf = null;
   window._compassStop();
   var el = document.getElementById('radar-panel'); if (el) el.classList.remove('show');
