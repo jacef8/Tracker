@@ -4283,7 +4283,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 896;
+var APP_BUILD = 897;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19457,7 +19457,7 @@ function _clearPendingMarker(){ try { var _b=document.getElementById('pending-pi
 // Move / reposition an existing pin (yours).
 function _clearMoveMarker(){ try { if(window._moveMarker){ window._moveMarker.remove(); window._moveMarker=null; } } catch(e){} window._movePinId=null; }
 window._movePin = function(pid){
-  var pin = lastPins[pid]; if(!pin) return;
+  var pin = window._anyPin(pid); if(!pin) return;
   try { window._closePinPopup(); } catch(e){}
   try { if(window._soloPop){ window._soloPop.remove(); window._soloPop=null; } } catch(e){}
   try { window._releaseCamera(); } catch(e){}
@@ -23658,8 +23658,15 @@ function _radarTargets() {
     if (p && p.lat != null && p.lng != null) out.push({ id: id, lat: p.lat, lng: p.lng, name: p.label || p.name || 'Pin' });
   }); } catch (e) {}
   try { (getSavedPins() || []).forEach(function (p) {
-    if (p && p.lat != null && p.lng != null && !out.some(function (o) { return o.id === p.pid; }))
-      out.push({ id: p.pid, lat: p.lat, lng: p.lng, name: p.label || p.name || 'Saved pin' });
+    if (!p || p.lat == null || p.lng == null) return;
+    var id = 'mypin_' + (p.pid || (p.lat + ',' + p.lng));     // the SAME id the map uses
+    if (out.some(function (o) { return o.id === id; })) return;
+    // Same spot as a pin already listed? It is the saved copy of it. Two blips a few feet
+    // apart for one stand is worse than none.
+    if (out.some(function (o) {
+      return Math.abs(o.lat - p.lat) < 0.0001 && Math.abs(o.lng - p.lng) < 0.0001;
+    })) return;
+    out.push({ id: id, lat: p.lat, lng: p.lng, name: p.label || p.name || 'Saved pin' });
   }); } catch (e) {}
   return out;
 }
@@ -26010,7 +26017,11 @@ window._soloRemovePin = function(pid) {
   toast('Removed from your map');
 };
 function _isPinSaved(pid) {
-  return getSavedPins().some(function(p) { return p.pid === pid; });
+  var id = String(pid || '');
+  // A 'mypin_' feature IS the library copy, by definition. Comparing the raw id never matched
+  // it, so Save looked available on a pin that was already saved and filed a second copy.
+  if (id.indexOf('mypin_') === 0) return true;
+  return getSavedPins().some(function (p) { return p.pid === pid; });
 }
 // Re-render the "This Room" tab (star/save state) if it's the currently-open tab.
 function _refreshPinListIfOpen() {
@@ -26019,6 +26030,8 @@ function _refreshPinListIfOpen() {
 window.savePin = function(pid) {
   var pin = window._anyPin(pid);
   if (!pin) { toast('Pin not found'); return; }
+  // Belt and braces behind _isPinSaved: this one is already the library copy.
+  if (String(pid).indexOf('mypin_') === 0) { toast('Already in My Saved Pins'); return; }
   var saved = getSavedPins();
   if (saved.find(function(p) { return p.pid === pid; })) { toast('Already in My Saved Pins'); return; }
   saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name,
@@ -26032,7 +26045,15 @@ window._feedToggleSave = function(pid){
   var saved = getSavedPins();
   var idx=-1; for(var k=0;k<saved.length;k++){ if(saved[k].pid===pid){ idx=k; break; } }
   if(idx>=0){ window._addTomb('gl_pins_del', window._pinKey(saved[idx])); saved.splice(idx,1); setSavedPins(saved); try{ toast('Removed from My Pins'); }catch(e){} }
-  else { var pin=lastPins[pid]; if(!pin){ try{ toast('Pin not found'); }catch(e){} return; } saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name, lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() }); setSavedPins(saved); try{ toast('Saved to My Pins'); }catch(e){} }
+  else if (String(pid).indexOf('mypin_') === 0) {
+    // Already the library copy -- the star is on, and tapping it should take it OUT, which
+    // is deletePin's saved-pin branch. Falling through to the add path below filed a second
+    // copy of a pin that was already there.
+    try { window.deletePin(pid); } catch (e) {}
+    try { renderSavedPins(); } catch (e) {}
+    return;
+  }
+  else { var pin=window._anyPin(pid); if(!pin){ try{ toast('Pin not found'); }catch(e){} return; } saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name, lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() }); setSavedPins(saved); try{ toast('Saved to My Pins'); }catch(e){} }
   try { renderSavedPins(); } catch(e){}
   if (typeof pinFeedOpen!=='undefined' && pinFeedOpen) renderPinFeed(lastPins);
 };
@@ -26590,6 +26611,19 @@ window.addAllShownToRoom = function() {
   if (!groupName || !db) { toast('Join a room first'); return; }
   var pins = getSavedPins().filter(_savedMatch);
   if (!pins.length) { toast('Nothing to add'); return; }
+  // Ask first past a handful. This writes to a map other people are using and there is no
+  // undo -- putting 151 imported waypoints on the Crew's map is 151 deletes to put right.
+  if (pins.length > 10 && typeof _confirm === 'function') {
+    var room = (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName;
+    _confirm('Add ' + pins.length + ' pins to ' + room + '?' + String.fromCharCode(10, 10) +
+             'Everyone in the Crew will see all of them, and removing them again means '
+             + 'deleting them one at a time.',
+             function () { window._addAllShownToRoomGo(pins); }, { yes: 'Add ' + pins.length });
+    return;
+  }
+  window._addAllShownToRoomGo(pins);
+};
+window._addAllShownToRoomGo = function (pins) {
   pins.forEach(function(pin) {
     window._queuePin(groupName, { lat:pin.lat, lng:pin.lng, cat:pin.cat, label:pin.label || (pin.cat + ' pin'),
       name:userName, droppedBy:userId, ts:Date.now() });
