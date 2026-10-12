@@ -4310,7 +4310,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 903;
+var APP_BUILD = 904;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23669,6 +23669,28 @@ window._compassStart = function () {
 window._compassStop = function () {
   try { if (window._compassOn) window.removeEventListener(window._compassEvt, _compassHandler, true); } catch (e) {}
   window._compassOn = false;
+  window._compassDeg = null;   // a stale heading is worse than none: it reads as live
+};
+// Release the compass only when NOTHING still wants it. Two faults this fixes:
+//
+//   _closeInstruments never stopped it at all, so opening Compass & speed once left the
+//   magnetometer firing for the rest of the session -- invisible, and paid for in battery.
+//
+//   _closeRadar stopped it unconditionally, so closing the radar while the compass panel was
+//   still open killed the feed that panel was reading and froze its dial.
+//
+// Asking the panels whether they are on screen beats a reference count: a count drifts the
+// moment one path forgets to decrement, and these panels are plain overlays whose visibility
+// is already the truth.
+window._compassRelease = function () {
+  try {
+    var ids = ['radar-panel', 'instr-panel'];
+    for (var i = 0; i < ids.length; i++) {
+      var e = document.getElementById(ids[i]);
+      if (e && e.classList.contains('show')) return;   // somebody is still using it
+    }
+  } catch (e) {}
+  window._compassStop();
 };
 // What the scope points with: the compass when we have it, else GPS course while moving.
 function _facingDeg() {
@@ -23778,7 +23800,15 @@ function _radarTargets() {
 function _radarFocus() {
   var all = _radarTargets();
   if (!all.length || !window._radarTargetId) return null;
-  return all.filter(function (o) { return o.id === window._radarTargetId; })[0] || null;
+  var hit = all.filter(function (o) { return o.id === window._radarTargetId; })[0] || null;
+  // The pin it names has been deleted. Forget it rather than carrying a dead id in storage
+  // for ever, where it would quietly suppress the "pick something to walk to" prompt's
+  // reason for existing if the id were ever reused.
+  if (!hit && all.length) {
+    window._radarTargetId = null;
+    try { localStorage.removeItem('gl_radar_target'); } catch (e) {}
+  }
+  return hit;
 }
 function _radarRangeM(distM) {
   if (window._radarRange > 0) return RADAR_RANGES_YD[window._radarRange - 1] * 0.9144;
@@ -23792,7 +23822,23 @@ function _radarRangeM(distM) {
 // and as a point, and what the GPS says about your speed. Nothing here needs native code, so
 // it works the same on Jace's Android and on the iPhones in the family -- which is exactly
 // why Vector's satellite and barometer screens stayed behind.
-window._instrMaxMph = 0;
+// Really today's: stored with the date it belongs to, and reset when that date changes.
+window._instrMaxMph = (function () {
+  try {
+    var raw = JSON.parse(localStorage.getItem('gl_max_mph') || 'null');
+    if (raw && raw.d === new Date().toDateString()) return +raw.v || 0;
+  } catch (e) {}
+  return 0;
+})();
+window._noteMaxMph = function (mph) {
+  try {
+    var today = new Date().toDateString();
+    var raw = JSON.parse(localStorage.getItem('gl_max_mph') || 'null');
+    if (!raw || raw.d !== today) { raw = { d: today, v: 0 }; window._instrMaxMph = 0; }
+    if (mph > (raw.v || 0)) { raw.v = mph; localStorage.setItem('gl_max_mph', JSON.stringify(raw)); }
+    window._instrMaxMph = raw.v || 0;
+  } catch (e) { if (mph > window._instrMaxMph) window._instrMaxMph = mph; }
+};
 window._openInstruments = function (ev) {
   if (ev) ev.stopPropagation();
   try { _toggleNorthMenu(false); } catch (e) {}
@@ -23814,11 +23860,13 @@ window._openInstruments = function (ev) {
     window._instrLast = now;
     _instrDraw();
   };
-  loop();
+  cancelAnimationFrame(window._instrRaf); loop();
 };
 window._closeInstruments = function () {
   var el = document.getElementById('instr-panel'); if (el) el.classList.remove('show');
   try { cancelAnimationFrame(window._instrRaf); } catch (e) {}
+  window._instrRaf = null;
+  window._compassRelease();   // this panel never used to give the compass back at all
 };
 function _instrDraw() {
   var cv = document.getElementById('instr-dial'); if (!cv) return;
@@ -23873,7 +23921,7 @@ function _instrDraw() {
   if (cardEl) cardEl.textContent = hd == null ? '\u2014' : _compassPoint(hd);
 
   var mph = window._lastSpeedMph || 0;
-  if (mph > window._instrMaxMph) window._instrMaxMph = mph;
+  window._noteMaxMph(mph);
   var mEl = document.getElementById('instr-mph'), xEl = document.getElementById('instr-max');
   if (mEl) mEl.textContent = mph > 0 ? mph.toFixed(mph < 10 ? 1 : 0) : '0';
   if (xEl) xEl.textContent = 'max ' + (window._instrMaxMph > 0 ? window._instrMaxMph.toFixed(window._instrMaxMph < 10 ? 1 : 0) : '0');
@@ -23974,7 +24022,7 @@ window._openHud = function () {
       sub.textContent = 'MPH' + (hd == null ? '' : '   ' + _compassPoint(hd) + ' ' + Math.round(hd) + '\u00b0');
     }
   };
-  tick();
+  cancelAnimationFrame(window._hudRaf); tick();
 };
 window._closeHud = function () {
   var el = document.getElementById('gl-hud'); if (el) el.remove();
@@ -24019,7 +24067,7 @@ window._openSky = function (ev) {
     window._skyLast = now;
     _skyDraw();
   };
-  loop();
+  cancelAnimationFrame(window._skyRaf); loop();
 };
 window._closeSky = function () {
   var el = document.getElementById('sky-panel'); if (el) el.classList.remove('show');
@@ -24225,8 +24273,9 @@ window._closeRadar = function () {
     }
   } catch (e) {}
   cancelAnimationFrame(window._radarRaf); window._radarRaf = null;
-  window._compassStop();
   var el = document.getElementById('radar-panel'); if (el) el.classList.remove('show');
+  // AFTER the class comes off, so this panel does not count itself as a user.
+  window._compassRelease();
 };
 window._radarTogglePing = function () {
   window._radarPingOn = !window._radarPingOn;
