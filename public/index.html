@@ -4283,7 +4283,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 894;
+var APP_BUILD = 895;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8785,7 +8785,15 @@ function _ensureDem() {
 }
 window._applyTerrainOverlays = function () {
   try {
-    if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    if (!map) return;
+    // Come back when the style can take layers, instead of giving up. This used to return and
+    // never retry, so toggling Hillshade while the style was busy -- which is most likely right
+    // after opening the map, or straight after a basemap change -- turned the pill ON and added
+    // nothing at all. Same failure the pins had in 876: a one-shot check with no second chance.
+    if (!map.isStyleLoaded || !map.isStyleLoaded()) {
+      if (typeof _whenStyleReady === 'function') _whenStyleReady(function () { window._applyTerrainOverlays(); });
+      return;
+    }
     var hs = window._hsOn(), ct = window._ctOn();
     // _firstSymbolLayer calls map.getStyle(), which deep-serializes every layer in the style
     // (~150 for streets). With both overlays off and nothing to tear down, this function's
