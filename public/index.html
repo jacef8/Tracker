@@ -4322,7 +4322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 905;
+var APP_BUILD = 906;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23127,12 +23127,12 @@ var GOVLAND_URL = 'https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/serv
 // forest" code in PAD-US; Tate's Hell & Lake Talquin State Forests both came back
 // as Mang_Type=STAT + Des_Tp=SRMA, so that combo is used as the best-available proxy.
 var GOVLAND_CATEGORIES = [
-  { id: 'nf',  label: 'National Forest',        color: '#1b4d1b', test: function(p){ return p.mg === 'USFS'; } },
-  { id: 'sf',  label: 'State Forest',            color: '#2e7d32', test: function(p){ return p.mt === 'STAT' && p.dt === 'SRMA'; } },
-  { id: 'wma', label: 'Wildlife Mgmt Area',       color: '#c77b00', test: function(p){ return p.mg === 'SFW'; } },
-  { id: 'wmd', label: 'Water Mgmt District',      color: '#1976d2', test: function(p){ return p.mg === 'RWD'; } },
-  { id: 'sp',  label: 'State Park',              color: '#6a1b9a', test: function(p){ return p.mg === 'SPR'; } },
-  { id: 'other', label: 'Other public/conservation land', color: '#757575', test: function(){ return true; } } // catch-all, keep last
+  { id: 'nf',  label: 'National Forest',        color: '#4ADE80', test: function(p){ return p.mg === 'USFS'; } },
+  { id: 'sf',  label: 'State Forest',            color: '#A3E635', test: function(p){ return p.mt === 'STAT' && p.dt === 'SRMA'; } },
+  { id: 'wma', label: 'Wildlife Mgmt Area',       color: '#FB923C', test: function(p){ return p.mg === 'SFW'; } },
+  { id: 'wmd', label: 'Water Mgmt District',      color: '#38BDF8', test: function(p){ return p.mg === 'RWD'; } },
+  { id: 'sp',  label: 'State Park',              color: '#E879F9', test: function(p){ return p.mg === 'SPR'; } },
+  { id: 'other', label: 'Other public/conservation land', color: '#E4E4E7', test: function(){ return true; } } // catch-all, keep last
 ];
 function _govColorExpr() {
   var e = ['case'];
@@ -23188,15 +23188,20 @@ function addGovLandLayer() {
     map.addSource('liberty-govland', { type: 'geojson', data: '/liberty_govland.geojson', generateId: true });
   }
   map.addLayer({ id: 'liberty-govland-fill', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': colorExpr, 'fill-opacity': govLandFillOpacity } }, beforeLayer);
-  map.addLayer({ id: 'liberty-govland-line', type: 'line', source: 'liberty-govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
+  map.addLayer({ id: 'liberty-govland-casing', type: 'line', source: 'liberty-govland', paint: { 'line-color': 'rgba(0,0,0,.55)', 'line-width': 4.4 } }, beforeLayer);
+  map.addLayer({ id: 'liberty-govland-line', type: 'line', source: 'liberty-govland', paint: { 'line-color': colorExpr, 'line-width': 2.2 } }, beforeLayer);
   map.addLayer({ id: 'liberty-govland-hover', type: 'fill', source: 'liberty-govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
   if (!map.getSource('govland')) {
     map.addSource('govland', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true });
   }
   map.addLayer({ id: 'govland-fill', type: 'fill', source: 'govland', paint: { 'fill-color': colorExpr, 'fill-opacity': govLandFillOpacity } }, beforeLayer);
-  map.addLayer({ id: 'govland-line', type: 'line', source: 'govland', paint: { 'line-color': colorExpr, 'line-width': 1.2 } }, beforeLayer);
+  map.addLayer({ id: 'govland-casing', type: 'line', source: 'govland', paint: { 'line-color': 'rgba(0,0,0,.55)', 'line-width': 4.4 } }, beforeLayer);
+  map.addLayer({ id: 'govland-line', type: 'line', source: 'govland', paint: { 'line-color': colorExpr, 'line-width': 2.2 } }, beforeLayer);
   map.addLayer({ id: 'govland-hover', type: 'fill', source: 'govland', paint: { 'fill-color': '#fff', 'fill-opacity': 0.25 }, filter: ['==', ['id'], -1] }, beforeLayer);
   _updateGovLandFilter();
+  // First enable builds the layers AFTER the visibility call above, so apply the current
+  // state here too rather than leaving them visible by default.
+  _govSetVisible('liberty-govland', govLandLocalOn);
 }
 // Normalize PAD-US's full field names to the same short keys used by the local
 // Liberty extract (mg/mt/dt/n/pa/st) so styling/filtering/popups work identically
@@ -23207,13 +23212,23 @@ function _govNormalize(f) {
   p.dt = p.Des_Tp || p.dt || ''; p.pa = p.Pub_Access || p.pa || ''; p.st = p.State_Nm || p.st || '';
 }
 var govLandLocalOn = false, govLandOn = false, _govLoadTimer = null;
+// Show or hide every layer belonging to one of the two gov-land sources.
+function _govSetVisible(prefix, on) {
+  try {
+    ['-fill', '-casing', '-line'].forEach(function (suf) {
+      if (map.getLayer(prefix + suf)) map.setLayoutProperty(prefix + suf, 'visibility', on ? 'visible' : 'none');
+    });
+  } catch (e) {}
+}
 function toggleGovLandLocal(on) {
   govLandLocalOn = on;
   updateToggleUI('govland-local-toggle-track', 'govland-local-toggle-thumb', on);
-  if (on) { addGovLandLayer(); map.setLayoutProperty('liberty-govland-fill', 'visibility', 'visible'); map.setLayoutProperty('liberty-govland-line', 'visibility', 'visible'); }
-  else if (map.getLayer('liberty-govland-fill')) {
-    map.setLayoutProperty('liberty-govland-fill', 'visibility', 'none'); map.setLayoutProperty('liberty-govland-line', 'visibility', 'none');
-  }
+  // All THREE layers, named in one place. The toggle used to list the fill and the line by
+  // hand, so the casing added alongside them would have stayed painted on the map after the
+  // overlay was switched off -- black outlines around nothing. Any layer added to this
+  // overlay later goes in this list and is turned off with the rest.
+  _govSetVisible('liberty-govland', on);
+  if (on) addGovLandLayer();
 }
 function toggleGovLand(on) {
   govLandOn = on;
