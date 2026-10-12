@@ -1802,6 +1802,18 @@
   #radar-panel.fi-split .fi-turn { margin-top: 0; gap: 0; }
   #radar-panel.fi-split .fi-turn b { font-size: 30px; line-height: 1; }
   #radar-panel.fi-split .fi-acts { padding-top: 8px; }
+  /* A wide window is the wrong shape for a top/bottom split: the map becomes a letterbox
+     strip and the scope gets a squashed half of a very tall panel. Side by side gives both
+     a sensible shape, and the padding above follows the sheet because it measures it. */
+  @media (min-width: 900px) {
+    .fi.fi-split { top: 0; left: 50%; border-top: none; border-left: 1px solid rgba(240,165,0,.5);
+                   box-shadow: -10px 0 30px rgba(0,0,0,.65); padding-top: var(--safe-top); }
+    .fi.fi-split .fi-head { padding: 12px 14px 8px; }
+    #radar-panel.fi-split .fi-body { justify-content: center; }
+    #radar-panel.fi-split #radar-scope { max-width: 42vw; }
+    #radar-panel.fi-split .fi-note { display: block; }
+    #radar-panel.fi-split .fi-turn b { font-size: 40px; }
+  }
   .fi-head { display:flex; align-items:center; gap:12px; padding:12px 14px 10px; flex-shrink:0; }
   .fi-head h3 { flex:1; min-width:0; font-size:17px; font-weight:800; color:var(--text);
                 letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -4310,7 +4322,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 904;
+var APP_BUILD = 905;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24244,20 +24256,37 @@ function _radarFrameMap() {
   try {
     if (!map) return;
     var me = window._lastGPS;
-    if (!me) return;
+    // No own position -- a desktop window, or a phone that has not got a fix yet. Returning
+    // here left the map wherever it happened to be, with half of it behind the scope, and
+    // reported as "still not centered on me" from the desktop app where there is no me at
+    // all. Fall back to the target you picked, then to whatever is already on screen: in
+    // every case the padding below lifts it into the strip you can actually see.
+    var aim = me;
+    if (!aim) { var f0 = _radarFocus(); if (f0) aim = { lat: f0.lat, lng: f0.lng }; }
+    if (!aim) { try { var c0 = map.getCenter(); aim = { lat: c0.lat, lng: c0.lng }; } catch (e) {} }
+    if (!aim) return;
     // setPadding, ALWAYS, and before the move. fitBounds's own padding option applies to that
     // one call and is then forgotten -- so the next time anything re-centred the map (a GPS
     // fix while following yourself, which is every few seconds) you slid back under the
     // scope. Reported straight away: "the map isn't centered on me". As a persistent padding
     // it means the middle of the map is the middle of the STRIP you can actually see, and
     // every later move respects that for as long as the split is open.
-    var pad = { top: 60, bottom: Math.round(window.innerHeight * 0.5) + 16, left: 40, right: 40 };
+    // Which half is hidden depends on the layout: the sheet sits at the bottom on a phone and
+    // down the right-hand side on a wide window, so the padding has to follow it. Read from
+    // the element rather than re-deriving the breakpoint, so the two can never disagree.
+    var pad = { top: 60, bottom: 20, left: 40, right: 40 };
+    try {
+      var panel = document.getElementById('radar-panel');
+      var r = panel.getBoundingClientRect();
+      if (r.top > 4) pad.bottom = Math.round(window.innerHeight - r.top) + 16;   // sheet below
+      if (r.left > 4) pad.right = Math.round(window.innerWidth - r.left) + 16;   // sheet right
+    } catch (e) { pad.bottom = Math.round(window.innerHeight * 0.5) + 16; }
     map.setPadding(pad);
     // Centre on YOU and leave the zoom alone. Fitting you and the target both in sounds
     // tidier until the target is four miles off, which it was -- that frames a county and
     // the strip of map becomes useless. The scope already carries the direction; the map is
     // here to show the ground immediately around you.
-    map.easeTo({ center: [me.lng, me.lat], duration: 600 });
+    map.easeTo({ center: [aim.lng, aim.lat], duration: 600 });
   } catch (e) {}
 }
 window._closeRadar = function () {
