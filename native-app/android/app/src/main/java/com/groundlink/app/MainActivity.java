@@ -31,6 +31,7 @@ public class MainActivity extends BridgeActivity {
     private static final String TAG = "GLMainActivity";
 
     private AudioRouter audioRouter;
+    private SensorBridge sensorBridge;
 
     // ── Car-radio fix ──────────────────────────────────────────────────────
     // WebView voice (LiveKit/WebRTC) makes Chromium flip Android into
@@ -281,6 +282,17 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // Non-fatal — voice just won't have mic access until granted in app settings.
         }
+        // Raw GNSS and device sensors, for the satellite / sky / sensors screens. The web
+        // platform hands a page a position and nothing behind it -- no satellite list, no
+        // signal strengths, no barometer -- so these can only come from here. Android only:
+        // iOS exposes no raw satellite data to any app, so the web side checks for
+        // window.GLSensors and simply shows nothing on the iPhones.
+        try {
+            sensorBridge = new SensorBridge(this);
+            this.getBridge().getWebView().addJavascriptInterface(sensorBridge, "GLSensors");
+        } catch (Exception e) {
+            // Non-fatal: every other part of the app works without the instrument screens.
+        }
         // Expose the car-radio audio router to the web app (voice.js).
         try {
             audioRouter = new AudioRouter(this);
@@ -444,6 +456,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPause() {
         super.onPause();
+        // Nothing is looking at the instruments once we are behind something else, and these
+        // listeners are the expensive kind. The page re-starts them when a screen reopens.
+        try { if (sensorBridge != null) sensorBridge.stop(); } catch (Exception e) {}
         if (isFinishing() && !isChangingConfigurations()) {
             try { HeadlessTrackerService.startActive(this); } catch (Exception e) { Log.w(TAG, "handover on finish failed", e); }
         }
@@ -455,6 +470,7 @@ public class MainActivity extends BridgeActivity {
     // next chance (GLMessagingService).
     @Override
     public void onDestroy() {
+        try { if (sensorBridge != null) sensorBridge.stop(); } catch (Exception e) {}
         if (!isFinishing() && !isChangingConfigurations()) {
             try { HeadlessTrackerService.startActive(this); } catch (Exception e) { Log.w(TAG, "handover on destroy failed", e); }
         }
