@@ -4250,7 +4250,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 890;
+var APP_BUILD = 891;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23562,7 +23562,8 @@ function _actTick() {
 // Ranges in yards. Auto picks the smallest ring that still contains the target.
 var RADAR_RANGES_YD = [25, 50, 100, 250];
 window._radarRange = 0;        // 0 = auto, else index+1 into RADAR_RANGES_YD
-window._radarTargetId = null;
+// Restored from the last session: a deliberate pick is worth remembering, unlike a guess.
+window._radarTargetId = (function () { try { return localStorage.getItem('gl_radar_target') || null; } catch (e) { return null; } })();
 window._radarPingOn = true;
 
 // Every pin we could walk to: the open room's pins plus this device's saved ones.
@@ -23578,16 +23579,16 @@ function _radarTargets() {
   }); } catch (e) {}
   return out;
 }
+// The target is the one you PICKED. It used to fall back to "nearest pin", which sounds
+// helpful and is not: with 151 saved pins, most of them imported onX waypoints, the nearest
+// is almost always something you never chose -- and the scope then says "Behind you, turn
+// around" about it in red, with confidence, before you have asked it anything. Reported
+// 2026-10-11: "as soon as I open the radar it already has a waypoint selected."
+// No pick means no target. Every pin still draws as a blip; tap one, or use Choose pin.
 function _radarFocus() {
   var all = _radarTargets();
-  if (!all.length) return null;
-  var t = null;
-  if (window._radarTargetId) t = all.filter(function (o) { return o.id === window._radarTargetId; })[0] || null;
-  if (t) return t;
-  var me = window._lastGPS; if (!me) return all[0];
-  var best = null, bd = Infinity;
-  all.forEach(function (o) { var d = metersApart(me.lat, me.lng, o.lat, o.lng); if (d < bd) { bd = d; best = o; } });
-  return best;
+  if (!all.length || !window._radarTargetId) return null;
+  return all.filter(function (o) { return o.id === window._radarTargetId; })[0] || null;
 }
 function _radarRangeM(distM) {
   if (window._radarRange > 0) return RADAR_RANGES_YD[window._radarRange - 1] * 0.9144;
@@ -23858,6 +23859,7 @@ window._radarWireTaps = function () {
       });
       if (!best) return;
       window._radarTargetId = best;
+      try { localStorage.setItem('gl_radar_target', best); } catch (e) {}
       try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) {}
       _radarDraw();
     } catch (e) {}
@@ -23896,6 +23898,7 @@ window._radarPickTarget = function () {
 };
 window._radarChoose = function (id) {
   window._radarTargetId = id;
+  try { localStorage.setItem('gl_radar_target', id); } catch (e) {}
   var ov = document.getElementById('radar-pick'); if (ov) ov.remove();
   _radarDraw();
 };
@@ -23945,7 +23948,20 @@ function _radarDraw() {
   var me = window._lastGPS, f = _radarFocus();
   var dist = NaN, brg = 0;
   if (me && f) { dist = metersApart(me.lat, me.lng, f.lat, f.lng); brg = _bearingDeg(me.lat, me.lng, f.lat, f.lng); }
-  var rangeM = _radarRangeM(dist);
+  // With no target, there is no distance to size the scope by -- so use the nearest pin's,
+  // or the rings default to 90 m and everything you own sits off the edge.
+  var _sizeBy = dist;
+  if (!isFinite(_sizeBy) && me) {
+    try {
+      var _near = Infinity;
+      _radarTargets().forEach(function (o) {
+        var d2 = metersApart(me.lat, me.lng, o.lat, o.lng);
+        if (d2 < _near) _near = d2;
+      });
+      if (isFinite(_near)) _sizeBy = _near;
+    } catch (e) {}
+  }
+  var rangeM = _radarRangeM(_sizeBy);
   var face = _facingDeg();
   var ref = face == null ? 0 : face;
 
@@ -24108,9 +24124,12 @@ function _radarDraw() {
   var nEl = document.getElementById('radar-note'), ttl = document.getElementById('radar-title');
   if (ttl) ttl.textContent = f ? f.name : 'Radar';
   if (!f) {
+    var _any = _radarTargets().length;
     if (dEl) dEl.textContent = '—';
-    if (tEl) { tEl.textContent = 'No pins yet'; tEl.style.color = MUT; }
-    if (nEl) nEl.textContent = 'Drop a pin on the map first, then walk away and come back to it.';
+    if (tEl) { tEl.textContent = _any ? 'Pick something to walk to' : 'No pins yet'; tEl.style.color = MUT; }
+    if (nEl) nEl.textContent = _any
+      ? 'Tap a blip on the scope, or use Choose pin.'
+      : 'Drop a pin on the map first, then walk away and come back to it.';
     return;
   }
   if (!me || !isFinite(dist)) {
