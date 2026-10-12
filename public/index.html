@@ -4283,7 +4283,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 895;
+var APP_BUILD = 896;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19194,6 +19194,30 @@ function listenPins() {
 }
 
 window.deletePin = pid => {
+  // A 'mypin_' id is one of YOUR saved pins drawn on this map, not a pin in the room. Sending
+  // its id to gl/<room>/pins deleted a path that was never there, filtered a lastPins entry
+  // that was never there, said "Pin removed" and changed nothing -- so the pin came straight
+  // back on the next redraw, which is how a Vehicle pin survived being deleted over and over.
+  // Reported 2026-10-11: "I can select it to delete but then it never goes away."
+  if (String(pid).indexOf('mypin_') === 0) {
+    try {
+      var want = String(pid).slice(6);
+      var saved = getSavedPins(), idx = -1;
+      for (var i = 0; i < saved.length; i++) {
+        var c = saved[i]; if (!c) continue;
+        if (String(c.pid) === want || (c.lat + ',' + c.lng) === want) { idx = i; break; }
+      }
+      if (idx < 0) { toast('That pin is already gone', 2200); return; }
+      // removeSavedPin is the one deletion path for the library: it files the pin in Recently
+      // deleted and writes the tombstone that stops the cloud copy merging straight back in.
+      window.removeSavedPin(idx);
+      try { if (window._savedPinView) delete window._savedPinView[pid]; } catch (e) {}
+      updatePinSource(lastPins);
+      try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+      toast('Removed from your pins');
+    } catch (e) { try { toast('Could not remove that pin'); } catch (_e) {} }
+    return;
+  }
   fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
   const pins = Object.fromEntries(Object.entries(lastPins).filter(([k]) => k !== pid));
   updatePinSource(pins);
@@ -19213,7 +19237,7 @@ window._closePinPopup = function() {
 // useful to someone without the app, or without access to that Crew.
 window._sharePin = function (pid) {
   try {
-    var pin = lastPins[pid];
+    var pin = window._anyPin(pid);
     if (!pin) { toast('That pin is gone'); return; }
     var lat = +pin.lat, lng = +pin.lng;
     if (!isFinite(lat) || !isFinite(lng)) { toast('That pin has no location'); return; }
