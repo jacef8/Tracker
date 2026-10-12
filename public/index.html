@@ -4283,7 +4283,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 897;
+var APP_BUILD = 900;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19194,35 +19194,24 @@ function listenPins() {
 }
 
 window.deletePin = pid => {
-  // A 'mypin_' id is one of YOUR saved pins drawn on this map, not a pin in the room. Sending
-  // its id to gl/<room>/pins deleted a path that was never there, filtered a lastPins entry
-  // that was never there, said "Pin removed" and changed nothing -- so the pin came straight
-  // back on the next redraw, which is how a Vehicle pin survived being deleted over and over.
-  // Reported 2026-10-11: "I can select it to delete but then it never goes away."
-  if (String(pid).indexOf('mypin_') === 0) {
+  var ref = window._pinRef(pid);
+  if (!ref) { try { toast('That pin is already gone', 2200); } catch (e) {} return; }
+  if (ref.kind === 'saved') {
+    // removeSavedPin is the library's one deletion path: it files the pin in Recently deleted
+    // and writes the tombstone that stops the cloud copy merging straight back in. A second
+    // delete written here would skip both and lose the pin for good.
     try {
-      var want = String(pid).slice(6);
-      var saved = getSavedPins(), idx = -1;
-      for (var i = 0; i < saved.length; i++) {
-        var c = saved[i]; if (!c) continue;
-        if (String(c.pid) === want || (c.lat + ',' + c.lng) === want) { idx = i; break; }
-      }
-      if (idx < 0) { toast('That pin is already gone', 2200); return; }
-      // removeSavedPin is the one deletion path for the library: it files the pin in Recently
-      // deleted and writes the tombstone that stops the cloud copy merging straight back in.
-      window.removeSavedPin(idx);
-      try { if (window._savedPinView) delete window._savedPinView[pid]; } catch (e) {}
-      updatePinSource(lastPins);
-      try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+      window.removeSavedPin(ref.idx);
+      if (window._savedPinView) delete window._savedPinView[pid];
+      try { delete lastPins[pid]; } catch (e) {}
+      window._pinsChanged();
       toast('Removed from your pins');
     } catch (e) { try { toast('Could not remove that pin'); } catch (_e) {} }
     return;
   }
-  fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`));
-  const pins = Object.fromEntries(Object.entries(lastPins).filter(([k]) => k !== pid));
-  updatePinSource(pins);
-  lastPins = pins;
-  if (pinFeedOpen) { renderPinFeed(pins); }
+  try { fbRemove(fbRef(db, `gl/${groupName}/pins/${pid}`)); } catch (e) {}
+  lastPins = Object.fromEntries(Object.entries(lastPins).filter(([k]) => k !== pid));
+  window._pinsChanged();
   toast('Pin removed');
 };
 
@@ -19271,37 +19260,71 @@ window._focusSharedPin = function () {
 // Any pin the UI might be asked about: a room pin, or one of your saved ones resolved for
 // the popup. One lookup, so Edit / Share / Navigate / Save cannot disagree with what is
 // actually on screen.
+// Where does this pin actually live? Returns { kind, pin, idx } or null.
+//   kind 'room'  -- in gl/<room>/pins, shared with the Crew. idx is null.
+//   kind 'saved' -- in YOUR library (gl_saved_pins). idx is its index there.
+// Resolution order matters. A 'mypin_' id is unambiguous and is checked first. Otherwise a
+// live room pin wins, because in a Crew that is what an id normally means. Only then do we
+// look in the library, which is what catches solo "My Map" -- there lastPins is REBUILT out
+// of the library and keyed by the raw saved id, so the same id means something different
+// depending on which map is open. That ambiguity is the reason this has to be one function.
+window._pinRef = function (id) {
+  var pid = String(id || '');
+  if (!pid) return null;
+  var saved = [];
+  try { saved = getSavedPins() || []; } catch (e) { saved = []; }
+  var findSaved = function (want) {
+    for (var i = 0; i < saved.length; i++) {
+      var c = saved[i]; if (!c) continue;
+      if (String(c.pid) === want || (c.lat + ',' + c.lng) === want) return i;
+    }
+    return -1;
+  };
+  if (pid.indexOf('mypin_') === 0) {
+    var i1 = findSaved(pid.slice(6));
+    return i1 < 0 ? null : { kind: 'saved', pin: saved[i1], idx: i1 };
+  }
+  var inSolo = false;
+  try { inSolo = !!window._soloMode; } catch (e) {}
+  if (!inSolo) {
+    try { if (lastPins && lastPins[pid]) return { kind: 'room', pin: lastPins[pid], idx: null }; } catch (e) {}
+  }
+  var i2 = findSaved(pid);
+  if (i2 >= 0) return { kind: 'saved', pin: saved[i2], idx: i2 };
+  try { if (lastPins && lastPins[pid]) return { kind: 'room', pin: lastPins[pid], idx: null }; } catch (e) {}
+  return null;
+};
+// Redraw after a write, whichever store it landed in.
+window._pinsChanged = function () {
+  try { updatePinSource(lastPins); } catch (e) {}
+  try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
+  try { renderSavedPins(); } catch (e) {}
+  try { if (typeof pinFeedOpen !== 'undefined' && pinFeedOpen) renderPinFeed(lastPins); } catch (e) {}
+};
 window._anyPin = function (pid) {
   try {
-    if (lastPins && lastPins[pid]) return lastPins[pid];
+    var r = window._pinRef(pid);
+    if (r) return r.pin;
+    // The popup's resolved view, for the moment between resolving and the library settling.
     if (window._savedPinView && window._savedPinView[pid]) return window._savedPinView[pid];
   } catch (e) {}
   return null;
 };
 window._showPinPopup = function(pid, lngLat) {
-  var pin = lastPins[pid];
-  // 'mypin_*' features come from your own saved library, not from the room, so they are not in
-  // lastPins and this used to return silently -- a pin you could see and not open. Reported as
-  // "the deer stand in the middle will not let me click it to share it".
-  if (!pin && String(pid).indexOf('mypin_') === 0) {
-    try {
-      var _want = String(pid).slice(6);
-      var _sp = (typeof getSavedPins === 'function') ? getSavedPins() : [];
-      for (var _i = 0; _i < _sp.length; _i++) {
-        var _c = _sp[_i];
-        if (!_c) continue;
-        if (String(_c.pid) === _want || (_c.lat + ',' + _c.lng) === _want) {
-          pin = { lat: _c.lat, lng: _c.lng, cat: _c.cat || 'Waypoint', label: _c.label || '',
-                  name: _c.name || 'My pin', ts: _c.ts || _c.savedAt || Date.now(), droppedBy: userId };
-          // Held in a lookup of its own, NOT written into lastPins. Writing it there is what
-          // created a stale duplicate that outlived every edit (see updatePinSource).
-          // Re-resolved on every open, so it always reflects the saved record as it stands.
-          window._savedPinView = window._savedPinView || {};
-          window._savedPinView[pid] = pin;
-          break;
-        }
-      }
-    } catch (e) {}
+  // One resolution path for every pin, whichever store it lives in -- see _pinRef. The
+  // popup used to carry its own copy of that lookup, which is how it and the buttons on it
+  // could disagree about whether a pin existed.
+  var ref = window._pinRef(pid);
+  var pin = ref && ref.pin;
+  if (ref && ref.kind === 'saved') {
+    // A view of the saved record shaped like a room pin, so the popup and its buttons can
+    // treat both alike. Rebuilt on every open and deliberately NOT written into lastPins --
+    // doing that is what left a stale copy that outlived every edit.
+    var c = ref.pin;
+    pin = { lat: c.lat, lng: c.lng, cat: c.cat || 'Waypoint', label: c.label || '',
+            name: c.name || 'My pin', ts: c.ts || c.savedAt || Date.now(), droppedBy: userId };
+    window._savedPinView = window._savedPinView || {};
+    window._savedPinView[pid] = pin;
   }
   if (!pin) return;
   var def    = PIN_DEFS[pin.cat] || PIN_DEFS['Waypoint'];
@@ -19471,22 +19494,24 @@ window._movePin = function(pid){
 window._saveMovedPin = function(){
   var pid=window._movePinId, mk=window._moveMarker; if(!pid||!mk){ window._cancelMovePin(); return; }
   var ll=mk.getLngLat();
-  if (window._soloMode){
-    try { var arr=getSavedPins(); for(var i=0;i<arr.length;i++){ if(arr[i].pid===pid){ arr[i].lat=ll.lat; arr[i].lng=ll.lng; break; } } setSavedPins(arr); } catch(e){}
-    if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; } try{ updatePinSource(lastPins); }catch(e){}
+  var ref = window._pinRef(pid);
+  if (!ref) { window._cancelMovePin(); try { toast('That pin is gone'); } catch (e) {} return; }
+  if (ref.kind === 'saved') {
+    try {
+      var arr = getSavedPins();
+      if (arr[ref.idx]) { arr[ref.idx].lat = ll.lat; arr[ref.idx].lng = ll.lng; setSavedPins(arr); }
+    } catch (e) {}
   } else {
-    if (window._isPrivatePin(pid)) {
-      try {
-        var _sp2 = getSavedPins();
-        var _h2 = _sp2.filter(function (x) { return ('mypin_' + x.pid) === pid; })[0];
-        if (_h2) { _h2.lat = ll.lat; _h2.lng = ll.lng; setSavedPins(_sp2); }
-        updatePinSource(lastPins);
-      } catch (e) {}
-    } else {
-      try { fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat); fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng); } catch(e){}
-    }
-    if(lastPins[pid]){ lastPins[pid].lat=ll.lat; lastPins[pid].lng=ll.lng; }
+    try {
+      fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lat'), ll.lat);
+      fbSet(fbRef(db,'gl/'+groupName+'/pins/'+pid+'/lng'), ll.lng);
+    } catch(e){}
   }
+  // Keep whatever copy is on screen in step, so the marker does not jump back before the
+  // store's own update comes round.
+  try { if (lastPins[pid]) { lastPins[pid].lat = ll.lat; lastPins[pid].lng = ll.lng; } } catch (e) {}
+  try { if (window._savedPinView && window._savedPinView[pid]) { window._savedPinView[pid].lat = ll.lat; window._savedPinView[pid].lng = ll.lng; } } catch (e) {}
+  window._pinsChanged();
   _clearMoveMarker(); var bar=document.getElementById('pin-move-bar'); if(bar) bar.style.display='none';
   try { toast('Pin moved'); } catch(e){}
 };
@@ -20268,31 +20293,27 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
                    ? customCatEl.value.trim().substring(0, 20)
                    : selectedCat;
 
-  // Edit mode — update the existing pin's type + description in place.
+  // Edit mode. One decision about where the pin lives, then one write to that store --
+  // see _pinRef. This used to be a private branch, a room branch, and a bolted-on block to
+  // keep the saved copy in step because the room branch had forgotten it.
   if (_editingPid) {
-    var existing = lastPins[_editingPid];
-    if (window._isPrivatePin(_editingPid)) {
-      // Yours alone: keep the change on this device and tell them plainly where it went.
+    var ref = window._pinRef(_editingPid);
+    if (!ref) { _closePinModal(); try { toast('That pin is gone'); } catch (e) {} return; }
+    if (ref.kind === 'saved') {
       try {
-        var _sp = getSavedPins();
-        var _hit = _sp.filter(function (x) { return ('mypin_' + x.pid) === _editingPid; })[0];
-        if (_hit) { _hit.label = label; _hit.cat = finalCat; setSavedPins(_sp); }
+        var sv = getSavedPins();
+        if (sv[ref.idx]) { sv[ref.idx].label = label; sv[ref.idx].cat = finalCat; setSavedPins(sv); }
+        if (window._savedPinView && window._savedPinView[_editingPid]) {
+          window._savedPinView[_editingPid].label = label;
+          window._savedPinView[_editingPid].cat = finalCat;
+        }
       } catch (e) {}
-      try { updatePinSource(lastPins); } catch (e) {}
+      window._pinsChanged();
       _closePinModal();
-      toast('Saved to your own pins — the Crew cannot see it', 3000);
+      toast('Saved to your own pins \u2014 the Crew cannot see it', 3000);
       return;
     }
-    // Keep your saved copy in step with the rename. Without this the library shows whatever
-    // the pin was called at the moment it was saved -- usually nothing at all. The private
-    // branch just above has always done this; the room branch never did.
-    try {
-      var _sv = getSavedPins(), _touched = false;
-      for (var _i = 0; _i < _sv.length; _i++) {
-        if (_sv[_i] && _sv[_i].pid === _editingPid) { _sv[_i].label = label; _sv[_i].cat = finalCat; _touched = true; }
-      }
-      if (_touched) { setSavedPins(_sv); try { renderSavedPins(); } catch (e) {} }
-    } catch (e) {}
+    var existing = ref.pin;
     if (existing && db && groupName) {
       fbSet(fbRef(db, `gl/${groupName}/pins/${_editingPid}`), {
         lat: existing.lat, lng: existing.lng,
@@ -20301,6 +20322,16 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
         droppedBy: existing.droppedBy || userId,
         ts: existing.ts || Date.now()
       });
+      // A room pin you have ALSO saved keeps a copy in the library; without this the library
+      // goes on showing the name the pin had when you saved it.
+      try {
+        var sv2 = getSavedPins(), touched = false;
+        for (var k = 0; k < sv2.length; k++) {
+          if (sv2[k] && sv2[k].pid === _editingPid) { sv2[k].label = label; sv2[k].cat = finalCat; touched = true; }
+        }
+        if (touched) { setSavedPins(sv2); }
+      } catch (e) {}
+      window._pinsChanged();
       toast('Pin updated');
     }
     _closePinModal();
@@ -26042,20 +26073,18 @@ window.savePin = function(pid) {
   _refreshPinListIfOpen();
 };
 window._feedToggleSave = function(pid){
+  var ref = window._pinRef(pid);
+  if (!ref) { try { toast('Pin not found'); } catch(e){} return; }
+  // Already in the library -- the star is on, so tapping it takes the pin out. deletePin's
+  // saved branch is the one removal path, tombstone and Recently-deleted included.
+  if (ref.kind === 'saved') { try { window.deletePin(pid); } catch (e) {} return; }
+  var pin = ref.pin;
   var saved = getSavedPins();
-  var idx=-1; for(var k=0;k<saved.length;k++){ if(saved[k].pid===pid){ idx=k; break; } }
-  if(idx>=0){ window._addTomb('gl_pins_del', window._pinKey(saved[idx])); saved.splice(idx,1); setSavedPins(saved); try{ toast('Removed from My Pins'); }catch(e){} }
-  else if (String(pid).indexOf('mypin_') === 0) {
-    // Already the library copy -- the star is on, and tapping it should take it OUT, which
-    // is deletePin's saved-pin branch. Falling through to the add path below filed a second
-    // copy of a pin that was already there.
-    try { window.deletePin(pid); } catch (e) {}
-    try { renderSavedPins(); } catch (e) {}
-    return;
-  }
-  else { var pin=window._anyPin(pid); if(!pin){ try{ toast('Pin not found'); }catch(e){} return; } saved.unshift({ pid:pid, cat:pin.cat, label:pin.label, name:pin.name, lat:pin.lat, lng:pin.lng, ts:pin.ts, savedAt:Date.now() }); setSavedPins(saved); try{ toast('Saved to My Pins'); }catch(e){} }
-  try { renderSavedPins(); } catch(e){}
-  if (typeof pinFeedOpen!=='undefined' && pinFeedOpen) renderPinFeed(lastPins);
+  saved.unshift({ pid: pid, cat: pin.cat, label: pin.label, name: pin.name,
+                  lat: pin.lat, lng: pin.lng, ts: pin.ts, savedAt: Date.now() });
+  setSavedPins(saved);
+  try { toast('Saved to My Pins'); } catch (e) {}
+  window._pinsChanged();
 };
 // Delete a saved pin straight from its map popup.
 //
