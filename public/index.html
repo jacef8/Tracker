@@ -3329,17 +3329,27 @@
         <span id="instr-card" style="font-size:15px;font-weight:800;letter-spacing:.14em;color:var(--accent);margin-top:4px">&mdash;</span>
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:4px">
-      <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:center">
-        <div style="font-size:26px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums" id="instr-mph">--</div>
-        <div style="font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--muted)">MPH NOW</div>
-      </div>
-      <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:center">
-        <div style="font-size:26px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums" id="instr-max">--</div>
-        <div style="font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--muted)">MAX TODAY</div>
+    <!-- Speed as a 270-degree sweep, the way Vector draws it. A bare number tells you the
+         value; an arc tells you where you are in the range without reading anything. -->
+    <div class="fi-anchor" style="width:min(62vw,250px);margin-top:2px">
+      <svg viewBox="0 0 340 340" aria-hidden="true">
+        <circle cx="170" cy="170" r="136" fill="none" stroke="rgba(0,0,0,.6)" stroke-width="24"
+                stroke-linecap="round" stroke-dasharray="641 855" transform="rotate(135 170 170)"/>
+        <circle id="instr-arc" cx="170" cy="170" r="136" fill="none" stroke="var(--accent)" stroke-width="22"
+                stroke-linecap="round" stroke-dasharray="0 855" transform="rotate(135 170 170)"/>
+        <g id="instr-ticks"></g>
+      </svg>
+      <div class="fi-read">
+        <b id="instr-mph" style="font-size:44px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums">--</b>
+        <span style="font-size:12px;font-weight:800;letter-spacing:.14em;color:var(--muted);margin-top:2px">MPH</span>
+        <span id="instr-max" style="font-size:12px;font-weight:700;color:var(--muted);margin-top:6px">max --</span>
       </div>
     </div>
-    <div class="fi-note" id="instr-note" style="margin-top:10px"></div>
+    <div class="fi-note" id="instr-note" style="margin-top:6px"></div>
+  </div>
+  <div class="fi-acts">
+    <button class="fi-btn" type="button" id="hud-mirror-btn" onclick="window._toggleHudMirror()">Mirror: off</button>
+    <button class="fi-btn pri" type="button" onclick="window._openHud()">Windscreen HUD</button>
   </div>
 </div>
 
@@ -3360,7 +3370,7 @@
   </div>
   <div class="fi-acts">
     <button class="fi-btn" type="button" id="radar-ping-btn" onclick="window._radarTogglePing()">Sound on</button>
-    <button class="fi-btn" type="button" onclick="window._radarMarkHere()">Mark here</button>
+    <button class="fi-btn" type="button" id="radar-mark-btn" onclick="window._radarMarkHere()">Pin my spot</button>
     <button class="fi-btn pri" type="button" onclick="window._radarPickTarget()">Choose pin</button>
   </div>
 </div>
@@ -4240,7 +4250,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 889;
+var APP_BUILD = 890;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -23597,6 +23607,10 @@ window._openInstruments = function (ev) {
   try { _toggleNorthMenu(false); } catch (e) {}
   var el = document.getElementById('instr-panel'); if (!el) return;
   el.classList.add('show');
+  try {
+    var _mb = document.getElementById('hud-mirror-btn');
+    if (_mb) _mb.textContent = 'Mirror: ' + (window._hudMirror() ? 'on' : 'off');
+  } catch (e) {}
   window._compassStart().then(function (ok) {
     var n = document.getElementById('instr-note');
     if (!ok && n) n.textContent = 'No compass on this phone - the dial follows the way you are MOVING instead. Walk a few steps to set it.';
@@ -23671,7 +23685,35 @@ function _instrDraw() {
   if (mph > window._instrMaxMph) window._instrMaxMph = mph;
   var mEl = document.getElementById('instr-mph'), xEl = document.getElementById('instr-max');
   if (mEl) mEl.textContent = mph > 0 ? mph.toFixed(mph < 10 ? 1 : 0) : '0';
-  if (xEl) xEl.textContent = window._instrMaxMph > 0 ? window._instrMaxMph.toFixed(window._instrMaxMph < 10 ? 1 : 0) : '0';
+  if (xEl) xEl.textContent = 'max ' + (window._instrMaxMph > 0 ? window._instrMaxMph.toFixed(window._instrMaxMph < 10 ? 1 : 0) : '0');
+  // The dial picks its own top end from the fastest you have actually gone, stepping up
+  // through sensible numbers. A fixed 0-120 face spends its whole life in the first inch
+  // when you are walking, and a face that rescales continuously is unreadable.
+  var _steps = [10, 20, 40, 60, 80, 100, 120];
+  var _top = _steps[_steps.length - 1];
+  for (var _si = 0; _si < _steps.length; _si++) {
+    if (_steps[_si] >= Math.max(mph, window._instrMaxMph) * 1.1) { _top = _steps[_si]; break; }
+  }
+  var arc = document.getElementById('instr-arc');
+  if (arc) {
+    var pct = Math.max(0, Math.min(1, mph / _top));
+    arc.setAttribute('stroke-dasharray', (641 * pct).toFixed(1) + ' 855');
+  }
+  var tk = document.getElementById('instr-ticks');
+  if (tk && tk.getAttribute('data-top') !== String(_top)) {
+    tk.setAttribute('data-top', String(_top));
+    var h = '', step = _top / 4;
+    for (var k = 0; k <= 4; k++) {
+      var v = k * step, ang = (135 + 270 * (v / _top)) * Math.PI / 180;
+      var cxx = Math.cos(ang), cyy = Math.sin(ang);
+      h += '<line x1="' + (170 + cxx * 116).toFixed(1) + '" y1="' + (170 + cyy * 116).toFixed(1) +
+           '" x2="' + (170 + cxx * 104).toFixed(1) + '" y2="' + (170 + cyy * 104).toFixed(1) +
+           '" stroke="rgba(255,255,255,.5)" stroke-width="3" stroke-linecap="round"/>';
+      h += '<text x="' + (170 + cxx * 86).toFixed(1) + '" y="' + (170 + cyy * 86 + 5).toFixed(1) +
+           '" text-anchor="middle" fill="#a9b4bf" font-size="15" font-weight="700">' + Math.round(v) + '</text>';
+    }
+    tk.innerHTML = h;
+  }
 
   var nEl2 = document.getElementById('instr-note');
   if (nEl2 && hd != null) {
@@ -23692,6 +23734,66 @@ function _instrDraw() {
     nEl2.textContent = bits.join(' \u00b7 ');
   }
 }
+// ── WINDSCREEN HUD ────────────────────────────────────────────────────────────────────────
+// Ported from Vector. Huge speed on black, optionally MIRRORED so it reads the right way
+// round in the windscreen with the phone face-up on the dash. Tap anywhere to leave.
+// The whole point is that it is legible at a glance and has nothing else on it, so there are
+// no controls inside -- the mirror choice is made before you go in.
+window._hudMirror = function () { try { return localStorage.getItem('gl_hud_mirror') === '1'; } catch (e) { return false; } };
+window._toggleHudMirror = function () {
+  var on = !window._hudMirror();
+  try { localStorage.setItem('gl_hud_mirror', on ? '1' : '0'); } catch (e) {}
+  var b = document.getElementById('hud-mirror-btn');
+  if (b) b.textContent = 'Mirror: ' + (on ? 'on' : 'off');
+  var el = document.getElementById('gl-hud');
+  if (el) el.style.transform = on ? 'scaleX(-1)' : '';
+};
+window._openHud = function () {
+  if (document.getElementById('gl-hud')) return;
+  var el = document.createElement('div');
+  el.id = 'gl-hud';
+  el.style.cssText = 'position:fixed;inset:0;z-index:4000;background:#000;display:flex;' +
+    'flex-direction:column;align-items:center;justify-content:center;cursor:pointer;' +
+    '-webkit-tap-highlight-color:transparent' + (window._hudMirror() ? ';transform:scaleX(-1)' : '');
+  el.innerHTML = '<div id="gl-hud-num" style="font-weight:800;line-height:.9;color:#fff;font-variant-numeric:tabular-nums">--</div>' +
+                 '<div id="gl-hud-sub" style="margin-top:10px;font-size:18px;font-weight:800;letter-spacing:.22em;color:#8b949e">MPH</div>' +
+                 '<div style="position:absolute;bottom:calc(var(--safe-bot) + 18px);font-size:13px;color:#484f58">Tap anywhere to exit</div>';
+  el.addEventListener('click', window._closeHud);
+  document.body.appendChild(el);
+  // Keep the screen awake while it is up -- a HUD that sleeps after 30 seconds is not a HUD.
+  // acquireWakeLock(true) is the app's one wake-lock path; force=true because the HUD needs
+  // it whether or not "keep screen on" is set in Settings.
+  try { acquireWakeLock(true); } catch (e) {}
+  var tick = function () {
+    var e2 = document.getElementById('gl-hud'); if (!e2) return;
+    window._hudRaf = requestAnimationFrame(tick);
+    var now = Date.now();
+    if (now - (window._hudLast || 0) < 120) return;
+    window._hudLast = now;
+    var n = document.getElementById('gl-hud-num'); if (!n) return;
+    var mph = window._lastSpeedMph || 0;
+    var txt = mph >= 1 ? String(Math.round(mph)) : '0';
+    n.textContent = txt;
+    // Sized to the screen, and to how many digits there are, so 8 and 108 both fill it.
+    var px = Math.min(window.innerWidth * (txt.length >= 3 ? 0.42 : 0.6), window.innerHeight * 0.62);
+    n.style.fontSize = Math.round(px) + 'px';
+    var sub = document.getElementById('gl-hud-sub');
+    if (sub) {
+      var hd = _facingDeg();
+      sub.textContent = 'MPH' + (hd == null ? '' : '   ' + _compassPoint(hd) + ' ' + Math.round(hd) + '\u00b0');
+    }
+  };
+  tick();
+};
+window._closeHud = function () {
+  var el = document.getElementById('gl-hud'); if (el) el.remove();
+  try { cancelAnimationFrame(window._hudRaf); } catch (e) {}
+  // Give the lock back unless something else still wants it: the Settings toggle, or a track
+  // being recorded. Releasing unconditionally would switch the screen off under a recording.
+  try {
+    if (wakeLock && !_keepScreenOn() && !window._trackRec) { wakeLock.release(); }
+  } catch (e) {}
+};
 window._openRadar = function (pinId) {
   var el = document.getElementById('radar-panel'); if (!el) return;
   if (pinId) window._radarTargetId = pinId;
@@ -24039,6 +24141,16 @@ function _radarDraw() {
   } catch (e) {}
   if (nEl) nEl.textContent = 'GPS accurate to about ' + Math.round((acc || 0) * 3.28084) + ' ft' +
     (face == null ? ' · no compass yet' : '') + ' · ring ' + Math.round(rangeM / 0.9144) + ' yd' + _eta;
+  // Dim it when there is no fix to pin. A button that can only say "no GPS yet" should look
+  // like it cannot be used, not like the one thing left to try.
+  try {
+    var _mb2 = document.getElementById('radar-mark-btn');
+    if (_mb2) {
+      var _has = !!window._lastGPS;
+      _mb2.style.opacity = _has ? '' : '.45';
+      _mb2.title = _has ? 'Save a pin where you are standing' : 'Waiting for a GPS fix';
+    }
+  } catch (e) {}
   _radarPing(dist, rangeM);
 }
 function _trkFmtDate(ts){ try { return new Date(ts).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}); } catch(e){ return ''; } }
@@ -29407,6 +29519,10 @@ window._voiceMod().then(function (m) {
     // overlays, so the overlay walk below never saw them and Back appeared dead -- with no way
     // out except a small Cancel chip at the top of the screen. Backing out of a mode is exactly
     // what Back is for.
+    try {
+      // The HUD is a full-screen takeover with no chrome; Back has to mean "leave the HUD".
+      if (document.getElementById('gl-hud')) { window._closeHud(); return true; }
+    } catch (e) {}
     try {
       var xh = document.getElementById('pin-crosshair');
       if (xh && xh.style.display === 'block') { window._hidePinCrosshair(); disablePinMode(); return true; }
