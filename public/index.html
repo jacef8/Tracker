@@ -4498,7 +4498,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 910;
+var APP_BUILD = 911;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5171,6 +5171,13 @@ function _applyMarkerSolo(mk) {
   // colour and leaves a white circle, so put the member's colour back explicitly.
   el.style.background = '';
   if (mk._fillColor) el.style.backgroundColor = mk._fillColor;
+  // Say "this position is old" the SAME way at both zoom levels. A merged oval already
+  // greys a stale member's photo (see _applyMarkerMerged); standing alone, the very same
+  // person kept a full-colour photo and only a red ring. One state told two different
+  // stories depending on how far out the map happened to be, which is how it got reported:
+  // "why is this flashing red, and zoomed out it was completely greyed."
+  // Greyscale is the cue that survives bright sun, where a thin ring does not.
+  try { el.style.filter = mk._isLive ? '' : 'grayscale(1) brightness(.78)'; } catch (e) {}
   el.style.opacity = mk._soloOpacity || '1';   // drop any fade inherited from a merged oval
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
