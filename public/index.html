@@ -1783,13 +1783,25 @@
     box-shadow: 0 -10px 30px rgba(0,0,0,.65);
     padding-top: 0;
   }
-  .fi.fi-split .fi-head { padding: 8px 14px 4px; }
+  .fi.fi-split .fi-head { padding: 6px 14px 2px; }
   .fi.fi-split .fi-head h3 { font-size: 15px; }
-  /* The scope has to fit the half it has left, so size it off the HEIGHT as well as the
-     width -- 92vw square is taller than half a phone screen and would simply be clipped. */
-  #radar-panel.fi-split #radar-scope { width: min(86vw, 34vh); }
+  /* Sized by what is LEFT, not by a guess at the viewport. The first attempt used
+     min(86vw, 34vh) and measured 276px of scope in 257px of space -- and because the radar's
+     body centres its stack, 67px of overflow clipped the TOP of the circle off rather than
+     scrolling. flex with aspect-ratio lets the canvas take the leftover height and work out
+     its own width, which fits any phone without another magic number. Measured after the
+     change: 164px scope, zero overflow.
+     justify-content matters as much as the size: a centred flex child that overflows is cut
+     off at BOTH ends and cannot be scrolled back into view. */
+  #radar-panel.fi-split .fi-body { justify-content: flex-start; overflow: hidden; }
+  #radar-panel.fi-split #radar-scope {
+    width: auto; height: auto; flex: 1 1 auto; min-height: 0;
+    max-width: 86vw; aspect-ratio: 1; margin: 2px auto 4px;
+  }
   #radar-panel.fi-split .fi-note { display: none; }
-  #radar-panel.fi-split .fi-turn { margin-top: 2px; }
+  #radar-panel.fi-split .fi-turn { margin-top: 0; gap: 0; }
+  #radar-panel.fi-split .fi-turn b { font-size: 30px; line-height: 1; }
+  #radar-panel.fi-split .fi-acts { padding-top: 8px; }
   .fi-head { display:flex; align-items:center; gap:12px; padding:12px 14px 10px; flex-shrink:0; }
   .fi-head h3 { flex:1; min-width:0; font-size:17px; font-weight:800; color:var(--text);
                 letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -4298,7 +4310,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 902;
+var APP_BUILD = 903;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24183,16 +24195,21 @@ window._toggleRadarSplit = function () {
 function _radarFrameMap() {
   try {
     if (!map) return;
-    var me = window._lastGPS, f = _radarFocus();
-    var pad = { top: 70, bottom: Math.round(window.innerHeight * 0.5) + 20, left: 50, right: 50 };
-    if (me && f) {
-      var b = new mapboxgl.LngLatBounds([me.lng, me.lat], [me.lng, me.lat]);
-      b.extend([f.lng, f.lat]);
-      map.fitBounds(b, { padding: pad, duration: 700, maxZoom: 17 });
-    } else if (me) {
-      map.setPadding(pad);
-      map.easeTo({ center: [me.lng, me.lat], zoom: Math.max(map.getZoom(), 15), duration: 700 });
-    }
+    var me = window._lastGPS;
+    if (!me) return;
+    // setPadding, ALWAYS, and before the move. fitBounds's own padding option applies to that
+    // one call and is then forgotten -- so the next time anything re-centred the map (a GPS
+    // fix while following yourself, which is every few seconds) you slid back under the
+    // scope. Reported straight away: "the map isn't centered on me". As a persistent padding
+    // it means the middle of the map is the middle of the STRIP you can actually see, and
+    // every later move respects that for as long as the split is open.
+    var pad = { top: 60, bottom: Math.round(window.innerHeight * 0.5) + 16, left: 40, right: 40 };
+    map.setPadding(pad);
+    // Centre on YOU and leave the zoom alone. Fitting you and the target both in sounds
+    // tidier until the target is four miles off, which it was -- that frames a county and
+    // the strip of map becomes useless. The scope already carries the direction; the map is
+    // here to show the ground immediately around you.
+    map.easeTo({ center: [me.lng, me.lat], duration: 600 });
   } catch (e) {}
 }
 window._closeRadar = function () {
