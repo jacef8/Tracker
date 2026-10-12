@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GroundLink — look preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ── Tokens. Field style, dark. GroundLink keeps its gold. ───────────────────────────── */
+  :root{
+    color-scheme: dark;
+    --ink:#FFFFFF;
+    --ink-2:rgba(255,255,255,.86);
+    --ink-3:rgba(255,255,255,.72);
+    --gold:#F0A500;
+    --surface:#12151B;          /* solid. never see-through under text */
+    --surface-2:#1A1E26;
+    --line:rgba(255,255,255,.14);
+    --ok:#3FB950;
+    --r:16px;
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bot:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:#06080C; color:var(--ink);
+    font-family:'Inter Tight',system-ui,sans-serif; font-size:16px; line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+
+  /* ── The photograph: YOUR ground, not a stock mountain ───────────────────────────────── */
+  .shot{position:fixed;inset:0;z-index:0;overflow:hidden;background:#06080C}
+  .shot img{
+    width:100%;height:100%;object-fit:cover;display:block;
+    /* Pushed dark and cool so white type sits on it at full contrast. */
+    filter:brightness(.52) saturate(.78) contrast(1.06);
+    transform:scale(1.08);
+    animation:drift 38s ease-in-out infinite alternate;
+  }
+  @keyframes drift{ from{transform:scale(1.08) translate3d(0,0,0)} to{transform:scale(1.16) translate3d(-2.2%,-1.6%,0)} }
+  /* A plain dark gradient, NOT a blur. Keeps the type at 7:1 without muddying the photo. */
+  .shot::after{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(6,8,12,.72) 0%,rgba(6,8,12,.30) 32%,rgba(6,8,12,.72) 68%,rgba(6,8,12,.95) 100%);
+  }
+
+  .wrap{position:relative;z-index:1;min-height:100dvh;display:flex;flex-direction:column;
+        padding:calc(var(--safe-top) + 26px) 22px calc(var(--safe-bot) + 20px)}
+
+  /* ── Hero ────────────────────────────────────────────────────────────────────────────── */
+  .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+        padding:26px 0 34px}
+  .mark{width:104px;height:104px;margin-bottom:26px;display:block}
+  .mark path,.mark circle{vector-effect:non-scaling-stroke}
+  h1{
+    margin:0;font-family:'Archivo',sans-serif;font-weight:600;
+    font-size:clamp(38px,12.5vw,58px);line-height:.98;letter-spacing:.17em;
+    text-indent:.17em;            /* tracking pushes right; this re-centres it */
+    color:#fff;
+  }
+  .sub{
+    margin:14px 0 0;font-family:'Archivo',sans-serif;font-weight:500;
+    font-size:clamp(11px,3.4vw,13px);letter-spacing:.42em;text-indent:.42em;
+    color:var(--ink-2);text-transform:uppercase;
+  }
+  .rule{width:46px;height:1px;background:var(--gold);margin:24px auto 0;opacity:.9}
+
+  /* ── Crews. Solid rows, not glass: this is the part you read. ────────────────────────── */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+         overflow:hidden;box-shadow:0 10px 26px -18px rgba(0,0,0,.95)}
+  .phead{display:flex;align-items:center;justify-content:space-between;gap:10px;
+         padding:13px 16px 11px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+  .phead span{font-family:'Archivo',sans-serif;font-size:11px;font-weight:700;letter-spacing:.2em;color:var(--ink-3)}
+  .crew{display:flex;align-items:center;gap:13px;width:100%;min-height:62px;padding:12px 16px;
+        background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.07);
+        color:var(--ink);text-align:left;cursor:pointer;font:inherit;
+        -webkit-tap-highlight-color:transparent;transition:background .15s}
+  .crew:last-of-type{border-bottom:0}
+  .crew:active{background:rgba(255,255,255,.06)}
+  .crew:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:rgba(255,255,255,.26)}
+  .dot.live{background:var(--ok)}
+  .cname{flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:.01em;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmeta{font-size:13px;color:var(--ink-3);white-space:nowrap}
+  .chev{color:rgba(255,255,255,.4);flex:0 0 auto}
+
+  /* ── Actions ─────────────────────────────────────────────────────────────────────────── */
+  .acts{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+  .btn{min-height:56px;border-radius:14px;border:1px solid var(--line);background:var(--surface);
+       color:var(--ink);font:600 16px/1 'Inter Tight',sans-serif;letter-spacing:.01em;
+       display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;
+       -webkit-tap-highlight-color:transparent;transition:transform .12s, background .15s}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .btn.primary{background:var(--gold);border-color:var(--gold);color:#140E00;font-weight:700}
+  .foot{margin-top:16px;text-align:center;font-size:13px;color:var(--ink-3)}
+  .foot b{color:var(--ink-2);font-weight:600}
+
+  /* ── Entrance. Position and fade only — never blur, never on text while it moves. ────── */
+  .in{opacity:0;transform:translateY(14px);animation:rise .62s cubic-bezier(.22,.8,.26,1) forwards}
+  .d1{animation-delay:.05s}.d2{animation-delay:.14s}.d3{animation-delay:.24s}.d4{animation-delay:.34s}
+  @keyframes rise{to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    .in{animation:none;opacity:1;transform:none}
+    .shot img{animation:none;transform:scale(1.04)}
+  }
+
+  /* ── Daylight. Field style has to be readable in the sun. ────────────────────────────── */
+  :root[data-theme="light"]{
+    --ink:#0C0F14; --ink-2:#2C3340; --ink-3:#4C5566;
+    --surface:#FFFFFF; --surface-2:#F2F4F7; --line:rgba(0,0,0,.14);
+  }
+  :root[data-theme="light"] body{background:#E9ECF1}
+  :root[data-theme="light"] .shot img{filter:brightness(1.02) saturate(.9) contrast(.98)}
+  :root[data-theme="light"] .shot::after{
+    background:linear-gradient(180deg,rgba(255,255,255,.80) 0%,rgba(255,255,255,.52) 30%,rgba(233,236,241,.90) 66%,rgba(233,236,241,.99) 100%)}
+  :root[data-theme="light"] h1{color:#0C0F14}
+  :root[data-theme="light"] .mark path,:root[data-theme="light"] .mark circle{stroke:#0C0F14}
+  :root[data-theme="light"] .btn.primary{color:#140E00}
+
+  .sun{position:absolute;top:calc(var(--safe-top) + 14px);right:18px;z-index:3;
+       width:44px;height:44px;border-radius:50%;border:1px solid var(--line);
+       background:var(--surface);color:var(--ink);display:flex;align-items:center;justify-content:center;
+       cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .sun:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .tag{position:absolute;top:calc(var(--safe-top) + 14px);left:18px;z-index:3;
+       font:700 10px/1 'Archivo',sans-serif;letter-spacing:.18em;color:var(--ink-3);
+       background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:9px 12px}
+</style>
+</head>
+<body>
+
+<div class="shot">
+  <!-- Satellite imagery of the Outkasts ground in southern Illinois, from the map the app
+       already uses. A real place you know beats a stock mountain, and it costs no new source. -->
+  <img id="hero" alt="" src="">
+</div>
+
+<div class="tag">PREVIEW</div>
+<button class="sun" id="sun" aria-label="Switch between day and night">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>
+  </svg>
+</button>
+
+<div class="wrap">
+
+  <section class="hero">
+    <svg class="mark in d1" viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="2.4"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M32 7 C22.6 7 15 14.6 15 24 c0 12.1 17 33 17 33 s17-20.9 17-33 C49 14.6 41.4 7 32 7 Z"/>
+      <circle cx="32" cy="23.5" r="6.4"/>
+      <path d="M32 17.1 v12.8 M25.6 23.5 h12.8"/>
+    </svg>
+    <h1 class="in d2">GROUNDLINK</h1>
+    <p class="sub in d2">FIND YOUR PEOPLE</p>
+    <div class="rule in d3"></div>
+  </section>
+
+  <section class="panel in d3">
+    <div class="phead"><span>YOUR CREWS</span><span id="livecount">1 SHARING</span></div>
+    <button class="crew"><span class="dot live"></span><span class="cname">Our Crew</span><span class="cmeta">4 people · 1 live</span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="crew"><span class="dot"></span><span class="cname">OutKasts</span><span class="cmeta">3 people</span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="crew"><span class="dot"></span><span class="cname">Family Men</span><span class="cmeta">6 people</span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="crew"><span class="dot"></span><span class="cname">Mom and Dad Trip</span><span class="cmeta">5 people</span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+  </section>
+
+  <div class="acts in d4">
+    <button class="btn primary">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3z"/><path d="M9 4v13M15 7v13"/></svg>
+      Everyone on one map
+    </button>
+    <button class="btn">New Crew</button>
+  </div>
+
+  <p class="foot in d4">Signed in as <b>Jace Ford</b> · sample crews shown</p>
+</div>
+
+<script>
+  // Day / night. Field style must be readable at full brightness in the sun.
+  (function () {
+    var d = document.documentElement;
+    try { var t = localStorage.getItem('gl_look_theme'); if (t) d.dataset.theme = t; } catch (e) {}
+    document.getElementById('sun').onclick = function () {
+      d.dataset.theme = d.dataset.theme === 'light' ? 'dark' : 'light';
+      try { localStorage.setItem('gl_look_theme', d.dataset.theme); } catch (e) {}
+    };
+  })();
+
+  // The hero photograph is the Outkasts ground, pulled from the same satellite imagery the
+  // map uses. Sized to the screen so it is sharp on a phone and still cheap to fetch.
+  (function () {
+    var TOKEN = 'pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg';
+    var w = Math.min(1280, Math.round(window.innerWidth * Math.min(devicePixelRatio || 1, 2)));
+    var h = Math.min(1280, Math.round(window.innerHeight * Math.min(devicePixelRatio || 1, 2)));
+    var url = 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/-88.1368,37.4291,14.2,0/'
+            + w + 'x' + h + '@2x?access_token=' + TOKEN + '&attribution=false&logo=false';
+    var img = document.getElementById('hero');
+    img.onerror = function () { document.querySelector('.shot').style.background =
+      'radial-gradient(ellipse at 60% 35%, #16222e 0%, #06080c 72%)'; };
+    img.src = url;
+  })();
+</script>
+</body>
+</html>
