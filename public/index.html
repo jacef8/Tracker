@@ -4283,7 +4283,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 900;
+var APP_BUILD = 901;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8884,6 +8884,20 @@ window._toggleContours = function () {
 window._shownTrackIds = function () {
   try {
     var raw = localStorage.getItem('gl_tracks_shown');
+    // Ids of tracks that no longer exist are dropped on read. Without this a deleted track
+    // stayed counted for ever and the layers row claimed "4 of 3".
+    if (raw != null) {
+      try {
+        var keep = JSON.parse(raw);
+        if (Array.isArray(keep)) {
+          var live = {};
+          (getSavedTracks() || []).forEach(function (t) { if (t && t.id) live[t.id] = 1; });
+          var pruned = keep.filter(function (k) { return live[k]; });
+          if (pruned.length !== keep.length) localStorage.setItem('gl_tracks_shown', JSON.stringify(pruned));
+          return pruned;
+        }
+      } catch (e) {}
+    }
     if (raw == null) {
       // Carry over the old single switch once, so anyone who had it on this morning does not
       // open the map to find their lines silently gone.
@@ -23442,6 +23456,11 @@ window._handleGpxFile = function (file) {
       } catch (e) {}
       try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
       try { if (typeof openSavedPins === 'function') openSavedPins(); } catch (e) {}
+      // Put the imported pins and tracks ON the map, not just in the lists. The import
+      // refreshed the drawers and the old DOM marker renderer, neither of which draws the
+      // pin features or the track overlay -- so an import appeared to land nowhere.
+      try { if (window._pinsChanged) window._pinsChanged(); } catch (e) {}
+      try { if (window._tracksChanged) window._tracksChanged(); } catch (e) {}
       try { if (window._evt) window._evt('imported ' + added + ' GPX waypoints, ' + addedTrk + ' tracks (' + coll + ')'); } catch (e) {}
       try { if (typeof _renderSavedOnMap === 'function') _renderSavedOnMap(); } catch (e) {}
       var _sum = [];
@@ -23460,6 +23479,24 @@ window._handleGpxFile = function (file) {
 // PERSONAL TRACKS — record your path with full stats, saved like pins.
 // Separate library, follows you across rooms, backed up to your account.
 // ═══════════════════════════════════════════════════════════════════
+// Find a track by id, once, instead of in each caller. Returns { track, idx } or null.
+// Four places walked the array themselves and each had its own quiet failure when the id
+// had gone; this is the pins' _pinRef lesson applied before the same bugs are written again.
+window._trackRef = function (id) {
+  try {
+    var arr = getSavedTracks() || [];
+    for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === id) return { track: arr[i], idx: i };
+  } catch (e) {}
+  return null;
+};
+// Redraw everything a track change can affect. Renaming or deleting used to call
+// renderTracks() alone, which updates the drawer LIST -- so the map overlay kept drawing a
+// deleted track's line and a renamed track's old label until something unrelated redrew it.
+window._tracksChanged = function () {
+  try { renderTracks(); } catch (e) {}
+  try { if (window._renderAllTracks) window._renderAllTracks(); } catch (e) {}
+  try { if (window._renderTrackPickerRows) window._renderTrackPickerRows(); } catch (e) {}
+};
 function getSavedTracks() { try { return JSON.parse(localStorage.getItem('gl_saved_tracks') || '[]'); } catch (e) { return []; } }
 function setSavedTracks(arr) {
   try { localStorage.setItem('gl_saved_tracks', JSON.stringify(arr)); } catch (e) {}
@@ -25285,8 +25322,9 @@ function renderTracks(){
 
 // — polished detail view + elevation profile —
 function _openTrackDetail(id){
-  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){ t=arr[i]; break; } }
-  if (!t) return;
+  var ref = window._trackRef(id);
+  if (!ref) { try { toast('That track is gone'); } catch (e) {} return; }
+  var t = ref.track;
   var st=t.stats||_trackStats(t.pts||[]);
   document.getElementById('trk-d-title').textContent=t.name;
   function stat(v,l){ return '<div class="trk-stat"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
@@ -25326,8 +25364,9 @@ function _trackElevSvg(pts){
     '<polyline points="'+pp.join(' ')+'" fill="none" stroke="#00b0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg></div>';
 }
 window._showTrackOnMap = function(id){
-  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
-  if (!t) return;
+  var ref = window._trackRef(id);
+  if (!ref) { try { toast('That track is gone'); } catch (e) {} return; }
+  var t = ref.track;
   document.getElementById('track-detail-drawer').classList.remove('open');
   document.getElementById('tracks-drawer').classList.remove('open');
   try { window._releaseCamera(); } catch(e){}
@@ -25346,9 +25385,8 @@ window._showTrackOnMap = function(id){
 // pin you dropped -- which is most of what makes looking at a track in 3D worth doing.
 window._showTrack3D = function (id) {
   try {
-    var arr = (typeof getSavedTracks === 'function') ? getSavedTracks() : [];
-    var t = null;
-    for (var i = 0; i < arr.length; i++) { if (arr[i].id === id) { t = arr[i]; break; } }
+    var ref = window._trackRef(id);
+    var t = ref && ref.track;
     if (!t || !(t.pts || []).length) { toast('That track has no points'); return; }
     var pts = t.pts.filter(function (q) { return q && isFinite(q.lat) && isFinite(q.lng); });
     if (pts.length < 2) { toast('Too short to show in 3D', 2600); return; }
@@ -25423,15 +25461,21 @@ window._exitTrack3D = function () {
   // looking at" -- clearing the line here would mean re-opening the drawer to get it back.
 };
 window._renameTrack = function(id){
-  var arr=getSavedTracks(), t=null; for(var i=0;i<arr.length;i++){ if(arr[i].id===id){t=arr[i];break;} }
-  if (!t) return;
+  var ref = window._trackRef(id);
+  if (!ref) { try { toast('That track is gone'); } catch (e) {} return; }
+  var t = ref.track;
   _trkPrompt('Rename track', t.name, function(nm){
     if (!nm) nm=t.name;
     // The content key includes the name, so the pre-rename identity must be tombstoned or
     // the cloud's old-named copy re-merges alongside the renamed one as a "new" track.
     if (nm !== t.name) window._addTomb('gl_tracks_del', window._trackKey(t));
-    t.name=nm; t.savedAt=Date.now(); setSavedTracks(arr);
-    var el=document.getElementById('trk-d-title'); if(el) el.textContent=nm; renderTracks();
+    var arr = getSavedTracks();
+    if (arr[ref.idx]) { arr[ref.idx].name = nm; arr[ref.idx].savedAt = Date.now(); }
+    setSavedTracks(arr);
+    var el=document.getElementById('trk-d-title'); if(el) el.textContent=nm;
+    // The map overlay draws the name along the line. renderTracks alone only redrew the
+    // drawer, so the line kept the old name until something else happened to redraw it.
+    window._tracksChanged();
   });
 };
 window._deleteTrack = function(id){
@@ -25439,16 +25483,19 @@ window._deleteTrack = function(id){
   var arr=getSavedTracks().filter(function(t){ if(t.id===id) window._addTomb('gl_tracks_del', window._trackKey(t)); return t.id!==id; }); setSavedTracks(arr);
   if (window._shownTrackId===id) _clearSavedTrack();
   document.getElementById('track-detail-drawer').classList.remove('open');
-  renderTracks();
+  // Take it off the overlay too. renderTracks only refreshes the drawer, so the deleted
+  // track's LINE stayed on the map -- the same "I deleted it and it is still there" the
+  // pins had. _shownTrackIds prunes the dead id on its next read.
+  window._tracksChanged();
   try { toast('Track deleted'); } catch(e){}
   }, { danger: true, yes: 'Delete' });
 };
 window._closeTrackDetail = function(){ document.getElementById('track-detail-drawer').classList.remove('open'); };
 window._shareTrack = function (id) {
   try {
-    var arr = getSavedTracks(), t = null;
-    for (var i = 0; i < arr.length; i++) { if (arr[i].id === id) { t = arr[i]; break; } }
-    if (!t) return;
+    var ref = window._trackRef(id);
+    if (!ref) { try { toast('That track is gone'); } catch (e) {} return; }
+    var t = ref.track;
     // Borrow the library-share picker with just this one, rather than a second implementation.
     window._trkShareOne = [t];
     window._shareTracksOpen();
