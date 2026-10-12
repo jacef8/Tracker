@@ -4279,7 +4279,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 892;
+var APP_BUILD = 893;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -15621,7 +15621,12 @@ function updatePinSource(pins) {
       _mine.forEach(function (sp) {
         if (!sp || typeof sp.lat !== 'number' || typeof sp.lng !== 'number') return;
         var _k = 'mypin_' + (sp.pid || (sp.lat + ',' + sp.lng));
-        if (pins[_k]) return;
+        // Deliberately NOT "skip if already present". This key is namespaced to saved pins,
+        // so the only thing it can collide with is an earlier copy of ITSELF -- and the saved
+        // record is the truth. Skipping here is what made a renamed waypoint snap back to its
+        // old name: the popup had cached a stale copy under this key and the skip protected
+        // it for ever. Room pins are untouched; they live under their own ids.
+        
         // Already on this map as a room pin? Then this is just your saved COPY of it. Drawing
         // it again stacks a second, untappable marker on the real one.
         if (sp.pid && pins[sp.pid]) return;
@@ -19227,6 +19232,16 @@ window._focusSharedPin = function () {
     }, 900);
   } catch (e) {}
 };
+// Any pin the UI might be asked about: a room pin, or one of your saved ones resolved for
+// the popup. One lookup, so Edit / Share / Navigate / Save cannot disagree with what is
+// actually on screen.
+window._anyPin = function (pid) {
+  try {
+    if (lastPins && lastPins[pid]) return lastPins[pid];
+    if (window._savedPinView && window._savedPinView[pid]) return window._savedPinView[pid];
+  } catch (e) {}
+  return null;
+};
 window._showPinPopup = function(pid, lngLat) {
   var pin = lastPins[pid];
   // 'mypin_*' features come from your own saved library, not from the room, so they are not in
@@ -19242,7 +19257,11 @@ window._showPinPopup = function(pid, lngLat) {
         if (String(_c.pid) === _want || (_c.lat + ',' + _c.lng) === _want) {
           pin = { lat: _c.lat, lng: _c.lng, cat: _c.cat || 'Waypoint', label: _c.label || '',
                   name: _c.name || 'My pin', ts: _c.ts || _c.savedAt || Date.now(), droppedBy: userId };
-          lastPins[pid] = pin;   // so Navigate / Edit / Share can find it too
+          // Held in a lookup of its own, NOT written into lastPins. Writing it there is what
+          // created a stale duplicate that outlived every edit (see updatePinSource).
+          // Re-resolved on every open, so it always reflects the saved record as it stands.
+          window._savedPinView = window._savedPinView || {};
+          window._savedPinView[pid] = pin;
           break;
         }
       }
@@ -19281,7 +19300,7 @@ window._showPinPopup = function(pid, lngLat) {
 
 // Open the pin sheet pre-filled to edit an existing pin's type + description.
 window.editPin = function(pid) {
-  var pin = lastPins[pid];
+  var pin = window._anyPin(pid);
   if (!pin) return;
   window._closePinPopup();
   _editingPid = pid;
@@ -25962,7 +25981,7 @@ function _refreshPinListIfOpen() {
   try { if (typeof pinFeedOpen !== 'undefined' && pinFeedOpen) renderPinFeed(lastPins); } catch (e) {}
 }
 window.savePin = function(pid) {
-  var pin = lastPins[pid];
+  var pin = window._anyPin(pid);
   if (!pin) { toast('Pin not found'); return; }
   var saved = getSavedPins();
   if (saved.find(function(p) { return p.pid === pid; })) { toast('Already in My Saved Pins'); return; }
@@ -26295,6 +26314,13 @@ function _renderSavedOnMap() {
   if (typeof map === 'undefined' || !map) return;
   _clearSavedMapMarkers();
   if (!window._showSavedOnMap) return;
+  // If "show my pins" is on, updatePinSource ALREADY puts every saved pin on the map as a
+  // proper feature -- clustered, labelled and tappable. Drawing them here as well put a second
+  // marker directly on top of the first, and the DOM marker eats the tap: the pin is visible,
+  // the popup never opens. Reported 2026-10-11 ("the pop-up doesn't pop up when I try to tap
+  // it"). The dedupe below only ever checked lastPins, which holds ROOM pins, so it could not
+  // see the saved-pin features and never fired. One job, one renderer.
+  try { if (window._myPinsOn && window._myPinsOn()) return; } catch (e) {}
   // A library pin that's ALSO on the map as a real dropped pin (added from the library, or
   // saved from the room) is already rendered and labeled by the pins layer — drawing the
   // library copy on top doubled the marker, and a tap opened BOTH popups stacked.
