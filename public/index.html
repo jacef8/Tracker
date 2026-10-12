@@ -4550,7 +4550,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 912;
+var APP_BUILD = 913;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -29137,8 +29137,10 @@ try {
   // is never re-redeemed (Firebase rejects that), and no privilege is created -- only someone
   // who is already that user can produce the ID token in the first place.
   window._authBridged = window._authBridged || false;
+  // True only when the JS SDK is ACTUALLY signed in as the account. Never set hopefully.
+  window._authBridged = false;
   window._bridgeNativeAuth = function (cb) {
-    var done = function (ok) { try { cb && cb(ok); } catch (e) {} };
+    var done = function (ok) { if (!ok) window._authBridged = false; try { cb && cb(ok); } catch (e) {} };
     try {
       var f = window._fb;
       if (!f || !f.auth || !f.authApi || !f.authApi.signInWithCustomToken) return done(false);
@@ -29168,6 +29170,59 @@ try {
     } catch (e) { done(false); }
   };
 
+  // Keep trying until the device really is signed in as its account. The native plugin and
+  // the native sign-in both settle asynchronously after the page loads, so the first attempt
+  // regularly lands too early -- and every room read, every position write and the push
+  // registration depend on this having happened. Backoff rather than a tight loop; it stops
+  // the moment it succeeds, and gives up quietly on a plain browser where there is nothing
+  // to bridge.
+  var _BRIDGE_TRIES = [0, 1200, 3500, 9000, 20000, 45000];
+  window._ensureAccountAuth = function (why) {
+    try {
+      if (window._authBridged) return;
+      var cu = null;
+      try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+      if (cu && !cu.isAnonymous) { window._authBridged = true; return; }
+      if (window._bridgeBusy) return;
+      window._bridgeBusy = true;
+      var i = 0;
+      var attempt = function () {
+        if (window._authBridged) { window._bridgeBusy = false; return; }
+        window._bridgeNativeAuth(function (ok) {
+          if (ok) {
+            window._bridgeBusy = false;
+            try { _syncNote('identity ready (' + (why || 'startup') + ')'); } catch (e) {}
+            // Everything that was refused while anonymous gets another go, in order.
+            // _pullAccountNow quietly re-reads the profile, which brings the crews back.
+            // Deliberately NOT _retryCrewSync: that is the user-facing button and it toasts,
+            // so calling it on every resume would pop a message at somebody who asked for
+            // nothing.
+            try { window._pullAccountNow && window._pullAccountNow(); } catch (e) {}
+            try { window._registerVoipToken && window._registerVoipToken(); } catch (e) {}
+            try { window._registerPttToken && window._registerPttToken(); } catch (e) {}
+            return;
+          }
+          i++;
+          if (i >= _BRIDGE_TRIES.length) {
+            window._bridgeBusy = false;
+            try { _syncNote('identity swap gave up after ' + i + ' tries'); } catch (e) {}
+            return;
+          }
+          setTimeout(attempt, _BRIDGE_TRIES[i]);
+        });
+      };
+      attempt();
+    } catch (e) { window._bridgeBusy = false; }
+  };
+  // At startup, and again whenever the app comes back to the front. A phone that cold-starts
+  // with no signal never recovered before: one attempt, failed, latched, done for the session.
+  try { setTimeout(function () { window._ensureAccountAuth('startup'); }, 900); } catch (e) {}
+  try {
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') window._ensureAccountAuth('resume');
+    });
+  } catch (e) {}
+
   window._pullAccountNow = function (cb) {
     try {
       // Ask the auth SDK who we are, not localStorage. profileKey() reads gl_account_uid,
@@ -29179,8 +29234,18 @@ try {
       try { cu0 = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
       // Anonymous JS session but a native sign-in behind it: bridge first, then come back.
       if ((!cu0 || cu0.isAnonymous) && !window._authBridged && window._bridgeNativeAuth) {
-        window._authBridged = true;                       // one attempt, not a loop
-        window._bridgeNativeAuth(function () { try { window._pullAccountNow(cb); } catch (e) {} });
+        // Was: set _authBridged = true BEFORE bridging, "one attempt, not a loop". A failed
+        // attempt therefore marked the session as bridged for good, and every later check --
+        // the access probe included -- believed it had worked. That one line is why a device
+        // that missed the swap once stayed locked out of its owner's own crews.
+        // _bridgeBusy is the re-entry guard now; _authBridged means SUCCEEDED.
+        if (!window._bridgeBusy) {
+          window._bridgeBusy = true;
+          window._bridgeNativeAuth(function () {
+            window._bridgeBusy = false;
+            try { window._pullAccountNow(cb); } catch (e) {}
+          });
+        }
         return;
       }
       var u = '';
