@@ -687,6 +687,8 @@
     --v2-scrim: rgba(12,17,19,.90);
     /* Named because the daylight theme has to be able to replace them. Every one of these
        was a literal spelled out across the sheet until 915. */
+    --v2-chip-ok-bg: #13361f;   --v2-chip-ok-ink: #3fb950;
+    --v2-chip-warn-bg: #3a2a13; --v2-chip-warn-ink: #f0a500;
     --v2-on-ok: #04210F;
     --v2-on-acc: #1A1204;                                  /* ink that sits ON the accent */
     --v2-acc-grad: linear-gradient(150deg, #FFD37A, #FFB020);
@@ -712,6 +714,47 @@
       inset 0 3px 8px rgba(0,0,0,.9),
       inset 0 -1px 0 rgba(255,255,255,.05);
   }
+
+  /* ── Lists: crews and people ──────────────────────────────────────────────────────────
+     The row is not the content; the name is. 909 took the raised slab away, this gives the
+     name the weight the slab used to carry, and drops the second line into mono so a status
+     and a time read as data rather than as more prose. */
+  body.ui-v2 .room-name,
+  body.ui-v2 .pname,
+  body.ui-v2 .uname {
+    font-family: var(--v2-txt) !important;
+    font-size: 17px !important; font-weight: 600 !important;
+    letter-spacing: .01em; color: var(--v2-ink) !important;
+  }
+  body.ui-v2 .room-meta,
+  body.ui-v2 .pmeta,
+  body.ui-v2 .ustatus {
+    font-family: var(--v2-mono) !important;
+    font-size: 13px !important; font-weight: 500 !important;
+    letter-spacing: .01em;
+    font-variant-numeric: tabular-nums;
+  }
+  /* .ustatus carries an inline colour per status (live / parked / off), so only the rows
+     that do NOT set one fall back to the token -- hence no colour here. .room-meta has no
+     inline colour and does. */
+  body.ui-v2 .room-meta,
+  body.ui-v2 .pmeta { color: var(--v2-ink3) !important; }
+  /* The avatar is an identifier, not an ornament: one size, a hairline, and the person's own
+     map colour showing through. */
+  body.ui-v2 .user-avatar {
+    width: 40px !important; height: 40px !important;
+    border: 1px solid var(--v2-line2) !important;
+    font-size: 13px !important; font-weight: 700 !important;
+    font-family: var(--v2-mono) !important;
+  }
+  /* The chevron stops being grey furniture and becomes the accent -- it is the only thing in
+     the row saying "this opens". */
+  body.ui-v2 .room-join-arrow { color: var(--v2-acc) !important; }
+
+  /* Status chips (LIVE / PAUSED / OFF). These were a dark tint with saturated ink, which is
+     right on pine and wrong on stone -- a dark chip on a light row reads as a hole punched
+     in it. Tokenised so daylight gets a pale tint with dark ink instead, same shape. */
+  body.ui-v2 .user-item span[style*="--v2-chip"] { font-family: var(--v2-mono) !important; }
 
   /* ── Daylight ─────────────────────────────────────────────────────────────────────────
      The Field rule has always said a tool used outdoors must have a bright mode with
@@ -750,6 +793,10 @@
     /* On a light ground the gold gradient is unreadable whatever ink goes on it, so daylight
        uses the flat darkened accent with white ink -- 6.4:1 instead of 1.9:1. The surface
        gradients flatten too: a gradient between two near-whites is just banding. */
+    /* Pale tint, dark ink -- the same chip, right way up for stone. Measured: 6.9:1 and
+       7.4:1 against their own backgrounds. */
+    --v2-chip-ok-bg: #DCEFD0;   --v2-chip-ok-ink: #205C12;
+    --v2-chip-warn-bg: #F6E6C8; --v2-chip-warn-ink: #6B4400;
     --v2-on-ok: #FFFFFF;
     --v2-on-acc: #FFFFFF;
     --v2-acc-grad: #7A5100;
@@ -848,8 +895,8 @@
   body.ui-v2 #saved-pins-list > div:active { background: rgba(255,255,255,.08) !important; }
   /* The name carries the weight the slab used to. These lists are scanned, often in sun,
      so the thing being scanned is the biggest thing in the row. */
-  body.ui-v2 .uname { font-size: 16px !important; font-weight: 600 !important; letter-spacing: .01em; }
-  body.ui-v2 .ustatus { font-size: 13px !important; }
+  /* .uname / .ustatus moved to the single "Lists" block above (916). Two competing
+     definitions of the same selector is how the 17px name silently rendered at 16px. */
   /* Mouse only, and flat. Two problems with what was here: it lifted the row and gave it
      back the raised shadow the new look just removed, and it was NOT behind a pointer query
      -- so on a phone the row you last tapped stayed lifted and shadowed, the same sticky
@@ -1123,8 +1170,9 @@
     letter-spacing: .13em !important; text-transform: uppercase !important;
     color: var(--v2-ink3) !important;
   }
-  body.ui-v2 .room-name, body.ui-v2 .pname { font-size: 15px !important; font-weight: 700 !important; color: var(--v2-ink) !important; }
-  body.ui-v2 .room-meta, body.ui-v2 .pmeta { font-size: 13px !important; color: var(--v2-ink3) !important; }
+  /* .room-name / .room-meta likewise. .pname and .pmeta are the same two roles under
+     different class names, so they join the one block above rather than keeping a private
+     15px copy here. */
 
   /* ── Keyboard focus. The standard requires it and there was none. ────────────────────── */
   body.ui-v2 button:focus-visible, body.ui-v2 input:focus-visible, body.ui-v2 [tabindex]:focus-visible {
@@ -4670,7 +4718,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 915;
+var APP_BUILD = 916;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6955,9 +7003,9 @@ window._renderDeviceList = function _renderDeviceList() {
     // Same LIVE window as a real member (LIVE_MS, above) so a watch doesn't flip to a
     // stale-looking badge on a different cadence than everyone else in the same list.
     var online = live.ts && (Date.now() - live.ts) < LIVE_MS;
-    var bd = !live.ts ? { t: 'NO GPS', bg: 'var(--border)', c: '#a9b4bf' }
-      : online ? { t: 'LIVE', bg: '#13361f', c: '#3fb950' }
-      : { t: 'PAUSED', bg: '#3a2a13', c: '#f0a500' };
+    var bd = !live.ts ? { t: 'NO GPS', bg: 'var(--border)', c: 'var(--muted)' }
+      : online ? { t: 'LIVE', bg: 'var(--v2-chip-ok-bg)', c: 'var(--v2-chip-ok-ink)' }
+      : { t: 'PAUSED', bg: 'var(--v2-chip-warn-bg)', c: 'var(--v2-chip-warn-ink)' };
     var row = document.createElement('div');
     row.className = 'user-item';
     row.setAttribute('data-devrow', '1');
@@ -11920,7 +11968,7 @@ function _txHtml() {
         '<svg class="licon licon-sm" style="color:var(--accent);flex-shrink:0"><use href="#ic-play"/></svg>' +
         '<div style="flex:1;min-width:0">' +
           '<div style="font-size:13.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(c.name) +
-            (c.unheard ? ' <span style="font-size:9px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 6px;border-radius:8px;vertical-align:1px">NEW</span>' : '') + '</div>' +
+            (c.unheard ? ' <span style="font-size:9px;font-weight:800;color:var(--v2-on-acc,#0d1117);background:var(--accent);padding:1px 6px;border-radius:8px;vertical-align:1px">NEW</span>' : '') + '</div>' +
           '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + _escHtml(crew) + ' &middot; ' + _txAgo(c.ts) + (c.dur ? ' &middot; ' + c.dur + 's' : '') + '</div>' +
         '</div>' +
       '</div>';
@@ -12141,7 +12189,7 @@ window._renderCrewsSection = function () {
     return '<div class="room-item" onclick="window._openCrew(\'' + _escHtml(k) + '\')">' +
       '<div class="room-item-left">' +
         '<div class="room-name">' + _escHtml(label) +
-          (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
+          (d.unread ? ' <span style="font-size:10px;font-weight:800;color:var(--v2-on-acc,#0d1117);background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
         '</div>' +
         '<div class="room-meta">' + (d.people === undefined ? 'Checking&hellip;' : (on ? on + ' sharing now' : 'Nobody sharing right now')) + '</div>' +
       '</div>' +
@@ -12242,7 +12290,7 @@ window._renderTalkSection = function (skipLoad) {
       return '<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
         '<div onclick="window._openCrew(\'' + _escHtml(k) + '\',' + (d.unread ? 'true' : 'false') + ')" style="flex:1;min-width:0;cursor:pointer">' +
           '<div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(label) +
-            (d.unread ? ' <span style="font-size:10px;font-weight:800;color:#0d1117;background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
+            (d.unread ? ' <span style="font-size:10px;font-weight:800;color:var(--v2-on-acc,#0d1117);background:var(--accent);padding:1px 7px;border-radius:9px;vertical-align:1px">' + d.unread + ' NEW</span>' : '') +
           '</div>' +
           '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + (d.unread ? 'Tap to hear what you missed' : 'Everyone in this Crew at once') + '</div>' +
         '</div>' +
@@ -18905,12 +18953,12 @@ function listenUsers() {
       // else — LIVE / RESTING / etc. — instead of a second, redundant "YOU". Three "you" markers
       // on one row (the name's "(you)", the inline pill, and a "YOU" badge here) was the report.
       var bd;
-      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)',     c: '#a9b4bf' };
-      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: '#a9b4bf' };
-      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: '#a9b4bf' };
-      else if (isLive)       bd = { t: 'LIVE',    bg: '#13361f',            c: '#3fb950' };
+      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)',     c: 'var(--muted)' };
+      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: 'var(--muted)' };
+      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: 'var(--muted)' };
+      else if (isLive)       bd = { t: 'LIVE',    bg: 'var(--v2-chip-ok-bg)',            c: 'var(--v2-chip-ok-ink)' };
       else if (isResting)    bd = { t: 'RESTING', bg: 'rgba(46,196,182,.16)', c: '#2ec4b6' };
-      else                   bd = { t: 'PAUSED',  bg: '#3a2a13',            c: '#f0a500' };
+      else                   bd = { t: 'PAUSED',  bg: 'var(--v2-chip-warn-bg)',            c: 'var(--v2-chip-warn-ink)' };
 
       const row = document.createElement('div');
       row.className = 'user-item';
@@ -19018,7 +19066,7 @@ function listenUsers() {
           var _un = row.querySelector('.uname');
           if (_un) {
             var _yc = document.createElement('span');
-            _yc.style.cssText = 'margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.04em;color:#0d1117;background:var(--accent);padding:1px 6px;border-radius:8px;white-space:nowrap;vertical-align:1px';
+            _yc.style.cssText = 'margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.04em;color:var(--v2-on-acc,#0d1117);background:var(--accent);padding:1px 6px;border-radius:8px;white-space:nowrap;vertical-align:1px';
             _yc.textContent = 'YOU';
             _un.appendChild(_yc);
           }
