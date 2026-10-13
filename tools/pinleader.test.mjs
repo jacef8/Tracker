@@ -92,5 +92,22 @@ globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [-80.0, 25.0] } };
 ZOOM = 16; window._offsetCollidingPins();
 check('no collision: pin returns to the true position', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
 
+// 7. THE GUARD. On a flat map unproject is a clean inverse of project. Under 3D terrain,
+//    pitch or a globe it is not, and a 40px nudge can resolve to a point a very long way off
+//    -- which is what put a waypoint about a mile from its real position on a phone that
+//    already had the accumulation fix. Simulate a lying inverse and require the pin to stay
+//    exactly on the truth rather than be flung somewhere plausible-looking.
+globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [TRUE_LL[0], TRUE_LL[1]] } };
+source = freshSource();
+const honest = map.unproject;
+map.unproject = ([x, y]) => { const r = honest([x, y]); return { lng: r.lng, lat: r.lat - 0.02 }; };
+ZOOM = 14; window._offsetCollidingPins();
+check('lying unproject: pin is NOT moved', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
+check('lying unproject: no leader drawn', (window._pinLeaderFeats || []).length === 0,
+      String((window._pinLeaderFeats || []).length) + ' leaders');
+map.unproject = honest;
+ZOOM = 14; window._offsetCollidingPins();
+check('honest unproject again: a normal 40px nudge', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
+
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');
 process.exit(fail ? 1 : 0);

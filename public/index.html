@@ -4811,7 +4811,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 921;
+var APP_BUILD = 922;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16236,6 +16236,17 @@ window._offsetCollidingPins = function () {
       var ox = (vx / m) * 40, oy = (vy / m) * 40;
       try {
         var np = map.unproject([sp.x + ox, sp.y + oy]);
+        // Project it BACK and check it actually landed where it was asked to. unproject is
+        // only a clean inverse of project on a flat, unpitched, un-terrained map; under 3D
+        // terrain, pitch or a globe it can return a point a very long way off, and a 40px
+        // nudge then renders as hundreds of pixels or more. Rather than enumerate the cases,
+        // measure the outcome: anything that did not land within 2x the intended nudge is
+        // discarded and the pin stays exactly where it really is.
+        var back; try { back = map.project([np.lng, np.lat]); } catch (e) { back = null; }
+        if (!back || Math.hypot(back.x - (sp.x + ox), back.y - (sp.y + oy)) > 40) {
+          try { window._pinOffsetRejects = (window._pinOffsetRejects || 0) + 1; } catch (e) {}
+          return;   // leave it on the truth; no leader line either
+        }
         var tl = f.properties._trueLL || c;
         leaders.push({ type: 'Feature', properties: {},
           geometry: { type: 'LineString', coordinates: [[tl[0], tl[1]], [np.lng, np.lat]] } });
@@ -24070,7 +24081,26 @@ function _syncMyPinsBtn() {
 function getSavedPins() {
   try { return JSON.parse(localStorage.getItem('gl_saved_pins') || '[]'); } catch(e) { return []; }
 }
+// Two entries under one pid make the library lie: _pinRef resolves to the first, so an edit
+// touches one copy and the other carries on drawing under its old name -- which is exactly
+// how a pin renamed to "Home" went on calling itself "Waypoint 03/24/26 08:20". Collapse on
+// write, keeping the FIRST occurrence because that is the one _pinRef hands to an edit.
+function _dedupePins(arr) {
+  if (!Array.isArray(arr)) return arr;
+  var seen = {}, out = [], dropped = 0;
+  for (var i = 0; i < arr.length; i++) {
+    var p = arr[i];
+    if (!p) continue;
+    var id = p.pid;
+    if (id != null && seen[id]) { dropped++; continue; }
+    if (id != null) seen[id] = 1;
+    out.push(p);
+  }
+  if (dropped) { try { console.log('[GL] dropped ' + dropped + ' duplicate pin id(s)'); } catch (e) {} }
+  return out;
+}
 function setSavedPins(arr) {
+  arr = _dedupePins(arr);
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}
   try { if (window._glSync) window._glSync(); } catch (e) {}
 }
@@ -24127,7 +24157,10 @@ window._handleGpxFile = function (file) {
         var _k = lat.toFixed(6) + ',' + lng.toFixed(6) + '|' + (nm || cat);
         if (_have[_k]) { skipped++; continue; }
         _have[_k] = 1;
-        arr.push({ pid: 'gpx_' + Date.now() + '_' + i, lat: lat, lng: lng, cat: cat, label: nm || cat, coll: coll, savedAt: Date.now() });
+        // Date.now() + index is only unique if no two imports ever share a millisecond and the
+      // array is never concatenated with itself. Neither held: the library arrived with two
+      // entries under gpx_1785437691951_56. A random suffix costs nothing.
+      arr.push({ pid: 'gpx_' + Date.now() + '_' + i + '_' + Math.floor(Math.random() * 1e6), lat: lat, lng: lng, cat: cat, label: nm || cat, coll: coll, savedAt: Date.now() });
         added++;
       }
       setSavedPins(arr);
