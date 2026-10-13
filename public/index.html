@@ -2776,6 +2776,16 @@
             </div>
             <button id="btn-signout" type="button" onclick="window.GLAuth ? GLAuth.signOutUser() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
           </div>
+          <!-- Signed in as the wrong account, or a session the mobile repair cannot fix from
+               the inside? This is the escape hatch, and it belongs next to Sign out rather
+               than on the Quick-join strip where nobody looks for it. -->
+          <button type="button" id="acct-switch-btn"
+                  onclick="window.GLAuth && GLAuth.switchAccount && GLAuth.switchAccount()"
+                  style="display:none;width:100%;margin-top:8px;padding:10px;background:transparent;
+                         border:1px solid var(--border);border-radius:10px;color:var(--accent);
+                         font-size:13px;font-weight:700;cursor:pointer">
+            Not you? Sign in as someone else
+          </button>
           <!-- Named in words. The avatar circle above opens the same picker, but a small
                circle with a "+" badge reads as decoration and was being missed entirely. -->
           <button type="button" id="acct-photo-cta"
@@ -4744,7 +4754,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 917;
+var APP_BUILD = 918;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6056,8 +6066,10 @@ window._showGroupedMemberSheet = function (uids) {
       // Avatar in the member's actual map color instead of one flat accent for everyone —
       // the whole point of this sheet is telling co-located people apart.
       var _avCol = mk._fillColor || 'var(--accent)';
-      var statusColor = mk._isLive ? '#00e676' : '#a9b4bf';
-      var statusLabel = mk._isLive ? 'LIVE' : 'LAST KNOWN';
+      // isMine is resolved above for this row. The map marker has always said YOU here; this
+      // list did not, so the device you were holding sat in it as "LAST KNOWN".
+      var statusColor = isMine ? 'var(--accent)' : mk._isLive ? '#00e676' : 'var(--muted)';
+      var statusLabel = isMine ? 'YOU' : mk._isLive ? 'LIVE' : 'LAST KNOWN';
       return '<div onclick="window._showMemberSheet(\'' + u + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)">' +
         '<div data-ava="' + escapeHtmlJs(u) + '" style="width:34px;height:34px;border-radius:50%;background:' + _avCol + ';background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#000;flex-shrink:0">' + escapeHtmlJs(initials(_baseNm)) + '</div>' +
         '<div style="flex:1;min-width:0">' +
@@ -16138,7 +16150,21 @@ window._offsetCollidingPins = function () {
     if (!pts.length) { window._pinLeaderFeats = []; return; }
     var leaders = [], changed = false;
     data.features.forEach(function (f) {
-      var c = f.geometry && f.geometry.coordinates; if (!c) return;
+      if (!f.geometry || !f.geometry.coordinates) return;
+      // Restore the TRUE position before measuring anything. The nudge is a screen-space
+      // adjustment; baking it into the coordinate made it a lie at every other zoom, and
+      // left the pin permanently displaced because nothing ever put it back.
+      if (!f.properties) f.properties = {};
+      if (f.properties._trueLL) {
+        var t = f.properties._trueLL;
+        if (f.geometry.coordinates[0] !== t[0] || f.geometry.coordinates[1] !== t[1]) {
+          f.geometry.coordinates = [t[0], t[1]];
+          changed = true;
+        }
+      } else {
+        f.properties._trueLL = [f.geometry.coordinates[0], f.geometry.coordinates[1]];
+      }
+      var c = f.geometry.coordinates;
       var sp; try { sp = map.project(c); } catch (e) { return; }
       var hit = null;
       for (var i = 0; i < pts.length; i++) {
@@ -16153,8 +16179,9 @@ window._offsetCollidingPins = function () {
       var ox = (vx / m) * 40, oy = (vy / m) * 40;
       try {
         var np = map.unproject([sp.x + ox, sp.y + oy]);
+        var tl = f.properties._trueLL || c;
         leaders.push({ type: 'Feature', properties: {},
-          geometry: { type: 'LineString', coordinates: [[c[0], c[1]], [np.lng, np.lat]] } });
+          geometry: { type: 'LineString', coordinates: [[tl[0], tl[1]], [np.lng, np.lat]] } });
         // Move the DRAWN position. updatePinSource rebuilds features from the truth on every
         // pass, so this recomputes cleanly and can never accumulate.
         f.geometry.coordinates = [np.lng, np.lat];
@@ -16929,6 +16956,20 @@ try {
       var hiddenAt = h.hiddenAt0 || 0;
       var judge = function (dbSaysWrote) {
         if (dbSaysWrote) { _bghSetStrikes(0); return; }
+        // Before blaming the phone: was this device even allowed to write? An unauthenticated
+        // WebView is refused by the rules and produces exactly the same silence as an app the
+        // OS put to sleep. Telling someone to check Battery -> Unrestricted when the real
+        // problem is a lapsed sign-in sends them hunting through settings that are already
+        // right -- which is precisely what happened on 2026-10-12. Repair the identity and
+        // say nothing; the next window will tell the truth either way.
+        try {
+          var _cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
+          if (!_cu || _cu.isAnonymous) {
+            try { window._evt('background writes refused -- device not signed in, not a battery pause'); } catch (e) {}
+            try { window._ensureAccountAuth && window._ensureAccountAuth('bg watchdog'); } catch (e) {}
+            return;                       // no strike: this is not what the banner is about
+          }
+        } catch (e) {}
         var n = _bghStrikes() + 1;
         _bghSetStrikes(n);
         try { window._evt('background tracking produced no writes over ' + Math.round(span / 60000) + 'm (strike ' + n + ', verified against DB)'); } catch (e) {}
@@ -16963,7 +17004,7 @@ function _showBgHealthBanner(mins) {
       '<div style="font-weight:800;color:var(--accent);margin-bottom:4px">Your phone is pausing GroundLink</div>' +
       '<div>You were away for ' + mins + ' minutes and your location never updated, so your family saw you frozen in place. ' + steps + '</div>' +
       '<div style="display:flex;gap:8px;margin-top:10px">' +
-        '<button onclick="try{window._bgOpenAppSettings&&window._bgOpenAppSettings()}catch(e){};var b=document.getElementById(\'bgh-banner\');if(b)b.remove()" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:13px;font-weight:800;cursor:pointer">Open settings</button>' +
+        '<button onclick="try{localStorage.setItem(\'gl_bgh_strikes\',\'0\')}catch(e){};try{window._bgOpenAppSettings&&window._bgOpenAppSettings()}catch(e){};var b=document.getElementById(\'bgh-banner\');if(b)b.remove()" style="flex:1;padding:9px;background:var(--accent);border:none;border-radius:9px;color:var(--v2-on-acc,#0d1117);font-size:13px;font-weight:800;cursor:pointer">Open settings</button>' +
         '<button onclick="try{localStorage.setItem(\'gl_bgh_strikes\',\'0\')}catch(e){};var b=document.getElementById(\'bgh-banner\');if(b)b.remove()" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;cursor:pointer">Dismiss</button>' +
       '</div>';
     document.body.appendChild(d);
@@ -18567,7 +18608,15 @@ function listenUsers() {
       // heartbeat regardless of whether any fix arrived, so keying off it showed a stale
       // position as green. fixTs is written only by a real fix; fall back to ts for clients
       // that predate it.
-      const isLive   = (now - (data.fixTs || data.ts || 0)) < LIVE_MS;
+      // Your own device answers from its own GPS, never from the round trip. _lastGoodFix is
+      // stamped by the fix handler on this device; if that is current, you are live whatever
+      // the database has got round to storing. Falls back to the stored value for a device
+      // with no GPS of its own (a PC), which is the only case where the server knows better.
+      const isLive   = isMine
+        ? (((window._lastGoodFix && window._lastGoodFix.ts) || 0) > 0
+             ? (now - window._lastGoodFix.ts) < LIVE_MS
+             : (now - (data.fixTs || data.ts || 0)) < LIVE_MS)
+        : (now - (data.fixTs || data.ts || 0)) < LIVE_MS;
       // "Resting": not live, but parked somewhere known rather than lost. A calm, still-present
       // state — not the gray "last known / lost signal".
       //
@@ -21610,6 +21659,10 @@ window._requestRoomAccess = function (roomKey, label) {
 window._showAccessRequestScreen = function (roomKey, label) {
   if (document.getElementById('acl-request-overlay')) return;
   var nm = label || _prettyGroup(roomKey);
+  // Two different refusals. Tell them apart before saying anything.
+  var _cu = null;
+  try { _cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+  if (!_cu || _cu.isAnonymous) { window._showSignedOutScreen(roomKey, nm); return; }
   var o = document.createElement('div');
   o.id = 'acl-request-overlay';
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.96);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--text)';
@@ -21630,6 +21683,43 @@ window._showAccessRequestScreen = function (roomKey, label) {
     try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
     location.reload();
   };
+};
+// The honest version of the screen above, for the case the app used to mislabel: this
+// device is not signed in, so EVERY room is refused -- including the ones you own. It also
+// repairs itself in the background, because the usual cause is a swap that landed late
+// rather than a session that is really gone.
+window._showSignedOutScreen = function (roomKey, nm) {
+  if (document.getElementById('acl-request-overlay')) return;
+  var fallback = "(typeof toast === 'function' && toast('Still loading — try again in a second', 2400))";
+  var isIOS = false; try { isIOS = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
+  var o = document.createElement('div');
+  o.id = 'acl-request-overlay';
+  o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.96);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--text)';
+  o.innerHTML =
+    '<svg class="licon" style="color:var(--accent);width:34px;height:34px;margin-bottom:12px"><use href="#ic-lock"/></svg>' +
+    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">This device isn\'t signed in</div>' +
+    '<div id="acl-req-sub" style="font-size:14px;color:var(--muted);max-width:330px;line-height:1.5;margin-bottom:18px">' +
+      _escHtml(nm) + ' is still yours — GroundLink just can\'t tell who this device belongs to ' +
+      'until you sign in. Nothing has been lost and nobody has removed you.</div>' +
+    '<button onclick="window.GLAuth ? GLAuth.signInGoogle() : ' + fallback + '" style="width:100%;max-width:280px;padding:13px;background:#fff;border:none;border-radius:10px;color:#1f1f1f;font-size:15px;font-weight:800;cursor:pointer">Sign in with Google</button>' +
+    (isIOS ? '<button onclick="window.GLAuth ? GLAuth.signInApple() : ' + fallback + '" style="width:100%;max-width:280px;margin-top:9px;padding:13px;background:#000;border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:800;cursor:pointer">Sign in with Apple</button>' : '') +
+    '<button id="acl-req-back" style="margin-top:10px;width:100%;max-width:280px;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Back to home</button>';
+  document.body.appendChild(o);
+  document.getElementById('acl-req-back').onclick = function () {
+    try { localStorage.removeItem('gl_group'); sessionStorage.removeItem('gl_group'); _cookieSet('gl_group', ''); } catch (e) {}
+    location.reload();
+  };
+  // Try to repair it without the person doing anything; if the swap lands, go straight in.
+  try {
+    window._ensureAccountAuth && window._ensureAccountAuth('signed-out screen');
+    var tries = 0;
+    var t = setInterval(function () {
+      var cu = null;
+      try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+      if (cu && !cu.isAnonymous) { clearInterval(t); location.reload(); return; }
+      if (++tries > 30) clearInterval(t);
+    }, 2000);
+  } catch (e) {}
 };
 // ── Approver side ────────────────────────────────────────────────────
 window._approveJoinReq = function (uid) {
@@ -29619,6 +29709,7 @@ try {
     }
     try { if (window._renderAdminActivity) window._renderAdminActivity(); } catch (e) {}
     var dot = document.getElementById('pager-acct-dot'); if (dot) dot.style.display = signedIn ? 'inline-block' : 'none';
+    try { var _sw = document.getElementById('acct-switch-btn'); if (_sw) _sw.style.display = signedIn ? 'block' : 'none'; } catch (e) {}
     // Front-page (Quick-join) status bar — makes the signed-in state obvious and keeps
     // signing in the prominent default for guests.
     var statusEl = document.getElementById('acct-status');
@@ -29630,10 +29721,10 @@ try {
           '<div style="display:flex;align-items:center;gap:9px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:8px 12px">' +
             '<span style="width:8px;height:8px;border-radius:50%;background:#3fb950;flex-shrink:0;box-shadow:0 0 7px #3fb950"></span>' +
             '<div style="flex:1;min-width:0;font-size:12.5px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed in as ' + esc(LS.get('gl_email') || name() || 'you') + ' <span style="color:var(--muted);font-weight:400">· synced</span></div>' +
-            // Always an escape hatch — "Signed in as X" is sometimes wrong (a wrong account, or
-            // a stale flag the mobile repair can't touch), and without this the home screen
-            // offers no way to re-authenticate. "Not you?" flips to a clean sign-out + sign-in.
-            '<button onclick="window.GLAuth && GLAuth.switchAccount && GLAuth.switchAccount()" style="flex-shrink:0;background:none;border:none;color:var(--accent);font-size:11.5px;font-weight:700;cursor:pointer;padding:2px 4px;text-decoration:underline">Not you?</button>' +
+            // "Not you?" now lives on the Account tab beside Sign out, which is where someone
+            // who needs it actually goes looking. Leaving a copy here as well meant the one
+            // place it was searched for was the one place it was not.
+            '' +
           '</div>';
       } else {
         statusEl.innerHTML =
