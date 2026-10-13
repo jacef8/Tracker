@@ -4811,7 +4811,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 922;
+var APP_BUILD = 923;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -16229,8 +16229,20 @@ window._offsetCollidingPins = function () {
         if (Math.sqrt(dx * dx + dy * dy) < PIN_HIT_PX) { hit = pts[i]; break; }
       }
       if (!hit) return;
-      // Push away from the dot; straight down when they sit exactly on each other, so the pin
-      // clears the icon rather than hiding behind its label.
+      // DELIBERATELY NOTHING. A pin is drawn exactly where it is.
+      //
+      // What used to happen here: push the pin 40 screen pixels clear of the marker covering
+      // it, convert that back to a coordinate, and draw a thread to the true spot. The intent
+      // was good -- a pin hidden behind an avatar is a pin you cannot tap. The cost was not:
+      // the offset was stored as a coordinate and so was frozen at one zoom (918), and even
+      // after that it still put a waypoint a mile out, then 80px out, on a pin that was six
+      // feet from the marker. Twice I diagnosed the line wrongly on the way.
+      //
+      // On a map people navigate by in the dark, where a pin is drawn IS the product. A
+      // slightly obscured pin is a smaller problem than a pin that lies, and markers already
+      // have their own collision handling -- they are DOM elements and move freely. So the
+      // marker moves and the pin stays put.
+      return;
       var vx = sp.x - hit.x, vy = sp.y - hit.y, m = Math.sqrt(vx * vx + vy * vy);
       if (m < 0.5) { vx = 0; vy = 1; m = 1; }
       var ox = (vx / m) * 40, oy = (vy / m) * 40;
@@ -24085,20 +24097,51 @@ function getSavedPins() {
 // touches one copy and the other carries on drawing under its old name -- which is exactly
 // how a pin renamed to "Home" went on calling itself "Waypoint 03/24/26 08:20". Collapse on
 // write, keeping the FIRST occurrence because that is the one _pinRef hands to an edit.
+// How much a pin looks like something a person deliberately named, rather than whatever the
+// importer called it. Used to pick between two entries sharing an id -- 922 kept the first,
+// which is what _pinRef hands an edit, but across synced devices "first" is whatever order
+// the merge produced and can easily be the stale copy.
+function _pinEditScore(p) {
+  if (!p) return -1;
+  var lbl = String(p.label || '').trim();
+  var n = 0;
+  if (lbl) n += 1;
+  // "Waypoint 03/24/26 08:20", "Waypoint 12" -- names no human types.
+  if (lbl && !/^waypoint[\s\d/:]*$/i.test(lbl)) n += 2;
+  if (p.cat && p.cat !== 'Waypoint') n += 1;      // a chosen category is a deliberate act
+  return n;
+}
 function _dedupePins(arr) {
   if (!Array.isArray(arr)) return arr;
-  var seen = {}, out = [], dropped = 0;
+  var at = {}, out = [], dropped = 0;
   for (var i = 0; i < arr.length; i++) {
     var p = arr[i];
     if (!p) continue;
     var id = p.pid;
-    if (id != null && seen[id]) { dropped++; continue; }
-    if (id != null) seen[id] = 1;
-    out.push(p);
+    if (id == null) { out.push(p); continue; }
+    if (!(id in at)) { at[id] = out.length; out.push(p); continue; }
+    dropped++;
+    // Keep whichever of the two looks more deliberately named; ties keep the earlier one.
+    if (_pinEditScore(p) > _pinEditScore(out[at[id]])) out[at[id]] = p;
   }
-  if (dropped) { try { console.log('[GL] dropped ' + dropped + ' duplicate pin id(s)'); } catch (e) {} }
+  if (dropped) { try { console.log('[GL] collapsed ' + dropped + ' duplicate pin id(s)'); } catch (e) {} }
   return out;
 }
+// Once per load: a device holding a stale copy from before 922 otherwise keeps showing the
+// old name until something happens to write. Only saves when it actually changed something.
+try {
+  setTimeout(function () {
+    try {
+      var cur = getSavedPins();
+      var fixed = _dedupePins(cur.slice());
+      if (fixed.length !== cur.length) {
+        setSavedPins(fixed);
+        try { window._pinsChanged && window._pinsChanged(); } catch (e) {}
+        try { window._evt && window._evt('collapsed ' + (cur.length - fixed.length) + ' duplicate pin(s) in the local library'); } catch (e) {}
+      }
+    } catch (e) {}
+  }, 2500);
+} catch (e) {}
 function setSavedPins(arr) {
   arr = _dedupePins(arr);
   try { localStorage.setItem('gl_saved_pins', JSON.stringify(arr)); } catch(e) {}

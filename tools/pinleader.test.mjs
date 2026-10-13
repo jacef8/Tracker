@@ -1,18 +1,21 @@
 // Pulls the REAL _offsetCollidingPins out of public/index.html and runs it against a stub
 // map, so this tests the shipped source rather than a retyped copy of it.
 //
-// The bug: the 40px nudge was computed in screen space and written back as a coordinate, so
-// it was frozen at the zoom it happened at. Zoom in and the pin renders far from the truth,
-// and because it is then clear of the marker the nudge never corrects it.
+// THE CONTRACT, as of build 923: a pin is drawn exactly where it is, always. No screen-space
+// nudge, no leader line, under any projection, at any zoom, however many times the layout
+// pass runs.
 //
-// The invariant that has to hold: at ANY zoom, the drawn position is at most ~40px from the
-// true position, and the true position is never lost.
+// It used to nudge a pin 40px clear of a marker covering it, which is a reasonable thing to
+// want and cost far too much: the offset was written back as a coordinate and so froze at one
+// zoom (918), and even after that was fixed it still drew a waypoint a mile from its real
+// position, then 80px from a position six feet away. On a map people walk by in the dark,
+// where a pin is drawn is the whole product. Markers are DOM elements with their own
+// collision layout, so the marker moves and the pin does not.
 import { readFileSync } from 'node:fs';
 
 const src = readFileSync('public/index.html', 'utf8');
 const start = src.indexOf('window._offsetCollidingPins = function () {');
 if (start < 0) throw new Error('function not found');
-// Walk braces to the end of the assignment.
 let i = src.indexOf('{', start), depth = 0, end = -1;
 for (let j = i; j < src.length; j++) {
   if (src[j] === '{') depth++;
@@ -20,9 +23,9 @@ for (let j = i; j < src.length; j++) {
 }
 const fnSrc = src.slice(start, end) + ';';
 
-// ── Stub map: a flat projection where one screen pixel = (1 / 2^zoom) degrees. Crude, but it
-//    has the property that matters -- the same ground distance is a different pixel distance
-//    at a different zoom, which is the whole bug.
+// Flat stub projection: one screen pixel = (1 / 2^zoom) degrees. Crude, but it has the
+// property that matters -- the same ground distance is a different pixel distance at a
+// different zoom, which is what the old bug turned on.
 let ZOOM = 14;
 const scale = () => Math.pow(2, ZOOM);
 const map = {
@@ -46,7 +49,6 @@ const freshSource = () => ({
 globalThis.window = { _mapReady: true, _deviceMarkers: null };
 globalThis.map = map;
 globalThis.PIN_HIT_PX = 34;   // module-scope in index.html; the harness has to supply it
-// One marker sitting exactly on the pin -- the degenerate "straight down" case.
 globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [TRUE_LL[0], TRUE_LL[1]] } };
 
 eval(fnSrc);
@@ -57,6 +59,7 @@ const pxApart = () => {
   const b = map.project(TRUE_LL);
   return Math.hypot(a.x - b.x, a.y - b.y);
 };
+const leaders = () => (window._pinLeaderFeats || []).length;
 
 let fail = 0;
 const check = (label, cond, detail) => {
@@ -64,50 +67,42 @@ const check = (label, cond, detail) => {
   if (!cond) fail++;
 };
 
+// 1. A pin sitting exactly under a marker -- the case the nudge existed for.
 source = freshSource();
-
-// 1. One pass at zoom 14: the nudge should be ~40px.
 ZOOM = 14; window._offsetCollidingPins();
-check('zoom 14, one pass: offset is ~40px', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
+check('pin under a marker: not moved', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
+check('pin under a marker: no leader', leaders() === 0, leaders() + ' leaders');
 
-// 2. Repeat passes at the same zoom must NOT accumulate.
-for (let n = 0; n < 25; n++) window._offsetCollidingPins();
-check('zoom 14, 26 passes: still ~40px (no accumulation)', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
+// 2. Repeated layout passes must not creep.
+for (let n = 0; n < 40; n++) window._offsetCollidingPins();
+check('40 layout passes: still exactly on the truth', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
 
-// 3. THE BUG: zoom in four levels. Before the fix the stored coordinate was frozen, so the
-//    same ground offset rendered 16x larger -- ~640px instead of 40px.
-ZOOM = 18; window._offsetCollidingPins();
-check('zoom 18 after nudging at z14: recomputed, still ~40px', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
+// 3. Zoom changes must not move it either -- this is what froze at one zoom before.
+for (const z of [18, 11, 20, 9]) { ZOOM = z; window._offsetCollidingPins(); }
+check('across zooms 18/11/20/9: unmoved', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
 
-// 4. Zoom back out: must not have drifted either.
-ZOOM = 11; window._offsetCollidingPins();
-check('zoom 11: still ~40px', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
-
-// 5. The truth survives every pass.
-const kept = source._data.features[0].properties._trueLL;
-check('true position preserved', !!kept && kept[0] === TRUE_LL[0] && kept[1] === TRUE_LL[1], JSON.stringify(kept));
-
-// 6. With no marker on top, the pin sits exactly on the truth.
-globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [-80.0, 25.0] } };
-ZOOM = 16; window._offsetCollidingPins();
-check('no collision: pin returns to the true position', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
-
-// 7. THE GUARD. On a flat map unproject is a clean inverse of project. Under 3D terrain,
-//    pitch or a globe it is not, and a 40px nudge can resolve to a point a very long way off
-//    -- which is what put a waypoint about a mile from its real position on a phone that
-//    already had the accumulation fix. Simulate a lying inverse and require the pin to stay
-//    exactly on the truth rather than be flung somewhere plausible-looking.
-globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [TRUE_LL[0], TRUE_LL[1]] } };
-source = freshSource();
+// 4. A projection whose inverse lies (terrain / pitch / globe) must change nothing.
 const honest = map.unproject;
 map.unproject = ([x, y]) => { const r = honest([x, y]); return { lng: r.lng, lat: r.lat - 0.02 }; };
 ZOOM = 14; window._offsetCollidingPins();
-check('lying unproject: pin is NOT moved', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
-check('lying unproject: no leader drawn', (window._pinLeaderFeats || []).length === 0,
-      String((window._pinLeaderFeats || []).length) + ' leaders');
+check('lying unproject: unmoved', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
+check('lying unproject: no leader', leaders() === 0, leaders() + ' leaders');
 map.unproject = honest;
+
+// 5. Nothing colliding at all -- the ordinary case.
+globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [-80.0, 25.0] } };
+source = freshSource();
+ZOOM = 16; window._offsetCollidingPins();
+check('no collision: on the truth', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
+check('no collision: no leader', leaders() === 0, leaders() + ' leaders');
+
+// 6. A displacement baked in by an older build must be cleaned up, not preserved.
+source = freshSource();
+source._data.features[0].geometry.coordinates = [TRUE_LL[0], TRUE_LL[1] - 0.01];
+source._data.features[0].properties._trueLL = [TRUE_LL[0], TRUE_LL[1]];
+globalThis.userMarkers = { me: { _el: { style: {} }, _ll: [TRUE_LL[0], TRUE_LL[1]] } };
 ZOOM = 14; window._offsetCollidingPins();
-check('honest unproject again: a normal 40px nudge', Math.abs(pxApart() - 40) < 1.5, pxApart().toFixed(1) + 'px');
+check('stale displacement from an older build: restored', pxApart() < 0.001, pxApart().toFixed(4) + 'px');
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');
 process.exit(fail ? 1 : 0);
