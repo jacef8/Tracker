@@ -421,7 +421,11 @@
   }
   /* Circular controls in a dock, per the shape rule -- nothing in the timid 4-8px range. */
   body.ui-v2 .icon-btn {
-    border-radius: 12px !important; width: 42px; height: 42px; min-width: 42px;
+    /* flex:0 0 auto matters as much as the width -- the base rule sets flex:1, which is how a
+       42px square became an 88px oval on a wide window. */
+    border-radius: 12px !important;
+    flex: 0 0 auto !important;
+    width: 44px !important; height: 44px !important; min-width: 44px; max-width: 44px;
     background: var(--v2-e2-grad) !important;
     box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 6px 14px -6px rgba(0,0,0,.9) !important;
     border: none !important;
@@ -815,6 +819,18 @@
   }
   body.ui-v2 .topbar-row1 #room-switch-btn { grid-area: rooms; align-self: center; }
   body.ui-v2 .topbar-row1 #switch-group-btn { grid-area: exit; align-self: center; }
+  /* On a wide window the two rows sit side by side and the base rule makes row 1
+     `flex: 0 0 auto` -- as wide as its contents and no wider. Giving the NAME its own line
+     then achieves nothing, because the column it lives in still shrinks to fit. This is why
+     the 926 fix worked on a phone and not on the desktop app. */
+  @media (orientation: landscape) and (min-width: 760px) {
+    body.ui-v2 .topbar-row1 {
+      flex: 0 1 420px !important;
+      min-width: 320px;
+    }
+  }
+  /* The crew name is the title of the screen; at this size it can afford to look like one. */
+  body.ui-v2 #group-name-label { font-size: 17px; font-weight: 600; }
 
   /* ── Lists: crews and people ──────────────────────────────────────────────────────────
      The row is not the content; the name is. 909 took the raised slab away, this gives the
@@ -1247,13 +1263,22 @@
      made seven buttons read as seven raised objects; a hairline is enough to say "tappable"
      when everything around it is flat. */
   body.ui-v2 .topbar-row2 .icon-btn {
-    background: rgba(255,255,255,.05) !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
+    background: var(--v2-e2) !important;
+    border: 1px solid var(--v2-line) !important;
     box-shadow: none !important;
   }
-  body.ui-v2 .topbar-row2 .icon-btn:active { background: rgba(255,255,255,.14) !important; }
+  body.ui-v2 .topbar-row2 .icon-btn:active { background: var(--v2-e2h) !important; }
+  /* Spread them evenly instead of letting the row stretch each one. */
+  body.ui-v2 .topbar-row2 { gap: 8px !important; justify-content: space-between !important; }
+  @media (min-width: 760px) {
+    body.ui-v2 .topbar-row2 { justify-content: flex-start !important; gap: 10px !important; }
+  }
   /* Rooms and Exit: outline only, so the bar has no filled blocks of colour in it at all. */
+  /* "Rooms" beside the glyph at every width. A bare map icon between the crew chip and a red
+     EXIT does not say "switch to another crew", and this button went unrecognised. */
+  body.ui-v2 #room-switch-btn .rs-label { display: inline !important; }
   body.ui-v2 #room-switch-btn {
+    gap: 5px;
     background: transparent !important;
     border: 1px solid color-mix(in srgb, var(--tint) 55%, transparent) !important;
     box-shadow: none !important;
@@ -1265,12 +1290,9 @@
     box-shadow: none !important;
     min-height: 36px;
   }
-  body.ui-v2 .icon-btn {
-    border-radius: 50% !important;
-    background: linear-gradient(160deg, var(--v2-e2h), var(--v2-e2)) !important;
-    border: 1px solid var(--v2-line) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.12) !important;
-  }
+  /* A second body.ui-v2 .icon-btn lived here with border-radius:50% and no width. The base
+     rule gives .icon-btn `flex: 1`, so it stretched to 88x40 and a 50% radius on that box is
+     an ELLIPSE -- the oval buttons. Removed; the 42x42 square above is the one definition. */
   /* A second .icon-btn.active lived here. Removed, same reason. */
 
   /* ── Typography floor. Nothing under 12px; no secondary text dimmer than 64%. ─────────── */
@@ -4840,7 +4862,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 926;
+var APP_BUILD = 927;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
