@@ -4811,7 +4811,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 924;
+var APP_BUILD = 925;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6343,6 +6343,18 @@ window._renderMutedList = function () {
 function _getPinMuted() { try { return JSON.parse(localStorage.getItem('gl_pin_muted') || '{}'); } catch (e) { return {}; } }
 function _setPinMuted(m) { try { localStorage.setItem('gl_pin_muted', JSON.stringify(m)); } catch (e) {} try { if (window._glSync) window._glSync(); } catch (e) {} }
 window._isPinMuted = function (uid) { return !!_getPinMuted()[uid]; };
+// A JS string literal that is safe inside a double-quoted HTML attribute. JSON.stringify is
+// NOT that: it returns its own double quotes, which close the attribute early. The name here
+// is whatever another member typed, so this is the boundary where that matters.
+window._jsAttrStr = function (v) {
+  return "'" + String(v == null ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;') + "'";
+};
 window._togglePinMute = function (uid, name) {
   var m = _getPinMuted(), was = !!m[uid];
   if (was) delete m[uid]; else m[uid] = { name: name || '', ts: Date.now() };
@@ -6494,7 +6506,7 @@ window._renderPinMutedList = function () {
   var rows = ids.sort(function (a, b) { return (m[b].ts || 0) - (m[a].ts || 0); }).map(function (uid) {
     return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">' +
       '<span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🚫 ' + _escHtml(m[uid].name || 'Hidden') + '</span>' +
-      '<button onclick="window._togglePinMute(\'' + uid + '\',' + JSON.stringify(m[uid].name || '') + ')" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer">Show pins</button>' +
+      '<button onclick="window._togglePinMute(\'' + uid + '\',' + window._jsAttrStr(m[uid].name || '') + ')" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;font-weight:800;padding:6px 11px;cursor:pointer">Show pins</button>' +
     '</div>';
   }).join('');
   el.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">' + rows + '</div>';
@@ -20034,14 +20046,14 @@ window._showPinPopup = function(pid, lngLat) {
     '<div class="pop-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
     '<div class="pop-meta">By ' + escapeHtmlJs(pin.name || '?') + ' &middot; ' + timeAgo(pin.ts) + '</div>' +
     '<div class="pop-actions">' +
-      '<button class="pop-btn pop-edit" onclick="window._navigateTo(' + pin.lat + ',' + pin.lng + ',\'' + (pin.cat||'Pin').replace(/'/g,'') + '\')">Navigate</button>' +
-      '<button class="pop-btn" onclick="window.editPin(\'' + pid + '\')">Edit</button>' +
-      '<button class="pop-btn" onclick="window._openRadar(\'' + pid + '\')">Radar</button>' +
-      '<button class="pop-btn" onclick="window._sharePin(\'' + pid + '\')">Share</button>' +
-      '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window.savePin(\'' + pid + '\')">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
-      (isMine ? '<button class="pop-btn" onclick="window._movePin(\'' + pid + '\')">Move</button>' : '') +
+      '<button class="pop-btn pop-edit" onclick="window._pinAction(\'Navigate\',function(){return window._navigateTo(' + pin.lat + ',' + pin.lng + ',\'' + (pin.cat||'Pin').replace(/'/g,'') + '\')})">Navigate</button>' +
+      '<button class="pop-btn" onclick="window._pinAction(\'Edit\',function(){return window.editPin(\'' + pid + '\')})">Edit</button>' +
+      '<button class="pop-btn" onclick="window._pinAction(\'Radar\',function(){return window._openRadar(\'' + pid + '\')})">Radar</button>' +
+      '<button class="pop-btn" onclick="window._pinAction(\'Share\',function(){return window._sharePin(\'' + pid + '\')})">Share</button>' +
+      '<button class="pop-btn pop-save' + (saved ? ' is-saved' : '') + '" onclick="window._pinAction(\'Save\',function(){return window.savePin(\'' + pid + '\')})">' + (saved ? 'Saved &#10003;' : 'Save') + '</button>' +
+      (isMine ? '<button class="pop-btn" onclick="window._pinAction(\'Move\',function(){return window._movePin(\'' + pid + '\')})">Move</button>' : '') +
       (isMine ? '<button class="pop-btn pop-del" onclick="window.deletePin(\'' + pid + '\');window._closePinPopup()">Delete</button>' : '') +
-      (!isMine ? '<button class="pop-btn" onclick="window._togglePinMute(\'' + pin.droppedBy + '\',' + JSON.stringify(pin.name || '') + ');window._closePinPopup()">' + (window._isPinMuted(pin.droppedBy) ? 'Show ' + escapeHtmlJs(pin.name || 'their') + ' pins' : 'Hide ' + escapeHtmlJs(pin.name || 'their') + ' pins') + '</button>' : '') +
+      (!isMine ? '<button class="pop-btn" onclick="window._pinAction(\'Mute\',function(){window._togglePinMute(\'' + pin.droppedBy + '\',' + window._jsAttrStr(pin.name || '') + ');window._closePinPopup()})">' + (window._isPinMuted(pin.droppedBy) ? 'Show ' + escapeHtmlJs(pin.name || 'their') + ' pins' : 'Hide ' + escapeHtmlJs(pin.name || 'their') + ' pins') + '</button>' : '') +
     '</div>';
   window._closePinPopup();
   window._pinInfoPopup = new mapboxgl.Popup({ offset: 18, closeButton: true, maxWidth: '250px' })
@@ -20050,9 +20062,31 @@ window._showPinPopup = function(pid, lngLat) {
 };
 
 // Open the pin sheet pre-filled to edit an existing pin's type + description.
+// Run a pin action and never let it fail quietly. A thrown error inside an inline onclick
+// goes to a console that does not exist on a phone, so the button simply appears dead --
+// which is exactly how Navigate stayed broken on Android for the whole life of the native
+// app. Anything that goes wrong gets said out loud and written to the event log.
+window._pinAction = function (what, fn) {
+  try {
+    var r = fn();
+    return r;
+  } catch (e) {
+    var msg = (e && e.message) ? e.message : String(e);
+    try { toast(what + ' could not open — ' + msg, 4000); } catch (e2) {}
+    try { window._evt && window._evt('pin action "' + what + '" threw: ' + msg); } catch (e2) {}
+    try { console.error('[GL] pin action ' + what, e); } catch (e2) {}
+    return null;
+  }
+};
 window.editPin = function(pid) {
   var pin = window._anyPin(pid);
-  if (!pin) return;
+  if (!pin) {
+    // Was a bare `return`. A pin the popup just drew but the stores cannot resolve is a real
+    // condition worth naming, not something to swallow.
+    try { toast('That pin could not be found to edit', 3500); } catch (e) {}
+    try { window._evt && window._evt('editPin: no pin for pid ' + pid); } catch (e) {}
+    return;
+  }
   window._closePinPopup();
   _editingPid = pid;
   var known = pin.cat in PIN_DEFS;
@@ -20074,6 +20108,29 @@ window.editPin = function(pid) {
   document.getElementById('pin-confirm').textContent = 'Save Changes';
   document.getElementById('pin-modal').classList.add('show');
   try { _syncPinPrivateRow(); } catch (_e) {}
+  // Calling the function is not the same as the person seeing a sheet. If it did not end up
+  // visible and on screen, say so -- that turns "the button does nothing" into a fact we can
+  // act on, reported from the device where it is happening.
+  try {
+    setTimeout(function () {
+      try {
+        var m = document.getElementById('pin-modal');
+        var sh = m && m.querySelector('.pin-sheet');
+        if (!m || !sh) return;
+        var cs = getComputedStyle(m), r = sh.getBoundingClientRect();
+        var onScreen = cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0.05 &&
+                       r.width > 40 && r.height > 40 && r.bottom > 0 && r.top < (window.innerHeight || 1);
+        if (!onScreen) {
+          var why = 'display=' + cs.display + ' opacity=' + cs.opacity +
+                    ' box=' + Math.round(r.width) + 'x' + Math.round(r.height) +
+                    ' at ' + Math.round(r.left) + ',' + Math.round(r.top) +
+                    ' vp=' + (window.innerWidth || 0) + 'x' + (window.innerHeight || 0);
+          try { toast('The edit sheet opened off screen — ' + why, 6000); } catch (e) {}
+          try { window._evt && window._evt('editPin opened but not visible: ' + why); } catch (e) {}
+        }
+      } catch (e) {}
+    }, 350);
+  } catch (e) {}
 };
 
 // The "Private pin" row only applies to a FRESH drop inside a room — on My Map every pin is
