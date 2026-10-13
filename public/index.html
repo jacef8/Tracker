@@ -791,6 +791,47 @@
     background: var(--v2-acc) !important; color: var(--v2-on-acc) !important;
   }
 
+  /* ── Crew strip: the empty half of the bar on a desktop window ─────────────────────────
+     Hidden below 900px. A phone needs that space for the buttons, and the People sheet is
+     the right home for this there. */
+  #crew-strip { display: none; }
+  @media (min-width: 900px) {
+    body.ui-v2 #crew-strip {
+      display: flex; align-items: center; gap: 8px;
+      flex: 1 1 auto; min-width: 0; margin-left: 14px;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    body.ui-v2 #crew-strip::-webkit-scrollbar { display: none; }
+  }
+  body.ui-v2 .cs-chip {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 12px 0 6px;
+    background: var(--v2-e2); border: 1px solid var(--v2-line);
+    border-radius: 12px; cursor: pointer; max-width: 230px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.ui-v2 .cs-chip:hover { background: var(--v2-e2h); }
+  body.ui-v2 .cs-av {
+    width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto;
+    background-size: cover; background-position: center;
+    display: grid; place-items: center;
+    font: 700 11px/1 var(--v2-mono); color: #0C1113;
+    border: 2px solid transparent;
+  }
+  body.ui-v2 .cs-txt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  body.ui-v2 .cs-name {
+    font: 600 14px/1.15 var(--v2-txt); color: var(--v2-ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* The number is the point of the chip, so it is mono and tabular -- a distance that
+     reflows as it counts down is harder to read at a glance than one that does not. */
+  body.ui-v2 .cs-meta {
+    font: 500 11.5px/1.15 var(--v2-mono); font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  body.ui-v2 .cs-live { color: var(--v2-ok); }
+  body.ui-v2 .cs-stale { color: var(--v2-ink3); }
+
   /* ── Top bar row 1: the crew name gets its own line ───────────────────────────────────
      It was one flex row with the wordmark, the crew chip, a lock, Rooms and EXIT all sharing
      a phone's width, so the only item with a variable length was the one that got cut --
@@ -3142,6 +3183,8 @@
     <div class="icon-btn" id="settings-btn" title="Settings" onclick="openSettings()"><svg class="licon"><use href="#ic-gear"/></svg></div>
     <!-- Hidden elements kept for JS compatibility -->
     <span id="pin-feed-badge" style="display:none">0</span>
+    <!-- Wide windows only: the crew at a glance, in the space the buttons do not use. -->
+    <div id="crew-strip" aria-label="Crew at a glance"></div>
   </div>
 </div>
 <!-- Update-available banner (shown when a newer build is deployed) -->
@@ -4862,7 +4905,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 927;
+var APP_BUILD = 928;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5704,6 +5747,84 @@ var LEADER_MIN_PX = 30;
 // the next is the flicker itself; only a dot that is still aside a moment later gets a line.
 var LEADER_SETTLE_MS = 1200;
 var _leaderSince = (typeof WeakMap === 'function') ? new WeakMap() : null;
+// The crew strip. Built from the markers already on the map rather than a second data path,
+// so it cannot disagree with what is drawn -- the kind of split that produced a popup and its
+// own buttons differing about whether a pin existed.
+var _csLastSig = '';
+window._renderCrewStrip = function () {
+  try {
+    var host = document.getElementById('crew-strip');
+    if (!host) return;
+    // Cheap bail on a phone: the element is display:none there and nothing needs building.
+    if (!host.offsetParent && host.style.display !== 'flex') { if (host.childNodes.length) host.innerHTML = ''; return; }
+    var me = null;
+    try { me = window._lastGoodFix || window._lastGPS || null; } catch (e) {}
+    var rows = [];
+    Object.keys(userMarkers || {}).forEach(function (uid) {
+      var mk = userMarkers[uid]; if (!mk) return;
+      var el = mk._el || (mk.getElement && mk.getElement());
+      if (el && el.style.display === 'none') return;
+      var mine = (uid === userId);
+      var nm = mk._name || (mine ? (userName || 'You') : 'Member');
+      var dist = '';
+      try {
+        if (!mine && me && mk._ll && typeof metersApart === 'function') {
+          dist = _trkFmtDist(metersApart(me.lat, me.lng, mk._ll[1], mk._ll[0]));
+        }
+      } catch (e) {}
+      rows.push({ uid: uid, mine: mine, name: nm, live: !!mk._isLive,
+                  color: mk._fillColor || 'var(--v2-acc)', initials: mk._initials || '',
+                  ts: mk._ts || 0, dist: dist });
+    });
+    // You first, then whoever is live, then by name -- a stable order so chips do not
+    // reshuffle under the pointer every time a position arrives.
+    rows.sort(function (a, b) {
+      if (a.mine !== b.mine) return a.mine ? -1 : 1;
+      if (a.live !== b.live) return a.live ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
+    var now = Date.now();
+    var sig = rows.map(function (r) { return r.uid + r.live + r.dist; }).join('|');
+    if (sig === _csLastSig) return;          // nothing a person could see has changed
+    _csLastSig = sig;
+    host.innerHTML = rows.map(function (r) {
+      var meta = r.mine ? 'You'
+               : r.live ? (r.dist || 'Live')
+               : (r.ts ? ('last seen ' + _csAgo(now - r.ts)) : 'no fix');
+      var cls = (r.mine || r.live) ? 'cs-live' : 'cs-stale';
+      return '<div class="cs-chip" data-uid="' + escapeHtmlJs(r.uid) + '" title="' + escapeHtmlJs(r.name) + '">' +
+               '<div class="cs-av" data-ava="' + escapeHtmlJs(r.uid) + '" style="background:' + r.color + '">' +
+                 escapeHtmlJs(r.initials) + '</div>' +
+               '<div class="cs-txt"><div class="cs-name">' + escapeHtmlJs(r.name) + '</div>' +
+               '<div class="cs-meta ' + cls + '">' + escapeHtmlJs(meta) + '</div></div>' +
+             '</div>';
+    }).join('');
+    // Reuse the avatar painter the rest of the app uses, so a photo here matches the map.
+    try { rows.forEach(function (r) { window._applyMarkerAvatar && window._applyMarkerAvatar(r.uid); }); } catch (e) {}
+  } catch (e) {}
+};
+function _csAgo(ms) {
+  var m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm';
+  var h = Math.floor(m / 60);
+  return h < 24 ? h + 'h' : Math.floor(h / 24) + 'd';
+}
+// One delegated listener rather than an inline handler per chip -- the chips are rebuilt
+// whenever anybody moves.
+try {
+  document.addEventListener('click', function (ev) {
+    try {
+      var c = ev.target && ev.target.closest && ev.target.closest('.cs-chip');
+      if (!c) return;
+      var uid = c.getAttribute('data-uid'); if (!uid) return;
+      var nm = (c.getAttribute('title') || '').replace(/'/g, '');
+      if (uid === userId) { try { window._locateMeTapped && window._locateMeTapped(); } catch (e) {} return; }
+      try { window._followUser(uid, nm); } catch (e) {}
+    } catch (e) {}
+  }, true);
+} catch (e) {}
+
 function _drawMarkerLeaders(vis) {
   try {
     if (typeof map === 'undefined' || !map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
@@ -5834,6 +5955,7 @@ function _spreadOverlappingMarkers() {
     // AFTER the margins above are applied -- the chip slots are computed from them.
     try { _layoutMarkerChips(); } catch (e) {}
     _drawMarkerLeaders(vis);
+    try { window._renderCrewStrip(); } catch (e) {}
   } catch (e) {}
 }
 function _layoutMarkerChips() {
