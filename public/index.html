@@ -787,6 +787,35 @@
     background: var(--v2-acc) !important; color: var(--v2-on-acc) !important;
   }
 
+  /* ── Top bar row 1: the crew name gets its own line ───────────────────────────────────
+     It was one flex row with the wordmark, the crew chip, a lock, Rooms and EXIT all sharing
+     a phone's width, so the only item with a variable length was the one that got cut --
+     "Our Cr...". A grid instead: the left column is the identity block, wordmark above and
+     crew name below it, and the two buttons sit in their own columns spanning both rows.
+     The name goes from about a third of the bar to nearly all of it. */
+  body.ui-v2 .topbar-row1 {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name rooms exit" "crew rooms exit";
+    column-gap: 10px; row-gap: 1px;
+    align-items: center;
+  }
+  body.ui-v2 .topbar-row1 .app-name { grid-area: name; align-self: end; }
+  body.ui-v2 .topbar-row1 .group-chip {
+    grid-area: crew; align-self: start;
+    max-width: none !important;      /* was 62% of the bar, competing with the buttons */
+    width: 100%; min-width: 0;
+    justify-content: flex-start;
+    min-height: 38px;                /* the row is two lines now; 44 would make the bar tall */
+    margin: 0 -8px 0 -8px;
+  }
+  /* The name itself can now use the whole column, and only elides if it truly runs out. */
+  body.ui-v2 #group-name-label {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  body.ui-v2 .topbar-row1 #room-switch-btn { grid-area: rooms; align-self: center; }
+  body.ui-v2 .topbar-row1 #switch-group-btn { grid-area: exit; align-self: center; }
+
   /* ── Lists: crews and people ──────────────────────────────────────────────────────────
      The row is not the content; the name is. 909 took the raised slab away, this gives the
      name the weight the slab used to carry, and drops the second line into mono so a status
@@ -4811,7 +4840,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 925;
+var APP_BUILD = 926;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5645,14 +5674,31 @@ var SPREAD_PASSES = 4;         // more markers on one spot need more relaxation 
 // difference is the whole point, so draw a thin line from the moved dot back to its true
 // position: the separation becomes a readable device instead of a quiet lie about where
 // somebody is. Only drawn for dots actually displaced -- an untouched dot needs no explanation.
-var LEADER_MIN_PX = 6;
+// A dot nudged a few pixels still covers its own true position, so a line explaining it is
+// noise. This was 6px -- thinner than the ring around an avatar -- so routine jostling drew
+// lines, and the layout settling made them blink in and out. Reported twice.
+var LEADER_MIN_PX = 30;
+// And it has to STAY displaced. A leader that appears during one layout pass and vanishes on
+// the next is the flicker itself; only a dot that is still aside a moment later gets a line.
+var LEADER_SETTLE_MS = 1200;
+var _leaderSince = (typeof WeakMap === 'function') ? new WeakMap() : null;
 function _drawMarkerLeaders(vis) {
   try {
     if (typeof map === 'undefined' || !map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
     var feats = [];
     (vis || []).forEach(function (v) {
       var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
-      if (m < LEADER_MIN_PX || !v.ll) return;
+      if (!v.ll) return;
+      var key = v.mk || v.el;
+      if (m < LEADER_MIN_PX) { try { if (_leaderSince && key) _leaderSince.delete(key); } catch (e) {} return; }
+      // Displaced far enough -- but only draw once it has stayed that way.
+      try {
+        if (_leaderSince && key) {
+          var t0 = _leaderSince.get(key);
+          if (!t0) { _leaderSince.set(key, Date.now()); return; }
+          if (Date.now() - t0 < LEADER_SETTLE_MS) return;
+        }
+      } catch (e) {}
       var moved;
       try { moved = map.unproject([v.x + v.dx, v.y + v.dy]); } catch (e) { return; }
       feats.push({
@@ -28113,35 +28159,33 @@ window._navigateTo = function (lat, lng, name) {
               : '';
   var web = 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving';
 
-  var native = false;
-  try { native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) {}
-  var AppP = null;
-  try { AppP = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App; } catch (e) {}
-
-  // Inside the native shell, ASK the OS. Assigning location.href to a geo: URL is silently
-  // dropped by the WebView -- it follows http/https itself and passes nothing else on -- which
-  // is why Navigate did nothing at all on the Android app.
-  if (native && AppP && typeof AppP.openUrl === 'function') {
-    var tryOpen = function (url, next) {
-      try {
-        AppP.openUrl({ url: url }).then(function (r) {
-          if (r && r.completed === false && next) { next(); return; }
-        }).catch(function () { if (next) next(); });
-      } catch (e) { if (next) next(); }
-    };
-    var giveUp = function () {
-      try { toast('Could not open a maps app for that spot', 3000); } catch (e) {}
-    };
-    if (primary) tryOpen(primary, function () { tryOpen(web, giveUp); });
-    else tryOpen(web, giveUp);
-    return;
-  }
-
-  // Plain browser (including the PWA): the OS does pick these up here.
+  // 924 routed this through Capacitor's App.openUrl. That method does not exist --
+  // openUrl is Cordova's API, not Capacitor's -- so the branch never ran and Android has
+  // been going through location.href the whole time, which the WebView does hand to the OS.
+  // Removed rather than left in place looking like it does something.
+  //
+  // NOT fixed here: pressing Back in Google Maps does not return to GroundLink. The WebView
+  // starts the maps app as its own Android task, so Back walks that app's stack instead of
+  // coming back to ours. Changing it means changing how the native shell launches the
+  // intent, which needs an APK rebuild and a reinstall -- it cannot be done from the web
+  // layer. Use the app switcher to come back for now.
   try {
-    if (primary) { window.location.href = primary; return; }
-    var w = window.open(web, '_blank');
-    if (!w) window.location.href = web;
+    if (primary) {
+      window.location.href = primary;
+      // If the launch was refused nothing happens at all and the person is left pressing a
+      // dead button, so give it a moment and fall back to the web map. A successful launch
+      // backgrounds us, which is what the visibility check detects.
+      setTimeout(function () {
+        try {
+          if (document.visibilityState !== 'visible') return;   // we got backgrounded: it worked
+          var w = window.open(web, '_blank');
+          if (!w) window.location.href = web;
+        } catch (e) {}
+      }, 1400);
+      return;
+    }
+    var w0 = window.open(web, '_blank');
+    if (!w0) window.location.href = web;
   } catch (e) {
     try { toast('Could not open a maps app for that spot', 3000); } catch (e2) {}
   }
