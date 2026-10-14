@@ -4950,7 +4950,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 930;
+var APP_BUILD = 931;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6787,7 +6787,7 @@ function _isRecentlyActiveInAnyCircle(uid) {
     var age = now - u.ts;
     // A resting (battery-saver) member heartbeats every few minutes for up to 6h and is still
     // legitimately present, not just "recently" active — same reasoning as the Crew switcher.
-    var freshMs = ((u.rest || u.lat || u.lng) && !u.noGps && !u.hidden) ? 3 * 24 * 60 * 60 * 1000 : 5 * 60 * 1000;
+    var freshMs = ((u.rest || u.lat || u.lng) && !_gpsless(u) && !u.hidden) ? 3 * 24 * 60 * 60 * 1000 : 5 * 60 * 1000;
     if (age < freshMs) return { room: key, ts: u.ts, name: u.name || null };
   }
   return null;
@@ -13065,7 +13065,7 @@ function _renderCircleSwitcherList() {
       if (uid === userId) return;
       var d = users[uid] || {}, age = now - (d.ts || 0);
       if (d.ts && age < 90000) liveCount++;
-      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
+      else if ((d.rest || d.lat || d.lng) && !_gpsless(d) && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
     });
     var sub = liveCount > 0
       ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
@@ -13122,7 +13122,7 @@ function _renderRoomSwitcherList() {
       if (uid === userId) return;
       var d = users[uid] || {}, age = now - (d.ts || 0);
       if (d.ts && age < 90000) liveCount++;
-      else if ((d.rest || d.lat || d.lng) && !d.noGps && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
+      else if ((d.rest || d.lat || d.lng) && !_gpsless(d) && !d.hidden && age < 3 * 24 * 60 * 60 * 1000) restingCount++;
     });
     var sub2 = liveCount > 0
       ? (liveCount + ' live now' + (restingCount > 0 ? ' · ' + restingCount + ' resting' : ''))
@@ -13755,7 +13755,7 @@ function renderRoomList(all) {
       var age = now - (u.ts || 0);
       // (u.rest || a real position) — not the flag alone. A sleeping iPhone parks with a
       // perfectly good position and never sets rest:1, and was being counted as absent.
-      return (u.rest || u.lat || u.lng) && !u.noGps && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS;
+      return (u.rest || u.lat || u.lng) && !_gpsless(u) && !u.hidden && age >= LIVE_MS && age < BS_REST_HOME_MS;
     }).length;
     var presentCount = liveCount + restingCount;
     // Hide a room from the directory only once it's truly empty — i.e. NOBODY is still
@@ -17862,6 +17862,11 @@ function startLocationSharing() {
       // _talkPeopleIndex already expires it after FG_FRESH_MS.
       fgTs: window._lastFgTs || 0,
       trail: true, spd: window._lastSpeedMph, spdH: _shareSpeed() ? 0 : 1, rest: window._bsIdle ? 1 : 0,
+      // Explicitly FALSE. The no-fix heartbeat sets noGps:true, and a reporter that patches
+      // the row instead of replacing it leaves that flag in place for ever -- which is how a
+      // phone reporting a position and a speed still claimed to have no GPS, and so could
+      // never be anything but grey. Stating it on every real fix is what clears it.
+      noGps: false,
       hereSince: window._hereSinceTs,
       // When this person's hunt mode runs out. Published so the Crew can SEE who is in it --
       // the point is that one person switching it on prompts the others standing in the same
@@ -18492,6 +18497,19 @@ function clearMyTrail() {
 })();
 
 // ══ USERS ════════════════════════════════════════════════════════
+// Does this row actually lack GPS? The stored flag alone is not trustworthy: it is written
+// once when a device has no fix yet, and a reporter that patches rather than replaces leaves
+// it set for ever. Coordinates on the row outrank it.
+// A function DECLARATION on purpose -- it hoists, and three of its callers sit earlier in
+// this script than this line does.
+function _gpsless(d) {
+  try {
+    if (!d || !d.noGps) return false;
+    var la = +d.lat, ln = +d.lng;
+    return !(isFinite(la) && isFinite(ln) && (la || ln));
+  } catch (e) { return !!(d && d.noGps); }
+}
+try { window._gpsless = _gpsless; } catch (e) {}
 const LIVE_MS  = 4 * 60 * 1000;   // actively broadcasting GPS — was 90s, too tight against a
                                    // normal battery-saver heartbeat cadence (~4min), which flipped
                                    // someone to PAUSED just for sitting still, not actually stale
@@ -18992,7 +19010,11 @@ function listenUsers() {
       // handler — can never be set from that state. Those people were falling through to
       // "Last known", which reads as lost signal when they're just parked with a perfectly
       // good position.
-      const isResting = !isLive && !data.noGps && !data.hidden
+      // A row with real coordinates on it is not a row with no GPS, whatever the flag says.
+      // Rows stuck from before the write above heal on sight rather than staying grey until
+      // that phone happens to report again.
+      const _noGps = !!data.noGps && !(isFinite(+data.lat) && isFinite(+data.lng) && (+data.lat || +data.lng));
+      const isResting = !isLive && !_noGps && !data.hidden
                         && (now - (data.ts || 0)) < _restWindowMs(data) && (data.lat !== 0 || data.lng !== 0);
       // Age of the POSITION, matching isLive — "last seen 2:14 PM" has to mean when they were
       // last actually located, not when their app last checked in.
