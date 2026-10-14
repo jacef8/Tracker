@@ -4950,7 +4950,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 929;
+var APP_BUILD = 930;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17711,6 +17711,27 @@ function startLocationSharing() {
     // anymore) so Circles/favorited rooms still get this fix even with no room open — that gap
     // used to silently break the "always on regardless of room, or no room at all" promise both
     // features make: your location never fanned out anywhere while sitting on My Map.
+    // IN A CREW: the room loop creates your marker (with your colour and photo) but
+    // deliberately never animates it, because a database row is always older than the fix in
+    // hand. So moving it on each local fix is this path's job -- and it was only doing that
+    // in solo mode, which left the dot pinned where it was first drawn while the camera
+    // followed the real GPS. Create nothing here; just move what is already there.
+    try {
+      if (typeof map !== 'undefined' && map && !(window._soloMode || !groupName) && userMarkers[userId]) {
+        _animateMarker(userMarkers[userId], lng, lat);
+      }
+    } catch (e) {}
+    // How long since the previous self fix. Reported in diag because "the map jumps" and
+    // "the map is smooth" are the same code with a different arrival rate, and there is no
+    // way to tell them apart from here.
+    try {
+      var _pf = window._prevSelfFixTs || 0;
+      if (_pf) {
+        window._selfFixGapMs = now - _pf;
+        window._selfFixGapMax = Math.max(window._selfFixGapMax || 0, window._selfFixGapMs);
+      }
+      window._prevSelfFixTs = now;
+    } catch (e) {}
     if (window._soloMode || !groupName) {
       try {
         if (typeof map !== 'undefined' && map) {
@@ -18286,6 +18307,24 @@ function startLocationSharing() {
         gfPts: (window._gfLastPts != null ? window._gfLastPts : -1),
         gfFail: window._gfLastFail || '',
         gfDbg: window._gfDbg || '',
+        // Gap between consecutive LOCAL gps fixes. The camera eases over 1400ms per fix, so
+        // ~1s arrivals glide and anything past ~3s reads as a lurch. This says which.
+        fixGap: Math.round((window._selfFixGapMs || 0) / 100) / 10,
+        fixGapMax: Math.round((window._selfFixGapMax || 0) / 100) / 10,
+        meMk: (function () {
+          try {
+            if (!userMarkers[userId]) return 'none';
+            var ll = userMarkers[userId].getLngLat ? userMarkers[userId].getLngLat() : null;
+            if (!ll) return 'no-ll';
+            var g = window._lastGoodFix;
+            if (!g) return 'drawn';
+            var R = 20902231, t = function (x) { return x * Math.PI / 180; };
+            var dLat = t(ll.lat - g.lat), dLon = t(ll.lng - g.lng);
+            var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(t(g.lat)) * Math.cos(t(ll.lat)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return Math.round(2 * R * Math.asin(Math.sqrt(h))) + 'ft';   // dot vs true position
+          } catch (e) { return 'err'; }
+        })(),
         pinChk: window._pinCheck || '',
         ts: now
       });
