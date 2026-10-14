@@ -62,6 +62,44 @@ try {
   });
 }
 
+// ── Duplicate CSS selectors in the skin ────────────────────────────────────────────────
+// A WARNING, never a failure: layering a later rule over an earlier one is a legitimate way
+// to build a skin, and this file is full of deliberate refinements. But it is also how six
+// real bugs happened — the top bar, map controls, room-item:hover, .uname, the selected
+// states and the oval icon buttons — where a forgotten second copy of a selector silently
+// beat the rule somebody had just written, both marked !important so specificity could not
+// break the tie. Printing the count every build is what stops the seventh being found by
+// accident. `node tools/css-dupes.mjs` lists them with line numbers.
+{
+  const styles = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]);
+  const decl = new Map();
+  for (const css of styles) {
+    const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of clean.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1].trim().replace(/\s+/g, ' ');
+      if (!sel || sel.startsWith('@') || sel.includes('%')) continue;
+      for (const one of sel.split(',').map((x) => x.trim()).filter(Boolean)) {
+        if (!/ui-v2/.test(one)) continue;
+        if (!decl.has(one)) decl.set(one, []);
+        decl.get(one).push(m[2]);
+      }
+    }
+  }
+  const props = (b) => [...b.matchAll(/(^|;)\s*([a-z-]+)\s*:/gi)].map((x) => x[2].toLowerCase());
+  let clashes = 0;
+  for (const [, list] of decl) {
+    for (let i = 1; i < list.length; i++) {
+      const later = new Set(props(list[i]));
+      for (let j = 0; j < i; j++) {
+        if (props(list[j]).some((pr) => later.has(pr))) { clashes++; break; }
+      }
+    }
+  }
+  if (clashes) {
+    console.warn(`warn  ${clashes} overriding duplicate selector(s) in the skin — node tools/css-dupes.mjs`);
+  }
+}
+
 if (bad) {
   console.error(`\n${bad} problem(s) — DO NOT DEPLOY.`);
   process.exit(1);
