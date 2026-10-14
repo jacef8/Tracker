@@ -4950,7 +4950,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 931;
+var APP_BUILD = 933;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5375,6 +5375,7 @@ function _animateMarker(marker, toLng, toLat, path) {
   // arrived every second or two; once reports are 10+ seconds apart it made the dot slide for
   // five seconds and then sit frozen for the rest — the stutter that reads as "it stopped".
   var dur = Math.max(700, Math.min(30000, _gap * 1.08));
+  marker._lastGapMs = _gap;   // the camera needs this too — see _followRecenter
   var start = _nowMs;
   // A route is only meaningful as the line between where this dot is and where it is going.
   // `path` is written only when there IS a route to write, and the iPhone reporter merges its
@@ -5494,6 +5495,16 @@ function _camPad() {
     return _sheetPad();
   } catch (e) { return null; }
 }
+// The camera should travel for as long as the gap between fixes actually is, exactly as the
+// marker does. A fixed 1400ms was written when fixes landed about once a second; at the 6s
+// cadence measured on a drive it means the view sweeps for 1.4s and then freezes for 4.6 --
+// which is what reads as jumping. Clamped at both ends: under ~700ms is a snap, and past ~12s
+// the camera lags so far behind the dot that it feels broken instead of smooth.
+function _camDur(gapMs) {
+  var g = +gapMs;
+  if (!isFinite(g) || g <= 0) g = 1400;
+  return Math.max(700, Math.min(12000, g * 1.08));
+}
 function _followRecenter(lng, lat) {
   if (!followUid) return;
   // The marker's own animation carries the camera while it is in flight (see _animateMarker);
@@ -5508,7 +5519,9 @@ function _followRecenter(lng, lat) {
   // second easeTo aimed at the same target is exactly the fight that produced the stutter.
   if (window._camLockUid && followUid === window._camLockUid) return;
   try {
-    var _o = { center: [lng, lat], duration: 1400, easing: function (t) { return t; } };
+    var _gap = 0;
+    try { var _m = userMarkers[followUid]; if (_m) _gap = _m._lastGapMs || 0; } catch (e) {}
+    var _o = { center: [lng, lat], duration: _camDur(_gap), easing: function (t) { return t; } };
     var _p = _camPad(); if (_p) _o.padding = _p;
     map.easeTo(_o);
   } catch (e) {}
@@ -5527,7 +5540,9 @@ function _applyCameraOnSelfFix(lng, lat) {
   // is a second camera aimed at the same place, which is the fight that reads as stutter.
   if (window._camLockUid && window._camLockUid === followUid) return;
   if (followUid === userId) {
-    opts = { center: [lng, lat], duration: 1400, easing: function(t) { return t; } };
+    // window._selfFixGapMs is measured in onGpsFix (930) -- the real interval between this
+    // phone's own fixes, which is the only honest basis for how long the camera should take.
+    opts = { center: [lng, lat], duration: _camDur(window._selfFixGapMs || 0), easing: function (t) { return t; } };
     var _sp = _camPad(); if (_sp) opts.padding = _sp;
     if (headed) opts.bearing = window._lastHeading;
   } else if (headed) {
@@ -14803,6 +14818,7 @@ function enterMap(name, group, uid) {
     if (window._listenVoiceInvites) window._listenVoiceInvites();
     if (window._listenVoiceEverywhere) window._listenVoiceEverywhere();
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
+    try { if (window._reportCoverageGap) window._reportCoverageGap(); } catch (e) {}  // how long was this app dead?
     try { if (window._registerVoipToken) window._registerVoipToken(); } catch (e) {}   // (re)file iOS VoIP token now that db+uid are ready
     try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}     // (re)file iOS 16 Push-to-Talk ephemeral token
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
@@ -17705,6 +17721,7 @@ function startLocationSharing() {
     _applyCameraOnSelfFix(lng, lat);
     // Track recorder: capture this fix into the active recording (works even if location hidden / in background).
     try { if (window._trackRec) window._trackRecOnFix(pos, now); } catch (e) {}
+    try { window._aliveStamp && window._aliveStamp(); } catch (e) {}
 
     // My Map (personal, no room): render YOUR dot with the SAME smooth marker + glide as the
     // room maps (was Mapbox's raw geolocate dot, which jumps). Falls through below (no `return`
@@ -30967,6 +30984,73 @@ window._maybeRejoinChannel = function () {
 // push token so we can register it in Firebase for the server's /voip endpoint to target; the
 // server sends a VoIP push when someone talks, iOS wakes the LOCKED phone as a call, and on
 // answer CallKit calls _callkitJoin so this web layer joins the channel and its WebRTC audio plays.
+// ── Coverage forensics ───────────────────────────────────────────────────────────────────
+// Stamped constantly while alive. The value survives the process being killed, so the gap
+// between the last stamp and the next launch IS the outage, measured rather than guessed.
+var GL_ALIVE_KEY = 'gl_alive';
+var GL_ALIVE_MIN_GAP = 90 * 1000;   // under this is an ordinary pause, not an outage
+window._aliveStamp = function () {
+  try {
+    localStorage.setItem(GL_ALIVE_KEY, JSON.stringify({
+      t: Date.now(),
+      vis: (typeof document !== 'undefined' && document.visibilityState) || '?',
+      lat: (window._lastGoodFix && window._lastGoodFix.lat) || null,
+      lng: (window._lastGoodFix && window._lastGoodFix.lng) || null,
+      bg: !!window._bgGeoStarted
+    }));
+  } catch (e) {}
+};
+// Read the previous life's last stamp and, if there is a hole, write it down where it can be
+// read back off the device. Runs once the room is open, because that is when there is
+// somewhere to write to.
+window._reportCoverageGap = function () {
+  try {
+    if (window._coverageReported) return;
+    var raw = null;
+    try { raw = localStorage.getItem(GL_ALIVE_KEY); } catch (e) {}
+    window._coverageReported = true;
+    window._aliveStamp();                       // begin this life's heartbeat immediately
+    if (!raw) return;
+    var prev = null;
+    try { prev = JSON.parse(raw); } catch (e) { return; }
+    if (!prev || !prev.t) return;
+    var gap = Date.now() - prev.t;
+    if (gap < GL_ALIVE_MIN_GAP) return;         // normal backgrounding, not an outage
+    var moved = null;
+    try {
+      var g = window._lastGoodFix;
+      if (g && prev.lat != null && typeof metersApart === 'function') {
+        moved = Math.round(metersApart(prev.lat, prev.lng, g.lat, g.lng));   // feet
+      }
+    } catch (e) {}
+    var rec = {
+      ts: Date.now(),
+      gapMs: gap,
+      gapMin: Math.round(gap / 60000),
+      wasVisible: prev.vis || '?',              // was the app on screen when it died?
+      bgWasStarted: !!prev.bg,                  // did it believe background tracking was on?
+      movedFt: moved,                           // how much ground went unrecorded
+      dev: (typeof _deviceLabel === 'function') ? _deviceLabel() : '',
+      build: APP_BUILD,
+      nativeVer: (window._nativeAppInfo && window._nativeAppInfo.version) || ''
+    };
+    try {
+      if (db && groupName && userId && _roomWritable(groupName)) {
+        fbPush(fbRef(db, 'gl/' + groupName + '/coverage/' + userId), rec);
+      }
+    } catch (e) {}
+    try { window._evt('coverage gap: ' + rec.gapMin + ' min with no app' +
+                      (moved != null ? ', moved ' + moved + ' ft' : '') +
+                      ' (was ' + rec.wasVisible + ', bg=' + rec.bgWasStarted + ')'); } catch (e) {}
+  } catch (e) {}
+};
+try {
+  // Often enough that the stamp is never far behind the truth, cheap enough to ignore.
+  setInterval(function () { window._aliveStamp(); }, 20000);
+  document.addEventListener('visibilitychange', function () { window._aliveStamp(); });
+  window.addEventListener('pagehide', function () { window._aliveStamp(); });
+} catch (e) {}
+
 window._registerVoipToken = function () {
   try {
     var t = window._voipToken || localStorage.getItem('gl_voip_token') || '';
