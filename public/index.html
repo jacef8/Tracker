@@ -791,6 +791,38 @@
     background: var(--v2-acc) !important; color: var(--v2-on-acc) !important;
   }
 
+  /* ── Instrument switcher ──────────────────────────────────────────────────────────────
+     Sits in each panel's header. Four instruments that each knew only about themselves is
+     how three of them went unfound for weeks. */
+  /* Scrolls rather than wraps: wrapping pushed ACTIVITY onto a second line and made the
+     header a third taller on a phone, stealing it from the scope. */
+  .fi-tools {
+    display: flex; gap: 6px; margin-left: auto;
+    flex-wrap: nowrap; overflow-x: auto; min-width: 0;
+    scrollbar-width: none;
+  }
+  .fi-tools::-webkit-scrollbar { display: none; }
+  .fi-tools .fi-tool { flex: 0 0 auto; }
+  /* The switcher already names the screen -- the lit chip says RADAR. Keeping the <h3> too
+     meant two labels fighting for one row, and the heading lost: it rendered as "R..". */
+  body.ui-v2 .fi-head h3 { display: none !important; }
+  body.ui-v2 .fi-tool {
+    appearance: none; cursor: pointer;
+    background: var(--v2-e2); border: 1px solid var(--v2-line);
+    color: var(--v2-ink3); border-radius: 10px;
+    /* Tight enough that all four fit a 412px phone without scrolling -- a switcher whose
+       whole job is "these other instruments exist" fails if half of it is off-screen. */
+    padding: 8px 7px; min-height: 36px;
+    font: 700 10.5px/1 var(--v2-mono); letter-spacing: .04em; text-transform: uppercase;
+  }
+  body.ui-v2 .fi-tool.is-on {
+    background: color-mix(in srgb, var(--v2-acc) 15%, transparent);
+    border-color: color-mix(in srgb, var(--v2-acc) 42%, transparent);
+    color: var(--v2-acc);
+  }
+  /* Present but not available -- better than absent, which reads as "never existed". */
+  body.ui-v2 .fi-tool-off { opacity: .45; }
+
   /* ── Crew strip: the empty half of the bar on a desktop window ─────────────────────────
      Hidden below 900px. A phone needs that space for the buttons, and the People sheet is
      the right home for this there. */
@@ -1167,6 +1199,19 @@
     letter-spacing: .18em !important;
     text-transform: uppercase;
   }
+  /* Rounded rectangles, not pills. radius 15 on a button containing the word "Map" is an
+     oval, and it sat next to a circular close button looking like neither. */
+  body.ui-v2 .fi-btn { border-radius: 12px !important; }
+  /* The split-view toggle is marked up as .fi-x -- the CIRCULAR close button -- but contains
+     the word "Map" rather than an X. A 38px circle with a word in it stretches, and a 50%
+     radius on the result is an oval. Same shape fault as the top-bar icon buttons. */
+  body.ui-v2 #radar-split-btn {
+    width: auto !important; min-width: 0 !important; height: 38px !important;
+    padding: 0 14px !important; border-radius: 12px !important;
+    font: 700 11.5px/1 var(--v2-mono) !important;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  body.ui-v2 .fi-head .fi-btn { flex: 0 0 auto; padding: 10px 16px !important; font-size: 14px !important; }
   body.ui-v2 .fi-x,
   body.ui-v2 .fi-btn {
     /* Was a white tint, a white border and white text -- which is a control that only exists
@@ -4905,7 +4950,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 928;
+var APP_BUILD = 929;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24704,6 +24749,7 @@ function _facingDeg() {
 
 // ── ACTIVITY ────────────────────────────────────────────────────────────────────────────────
 window._openActivity = function () {
+  try { window._fiMountTools('act-panel'); } catch (e) {}
   if (!window._trackRec) { try { toast('Start a track first'); } catch (e) {} return; }
   var el = document.getElementById('act-panel'); if (!el) return;
   el.classList.add('show');
@@ -24843,6 +24889,7 @@ window._noteMaxMph = function (mph) {
   } catch (e) { if (mph > window._instrMaxMph) window._instrMaxMph = mph; }
 };
 window._openInstruments = function (ev) {
+  try { window._fiMountTools('instr-panel'); } catch (e) {}
   if (ev) ev.stopPropagation();
   try { _toggleNorthMenu(false); } catch (e) {}
   var el = document.getElementById('instr-panel'); if (!el) return;
@@ -25056,7 +25103,11 @@ try {
 window._openSky = function (ev) {
   if (ev) ev.stopPropagation();
   try { _toggleNorthMenu(false); } catch (e) {}
-  if (!window._skyAvailable()) { try { toast('Satellite detail needs the Android app', 3000); } catch (e) {} return; }
+  if (!window._skyAvailable()) {
+    try { toast('Satellite detail needs the Android app — the sensor bridge is not in this build yet', 4500); } catch (e) {}
+    return;
+  }
+  try { window._fiMountTools('sky-panel'); } catch (e) {}
   var el = document.getElementById('sky-panel'); if (!el) return;
   el.classList.add('show');
   try { window.GLSensors.start(); } catch (e) {}
@@ -25189,7 +25240,86 @@ function _skyDraw() {
     nn.textContent = bits.join(' \u00b7 ');
   }
 }
+// Every instrument offers the others. Four panels that each only knew about themselves is
+// why three of them were never found: whichever one you reach first is a dead end.
+window._FI_TOOLS = [
+  { id: 'radar-panel', label: 'Radar',   open: function () { window._openRadar(); } },
+  { id: 'instr-panel', label: 'Compass', open: function () { window._openInstruments(); } },
+  { id: 'sky-panel',   label: 'Sats',    open: function () { window._openSky(); } },
+  { id: 'act-panel',   label: 'Activity', open: function () { window._openActivity(); } }
+];
+window._fiSwitch = function (toId) {
+  try {
+    // Close whatever is up first, so two instruments can never be open at once.
+    window._FI_TOOLS.forEach(function (t) {
+      try { var e = document.getElementById(t.id); if (e) e.classList.remove('show'); } catch (x) {}
+    });
+    var t = window._FI_TOOLS.filter(function (x) { return x.id === toId; })[0];
+    if (t) t.open();
+  } catch (e) {}
+};
+// Built once per panel and then just re-marked, so opening an instrument does not rebuild
+// four buttons every time.
+window._fiMountTools = function (activeId) {
+  try {
+    window._FI_TOOLS.forEach(function (t) {
+      var panel = document.getElementById(t.id); if (!panel) return;
+      var head = panel.querySelector('.fi-head'); if (!head) return;
+      var row = head.querySelector('.fi-tools');
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'fi-tools';
+        head.appendChild(row);
+        row.innerHTML = window._FI_TOOLS.map(function (o) {
+          return '<button type="button" class="fi-tool" data-fi="' + o.id + '">' + o.label + '</button>';
+        }).join('');
+        row.addEventListener('click', function (ev) {
+          var b = ev.target && ev.target.closest && ev.target.closest('.fi-tool');
+          if (!b) return;
+          ev.stopPropagation();
+          var to = b.getAttribute('data-fi');
+          if (to === (window._fiActive || '')) return;
+          window._fiSwitch(to);
+        });
+      }
+      // Satellites needs the native sensor bridge. It used to be hidden outright, which is
+      // indistinguishable from "this feature does not exist" -- so it is shown, disabled,
+      // and says why when pressed.
+      var sats = row.querySelector('[data-fi="sky-panel"]');
+      if (sats) {
+        var ok = false;
+        try { ok = !!(window._skyAvailable && window._skyAvailable()); } catch (e) {}
+        sats.classList.toggle('fi-tool-off', !ok);
+        sats.title = ok ? 'Satellites' : 'Satellite detail needs the Android app';
+      }
+      row.querySelectorAll('.fi-tool').forEach(function (b) {
+        b.classList.toggle('is-on', b.getAttribute('data-fi') === activeId);
+      });
+    });
+    window._fiActive = activeId;
+  } catch (e) {}
+};
+// The live accent as an rgba() string, for the canvases -- they cannot read a custom
+// property, and a stale hard-coded colour would drift away from the theme. Cached per value
+// so the radar loop is not reading computed styles 30 times a second.
+var _fiAccCache = { key: '', rgb: '168,214,106' };
+function _fiAccentRGBA(alpha) {
+  try {
+    var raw = getComputedStyle(document.body).getPropertyValue('--v2-acc').trim()
+           || getComputedStyle(document.body).getPropertyValue('--accent').trim();
+    if (raw && raw !== _fiAccCache.key) {
+      var d = document.createElement('div');
+      d.style.color = raw; d.style.display = 'none';
+      document.body.appendChild(d);
+      var m = (getComputedStyle(d).color || '').match(/[\d.]+/g);
+      d.remove();
+      if (m && m.length >= 3) _fiAccCache = { key: raw, rgb: m[0] + ',' + m[1] + ',' + m[2] };
+    }
+  } catch (e) {}
+  return 'rgba(' + _fiAccCache.rgb + ',' + alpha + ')';
+}
 window._openRadar = function (pinId) {
+  try { window._fiMountTools('radar-panel'); } catch (e) {}
   var el = document.getElementById('radar-panel'); if (!el) return;
   if (pinId) window._radarTargetId = pinId;
   el.classList.add('show');
@@ -25474,7 +25604,11 @@ function _radarDraw() {
     if (c.createConicGradient) {
       var _gr = c.createConicGradient((_sweep - 90 - 60) * Math.PI / 180, cx, cy);
       _gr.addColorStop(0, 'rgba(0,0,0,0)');
-      _gr.addColorStop(60 / 360, 'color-mix(in srgb, var(--tint) 30%, transparent)');
+      // A canvas gradient stop takes a COLOUR, not a CSS custom property -- color-mix with a
+      // var() here throws and kills the whole radar draw loop. The 920 sweep that moved tints
+      // onto a token skipped fillStyle/strokeStyle/shadowColor but not addColorStop, so this
+      // one slipped through. Read the accent off the computed style and build rgba by hand.
+      _gr.addColorStop(60 / 360, _fiAccentRGBA(0.30));
       _gr.addColorStop(60 / 360 + 0.0001, 'rgba(0,0,0,0)');
       c.fillStyle = _gr; c.fillRect(cx - R, cy - R, R * 2, R * 2);
     }
