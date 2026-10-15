@@ -807,6 +807,16 @@
     border-radius: 999px; width: fit-content; margin-inline: auto;
   }
   body.ui-v2 #radar-for:empty { display: none !important; }
+  /* The companion toggle: same pill, quieter, because it is a preference and not the subject. */
+  body.ui-v2 #radar-only {
+    display: block !important; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font: 700 10.5px/1 var(--v2-mono); letter-spacing: .06em;
+    color: var(--v2-ink3); border: 1px solid var(--v2-line);
+    border-radius: 999px; padding: 6px 10px; min-height: 30px;
+    width: fit-content; margin: 4px auto 0;
+  }
+  body.ui-v2 #radar-only:empty { display: none !important; }
+  body.ui-v2 #radar-only[data-on="1"] { color: var(--v2-acc); border-color: color-mix(in srgb, var(--v2-acc) 42%, transparent); }
   /* Set apart from the name so it reads as the button it is, not as part of the text. */
   body.ui-v2 #radar-for::after {
     content: '✕'; margin-left: 8px; opacity: .8; font-weight: 700;
@@ -4095,6 +4105,10 @@
       <span id="radar-for" style="display:none" role="button" tabindex="0"
             title="Clear this target"
             onclick="window._radarClear && window._radarClear()"></span>
+      <!-- Shown only once a target exists: with 147 saved pins the scope is otherwise full of
+           blips you did not ask about, around the one you did. -->
+      <span id="radar-only" style="display:none" role="button" tabindex="0"
+            onclick="window._radarToggleOnly && window._radarToggleOnly()"></span>
       <b id="radar-dist">—</b>
       <span id="radar-turn" style="color:var(--muted)">Waiting for GPS</span>
     </div>
@@ -4987,7 +5001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 938;
+var APP_BUILD = 939;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -25031,10 +25045,13 @@ function _radarFocus() {
 }
 function _radarRangeM(distM) {
   if (window._radarRange > 0) return RADAR_RANGES_YD[window._radarRange - 1] * 0.9144;
-  var steps = [10, 25, 50, 75, 100, 150, 250, 500, 1000, 2500];
+  // Was [..., 1000, 2500] and stopped there, so a target 3.5 miles away was drawn clamped to
+  // the rim of a 2500 yd ring with Auto selected. Yards throughout: 35200 yd is 20 miles.
+  var steps = [10, 25, 50, 75, 100, 150, 250, 500, 1000, 2500,
+               5000, 8800, 17600, 35200];
   var need = (isFinite(distM) ? distM : 90) * 1.15;
   for (var i = 0; i < steps.length; i++) if (steps[i] * 0.9144 >= need) return steps[i] * 0.9144;
-  return 2500 * 0.9144;
+  return 35200 * 0.9144;   // 20 miles — past this the scope is not the right tool anyway
 }
 // ── COMPASS & SPEED ───────────────────────────────────────────────────────────────────────
 // The instrument half of the Vector merge. A rotating compass card, the heading in degrees
@@ -25701,6 +25718,18 @@ window._radarPickTarget = function () {
   document.body.appendChild(ov);
 };
 // The single way a target is let go, so the three controls below cannot drift apart.
+// Remembered, because somebody who wants a clean scope wants it every time.
+window._radarOnlyTarget = (function () {
+  try { return localStorage.getItem('gl_radar_only') === '1'; } catch (e) { return false; }
+})();
+window._radarToggleOnly = function () {
+  try {
+    window._radarOnlyTarget = !window._radarOnlyTarget;
+    try { localStorage.setItem('gl_radar_only', window._radarOnlyTarget ? '1' : '0'); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(10); } catch (e) {}
+    _radarDraw();
+  } catch (e) {}
+};
 window._radarClear = function (quiet) {
   try {
     window._radarTargetId = null;
@@ -25882,6 +25911,9 @@ function _radarDraw() {
     });
     var _dots = [], _labels = [];
     _ord.forEach(function (o) {
+      // "Target only" hides the other blips. The target itself is never hidden, so the toggle
+      // can never leave an empty scope with a distance still counting down on it.
+      if (window._radarOnlyTarget && f && o.id !== f.id) return;
       var d = metersApart(me.lat, me.lng, o.lat, o.lng);
       var relDeg = _bearingDeg(me.lat, me.lng, o.lat, o.lng) - ref;
       var isF = f && o.id === f.id;
@@ -25957,7 +25989,10 @@ function _radarDraw() {
     var _any = _radarTargets().length;
     if (dEl) dEl.textContent = '—';
     if (tEl) { tEl.textContent = _any ? 'Pick something to walk to' : 'No pins yet'; tEl.style.color = MUT; }
-    try { var _fe = document.getElementById('radar-for'); if (_fe) _fe.textContent = ''; } catch (e) {}
+    try {
+      var _fe = document.getElementById('radar-for'); if (_fe) _fe.textContent = '';
+      var _oe = document.getElementById('radar-only'); if (_oe) _oe.textContent = '';
+    } catch (e) {}
     if (nEl) nEl.textContent = _any
       ? 'Tap a blip on the scope, or use Choose pin.'
       : 'Drop a pin on the map first, then walk away and come back to it.';
@@ -25979,6 +26014,12 @@ function _radarDraw() {
     // icon -- the ✕ from the CSS. A leading arrow as well implied a second thing to press and
     // there has never been one.
     if (_forEl) _forEl.textContent = f ? f.name : '';
+    var _onlyEl = document.getElementById('radar-only');
+    if (_onlyEl) {
+      // Offered only when there IS a target to narrow down to.
+      _onlyEl.textContent = f ? (window._radarOnlyTarget ? 'Showing this pin only' : 'Showing all pins') : '';
+      _onlyEl.setAttribute('data-on', (f && window._radarOnlyTarget) ? '1' : '0');
+    }
   } catch (e) {}
   if (dEl) dEl.textContent = dist < 91 ? Math.round(dist * 3.28084) + ' ft' : _trkFmtDist(dist);
   var acc = window._lastAccM || 0;
