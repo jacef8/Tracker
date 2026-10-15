@@ -4960,7 +4960,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 934;
+var APP_BUILD = 935;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22128,11 +22128,21 @@ window._showAccessRequestScreen = function (roomKey, label) {
   o.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(13,17,23,0.96);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--text)';
   o.innerHTML =
     '<svg class="licon" style="color:var(--accent);width:34px;height:34px;margin-bottom:12px"><use href="#ic-users"/></svg>' +
-    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">' + _escHtml(nm) + ' is private</div>' +
-    '<div id="acl-req-sub" style="font-size:14px;color:var(--muted);max-width:320px;line-height:1.5;margin-bottom:18px">Ask the room owner to let you in. They\'ll get a notification, and this screen will open the room as soon as they approve.</div>' +
+    '<div style="font-size:19px;font-weight:800;margin-bottom:8px">' + _escHtml(nm) + ' did not open</div>' +
+    '<div id="acl-req-sub" style="font-size:14px;color:var(--muted);max-width:330px;line-height:1.5;margin-bottom:18px">' +
+      'This can mean you are not a member yet — or that the connection had not finished signing in. ' +
+      'Try again first; if it keeps happening, ask the owner to let you in and this screen will open ' +
+      'the room as soon as they approve.</div>' +
+    '<button id="acl-req-retry" style="width:100%;max-width:280px;margin-bottom:9px;padding:13px;background:var(--accent);border:none;border-radius:10px;color:var(--v2-on-acc,#1a1200);font-size:15px;font-weight:800;cursor:pointer">Try again</button>' +
     '<button id="acl-req-btn" style="width:100%;max-width:280px;padding:13px;background:var(--accent);border:none;border-radius:10px;color:#1a1200;font-size:15px;font-weight:800;cursor:pointer">Ask to join</button>' +
     '<button id="acl-req-back" style="margin-top:10px;width:100%;max-width:280px;padding:11px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer">Back to home</button>';
   document.body.appendChild(o);
+  // Reloading re-runs the whole join, which is the cheapest correct retry and the thing a
+  // person would do anyway. It is first because it is usually the answer.
+  try {
+    var _rt = document.getElementById('acl-req-retry');
+    if (_rt) _rt.onclick = function () { try { location.reload(); } catch (e) {} };
+  } catch (e) {}
   document.getElementById('acl-req-btn').onclick = function () {
     var b = this;
     b.disabled = true; b.textContent = 'Waiting for approval…';
@@ -29584,6 +29594,23 @@ function checkGroupPasscode(name, group, uid, invitePin) {
           denied = code.indexOf('PERMISSION_DENIED') !== -1 || code.indexOf('PERMISSION DENIED') !== -1;
         } catch (e) {}
         if (!denied) { _checkBanned(); return; }
+        // Read again before believing it. Being signed in and the DATABASE CONNECTION having
+        // caught up are not the same moment, and a read in between is judged against the old
+        // identity. Two retries over ~3.5s, which is far longer than that handover takes and
+        // far shorter than a person's patience.
+        var _reprobe = function (tries, after) {
+          setTimeout(function () {
+            var again = null;
+            try { again = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) {}
+            if (!again || !again.then) { after(); return; }
+            again.then(function () {
+              try { window._evt('room read succeeded on retry — the sign-in had not reached the connection yet'); } catch (e) {}
+              _checkBanned();
+            }).catch(function () {
+              if (tries > 1) _reprobe(tries - 1, after); else after();
+            });
+          }, tries > 1 ? 800 : 2600);
+        };
         // A refusal here is read as "you are not a member" -- but it is equally what an
         // ANONYMOUS session gets, and on the native app the WebView starts anonymous and only
         // becomes the account once /authbridge completes. Opening a room before that lands
@@ -29592,7 +29619,9 @@ function checkGroupPasscode(name, group, uid, invitePin) {
         var _cu = null;
         try { _cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
         var _canBridge = (!_cu || _cu.isAnonymous) && window._bridgeNativeAuth;
-        if (!_canBridge) { window._showAccessRequestScreen(groupKey, group); return; }
+        // Signed in already, and still refused. Before telling somebody they are not a member
+        // of a crew they may well own, give the connection time to catch up with the identity.
+        if (!_canBridge) { _reprobe(2, function () { window._showAccessRequestScreen(groupKey, group); }); return; }
         window._authBridged = false;
         window._bridgeNativeAuth(function (ok) {
           if (!ok) { window._showAccessRequestScreen(groupKey, group); return; }
@@ -29600,7 +29629,10 @@ function checkGroupPasscode(name, group, uid, invitePin) {
           try { retry = fb.get(fb.ref(fb.db, 'gl/' + groupKey + '/config/owner')); } catch (e) {}
           if (!retry || !retry.then) { window._showAccessRequestScreen(groupKey, group); return; }
           retry.then(function () { _checkBanned(); })
-               .catch(function () { window._showAccessRequestScreen(groupKey, group); });
+               .catch(function () {
+                 // The swap just landed; the connection may still be a beat behind it.
+                 _reprobe(2, function () { window._showAccessRequestScreen(groupKey, group); });
+               });
         });
       });
     });
