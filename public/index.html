@@ -805,7 +805,17 @@
   .fi-tools .fi-tool { flex: 0 0 auto; }
   /* The switcher already names the screen -- the lit chip says RADAR. Keeping the <h3> too
      meant two labels fighting for one row, and the heading lost: it rendered as "R..". */
-  body.ui-v2 .fi-head h3 { display: none !important; }
+  /* Hidden when it merely repeats the screen name -- the lit chip in the switcher already
+     says RADAR -- and shown when it is naming the thing the scope is aimed at, which is the
+     question "what is this pointing at?" answered on screen instead of by asking. */
+  body.ui-v2 .fi-head h3:not([data-live]) { display: none !important; }
+  body.ui-v2 .fi-head h3[data-live] {
+    font-family: var(--v2-geo) !important;
+    font-size: 15px !important; font-weight: 600 !important;
+    letter-spacing: .06em; color: var(--v2-acc) !important;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; max-width: 40%;
+  }
   body.ui-v2 .fi-tool {
     appearance: none; cursor: pointer;
     background: var(--v2-e2); border: 1px solid var(--v2-line);
@@ -4950,7 +4960,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 933;
+var APP_BUILD = 934;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -24828,7 +24838,11 @@ function _facingDeg() {
 // ── ACTIVITY ────────────────────────────────────────────────────────────────────────────────
 window._openActivity = function () {
   try { window._fiMountTools('act-panel'); } catch (e) {}
-  if (!window._trackRec) { try { toast('Start a track first'); } catch (e) {} return; }
+  if (!window._trackRec) {
+    // Was "Start a track first", which does not say where to start one.
+    try { toast('Activity needs a track running — start one from Tracks on the map', 4000); } catch (e) {}
+    return;
+  }
   var el = document.getElementById('act-panel'); if (!el) return;
   el.classList.add('show');
   _actTick();
@@ -25328,12 +25342,29 @@ window._FI_TOOLS = [
 ];
 window._fiSwitch = function (toId) {
   try {
-    // Close whatever is up first, so two instruments can never be open at once.
-    window._FI_TOOLS.forEach(function (t) {
-      try { var e = document.getElementById(t.id); if (e) e.classList.remove('show'); } catch (x) {}
-    });
     var t = window._FI_TOOLS.filter(function (x) { return x.id === toId; })[0];
-    if (t) t.open();
+    if (!t) return;
+    // Remember what was up. 929 closed everything and THEN called open() -- and Activity
+    // refuses to open without a track recording, so pressing it closed the radar and opened
+    // nothing: a blank screen with no explanation. Never give up the screen you have until
+    // the replacement is actually on it.
+    var wasOpen = window._FI_TOOLS.filter(function (x) {
+      var e = document.getElementById(x.id);
+      return e && e.classList.contains('show');
+    }).map(function (x) { return x.id; });
+    wasOpen.forEach(function (id) {
+      try { var e = document.getElementById(id); if (e) e.classList.remove('show'); } catch (x) {}
+    });
+    t.open();
+    var now = document.getElementById(toId);
+    if (!now || !now.classList.contains('show')) {
+      // It declined. Put back what was there so the person is not left staring at a map they
+      // did not ask to return to -- open() will have said why in a toast.
+      wasOpen.forEach(function (id) {
+        var prev = window._FI_TOOLS.filter(function (x) { return x.id === id; })[0];
+        if (prev) { try { prev.open(); } catch (x) {} }
+      });
+    }
   } catch (e) {}
 };
 // Built once per panel and then just re-marked, so opening an instrument does not rebuild
@@ -25399,6 +25430,7 @@ function _fiAccentRGBA(alpha) {
 window._openRadar = function (pinId) {
   try { window._fiMountTools('radar-panel'); } catch (e) {}
   var el = document.getElementById('radar-panel'); if (!el) return;
+  window._radarSaidRemembered = 0;        // say "still set to X" once per opening
   if (pinId) window._radarTargetId = pinId;
   el.classList.add('show');
   _radarPills();
@@ -25804,7 +25836,12 @@ function _radarDraw() {
   // the readout under the scope
   var dEl = document.getElementById('radar-dist'), tEl = document.getElementById('radar-turn');
   var nEl = document.getElementById('radar-note'), ttl = document.getElementById('radar-title');
-  if (ttl) ttl.textContent = f ? f.name : 'Radar';
+  if (ttl) {
+    ttl.textContent = f ? f.name : 'Radar';
+    // data-live is what un-hides it (see the CSS note): a heading that names the target is
+    // worth the row, one that repeats the screen name is not.
+    if (f) ttl.setAttribute('data-live', '1'); else ttl.removeAttribute('data-live');
+  }
   if (!f) {
     var _any = _radarTargets().length;
     if (dEl) dEl.textContent = '—';
@@ -25819,6 +25856,14 @@ function _radarDraw() {
     if (tEl) { tEl.textContent = 'Waiting for GPS'; tEl.style.color = MUT; }
     return;
   }
+  // Said once per opening: this target is REMEMBERED, not something just picked. Without it
+  // the scope looks like it decided on its own -- which is exactly how it was read.
+  try {
+    if (!window._radarSaidRemembered && f && window._radarTargetId) {
+      window._radarSaidRemembered = 1;
+      if (nEl) nEl.textContent = 'Still set to ' + f.name + ' from last time — tap another blip, or Choose pin.';
+    }
+  } catch (e) {}
   if (dEl) dEl.textContent = dist < 91 ? Math.round(dist * 3.28084) + ' ft' : _trkFmtDist(dist);
   var acc = window._lastAccM || 0;
   if (tEl) {
