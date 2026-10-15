@@ -797,8 +797,9 @@
      would have sat there unnoticed until one day they did. */
   body.ui-v2 #radar-for {
     display: block !important;
-    font: 700 12px/1.2 var(--v2-mono); letter-spacing: .14em; text-transform: uppercase;
+    font: 700 12px/1.2 var(--v2-mono); letter-spacing: .06em;
     color: var(--v2-acc); margin-bottom: 2px;
+    max-width: 88%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     /* It is a control, so it looks like one: a tap target that shows what tapping does. */
     cursor: pointer; -webkit-tap-highlight-color: transparent;
     padding: 6px 10px; min-height: 32px;
@@ -806,7 +807,10 @@
     border-radius: 999px; width: fit-content; margin-inline: auto;
   }
   body.ui-v2 #radar-for:empty { display: none !important; }
-  body.ui-v2 #radar-for::after { content: ' ✕'; opacity: .75; }
+  /* Set apart from the name so it reads as the button it is, not as part of the text. */
+  body.ui-v2 #radar-for::after {
+    content: '✕'; margin-left: 8px; opacity: .8; font-weight: 700;
+  }
   body.ui-v2 #radar-for:active { background: color-mix(in srgb, var(--v2-acc) 15%, transparent); }
 
   /* ── Instrument switcher ──────────────────────────────────────────────────────────────
@@ -4983,7 +4987,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 937;
+var APP_BUILD = 938;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17739,11 +17743,35 @@ function startLocationSharing() {
     window._prevSpeedFix = { lat: lat, lng: lng, ts: now };
     if (_inst > 200) _inst = 0; // implausible — drop it
 
+    // ── Is this motion, or is it the GPS arguing with itself? ────────────────────────────
+    // speedAccuracy is the receiver's own error bar on the speed it just gave us. A reading
+    // inside its own error bar carries no information: "2.0 mph give or take 2.2" is a
+    // stationary phone. Android supplies this; iOS does not, hence the fallback below.
+    var _spdAccMph = null;
+    try {
+      if (pos.coords && pos.coords.speedAccuracy != null && isFinite(pos.coords.speedAccuracy)) {
+        _spdAccMph = pos.coords.speedAccuracy * 2.23694;
+      }
+    } catch (e) {}
+    var _believable;
+    if (_spdAccMph != null && _spdAccMph > 0) {
+      _believable = _inst > _spdAccMph;
+    } else {
+      // No error bar to lean on. Jitter crosses zero from fix to fix; walking does not. Ask
+      // for three moving fixes in a row before believing any of them.
+      _believable = _inst >= 1.5;
+    }
+    window._moveRun = _believable ? ((window._moveRun || 0) + 1) : 0;
+    // The error bar is a per-fix judgement and can stand alone. Without one, a run of three.
+    if (!_believable || (_spdAccMph == null && window._moveRun < 3)) _inst = 0;
+
     // Smooth it (exponential moving average) so the readout doesn't flicker, and hold
     // through brief gaps: a single missing/zero reading decays instead of blanking.
     if (window._smoothMph == null) window._smoothMph = _inst;
     else window._smoothMph = window._smoothMph * 0.6 + _inst * 0.4;
-    if (window._smoothMph < 1.5) window._smoothMph = 0; // settle to a clean 0 when stopped
+    // Backstop only — the gate above is what actually decides whether this is motion. Kept so
+    // the smoothed value cannot creep up from a long tail of rounded-down noise.
+    if (window._smoothMph < 1.5) window._smoothMph = 0;
     window._lastSpeedMph = Math.round(window._smoothMph);
 
     // Heading (course over ground) for the "Heading up" map rotation.
@@ -25022,6 +25050,9 @@ window._instrMaxMph = (function () {
   return 0;
 })();
 window._noteMaxMph = function (mph) {
+  // Under 2 mph is not a top speed, it is the GPS twitching. Recorded once, a bogus max sits
+  // there all day looking like a fact -- "max 2.0" while lying in bed.
+  try { if (!(+mph > 2)) return; } catch (e) { return; }
   try {
     var today = new Date().toDateString();
     var raw = JSON.parse(localStorage.getItem('gl_max_mph') || 'null');
@@ -25944,7 +25975,10 @@ function _radarDraw() {
   // own element and simply stays there.
   try {
     var _forEl = document.getElementById('radar-for');
-    if (_forEl) _forEl.textContent = f ? ('→ ' + f.name) : '';
+    // Name only. The pill is a single button whose only action is "clear", so it carries one
+    // icon -- the ✕ from the CSS. A leading arrow as well implied a second thing to press and
+    // there has never been one.
+    if (_forEl) _forEl.textContent = f ? f.name : '';
   } catch (e) {}
   if (dEl) dEl.textContent = dist < 91 ? Math.round(dist * 3.28084) + ' ft' : _trkFmtDist(dist);
   var acc = window._lastAccM || 0;
