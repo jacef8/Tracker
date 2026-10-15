@@ -792,12 +792,22 @@
   }
 
   /* The target's name, sitting above its distance. */
+  /* One rule, not two. I wrote this selector twice in a single build, which is the exact
+     habit tools/css-dupes.mjs now counts -- the properties happened not to collide, so it
+     would have sat there unnoticed until one day they did. */
   body.ui-v2 #radar-for {
     display: block !important;
     font: 700 12px/1.2 var(--v2-mono); letter-spacing: .14em; text-transform: uppercase;
     color: var(--v2-acc); margin-bottom: 2px;
+    /* It is a control, so it looks like one: a tap target that shows what tapping does. */
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    padding: 6px 10px; min-height: 32px;
+    border: 1px solid color-mix(in srgb, var(--v2-acc) 42%, transparent);
+    border-radius: 999px; width: fit-content; margin-inline: auto;
   }
   body.ui-v2 #radar-for:empty { display: none !important; }
+  body.ui-v2 #radar-for::after { content: ' ✕'; opacity: .75; }
+  body.ui-v2 #radar-for:active { background: color-mix(in srgb, var(--v2-acc) 15%, transparent); }
 
   /* ── Instrument switcher ──────────────────────────────────────────────────────────────
      Sits in each panel's header. Four instruments that each knew only about themselves is
@@ -4078,7 +4088,9 @@
     <div class="fi-turn">
       <!-- The name of the thing the big number refers to. The header cannot hold it any more
            (the instrument switcher fills that row), and this is where the eye already is. -->
-      <span id="radar-for" style="display:none"></span>
+      <span id="radar-for" style="display:none" role="button" tabindex="0"
+            title="Clear this target"
+            onclick="window._radarClear && window._radarClear()"></span>
       <b id="radar-dist">—</b>
       <span id="radar-turn" style="color:var(--muted)">Waiting for GPS</span>
     </div>
@@ -4971,7 +4983,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 936;
+var APP_BUILD = 937;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -25606,6 +25618,9 @@ window._radarWireTaps = function () {
         if (d < bd) { bd = d; best = h.id; }
       });
       if (!best) return;
+      // Tapping the one that is already selected releases it. This is the first thing anybody
+      // tries, and before 937 it silently re-selected the same pin and looked broken.
+      if (best === window._radarTargetId) { window._radarClear(); return; }
       window._radarTargetId = best;
       try {
         localStorage.setItem('gl_radar_target', best);
@@ -25644,8 +25659,29 @@ window._radarPickTarget = function () {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2500;background:rgba(0,0,0,.66);display:flex;align-items:flex-end;justify-content:center;padding:16px';
   ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
   ov.innerHTML = '<div style="width:100%;max-width:440px;max-height:72vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:14px">' +
-    '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:10px">Which pin?</div>' + rows + '</div>';
+    '<div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:10px">Which pin?</div>' +
+    // Only offered when there is something to clear; an always-present "none" in a list of
+    // places to walk to is just noise.
+    (window._radarTargetId
+      ? '<button type="button" class="fi-btn" style="width:100%;text-align:left;margin-bottom:8px;color:var(--danger)" ' +
+        'onclick="var o=document.getElementById(\'radar-pick\');if(o)o.remove();window._radarClear()">No target — just show the scope</button>'
+      : '') +
+    rows + '</div>';
   document.body.appendChild(ov);
+};
+// The single way a target is let go, so the three controls below cannot drift apart.
+window._radarClear = function (quiet) {
+  try {
+    window._radarTargetId = null;
+    try {
+      localStorage.removeItem('gl_radar_target');
+      localStorage.removeItem('gl_radar_target_ts');
+    } catch (e) {}
+    try { var fe = document.getElementById('radar-for'); if (fe) fe.textContent = ''; } catch (e) {}
+    if (!quiet) { try { toast('Target cleared — tap a blip to pick another', 2600); } catch (e) {} }
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+    try { _radarDraw(); } catch (e) {}
+  } catch (e) {}
 };
 window._radarChoose = function (id) {
   window._radarTargetId = id;
