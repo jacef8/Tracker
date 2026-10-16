@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GroundLink — Pine &amp; Powder look</title>
+<meta name="description" content="Design proof: six GroundLink screens rebuilt in the Pine &amp; Powder visual language, with a daylight mode.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* ===================================================================================
+   GroundLink in the Pine & Powder language — design proof, not shipped code.
+
+   Six screens, because one was not enough to judge. Every screen below is live: both
+   switches at the top drive all of them at once, so the look can be checked where it
+   is hardest (names over timber, a dense people list, a radar in daylight) and not
+   just where it flatters.
+
+   Two proposals, still separate decisions:
+
+   1. THE LANGUAGE. Montserrat in tracked caps, Instrument Sans at 17px/1.6 for
+      anything you read, JetBrains Mono in moss for labels and readouts. White ink,
+      not 66% grey. P&P is exactly as dark as GroundLink -- the legibility comes from
+      size and contrast, never from being lighter.
+
+   2. A DAYLIGHT MODE, which the app has never had and the Field rule has always
+      required. P&P has no light mode to copy, so this one is built in its spirit:
+      stone and mist, with the moss pushed down until it passes contrast on a light
+      ground rather than smearing across it.
+   =================================================================================== */
+
+:root{
+  color-scheme:dark;
+  --e0:#0C1113; --e1:#141B1E; --e2:#1D262A; --e3:#263238;
+  --line:rgba(255,255,255,.10); --line2:rgba(255,255,255,.20);
+  --ink:#fff; --ink2:rgba(255,255,255,.86); --ink3:rgba(255,255,255,.70);
+  --moss:#A8D66A; --rust:#E0A05A;
+  --acc:var(--moss); --on-acc:#0C1113;
+  --ok:#A8D66A; --bad:#FF6B5E;
+  /* Over imagery nothing is translucent. A blurred panel under a name is the muddy-text
+     case the directive rules out, and it is why markers are hard to read today. */
+  --scrim:rgba(12,17,19,.90);
+  --geo:"Montserrat",system-ui,sans-serif;
+  --txt:"Instrument Sans",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r:14px; --rs:10px;
+}
+body[data-theme="day"]{
+  color-scheme:light;
+  --e0:#F3F5F0; --e1:#FFFFFF; --e2:#E8ECE2; --e3:#DBE1D2;
+  --line:rgba(12,17,19,.15); --line2:rgba(12,17,19,.28);
+  --ink:#0C1113; --ink2:rgba(12,17,19,.84); --ink3:rgba(12,17,19,.64);
+  --moss:#3D6B12; --rust:#8A4B0B;
+  --acc:var(--moss); --on-acc:#FFFFFF;
+  --ok:#2F6B12; --bad:#B3261E;
+  --scrim:rgba(255,255,255,.94);
+}
+body[data-accent="gold"]{ --acc:#F0A500; --on-acc:#140E00 }
+body[data-theme="day"][data-accent="gold"]{ --acc:#7A5100; --on-acc:#FFFFFF }
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--e0); color:var(--ink);
+  font:500 17px/1.6 var(--txt); -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+  transition:background .25s ease, color .25s ease;
+}
+:where(a,button):focus-visible{outline:2px solid var(--acc); outline-offset:3px}
+.lbl{display:block;font:700 12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--acc)}
+.cap{font-family:var(--geo);font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+
+/* ── Page chrome ───────────────────────────────────────────────────────────────── */
+.bar{
+  position:sticky;top:0;z-index:20;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:13px 20px;border-bottom:1px solid var(--line);background:var(--e1);
+}
+.bar h1{margin:0;font:600 14px/1 var(--geo);letter-spacing:.2em;text-transform:uppercase}
+.bar .note{font-size:13.5px;color:var(--ink3);flex:1 1 220px;min-width:0}
+.seg{display:flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:999px;background:var(--e2)}
+.seg button{
+  appearance:none;border:none;background:none;cursor:pointer;color:var(--ink3);
+  font:700 11.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 14px;border-radius:999px;min-height:36px;
+}
+.seg button[aria-pressed="true"]{background:var(--acc);color:var(--on-acc)}
+
+/* Screens fill the window edge to edge and wrap — no parked column with dead space
+   either side of it. */
+.gal{
+  display:grid;gap:18px;padding:18px;
+  grid-template-columns:repeat(auto-fit,minmax(330px,1fr));
+  align-items:start;
+}
+.card{min-width:0}
+.card > .lbl{margin:0 0 8px 2px}
+.phone{
+  height:min(740px,82svh);
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--e0);border:1px solid var(--line);border-radius:var(--r);
+}
+
+/* ── Shared app furniture ──────────────────────────────────────────────────────── */
+.top{background:var(--e1);border-bottom:1px solid var(--acc);padding:10px 13px 0;flex:none}
+.top .row1{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wm{font:600 10.5px/1 var(--geo);letter-spacing:.26em;text-transform:uppercase;color:var(--ink2)}
+.crew{
+  appearance:none;background:none;border:none;cursor:pointer;color:var(--ink);
+  font:600 19px/1.1 var(--geo);letter-spacing:.05em;
+  padding:6px 8px;margin:0 -8px;border-radius:var(--rs);min-height:48px;
+  display:flex;align-items:center;gap:8px;max-width:62%;
+}
+.crew .chev{color:var(--acc);font-size:13px}
+.who{display:flex;align-items:center;gap:7px;font:700 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none}
+.top .row2{display:flex;gap:7px;padding:9px 0 10px;overflow-x:auto;scrollbar-width:none}
+.top .row2::-webkit-scrollbar{display:none}
+/* 56px targets — Field style, used with gloves on. */
+.ib{
+  flex:none;width:56px;height:56px;border-radius:var(--rs);
+  background:var(--e2);border:1px solid var(--line);color:var(--ink);
+  display:grid;place-items:center;cursor:pointer;
+  font:700 10px/1.25 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+  text-align:center;padding:4px;
+}
+.ib.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+
+.ph-head{flex:none;padding:14px 16px 12px;border-bottom:1px solid var(--acc);background:var(--e1)}
+.ph-head h2{margin:7px 0 0;font:600 23px/1.15 var(--geo);letter-spacing:.06em;text-transform:uppercase}
+.body{flex:1;min-height:0;overflow:auto;padding:4px 0}
+
+.dock{
+  flex:none;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;
+  padding:8px 10px;background:var(--e1);border-top:1px solid var(--line);
+}
+.dock button{
+  min-height:56px;border-radius:var(--rs);cursor:pointer;
+  background:var(--e2);border:1px solid var(--line);color:var(--ink2);
+  font:700 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+}
+.dock button.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+.dock button.sos{border-color:var(--bad);color:var(--bad)}
+
+/* Flat rows with a hairline between them — never a stack of raised slabs. The name is
+   the content; the row is not. */
+.row{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:13px 16px;background:none;border:none;border-bottom:1px solid var(--line);
+  color:var(--ink);cursor:pointer;text-align:left;min-height:64px;
+}
+.row:last-child{border-bottom:none}
+.row .av{
+  flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+  background:var(--e2);border:1px solid var(--line2);
+  font:700 13px/1 var(--mono);color:var(--acc);
+}
+.row .mid{flex:1;min-width:0}
+.row .nm{font:600 17px/1.25 var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .sub{font:500 13.5px/1.35 var(--mono);color:var(--ink3);margin-top:2px}
+.row .end{flex:none;text-align:right;font:700 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--acc)}
+.row .end small{display:block;color:var(--ink3);font-weight:500;letter-spacing:.06em;margin-top:3px}
+.row .star{color:var(--acc);font-size:15px}
+
+.tabs{display:flex;gap:4px;margin:10px 14px;padding:4px;border:1px solid var(--line);border-radius:var(--rs);background:var(--e2)}
+.tabs button{
+  flex:1;appearance:none;border:none;background:none;cursor:pointer;color:var(--ink3);
+  font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  padding:11px 6px;border-radius:7px;min-height:44px;
+}
+.tabs button[aria-pressed="true"]{background:var(--acc);color:var(--on-acc)}
+
+/* ── Map ───────────────────────────────────────────────────────────────────────── */
+.map{position:relative;flex:1;min-height:0;background:#1D262A center/cover no-repeat}
+.map::after{
+  content:'';position:absolute;inset:auto 0 0;height:44%;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(12,17,19,.55) 55%,rgba(12,17,19,.88));
+}
+body[data-theme="day"] .map::after{
+  background:linear-gradient(180deg,transparent,rgba(243,245,240,.45) 55%,rgba(243,245,240,.82));
+}
+.mk{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;gap:5px}
+.mk .pip{width:19px;height:19px;border-radius:50%;background:var(--acc);border:3px solid var(--e0);order:2}
+.mk .tag{
+  order:1;background:var(--scrim);border:1px solid var(--line2);border-left:3px solid var(--acc);
+  border-radius:8px;padding:5px 9px;white-space:nowrap;
+  font:600 14px/1.15 var(--txt);color:var(--ink);
+}
+.mk .tag b{display:block;font:700 10px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--acc)}
+.mk.stale .pip{background:var(--rust)}
+.mk.stale .tag{border-left-color:var(--rust)}
+.mk.stale .tag b{color:var(--rust)}
+
+.read{
+  position:absolute;left:11px;right:11px;bottom:11px;z-index:3;
+  display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--line2);border:1px solid var(--line2);border-radius:var(--r);overflow:hidden;
+}
+.read div{background:var(--scrim);padding:9px 10px}
+.read span{display:block;font:700 9.5px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}
+.read strong{display:block;font:700 21px/1.15 var(--mono);color:var(--ink);margin-top:3px}
+.read em{font-style:normal;font-size:12px;color:var(--ink3);font-family:var(--mono)}
+
+.pop{
+  position:absolute;left:11px;right:11px;bottom:90px;z-index:4;
+  background:var(--e1);border:1px solid var(--line);border-top:2px solid var(--acc);
+  border-radius:var(--r);padding:14px;
+}
+.pop h3{margin:6px 0 0;font:600 18px/1.2 var(--geo);letter-spacing:.05em}
+.pop p{margin:6px 0 0;font-size:15px;color:var(--ink2)}
+.pop .btns{display:flex;gap:8px;margin-top:12px}
+.pop button{
+  flex:1;min-height:48px;border-radius:var(--rs);cursor:pointer;
+  background:none;border:1px solid var(--line2);color:var(--ink);
+  font:600 14px/1 var(--txt);
+}
+.pop button.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc);font-weight:700}
+
+/* ── Radar / instrument ────────────────────────────────────────────────────────── */
+.instr{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--e0)}
+.scope-wrap{flex:1;min-height:0;display:grid;place-items:center;padding:14px}
+.scope{
+  width:min(100%,290px);aspect-ratio:1;position:relative;border-radius:50%;
+  background:
+    radial-gradient(circle, transparent 0 32%, var(--line) 32% calc(32% + 1px), transparent calc(32% + 1px)),
+    radial-gradient(circle, transparent 0 65%, var(--line) 65% calc(65% + 1px), transparent calc(65% + 1px)),
+    var(--e1);
+  border:1px solid var(--line2);
+}
+.scope .cross{position:absolute;inset:0}
+.scope .cross::before,.scope .cross::after{content:'';position:absolute;background:var(--line)}
+.scope .cross::before{left:50%;top:0;bottom:0;width:1px;transform:translateX(-.5px)}
+.scope .cross::after{top:50%;left:0;right:0;height:1px;transform:translateY(-.5px)}
+.scope .n{
+  position:absolute;top:9px;left:50%;transform:translateX(-50%);
+  font:700 11px/1 var(--mono);letter-spacing:.18em;color:var(--acc);
+}
+.scope .sweep{
+  position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 300deg, color-mix(in srgb, var(--acc) 26%, transparent), transparent 42%);
+}
+.scope .tgt{
+  position:absolute;left:68%;top:27%;transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:5px;
+}
+.scope .tgt i{width:15px;height:15px;border-radius:50%;background:var(--acc);border:2px solid var(--e1);display:block}
+.scope .tgt b{font:700 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink);background:var(--scrim);padding:3px 6px;border-radius:5px}
+.scope .me{
+  position:absolute;left:50%;top:50%;width:13px;height:13px;transform:translate(-50%,-50%);
+  border-radius:50%;background:var(--ink);border:2px solid var(--e1);
+}
+.big{
+  flex:none;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--line);border-top:1px solid var(--line);
+}
+.big div{background:var(--e1);padding:12px 12px 14px;text-align:center}
+.big span{display:block;font:700 9.5px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}
+.big strong{display:block;font:700 30px/1.1 var(--mono);color:var(--ink);margin-top:5px}
+.big em{font-style:normal;font-size:13px;color:var(--ink3)}
+.pills{flex:none;display:flex;gap:4px;margin:12px 14px;padding:4px;border:1px solid var(--line);border-radius:999px;background:var(--e2)}
+.pills button{
+  flex:1;appearance:none;border:none;background:none;cursor:pointer;color:var(--ink3);
+  font:700 11px/1 var(--mono);letter-spacing:.1em;padding:11px 4px;border-radius:999px;min-height:44px;
+}
+.pills button[aria-pressed="true"]{background:var(--acc);color:var(--on-acc)}
+
+/* ── Split: map over radar ─────────────────────────────────────────────────────── */
+.split{flex:1;min-height:0;display:grid;grid-template-rows:1fr 1fr}
+.split .map{border-bottom:1px solid var(--acc)}
+.split .instr{min-height:0}
+.split .instr .scope-wrap{padding:10px}
+/* In the split, the scope is sized by the HEIGHT it is given, not by the width of the
+   phone. Sized by width it was 290px tall in about 200px of space and pushed the
+   distance and bearing clean off the bottom -- the two numbers the split exists for. */
+.split .scope{width:auto;height:100%;max-width:100%;max-height:100%}
+.split .big strong{font-size:23px}
+.split .big div{padding:9px 8px 10px}
+
+/* ── Evidence strip ────────────────────────────────────────────────────────────── */
+.ev{border-top:1px solid var(--line);padding:20px;background:var(--e1)}
+.ev h2{margin:0 0 4px;font:600 clamp(18px,2.2vw,24px)/1.15 var(--geo);letter-spacing:.07em;text-transform:uppercase}
+.ev .sub{margin:0 0 18px;color:var(--ink2);max-width:66ch;font-size:15.5px}
+.cols{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.grid{display:grid;gap:9px;grid-template-columns:repeat(auto-fill,minmax(165px,1fr))}
+.sw{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;background:var(--e0)}
+.sw .chip{height:46px;display:grid;place-items:center;font:700 11px/1 var(--mono);letter-spacing:.1em;background:var(--e1)}
+.sw .meta{padding:8px 10px;font:500 12px/1.45 var(--mono);color:var(--ink3)}
+.sw .meta b{color:var(--ink);font-weight:700}
+.pass{color:var(--ok);font-weight:700}
+.fail{color:var(--bad);font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:baseline}
+th{font:700 10.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}
+td.now{color:var(--ink3)}
+.reveal{opacity:0;transform:translateY(14px);transition:opacity .45s ease,transform .45s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){ .reveal{opacity:1;transform:none;transition:none} .scope .sweep{display:none} }
+</style>
+</head>
+<body data-theme="night" data-accent="moss">
+
+<div class="bar">
+  <h1>GroundLink · proposed look</h1>
+  <div class="note">Six screens, all live. Both switches drive every screen at once.</div>
+  <div class="seg" role="group" aria-label="Theme">
+    <button type="button" data-set="theme" data-val="day">Daylight</button>
+    <button type="button" data-set="theme" data-val="night" aria-pressed="true">Night</button>
+  </div>
+  <div class="seg" role="group" aria-label="Accent">
+    <button type="button" data-set="accent" data-val="moss" aria-pressed="true">Moss</button>
+    <button type="button" data-set="accent" data-val="gold">GL gold</button>
+  </div>
+</div>
+
+<div class="gal">
+
+  <!-- ============ 1. MAP ============ -->
+  <div class="card">
+    <span class="lbl">1 · The map</span>
+    <div class="phone">
+      <div class="top">
+        <div class="row1">
+          <button class="crew" type="button">Our Crew <span class="chev">▾</span></button>
+          <div style="text-align:right">
+            <div class="wm">Groundlink</div>
+            <div class="who" style="justify-content:flex-end;margin-top:5px"><span class="dot"></span>3 sharing</div>
+          </div>
+        </div>
+        <div class="row2">
+          <button class="ib on" type="button">Follow<br>all</button>
+          <button class="ib" type="button">Sat</button>
+          <button class="ib" type="button">3D</button>
+          <button class="ib" type="button">Pins</button>
+          <button class="ib" type="button">Tracks</button>
+          <button class="ib" type="button">Radar</button>
+        </div>
+      </div>
+      <div class="map js-map">
+        <div class="mk" style="left:40%;top:36%"><div class="tag"><b>You</b>Jace</div><div class="pip"></div></div>
+        <div class="mk" style="left:71%;top:24%"><div class="tag"><b>4 min · 1.2 mi</b>Lexi</div><div class="pip"></div></div>
+        <div class="mk stale" style="left:23%;top:58%"><div class="tag"><b>Last seen 2 h</b>Chris</div><div class="pip"></div></div>
+        <div class="pop">
+          <span class="lbl">Saved pin</span>
+          <h3>Creek Stand</h3>
+          <p>412 ft away, bearing 318°. Dropped 14 Sep.</p>
+          <div class="btns">
+            <button class="pri" type="button">Guide me</button>
+            <button type="button">Share</button>
+            <button type="button">Delete</button>
+          </div>
+        </div>
+        <div class="read">
+          <div><span>Distance</span><strong>412<em> ft</em></strong></div>
+          <div><span>Speed</span><strong>0.0<em> mph</em></strong></div>
+          <div><span>GPS good to</span><strong>35<em> ft</em></strong></div>
+        </div>
+      </div>
+      <div class="dock">
+        <button class="on" type="button">Map</button>
+        <button type="button">Talk</button>
+        <button type="button">People</button>
+        <button type="button">Mark</button>
+        <button class="sos" type="button">SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 2. CREWS ============ -->
+  <div class="card">
+    <span class="lbl">2 · Crew switcher</span>
+    <div class="phone">
+      <div class="ph-head">
+        <span class="lbl">Signed in as jace</span>
+        <h2>Your crews</h2>
+      </div>
+      <div class="body">
+        <button class="row" type="button"><div class="av">OC</div><div class="mid"><div class="nm">Our Crew <span class="star">★</span></div><div class="sub">3 sharing now</div></div><div class="end">Open<small>owner</small></div></button>
+        <button class="row" type="button"><div class="av">OK</div><div class="mid"><div class="nm">Outkasts</div><div class="sub">1 sharing · 2 quiet</div></div><div class="end">Open<small>owner</small></div></button>
+        <button class="row" type="button"><div class="av">FM</div><div class="mid"><div class="nm">Family Men</div><div class="sub">Nobody sharing</div></div><div class="end">Open</div></button>
+        <button class="row" type="button"><div class="av">BG</div><div class="mid"><div class="nm">The Best Grandkids</div><div class="sub">2 sharing now</div></div><div class="end">Open</div></button>
+        <button class="row" type="button"><div class="av">MD</div><div class="mid"><div class="nm">Mom and Dad Trip</div><div class="sub">Last active 6 days ago</div></div><div class="end">Open</div></button>
+        <button class="row" type="button"><div class="av">JD</div><div class="mid"><div class="nm">Jace Devices</div><div class="sub">Phone · Tablet · PC</div></div><div class="end">Open<small>owner</small></div></button>
+      </div>
+      <div class="dock">
+        <button type="button">Map</button>
+        <button type="button">Talk</button>
+        <button class="on" type="button">Crews</button>
+        <button type="button">Join</button>
+        <button type="button">Account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3. PEOPLE ============ -->
+  <div class="card">
+    <span class="lbl">3 · People</span>
+    <div class="phone">
+      <div class="ph-head">
+        <span class="lbl">Our Crew</span>
+        <h2>People</h2>
+      </div>
+      <div class="tabs" role="group">
+        <button type="button" aria-pressed="true">In this crew</button>
+        <button type="button">Everyone</button>
+      </div>
+      <div class="body">
+        <button class="row" type="button"><div class="av">JF</div><div class="mid"><div class="nm">Jace <span class="star">★</span></div><div class="sub">Office · 35 ft</div></div><div class="end" style="color:var(--ok)">Live<small>just now</small></div></button>
+        <button class="row" type="button"><div class="av">LF</div><div class="mid"><div class="nm">Lexi <span class="star">★</span></div><div class="sub">1.2 mi away · 24 mph</div></div><div class="end" style="color:var(--ok)">Live<small>10 min</small></div></button>
+        <button class="row" type="button"><div class="av">CR</div><div class="mid"><div class="nm">Chris Rudd</div><div class="sub">Outkasts ground</div></div><div class="end" style="color:var(--rust)">Quiet<small>2 h</small></div></button>
+        <button class="row" type="button"><div class="av">LA</div><div class="mid"><div class="nm">Laura</div><div class="sub">Blountstown</div></div><div class="end" style="color:var(--rust)">Quiet<small>5 d</small></div></button>
+        <button class="row" type="button"><div class="av">VA</div><div class="mid"><div class="nm">Vanesa</div><div class="sub">Location hidden</div></div><div class="end" style="color:var(--ink3)">Hidden</div></button>
+      </div>
+      <div class="dock">
+        <button type="button">Map</button>
+        <button type="button">Talk</button>
+        <button class="on" type="button">People</button>
+        <button type="button">Mark</button>
+        <button class="sos" type="button">SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 4. PIN LIBRARY ============ -->
+  <div class="card">
+    <span class="lbl">4 · Pin library</span>
+    <div class="phone">
+      <div class="ph-head">
+        <span class="lbl">14 saved · 3 shared with you</span>
+        <h2>Pins</h2>
+      </div>
+      <div class="tabs" role="group">
+        <button type="button" aria-pressed="true">Mine</button>
+        <button type="button">Shared</button>
+      </div>
+      <div class="body">
+        <button class="row" type="button"><div class="av">▲</div><div class="mid"><div class="nm">Creek Stand</div><div class="sub">412 ft · bearing 318°</div></div><div class="end">Guide</div></button>
+        <button class="row" type="button"><div class="av">▲</div><div class="mid"><div class="nm">Powerline Stand</div><div class="sub">0.8 mi · bearing 94°</div></div><div class="end">Guide</div></button>
+        <button class="row" type="button"><div class="av">▲</div><div class="mid"><div class="nm">Back Corner Stand</div><div class="sub">1.4 mi · bearing 201°</div></div><div class="end">Guide</div></button>
+        <button class="row" type="button"><div class="av">◆</div><div class="mid"><div class="nm">Truck</div><div class="sub">0.6 mi · bearing 12°</div></div><div class="end">Guide</div></button>
+        <button class="row" type="button"><div class="av">◆</div><div class="mid"><div class="nm">Gate off Summers Rd</div><div class="sub">2.1 mi · bearing 350°</div></div><div class="end">Guide</div></button>
+        <button class="row" type="button"><div class="av">◆</div><div class="mid"><div class="nm">Where the trail forks</div><div class="sub">0.3 mi · bearing 77°</div></div><div class="end">Guide</div></button>
+      </div>
+      <div class="dock">
+        <button type="button">Map</button>
+        <button type="button">Talk</button>
+        <button type="button">People</button>
+        <button class="on" type="button">Pins</button>
+        <button class="sos" type="button">SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 5. RADAR ============ -->
+  <div class="card">
+    <span class="lbl">5 · Radar</span>
+    <div class="phone">
+      <div class="ph-head">
+        <span class="lbl">Heading to</span>
+        <h2>Creek Stand</h2>
+      </div>
+      <div class="instr">
+        <div class="scope-wrap">
+          <div class="scope">
+            <div class="sweep"></div>
+            <div class="cross"></div>
+            <div class="n">N</div>
+            <div class="me"></div>
+            <div class="tgt"><b>Creek Stand</b><i></i></div>
+          </div>
+        </div>
+        <div class="pills" role="group">
+          <button type="button">500 ft</button>
+          <button type="button" aria-pressed="true">¼ mi</button>
+          <button type="button">1 mi</button>
+          <button type="button">5 mi</button>
+        </div>
+        <div class="big">
+          <div><span>Distance</span><strong>412<em> ft</em></strong></div>
+          <div><span>Bearing</span><strong>318<em>°</em></strong></div>
+          <div><span>Walking</span><strong>2<em> min</em></strong></div>
+        </div>
+      </div>
+      <div class="dock">
+        <button type="button">Map</button>
+        <button type="button">Talk</button>
+        <button type="button">People</button>
+        <button class="on" type="button">Radar</button>
+        <button class="sos" type="button">SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 6. SPLIT ============ -->
+  <div class="card">
+    <span class="lbl">6 · Half map, half radar</span>
+    <div class="phone">
+      <div class="top">
+        <div class="row1">
+          <button class="crew" type="button">Our Crew <span class="chev">▾</span></button>
+          <div style="text-align:right">
+            <div class="wm">Groundlink</div>
+            <div class="who" style="justify-content:flex-end;margin-top:5px"><span class="dot"></span>3 sharing</div>
+          </div>
+        </div>
+        <div class="row2">
+          <button class="ib" type="button">Follow<br>all</button>
+          <button class="ib" type="button">Sat</button>
+          <button class="ib on" type="button">Split</button>
+          <button class="ib" type="button">Pins</button>
+          <button class="ib" type="button">Tracks</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="map js-map">
+          <div class="mk" style="left:46%;top:44%"><div class="tag"><b>You</b>Jace</div><div class="pip"></div></div>
+          <div class="mk" style="left:76%;top:26%"><div class="tag"><b>412 ft</b>Creek Stand</div><div class="pip"></div></div>
+        </div>
+        <div class="instr">
+          <div class="scope-wrap">
+            <div class="scope">
+              <div class="sweep"></div>
+              <div class="cross"></div>
+              <div class="n">N</div>
+              <div class="me"></div>
+              <div class="tgt"><b>Creek Stand</b><i></i></div>
+            </div>
+          </div>
+          <div class="big">
+            <div><span>Distance</span><strong>412<em> ft</em></strong></div>
+            <div><span>Bearing</span><strong>318<em>°</em></strong></div>
+            <div><span>Walking</span><strong>2<em> min</em></strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ EVIDENCE ============ -->
+<section class="ev">
+  <h2 class="reveal">Why this reads better</h2>
+  <p class="sub reveal">Pine &amp; Powder is just as dark as GroundLink is today — so darkness was never the problem. What it has is bigger text, white ink instead of grey, and labels that are tracked and coloured instead of whispered. The daylight mode is the other half: your own Field rule has always asked for one.</p>
+  <div class="cols">
+    <div class="reveal">
+      <span class="lbl" style="margin-bottom:10px">Text, now vs proposed</span>
+      <table>
+        <thead><tr><th>What</th><th>Today</th><th>Proposed</th></tr></thead>
+        <tbody>
+          <tr><td>Body you read</td><td class="now">13–14px, 66% white</td><td><b>17px / 1.6, 86% white</b></td></tr>
+          <tr><td>Names in a list</td><td class="now">14px on a raised slab</td><td><b>17px, flat row, hairline</b></td></tr>
+          <tr><td>Crew name</td><td class="now">15px in a bordered pill</td><td><b>19px, tracked, no box</b></td></tr>
+          <tr><td>Readouts</td><td class="now">mixed sizes, often unlabelled</td><td><b>21–30px mono, all labelled</b></td></tr>
+          <tr><td>Small labels</td><td class="now">11–12px grey, no tracking</td><td><b>12px mono, .16em, moss</b></td></tr>
+          <tr><td>Daylight theme</td><td class="now">none</td><td><b>near-black on stone</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="reveal">
+      <span class="lbl" style="margin-bottom:10px">Measured contrast, this theme</span>
+      <div class="grid" id="sw"></div>
+      <p style="font-size:13.5px;color:var(--ink3);margin:12px 0 0">Read back out of the live stylesheet and run through the WCAG arithmetic each time you flip a switch — so these are measurements, not claims.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+/* ── Satellite imagery, so marker legibility is judged against real timber and not a
+      flat green box. One request, reused by every map on the page. ── */
+(function () {
+  var TOKEN = 'pk.eyJ1IjoiamFjZWY4IiwiYSI6ImNtcWFkNGhoYjAydjYycnE1Z3JseDRwb2MifQ.AVsUTx3xvNv9fe8Nyw_-Tg';
+  var maps = document.querySelectorAll('.js-map');
+  if (!maps.length) return;
+  var url = 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/-88.1368,37.4291,14.6,0/'
+          + '600x900@2x?access_token=' + TOKEN + '&attribution=false&logo=false';
+  var pre = new Image();
+  pre.onload = function () {
+    maps.forEach(function (m) { m.style.backgroundImage = 'url("' + url + '")'; });
+  };
+  pre.src = url;     // if it never lands, the slate background is still a complete screen
+})();
+
+/* ── The switches ── */
+document.querySelectorAll('[data-set]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var k = b.dataset.set;
+    document.body.dataset[k] = b.dataset.val;
+    document.querySelectorAll('[data-set="' + k + '"]').forEach(function (o) {
+      o.setAttribute('aria-pressed', String(o === b));
+    });
+    swatches();
+  });
+});
+
+/* ── Contrast, measured. Claiming a palette is readable is worth nothing. ── */
+function rgb(c) {
+  var d = document.createElement('div');
+  d.style.color = c; d.style.display = 'none';
+  document.body.appendChild(d);
+  var v = getComputedStyle(d).color; d.remove();
+  var m = v.match(/[\d.]+/g) || [0, 0, 0];
+  return { r: +m[0], g: +m[1], b: +m[2], a: m[3] == null ? 1 : +m[3] };
+}
+function over(fg, bg) {   // flatten alpha onto the real backdrop before measuring
+  return { r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a) };
+}
+function lum(c) {
+  var f = function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+}
+function ratio(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+
+function swatches() {
+  var cs = getComputedStyle(document.body);
+  var tok = function (n) { return rgb(cs.getPropertyValue(n).trim()); };
+  var panel = tok('--e1');
+  var rows = [
+    ['--ink',  'Body ink',     7],
+    ['--ink2', 'Secondary',    4.5],
+    ['--ink3', 'Labels only',  4.5],
+    ['--acc',  'Accent',       4.5],
+    ['--rust', 'Stale / warn', 4.5],
+    ['--bad',  'Danger',       4.5]
+  ];
+  document.getElementById('sw').innerHTML = rows.map(function (r) {
+    var n = ratio(over(tok(r[0]), panel), panel), ok = n >= r[2];
+    return '<div class="sw">' +
+      '<div class="chip" style="color:var(' + r[0] + ')">' + r[1] + '</div>' +
+      '<div class="meta"><b>' + n.toFixed(1) + ':1</b> on panel<br>needs ' + r[2] +
+      ':1 · <span class="' + (ok ? 'pass' : 'fail') + '">' + (ok ? 'passes' : 'under') + '</span></div></div>';
+  }).join('');
+}
+swatches();
+
+var io = new IntersectionObserver(function (es) {
+  es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+}, { threshold: .12 });
+document.querySelectorAll('.reveal').forEach(function (e) { io.observe(e); });
+</script>
+</body>
+</html>
