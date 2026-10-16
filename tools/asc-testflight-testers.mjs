@@ -113,6 +113,14 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    // Written from the iOS-native commits between the 1.0.10 release (4 Oct) and this build
+    // (8 Oct): 1ba5eae, c30d408, 161a9cd. The rest of that range is web-layer work, which
+    // reaches every phone from the server and does not belong in an App Store note.
+    '1.0.11': [
+      '- Your trail keeps recording while you are driving, instead of leaving gaps in it',
+      '- Fixed a stop marker claiming you had been somewhere for hours while you were actually moving',
+      '- GroundLink now notices when iPhone quietly drops location back from Always, and says so',
+    ],
     '1.0.10': [
       '- Really fixes the "allow location" prompt appearing every time you open the app',
       '- A button that takes you straight to the location settings for this app',
