@@ -5001,7 +5001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 941;
+var APP_BUILD = 942;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -28981,8 +28981,19 @@ window._msAgeStart = function () {
 window._msAgeStop = function () {
   try { if (window._msAgeTimer) { clearInterval(window._msAgeTimer); window._msAgeTimer = null; } } catch (e) {}
 };
+// The member sheet and the People sheet are both bottom sheets at z-index 300, and People
+// comes later in the document, so it covers the one being opened. Any path to a person sheet
+// has to get People out of the way first -- doing it here means no caller can forget.
+window._sheetMakeRoom = function () {
+  try {
+    var d = document.getElementById('user-drawer');
+    if (d) d.classList.remove('open');
+    if (typeof setLocateMeVisible === 'function') setLocateMeVisible(true);
+  } catch (e) {}
+};
 window._showMemberSheet = function(uid) {
   var mk = userMarkers[uid]; if (!mk) return;
+  window._sheetMakeRoom();
   window._openMemberUid = uid;
   var sheet = document.getElementById('member-sheet');
   var body = document.getElementById('member-sheet-body');
@@ -29055,6 +29066,7 @@ window._buildPersonSheetHTML = function (uid, data) {
 };
 window._openPersonSheet = function (uid, data) {
   if (!uid) return;
+  window._sheetMakeRoom();
   // On the map right now → the rich, live sheet (unchanged path).
   if (typeof userMarkers !== 'undefined' && userMarkers[uid]) { window._showMemberSheet(uid); return; }
   // Not on the map → fill in a name from whatever we know, then show the lean sheet in the
