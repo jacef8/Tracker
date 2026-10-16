@@ -26,7 +26,7 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add', 'submitversion'].includes(mode)) {
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'groups', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add', 'submitversion'].includes(mode)) {
   console.error('usage: asc-testflight-testers.mjs [verify|list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
@@ -337,6 +337,45 @@ if (mode === 'listing') {
 
   const age = await asc('GET', `/apps/${app.id}/ageRatingDeclaration`);
   console.log(`\nAge rating declaration: ${age.ok && age.json?.data ? 'present' : 'MISSING'}`);
+  process.exit(0);
+}
+
+// ── groups ────────────────────────────────────────────────────────────────────────────
+// Read-only. Every beta group this app has -- INTERNAL as well as external -- with its build
+// assignments and tester count. `verify` only looks at external groups, so when it says "no
+// external group exists" it is silent about however people are actually getting builds today.
+// Answering that before changing anything is the difference between releasing a build and
+// creating a second, parallel way to receive it.
+if (mode === 'groups') {
+  const gr = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  if (!gr.ok) { console.error(`could not list groups (HTTP ${gr.status})`); process.exit(1); }
+  const gs = gr.json?.data || [];
+  console.log(`Beta groups: ${gs.length}`);
+  for (const g of gs) {
+    const a = g.attributes || {};
+    const t = await asc('GET', `/betaGroups/${g.id}/betaTesters?limit=200`);
+    const b = await asc('GET', `/betaGroups/${g.id}/builds?limit=200`);
+    const builds = (b.json?.data || []).map(x => 'b' + x.attributes?.version).join(', ') || '(none)';
+    console.log();
+    console.log(`  "${a.name}"  ${a.isInternalGroup ? 'INTERNAL' : 'EXTERNAL'}`);
+    console.log(`    id           ${g.id}`);
+    console.log(`    testers      ${t.ok ? (t.json?.data || []).length : 'HTTP ' + t.status}`);
+    console.log(`    builds       ${b.ok ? builds : 'HTTP ' + b.status}`);
+    console.log(`    publicLink   ${a.publicLinkEnabled ? (a.publicLink || 'enabled') : 'off'}`);
+    console.log(`    autoNotify   ${a.feedbackEnabled === undefined ? '?' : !!a.feedbackEnabled}`);
+  }
+  // What a tester can actually install is this field, not group membership.
+  const bl = await asc('GET', `/builds?filter[app]=${app.id}&limit=6&sort=-uploadedDate&include=buildBetaDetail`);
+  const inc = bl.json?.included || [];
+  console.log();
+  console.log('Newest builds — externalBuildState / internalBuildState:');
+  for (const b of (bl.json?.data || [])) {
+    const det = inc.find(i => i.id === b.relationships?.buildBetaDetail?.data?.id);
+    const d = det?.attributes || {};
+    console.log(`  b${String(b.attributes?.version).padEnd(4)} ext=${d.externalBuildState || '?'}  int=${d.internalBuildState || '?'}  uploaded=${(b.attributes?.uploadedDate||'').slice(0,16)}`);
+  }
+  console.log();
+  console.log('(groups mode — nothing was changed)');
   process.exit(0);
 }
 
