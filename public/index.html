@@ -5001,7 +5001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 943;
+var APP_BUILD = 944;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18653,6 +18653,80 @@ function _restWindowMs(data) {
   return 14 * 60 * 1000;                   // Android keeps a service running; expect better
 }
 
+// ── Parked, or lost? ────────────────────────────────────────────────────────────────────
+// One answer, used by the marker ring, the People badge, the People sentence and the member
+// sheet. They used to work it out separately, with predictable results.
+//
+// Returns { key, label, color, calm, line, why }. `calm` means "do not alarm the viewer" --
+// the ring stays green for it.
+window._presenceHealth = function (data) {
+  // What the DEVICE says about itself. Only iOS publishes this block (see _fixPayload.oss);
+  // for anything else the battery is all we have, which is why absence of evidence is treated
+  // as absence of a PROBLEM rather than proof of one.
+  try {
+    var o = (data && data.oss) || {};
+    if (o.iosVer) {
+      if (o.locDenied || o.locServices === false) return 'Location is turned off for GroundLink';
+      if (o.locWhenInUse && !o.locAlways)         return 'Location is set to "While Using" — it has to be "Always"';
+      if (o.bgRefreshDenied)                      return 'Background App Refresh is off';
+      if (o.lowPower)                             return 'Low Power Mode is on — iOS stops background location';
+      if ((o.authDowns || 0) > 0)                 return 'Lost location permission at some point';
+    }
+  } catch (e) {}
+  try {
+    // A phone that was nearly flat and unplugged is the likeliest answer to "why did it stop",
+    // and it is the one the viewer can do something about (ring them, go get them).
+    if (typeof data.batt === 'number' && data.batt <= 10 && !data.chg) {
+      return 'Battery was at ' + data.batt + '% and not charging';
+    }
+  } catch (e) {}
+  return '';
+};
+// Past this, "parked" stops being a reading and becomes a guess. Eight hours covers a night's
+// sleep and a working day without ever claiming presence for a phone that has been silent
+// since Tuesday.
+var PARKED_MAX_MS = 8 * 60 * 60 * 1000;
+window._presenceOf = function (uid, data) {
+  data = data || {};
+  var now = Date.now();
+  var fix = data.fixTs || data.ts || 0;
+  var age = now - fix;
+  var isLive = !!fix && age < LIVE_MS;
+  var hasGps = (data.lat !== 0 || data.lng !== 0) && isFinite(+data.lat) && isFinite(+data.lng);
+  var ageStr = !fix ? '' : age < 90000 ? Math.max(1, Math.round(age / 1000)) + 's'
+             : age < 5400000 ? Math.round(age / 60000) + 'm'
+             : age < 172800000 ? Math.round(age / 3600000) + 'h'
+             : (age / 86400000).toFixed(1) + 'd';
+
+  if (data.hidden)  return { key: 'off',   label: 'OFF',    color: '#a9b4bf', calm: true,  line: 'Location sharing off', why: '' };
+  // A real coordinate outranks the flag — see the note on the stale noGps trap.
+  if (data.noGps && !hasGps)
+                    return { key: 'nogps', label: 'NO GPS', color: '#a9b4bf', calm: true,  line: 'No GPS on this device', why: '' };
+  if (isLive)       return { key: 'live',  label: 'LIVE',   color: '#00e676', calm: true,  line: 'Live · ' + ageStr + ' ago', why: '' };
+  if (!fix || !hasGps)
+                    return { key: 'stale', label: 'OFFLINE', color: '#a9b4bf', calm: true, line: 'Not sharing right now', why: '' };
+
+  var why = window._presenceHealth(data);
+  // Stale while MOVING is the one that always mattered and is unchanged: a phone that went
+  // quiet at 64 mph did not park, it stopped being heard from.
+  if ((data.spd || 0) >= 15) {
+    return { key: 'lost', label: 'SIGNAL LOST', color: '#E0A05A', calm: false,
+             line: 'Signal lost ' + ageStr + ' ago, while moving', why: why };
+  }
+  if (why) {
+    return { key: 'check', label: 'CHECK PHONE', color: '#E0A05A', calm: false,
+             line: 'Quiet for ' + ageStr, why: why };
+  }
+  if (age < PARKED_MAX_MS) {
+    // The honest sentence. It says where they are, that nothing is wrong, and exactly how old
+    // the reading is -- never that it is current.
+    return { key: 'parked', label: 'PARKED', color: '#2ec4b6', calm: true,
+             line: 'Parked · last fix ' + ageStr + ' ago', why: '' };
+  }
+  return { key: 'stale', label: 'LAST KNOWN', color: '#a9b4bf', calm: true,
+           line: 'Last known · ' + ageStr + ' ago', why: '' };
+};
+
 // Track known users to detect joins/leaves
 var knownUsers = {};
 var usersInitialLoad = true;
@@ -19175,8 +19249,12 @@ function listenUsers() {
       // a phone that has gone past the window where it should have reported, which is the only
       // state worth looking at twice. Only the live ring pulses; resting sits still.
       // Amber, not red: this means the position is OLD, and red in here is SOS and Hazard.
-      const borderColor = (isLive || isResting) ? '#00e676' : '#E0A05A';
-      const ringClass   = isLive ? 'mk-ring-live' : isResting ? '' : 'mk-ring-stale';
+      // One source of truth now (see _presenceOf). `calm` is the same judgement the old
+      // `isLive || isResting` was reaching for, except it also stays calm for a phone that has
+      // been parked for three hours and goes amber for one whose owner needs to check it.
+      const _pres = window._presenceOf(uid, data);
+      const borderColor = _pres.calm ? '#00e676' : '#E0A05A';
+      const ringClass   = isLive ? 'mk-ring-live' : _pres.calm ? '' : 'mk-ring-stale';
       // Someone else's hunt mode, straight off their own published expiry.
       const isHunting   = (data.hunt || 0) > now;
       const opacity     = '1';   // solid always; stale is said with the ring colour and the age chip
@@ -19383,8 +19461,8 @@ function listenUsers() {
         // parked presence that is false (observed: "RESTING · 64 mph" for a member an hour
         // gone). SIGNAL LOST states exactly what is known: they were moving, then nothing.
         const wasDriving = !isLive && !isMine && (data.spd || 0) >= 15;
-        const statusLabel = isMine ? 'YOU' : isLive ? 'LIVE' : wasDriving ? 'SIGNAL LOST' : isResting ? 'RESTING' : 'LAST KNOWN';
-        const statusColor = isMine ? '#f0a500' : isLive ? '#00e676' : isResting ? '#2ec4b6' : '#a9b4bf';
+        const statusLabel = isMine ? 'YOU' : _pres.label;
+        const statusColor = isMine ? '#f0a500' : _pres.color;
         var _safeName = data.name.replace(/'/g, '');
         var _driving = _shouldShowSpeed(uid, data);
         // On-foot members get described in the card too, not just drivers.
@@ -19402,7 +19480,7 @@ function listenUsers() {
           : ('Last seen: ' + timeLabel);
         // The reason, when their phone reported one — the difference between "Laura is gone"
         // and "Laura's phone is in Low Power Mode".
-        var _why = !isLive ? window._locReason(data.oss) : '';
+        var _why = !isLive ? (_pres.why || window._locReason(data.oss)) : '';
         // A stale dot explains itself where the data allows: last-known battery + charging
         // state (Android/PC only; iOS never exposes battery, so nothing shows there).
         if (!isLive && typeof data.batt === 'number') {
@@ -19549,12 +19627,11 @@ function listenUsers() {
       // else — LIVE / RESTING / etc. — instead of a second, redundant "YOU". Three "you" markers
       // on one row (the name's "(you)", the inline pill, and a "YOU" badge here) was the report.
       var bd;
-      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)',     c: 'var(--muted)' };
-      else if (data.hidden)  bd = { t: 'OFF',    bg: 'var(--border)',       c: 'var(--muted)' };
-      else if (data.noGps)   bd = { t: 'NO GPS', bg: 'var(--border)',       c: 'var(--muted)' };
-      else if (isLive)       bd = { t: 'LIVE',    bg: 'var(--v2-chip-ok-bg)',            c: 'var(--v2-chip-ok-ink)' };
-      else if (isResting)    bd = { t: 'RESTING', bg: 'rgba(46,196,182,.16)', c: '#2ec4b6' };
-      else                   bd = { t: 'PAUSED',  bg: 'var(--v2-chip-warn-bg)',            c: 'var(--v2-chip-warn-ink)' };
+      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)', c: 'var(--muted)' };
+      else if (_pres.key === 'live')
+                             bd = { t: 'LIVE', bg: 'var(--v2-chip-ok-bg)', c: 'var(--v2-chip-ok-ink)' };
+      else if (_pres.calm)   bd = { t: _pres.label, bg: 'rgba(46,196,182,.16)', c: _pres.color };
+      else                   bd = { t: _pres.label, bg: 'var(--v2-chip-warn-bg)', c: 'var(--v2-chip-warn-ink)' };
 
       const row = document.createElement('div');
       row.className = 'user-item';
@@ -19590,7 +19667,7 @@ function listenUsers() {
         '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">' +
           '<div style="flex:1;min-width:0">' +
           '<div class="ustatus" style="color:' + statusColor + '">' +
-            (data.hidden ? 'Location off · ' + formatTime(data.ts) : data.noGps ? 'No GPS · ' + formatTime(data.ts) : isLive ? 'Live · ' + formatTime(data.ts) : isResting ? 'Parked · last seen ' + formatTime(data.ts) + ' (' + timeLabel + ')' : 'Last seen: ' + timeLabel) +
+            _pres.line + (_pres.why ? ' — ' + escapeHtmlJs(_pres.why) : '') +
             (_shouldShowSpeed(uid, data) ? ' <span style="color:#ffa657;font-weight:700">· ' + data.spd + ' mph</span>' : '') +
             // Battery on the row itself (written with every fix since 503; Android/PC only —
             // iOS never exposes it). Live: current charge. Stale: last KNOWN charge, marked
