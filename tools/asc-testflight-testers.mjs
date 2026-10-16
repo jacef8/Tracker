@@ -517,6 +517,42 @@ if (mode === 'builds' || mode === 'assignbuild' || mode === 'appstore') {
     if (r.ok) console.log(`  + added to "${g.attributes?.name}"`);
     else { console.error(`  ! "${g.attributes?.name}" FAILED (HTTP ${r.status}): ${r.json?.errors?.map(e => e.detail || e.title).join('; ') || r.text.slice(0, 200)}`); bad++; }
   }
+
+  // ── The step that actually releases it ────────────────────────────────────────────────
+  // Being in the group is not the same as being installable. externalBuildState is.
+  const detRes = await asc('GET', `/builds/${newest.id}/buildBetaDetail`);
+  const st = detRes.json?.data?.attributes || {};
+  console.log();
+  console.log(`  externalBuildState = ${st.externalBuildState || '?'}`);
+
+  if (st.externalBuildState === 'READY_FOR_BETA_SUBMISSION') {
+    // Export compliance, first: without it the submission is refused and the error does not
+    // say which of the two things is missing.
+    const bres = await asc('GET', `/builds/${newest.id}`);
+    const enc = bres.json?.data?.attributes?.usesNonExemptEncryption;
+    if (enc === null || enc === undefined) {
+      console.log('  setting usesNonExemptEncryption=false (HTTPS only — no custom crypto)');
+      const pr = await asc('PATCH', `/builds/${newest.id}`, {
+        data: { type: 'builds', id: newest.id, attributes: { usesNonExemptEncryption: false } }
+      });
+      if (!pr.ok) console.error(`  ! export compliance PATCH failed (HTTP ${pr.status}): ${pr.text.slice(0, 200)}`);
+    }
+    console.log('  submitting for Beta App Review (external testers)…');
+    const sub = await asc('POST', '/betaAppReviewSubmissions', {
+      data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: newest.id } } } }
+    });
+    if (sub.ok) {
+      console.log(`  + submitted — state=${sub.json?.data?.attributes?.betaReviewState || 'WAITING_FOR_BETA_REVIEW'}`);
+      console.log('    External testers get it once Apple approves; internal testers already have it.');
+    } else {
+      console.error(`  ! submit FAILED (HTTP ${sub.status}): ${sub.json?.errors?.map(e => e.detail || e.title).join('; ') || sub.text.slice(0, 300)}`);
+      bad++;
+    }
+  } else if (st.externalBuildState === 'IN_BETA_TESTING') {
+    console.log('  already live to external testers — nothing to submit.');
+  } else {
+    console.log('  not submitting: this state is not READY_FOR_BETA_SUBMISSION.');
+  }
   process.exit(bad ? 1 : 0);
 }
 
