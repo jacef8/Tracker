@@ -5001,7 +5001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 940;
+var APP_BUILD = 941;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12011,12 +12011,13 @@ function _roomWritable(key) {
   try { if (window._deadRooms && window._deadRooms[key]) return false; } catch (e) {}
   try {
     var s = window._lastGlSnap;
-    if (!s || typeof s !== 'object') return true;
-    if (s._deadRooms && s._deadRooms[key]) return false;          // tombstoned: always refuse
-    var live = Object.keys(s).filter(function (k) { return k.charAt(0) !== '_'; });
-    if (!live.length) return true;                                 // empty ⇒ bad read, not "all gone"
-    return Object.prototype.hasOwnProperty.call(s, key);
-  } catch (e) { return true; }
+    if (s && typeof s === 'object' && s._deadRooms && s._deadRooms[key]) return false;
+  } catch (e) {}
+  // No membership test here any more. _lastGlSnap is a FILTERED directory view (private rooms
+  // this device's local lists don't name are dropped from it), so asking it "does this room
+  // exist" answers a different question than the one being asked, and answers it with "no" for
+  // exactly the rooms that matter most. gl/_deadRooms above is the revocation channel.
+  return true;
 }
 // Add/refresh a room's fan-out entry — called on entering any room (see enterMap). Skipped for
 // rooms already tracked as a Favorite/Circle, since those already fan out permanently and don't
@@ -17729,7 +17730,11 @@ function startLocationSharing() {
     }
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
     window._lastFixTs = now;        // diagnostics: when we last got a fix
-    window._lastWriteTs = now;      // diagnostics: this fix triggers a DB write below
+    // _lastWriteTs USED TO BE SET HERE, on every fix, with the comment "this fix triggers a DB
+    // write below". It does not. The 10-second throttle returns before the write, and the room
+    // gate can skip it entirely -- so the one field that would have exposed a device fixing GPS
+    // and never reporting instead swore it had just written, every time. It is now set where
+    // the write actually happens, and nowhere else.
     window._lastAccM = accuracy || 0; // diagnostics: accuracy (meters) of this fix
     // Timeline events (edge-triggered so we log transitions, not every fix).
     try {
@@ -18004,7 +18009,18 @@ function startLocationSharing() {
         }
       }
     } catch (e) {}
-    if (groupName && !window._roomClosed && _roomWritable(groupName)) { fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload); _fgMark(groupName); }
+    if (groupName && !window._roomClosed && _roomWritable(groupName)) {
+      fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload); _fgMark(groupName);
+      window._wrOk = (window._wrOk || 0) + 1;
+      window._lastWriteTs = now;
+    } else {
+      // A position produced and then thrown away. This is the state that looked, from every
+      // other angle, like a device that was simply off -- so it gets counted and reported.
+      window._wrSkip = (window._wrSkip || 0) + 1;
+      window._wrSkipWhy = !groupName ? 'no room'
+                        : window._roomClosed ? 'room closed'
+                        : 'not writable';
+    }
     // Keep imagery for the ground around you while there is still signal to fetch it with.
     // Cheap on the common path: it returns immediately unless you have genuinely moved on.
     try { window._autoCacheAround(lat, lng); } catch (e) {}
@@ -18408,6 +18424,11 @@ function startLocationSharing() {
         // ~1s arrivals glide and anything past ~3s reads as a lurch. This says which.
         fixGap: Math.round((window._selfFixGapMs || 0) / 100) / 10,
         fixGapMax: Math.round((window._selfFixGapMax || 0) / 100) / 10,
+        // Positions produced vs positions actually sent. Until 941 these could differ for ever
+        // without anything saying so, and the difference is the whole of "they look frozen".
+        wrOk: window._wrOk || 0,
+        wrSkip: window._wrSkip || 0,
+        wrSkipWhy: window._wrSkipWhy || '',
         meMk: (function () {
           try {
             if (!userMarkers[userId]) return 'none';
