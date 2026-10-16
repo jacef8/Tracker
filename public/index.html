@@ -7,14 +7,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="GroundLink" />
-<meta name="theme-color" content="#0d1117" />
+<meta name="theme-color" content="#141B1E" />
 <title>GroundLink</title>
 <!-- APP_VERSION: 3 — bump this + sw.js APP_VERSION on every deploy -->
 
 <!-- PWA manifest -->
 <link rel="manifest" href="/manifest.json" />
 <!-- Apple touch icon (iOS home screen) -->
-<link rel="apple-touch-icon" href="/icons/icon-192.png?v=2" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=3" />
 <link rel="icon" type="image/png" href="/icons/icon-192.png?v=2" />
 
 <!-- Mapbox -->
@@ -4712,10 +4712,10 @@
       <button onclick="closeSettings()" style="background:none;border:none;color:var(--muted);cursor:pointer;line-height:1;display:flex"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
     <div id="set-uiv2-row" onclick="window._setToggleUiV2 && window._setToggleUiV2()" style="align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent;display:flex">
-      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-map"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">New look (beta)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Try the redesigned styling on this device only — nobody else in your crews sees any change. Turn it off any time to go straight back.</div></div></div>
-      <span id="set-uiv2-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">OFF</span>
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-map"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Current look</div><div style="font-size:11px;color:var(--muted);margin-top:2px">The standard GroundLink styling. Turn it off to go back to the older look on this device only — nobody else in your crews sees any change.</div></div></div>
+      <span id="set-uiv2-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
     </div>
-    <div id="set-day-row" onclick="window._cycleDaylight && window._cycleDaylight()" style="align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent;display:none">
+    <div id="set-day-row" onclick="window._cycleDaylight && window._cycleDaylight()" style="align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent;display:flex">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-sun"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Daylight</div><div style="font-size:11px;color:var(--muted);margin-top:2px">A bright screen for daylight and a dark one for night. Follow your phone, or pin it — auto-brightness guesses wrong in a truck.</div></div></div>
       <span id="set-day-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">PHONE</span>
     </div>
@@ -5001,7 +5001,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 942;
+var APP_BUILD = 943;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10795,13 +10795,17 @@ window._copyCoords = function (str) {
 // Per DEVICE, not per account: this is someone trying a look, not a preference to propagate to
 // every phone they own. Off unless explicitly turned on, so nobody in the family meets a
 // redesign they did not ask for.
-window._uiV2On = function () { try { return localStorage.getItem('gl_ui_v2') === '1'; } catch (e) { return false; } };
+// Default ON as of 943. The test is now !== '0' rather than === '1', so a device that has
+// never touched the switch gets the current look, a device that explicitly turned it ON keeps
+// it, and only an explicit OFF opts out. Nobody has to find a setting to stop looking at a
+// year-old design.
+window._uiV2On = function () { try { return localStorage.getItem('gl_ui_v2') !== '0'; } catch (e) { return true; } };
 window._applyUiV2 = function () {
   try {
     var on = window._uiV2On();
     document.body.classList.toggle('ui-v2', on);
-    // The display fonts are only fetched when the look is actually in use -- an opt-in beta
-    // should not cost every other phone three font downloads.
+    // Still lazy, but for a different reason now that this is the default: the fetch is
+    // skipped for the few devices that have deliberately gone back to the classic look.
     if (on && !document.getElementById('v2-fonts')) {
       var l = document.createElement('link');
       l.id = 'v2-fonts'; l.rel = 'stylesheet';
@@ -10811,6 +10815,8 @@ window._applyUiV2 = function () {
     try { _setPill('set-uiv2-pill', on); } catch (e) {}
     // Daylight only means anything inside the new look, so the row appears with it.
     try {
+      // Daylight only means anything inside this look, so it hides with it -- which now only
+      // happens on a device that has chosen the classic styling.
       var _dr = document.getElementById('set-day-row');
       if (_dr) _dr.style.display = on ? 'flex' : 'none';
     } catch (e) {}
