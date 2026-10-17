@@ -187,9 +187,28 @@
         set(ref(db, 'gl/' + k + '/users/' + uid), payload).then(function () {
           try { localStorage.setItem('gl_hl_ack', String(Date.now())); localStorage.setItem('gl_hl_err', ''); } catch (e) {}
         }, function (e) {
-          var msg = String((e && (e.code || e.message)) || e).slice(0, 80);
-          log('position write REFUSED for ' + k + ': ' + msg);
-          try { localStorage.setItem('gl_hl_err', msg); localStorage.setItem('gl_hl_errAt', String(Date.now())); } catch (_) {}
+          var msg = String((e && (e.code || e.message)) || e).slice(0, 60);
+          // Say WHO was refused, not just that someone was: the whole bug was an identity
+          // the page did not know it had. uid prefix + anon flag + whether it matches the
+          // device uid the row is keyed by.
+          var who = '';
+          try { var cu = auth.currentUser; who = cu ? ((cu.isAnonymous ? 'anon:' : 'acct:') + cu.uid.slice(0, 8) + (cu.uid === uid ? '=dev' : '')) : 'nobody'; } catch (_) {}
+          log('position write REFUSED for ' + k + ': ' + msg + ' as ' + who);
+          try { localStorage.setItem('gl_hl_err', msg + ' as ' + who); localStorage.setItem('gl_hl_errAt', String(Date.now())); } catch (_) {}
+          // A refused position write means this page's identity is wrong, and a running page
+          // keeps its identity in memory for life -- the first 951 instance restored a
+          // stranger that the OLD code had persisted, and would have stayed that stranger
+          // for ever. The persisted session is the main app's to repair; this page's job is
+          // just to start over and re-read it. Once per ten minutes, so a genuinely
+          // unrecoverable state cannot turn into a reload loop.
+          try {
+            var last = +localStorage.getItem('gl_hl_reloadAt') || 0;
+            if (Date.now() - last > 10 * 60 * 1000) {
+              localStorage.setItem('gl_hl_reloadAt', String(Date.now()));
+              log('restarting in 20 s to re-read the persisted session');
+              setTimeout(function () { try { location.reload(); } catch (_) {} }, 20000);
+            }
+          } catch (_) {}
         });
       } catch (e) {}
     });
