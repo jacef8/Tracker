@@ -1,0 +1,31 @@
+import { readFileSync } from 'node:fs';
+import admin from 'firebase-admin';
+admin.initializeApp({credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),databaseURL:'https://tracker-58b87-default-rtdb.firebaseio.com'});
+const db=admin.database(), now=Date.now();
+const iso=t=>t?new Date(t).toISOString().slice(5,23):'-';
+const PHONE='nydZQWbh';
+const users=(await db.ref('gl/our_crew/users').get()).val()||{};
+const phoneUid=Object.keys(users).find(k=>k.startsWith(PHONE));
+console.log('phone uid', phoneUid);
+const u=users[phoneUid]||{};
+console.log('row: name',u.name,'dev',u.dev,'ts',iso(u.ts),'fixTs',iso(u.fixTs),'age min',((now-(u.fixTs||u.ts||0))/60000).toFixed(1),'keys',Object.keys(u).sort().join(','));
+const diag=(await db.ref('gl/our_crew/diag/'+phoneUid).get()).val()||{};
+console.log('\ndiag at',iso(diag.at||diag.ts),JSON.stringify(diag).slice(0,1500));
+const subs=(await db.ref('gl/our_crew/pushSubs/'+phoneUid).get()).val();
+console.log('\npushSubs:',subs?JSON.stringify(Object.fromEntries(Object.entries(subs).map(([k,v])=>[k,typeof v==='string'?v.slice(0,12)+'…('+v.length+')':v]))):'(none)');
+const dayStart=Date.UTC(2026,9,17,0,0,0);
+const dbg=(await db.ref('gl/our_crew/debug').limitToLast(4000).get()).val()||{};
+const all=Object.entries(dbg).map(([k,r])=>({k,...r})).filter(r=>(r.ts||0)>=dayStart).sort((a,b)=>(a.ts||0)-(b.ts||0));
+console.log('\ndebug rows today', all.length);
+const mine=all.filter(r=>JSON.stringify(r).includes(PHONE)||(r.uid&&r.uid.startsWith(PHONE)));
+console.log('rows for phone', mine.length);
+for (const r of mine){const {k,ts,...rest}=r; console.log(' ',iso(ts),JSON.stringify(rest).slice(0,300));}
+console.log('\n== any row today mentioning headless/anonym/swap/bump/COLD/PERMISSION/identity');
+for (const r of all.filter(r=>/headless|anonym|swap|bump|COLD|PERMISSION|identity|GLHeadless/i.test(JSON.stringify(r)))){const {k,ts,...rest}=r; console.log(' ',iso(ts),JSON.stringify(rest).slice(0,300));}
+const up=(await db.ref('gl/_uptime/2026-10-17/'+phoneUid).get()).val();
+console.log('\nuptime today', up?JSON.stringify({name:up.name,samples:up.samples,fresh:up.fresh}):'(none)');
+const up16=(await db.ref('gl/_uptime/2026-10-16/'+phoneUid).get()).val();
+console.log('uptime 10-16', up16?JSON.stringify({name:up16.name,samples:up16.samples,fresh:up16.fresh}):'(none)');
+const owner=(await db.ref('gl/_devOwner/'+phoneUid).get()).val();
+console.log('\n_devOwner', JSON.stringify(owner));
+process.exit(0);

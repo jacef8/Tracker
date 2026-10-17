@@ -115,7 +115,11 @@
     if (!uid) return; // never used the real app on this device — nothing to report or fan out to
     // Cache for the heartbeat. Speed is nulled in the replay copy: a cached 40 mph re-sent
     // three minutes later would reset the here-since anchor and show phantom motion.
-    try { _lastFixCache = { coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, speed: null } }; _lastWriteTs = Date.now(); } catch (e) {}
+    try {
+      _lastFixCache = { coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, speed: null } };
+      _lastWriteTs = Date.now();
+      if (!pos._heartbeat) window._lastFixAt = Date.now();   // when this position was really taken
+    } catch (e) {}
     var keys = fanOutKeys();
     if (!keys.length) return;
     var c = pos.coords;
@@ -147,9 +151,15 @@
     if (spdMph >= 3 || hereMovedM > HERE_MOVE_M || !hereSinceTs) {
       hereAnchor = { lat: c.latitude, lng: c.longitude }; hereSinceTs = Date.now();
     }
+    var _nowTs = Date.now();
     var payload = {
       lat: c.latitude, lng: c.longitude, name: getName(), dev: getDev(),
-      accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: Date.now(),
+      accuracy: Math.round((c.accuracy || 0) * 3.28084), ts: _nowTs,
+      // fixTs marks a real GPS fix (a heartbeat re-report keeps the ORIGINAL fix time, so the
+      // age shown to the family stays honest); noGps:false clears a flag the main page may
+      // have set before its first fix; trail:true matches the other two writers.
+      fixTs: pos._heartbeat && window._lastFixAt ? window._lastFixAt : _nowTs,
+      noGps: false, trail: true,
       // spdH mirrors the app's share-speed setting (same-origin localStorage). It was
       // hardcoded to 1 (hidden) here, so every background write hid the speed chip while
       // every foreground write showed it — alternating writers made it blink mid-drive.
@@ -173,7 +183,15 @@
       }
     } catch (e) {}
     keys.forEach(function (k) {
-      try { set(ref(db, 'gl/' + k + '/users/' + uid), payload); } catch (e) {}
+      try {
+        set(ref(db, 'gl/' + k + '/users/' + uid), payload).then(function () {
+          try { localStorage.setItem('gl_hl_ack', String(Date.now())); localStorage.setItem('gl_hl_err', ''); } catch (e) {}
+        }, function (e) {
+          var msg = String((e && (e.code || e.message)) || e).slice(0, 80);
+          log('position write REFUSED for ' + k + ': ' + msg);
+          try { localStorage.setItem('gl_hl_err', msg); localStorage.setItem('gl_hl_errAt', String(Date.now())); } catch (_) {}
+        });
+      } catch (e) {}
     });
     // Low-battery Crew alert from the background path too — a dying phone is precisely the
     // one whose foreground app isn't open. Same edge logic and the SAME localStorage flag as
@@ -461,14 +479,34 @@
     setInterval(stopIfNothingToDo, 5 * 60 * 1000);
   }
 
-  // Anonymous auth isn't strictly required for gl/ writes today (production rules currently
-  // allow open writes there — only gltest/ enforces auth.uid match), but staying consistent with
-  // the rest of the app future-proofs against the same tightening eventually reaching gl/ too,
-  // and costs nothing to wait briefly for. Don't let a slow/broken auth path block tracking
-  // forever, though — start anyway after a short grace period either way.
+  // IDENTITY. gl/<room>/users/<uid> writes are identity-bound (rules: auth.uid must be the
+  // device uid or the account that gl/_devOwner says owns it). This page shares Firebase Auth
+  // persistence with the main app, so the session it restores is normally the bridged
+  // account -- and that is the ONLY identity under which its position writes are accepted.
+  //
+  // It used to call `if (!auth.currentUser) signInAnonymously(auth)` here. auth.currentUser
+  // is always null synchronously (restore is async), so that ran on every load, and Firebase
+  // replaces a restored non-anonymous session with a NEW anonymous user and persists it --
+  // swapping the whole device, main app included, to a stranger whose position writes are
+  // refused for the rest of the session. That is the mechanism behind "fixes arriving, writes
+  // issued, row frozen". Same bug index.html fixed for itself at its auth init; same fix:
+  // wait for the first emission, and only a genuine null falls back to anonymous.
+  var _authResolved = false;
   try {
-    onAuthStateChanged(auth, function (u) { if (u) start(); });
-    if (!auth.currentUser) signInAnonymously(auth).catch(function (e) { log('anon auth failed: ' + e); });
+    onAuthStateChanged(auth, function (u) {
+      if (!_authResolved) {
+        _authResolved = true;
+        if (!u) {
+          log('no persisted session -- anonymous fallback (position writes will be refused until the app is opened and signs in)');
+          signInAnonymously(auth).catch(function (e) { log('anon auth failed: ' + e); });
+          return;
+        }
+      }
+      if (u) {
+        log('auth: ' + (u.isAnonymous ? 'ANONYMOUS ' : 'account ') + u.uid.slice(0, 8));
+        start();
+      }
+    });
   } catch (e) { log('auth init failed: ' + e); }
   setTimeout(start, 5000);
 </script>

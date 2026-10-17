@@ -683,6 +683,14 @@ async function pruneSupersededDevices() {
   const day = new Date(now).toISOString().slice(0, 10);
   for (const { loser, keeper } of doomed) {
     for (const room of loser.rooms) {
+      // Only where the keeper has a row of its own. Deleting the loser anywhere else removes
+      // the person from that room entirely -- the one outcome a "duplicate" tidy must never
+      // produce. Same guard the roster branch below has always had.
+      if (!keeper.rooms.has(room)) {
+        console.log('prune: keeping ' + loser.name + ' (' + loser.uid.slice(0, 8) + ') in ' + room +
+                    ' -- keeper ' + keeper.uid.slice(0, 8) + ' has no row there');
+        continue;
+      }
       try {
         const row = await _dbGet('gl/' + room + '/users/' + loser.uid);
         if (!row) continue;

@@ -219,6 +219,11 @@
       if (!_authResolved) {
         _authResolved = true;
         if (!u) signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
+      } else if (!u || u.isAnonymous) {
+        // Not the first emission, and we are suddenly nobody / a stranger: another page on this
+        // origin replaced the persisted session. Re-bridge now; position writes are being
+        // refused from this instant until it completes.
+        try { if (window._ensureAccountAuth) setTimeout(function () { window._ensureAccountAuth('auth-swap'); }, 300); } catch (e) {}
       }
     });
     window.dispatchEvent(new Event('gl-auth-ready'));
@@ -5091,7 +5096,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 950;
+var APP_BUILD = 951;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18456,12 +18461,16 @@ function startLocationSharing() {
     // fires the instant permission is denied, often before either is true. Unguarded it threw
     // and took the rest of the error handling with it.
     try {
-      if (!db || typeof fbRef !== 'function' || typeof fbSet !== 'function') return;
+      if (!db || typeof fbRef !== 'function' || !window._fb || typeof window._fb.update !== 'function') return;
       if (!groupName || !userId) return;
-      fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
-        lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0,
-        ts: Date.now(), claiming: false, noGps: true
-      });
+      // UPDATE, not SET. This used to replace the whole row with lat:0/lng:0, which destroyed
+      // the person's last-known position for everyone -- on every cold start that had not got
+      // a fix within 30 s, and permanently when location is off, which is the one case this
+      // exists for. The flag alone is written; lat/lng/fixTs stay; ts is NOT bumped so the
+      // position's age stays honest. noGpsTs says when the no-fix state began.
+      window._fb.update(fbRef(db, `gl/${groupName}/users/${userId}`), {
+        name: userName, dev: _deviceLabel(), claiming: false, noGps: true, noGpsTs: Date.now()
+      }).catch(function () {});
     } catch (e) {}
   };
 
@@ -18615,6 +18624,10 @@ function startLocationSharing() {
         // it sent that the server never confirmed.
         wrAck: window._wrAck || 0,
         wrErr: window._wrErr || 0,
+        // The Android background writer (headless.html) reports into shared localStorage:
+        // when it last got an ack, and the last refusal it saw. Before 951 it was blind.
+        hlAck: (function () { try { var v = +localStorage.getItem('gl_hl_ack') || 0; return v ? Math.round((now - v) / 1000) : -1; } catch (e) { return -1; } })(),
+        hlErr: (function () { try { return localStorage.getItem('gl_hl_err') || ''; } catch (e) { return ''; } })(),
         wrErrMsg: window._wrErrMsg || '',
         ackAgo: window._lastAckTs ? Math.round((now - window._lastAckTs) / 1000) : -1,
         connOk: window._connOk === undefined ? null : !!window._connOk,
@@ -18681,8 +18694,14 @@ function startLocationSharing() {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
                   { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
     } else if (!window._lastGPS) {
-      try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-                  { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true }); } catch(_) {}
+      // Same rule as markNoGps: flag only, never a zeroed row over a stored position. Before
+      // 951 this fired 30 s into every cold start without a fix and wiped the last-known.
+      try {
+        if (window._fb && typeof window._fb.update === 'function') {
+          window._fb.update(fbRef(db, 'gl/' + groupName + '/users/' + userId),
+                            { name: userName, dev: _deviceLabel(), noGps: true, noGpsTs: Date.now() }).catch(function () {});
+        }
+      } catch(_) {}
     } else if (window._batterySaver && window._bsIdle) {
       // Battery-saver "resting": send a SLOW heartbeat (about every BS_HEARTBEAT_MS) that keeps
       // us in the member count as "resting" with our last position. (We used to write NOTHING
@@ -19180,8 +19199,18 @@ function listenUsers() {
       });
     } catch (e) {}
 
+    // Roster membership resolves through the account, so a device row counts if ITS account
+    // is on the roster. Rooms without a roster (quick rooms) keep the old behaviour.
+    const _retainForever = function (uid) {
+      try {
+        if (!window._roomMembersRoster) return false;
+        if (window._roomMembersRoster[uid]) return true;
+        var pid = window._personId ? window._personId(uid) : uid;
+        return !!(pid && window._roomMembersRoster[pid]);
+      } catch (e) { return false; }
+    };
     const users = Object.fromEntries(
-      Object.entries(allUsers).filter(([, d]) =>
+      Object.entries(allUsers).filter(([uid, d]) =>
         d.name && !d.claiming &&
         // PRESENCE IS DATA, NOT A CONNECTION. `conn:false` used to collapse the retention
         // window to 3 minutes, so a backgrounded phone disappeared from the map even when we
@@ -19203,7 +19232,12 @@ function listenUsers() {
             // handler) can never be written. Under the old 20-minute STALE_MS these people
             // vanished from the map entirely, which read as "gone" when we knew exactly where
             // they were parked.
-            : (now - (d.ts || 0)) < (((d.lat || d.lng) || d.rest) ? BS_REST_MAX_MS : STALE_MS))
+            // A roster member with a real coordinate is NEVER aged off the map: their last
+            // known place, with its age, is the whole value of this app when their phone has
+            // failed. Visitors (anyone not on the roster) still age out after BS_REST_MAX_MS so
+            // a one-time guest does not sit on the map for a month.
+            : (((d.lat || d.lng) && _retainForever(uid)) ? true
+               : (now - (d.ts || 0)) < (((d.lat || d.lng) || d.rest) ? BS_REST_MAX_MS : STALE_MS)))
       )
     );
     // ── DROP RE-KEY GHOSTS ────────────────────────────────────────────────────────────
@@ -19424,7 +19458,9 @@ function listenUsers() {
       // few minutes with a stale noGps from hours earlier still attached. Same trap as the
       // stale route in 817.
       const hasGps   = (data.lat !== 0 || data.lng !== 0);
-      const _ago      = ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ago';
+      const _ago      = ageMin < 60 ? ageMin + 'm ago'
+                      : ageMin < 48 * 60 ? Math.floor(ageMin/60) + 'h ago'
+                      : (ageMin / 1440).toFixed(1) + 'd ago';
       // Plain value — callers add their own prefix. It used to embed "Resting · " for resting
       // members, which every caller then prefixed again ("Last seen: Resting · 14m ago").
       const timeLabel = data.hidden ? 'Hidden' : data.noGps ? 'No GPS' : isLive ? formatTime(data.ts) : _ago;
@@ -29330,7 +29366,7 @@ window._buildPersonSheetHTML = function (uid, data) {
   var hasPos = (typeof data.lat === 'number' && typeof data.lng === 'number');
   var ts = data.fixTs || data.ts || 0;
   var live = !!ts && (now - ts) < (4 * 60 * 1000);
-  var lastStr = ts ? (function () { var mm = Math.floor((now - ts) / 60000); return mm < 1 ? 'just now' : mm < 60 ? (mm + 'm ago') : (Math.floor(mm / 60) + 'h ago'); })() : '';
+  var lastStr = ts ? (function () { var mm = Math.floor((now - ts) / 60000); return mm < 1 ? 'just now' : mm < 60 ? (mm + 'm ago') : mm < 48 * 60 ? (Math.floor(mm / 60) + 'h ago') : ((mm / 1440).toFixed(1) + 'd ago'); })() : '';
   var statusLine = live ? 'Live now' : (ts ? ('Last seen ' + lastStr) : 'Offline — not sharing right now');
   var S = 'padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px';
   var voiceOff = document.body.classList.contains('voice-off');
@@ -30746,9 +30782,17 @@ try {
   var _BRIDGE_TRIES = [0, 1200, 3500, 9000, 20000, 45000];
   window._ensureAccountAuth = function (why) {
     try {
-      if (window._authBridged) return;
       var cu = null;
       try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+      // The latch says "we bridged once". It does not say we are still signed in as the
+      // account: the session can be swapped out from under this page by another page on the
+      // same origin (headless.html did exactly that, every time it loaded). If the SDK's
+      // current user is missing or anonymous, the latch is stale -- clear it and bridge again.
+      if (window._authBridged && (!cu || cu.isAnonymous)) {
+        window._authBridged = false;
+        try { _syncNote('identity was swapped out (' + (why || '?') + ') -- re-bridging'); } catch (e) {}
+      }
+      if (window._authBridged) return;
       if (cu && !cu.isAnonymous) { window._authBridged = true; return; }
       if (window._bridgeBusy) return;
       window._bridgeBusy = true;
