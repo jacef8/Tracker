@@ -477,6 +477,35 @@ public class MainActivity extends BridgeActivity {
         super.onDestroy();
     }
 
+    // HIDDEN, NOT CLOSED. Measured 2026-10-17 on this phone at 66 mph: with the app merely in
+    // the background (Home pressed, screen locked) the WebView went dormant about two minutes
+    // later -- native fixes, position writes and diag all stopped in the same second -- while
+    // this service sat in STANDBY, because the handovers above only fire on finish/destroy.
+    // Nothing wrote for the rest of the drive until the server's keep-alive push happened to
+    // start the tracker. Life360 does not have a mode where being hidden means not reporting,
+    // and neither should this.
+    //
+    // onStop is "no longer visible", which is exactly the boundary that matters: in front, the
+    // page reports; not in front, the headless tracker reports. We are still inside Android's
+    // post-foreground grace window here, so starting a location foreground service is allowed
+    // even without the battery exemption. Rotation and finish are excluded -- finish is already
+    // handled in onPause, and a configuration change comes straight back.
+    @Override
+    public void onStop() {
+        super.onStop();
+        if (!isFinishing() && !isChangingConfigurations()) {
+            try { HeadlessTrackerService.startActive(this); } catch (Exception e) { Log.w(TAG, "handover on stop failed", e); }
+        }
+    }
+
+    // Visible again (the counterpart of onStop): the in-app path is about to track, so the
+    // background tracker steps down before the page even resumes.
+    @Override
+    public void onStart() {
+        super.onStart();
+        try { HeadlessTrackerService.startStandby(this); } catch (Exception e) {}
+    }
+
     // Back in front: the in-app path is tracking again, so the background tracker steps down.
     // onCreate already did this for a fresh start; a resumed Activity never gets onCreate.
     @Override
