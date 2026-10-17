@@ -81,11 +81,11 @@ def grid(d, cx, cy, w, h, n=5):
         # whole of the perspective here.
         k = 0.70 + 0.30 * v          # a gentle taper; more than this and it reads as a pyramid
         return (cx + (u - 0.5) * w * k, cy + (v - 0.5) * h)
-    wdt = max(2, int(S * 0.0075))
+    wdt = max(2, int(S * 0.0060))
     for i in range(n + 1):
         t = i / n
-        d.line([corner(t, 0.0), corner(t, 1.0)], fill=MOSS + (170,), width=wdt)
-        d.line([corner(0.0, t), corner(1.0, t)], fill=MOSS + (170,), width=wdt)
+        d.line([corner(t, 0.0), corner(t, 1.0)], fill=MOSS + (120,), width=wdt)
+        d.line([corner(0.0, t), corner(1.0, t)], fill=MOSS + (120,), width=wdt)
 
 
 def pin(d, cx, cy, r):
@@ -102,7 +102,7 @@ def pin(d, cx, cy, r):
     d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=MOSS + (255,))
 
     # Dial: a cut-out back to the ground, so the pin reads as a ring rather than a blob.
-    ri = r * 0.66
+    ri = r * 0.62
     d.ellipse([cx - ri, cy - ri, cx + ri, cy + ri], fill=INK + (255,))
 
     # Tick marks at the quarters — enough to say "compass", few enough to survive at 48px.
@@ -118,7 +118,7 @@ def pin(d, cx, cy, r):
     nl = ri * 0.80
     nx, ny = math.cos(th), math.sin(th)
     px, py = -ny, nx
-    half = ri * 0.17
+    half = ri * 0.22
     d.polygon([(cx + nx * nl, cy + ny * nl),
                (cx + px * half, cy + py * half),
                (cx - px * half, cy - py * half)], fill=AMBER + (255,))      # north
@@ -127,12 +127,17 @@ def pin(d, cx, cy, r):
                (cx - px * half, cy - py * half)], fill=MOSS_DIM + (255,))   # south
 
 
+# SMALL SIZES ARE THE HARD CASE. A notification banner draws this at about 20px and a
+# Settings row at 29px. At 20px the grid collapses into noise and the needle disappears --
+# only the pin silhouette survives, so the pin has to carry the whole icon on its own. The
+# grid is therefore lighter and narrower than looks ideal at 1024px, and the pin bigger: the
+# icon is tuned for the size it is read at, not the size it is drawn at.
 def mark(d, scale=1.0):
     """The pin and its ground plane, centred. `scale` exists for the Android foreground layer,
     which is drawn big and then inset by the launcher."""
     cx, cy = S * 0.50, S * 0.50
-    grid(d, cx, cy + S * 0.145 * scale, S * 0.60 * scale, S * 0.21 * scale)
-    pin(d, cx, cy - S * 0.080 * scale, S * 0.150 * scale)
+    grid(d, cx, cy + S * 0.150 * scale, S * 0.54 * scale, S * 0.19 * scale)
+    pin(d, cx, cy - S * 0.085 * scale, S * 0.175 * scale)
 
 
 def build():
