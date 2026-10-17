@@ -5091,7 +5091,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 946;
+var APP_BUILD = 947;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17928,8 +17928,36 @@ function startLocationSharing() {
     // in solo mode, which left the dot pinned where it was first drawn while the camera
     // followed the real GPS. Create nothing here; just move what is already there.
     try {
-      if (typeof map !== 'undefined' && map && !(window._soloMode || !groupName) && userMarkers[userId]) {
+      // Why this records a REASON rather than just succeeding quietly: when the dot ends up in
+      // the wrong place, "it didn't move" and "it moved and something moved it back" need
+      // completely different fixes, and a swallowed exception looks identical to both.
+      if (typeof map === 'undefined' || !map) { window._meAnimWhy = 'no map'; }
+      else if (window._soloMode) { window._meAnimWhy = 'solo'; }
+      else if (!groupName) { window._meAnimWhy = 'no room'; }
+      else if (!userMarkers[userId]) { window._meAnimWhy = 'no marker'; }
+      else {
         _animateMarker(userMarkers[userId], lng, lat);
+        window._meAnim = (window._meAnim || 0) + 1;
+        window._meAnimWhy = '';
+      }
+    } catch (e) {
+      window._meAnimErr = (window._meAnimErr || 0) + 1;
+      try { window._meAnimWhy = 'threw: ' + String((e && e.message) || e).slice(0, 60); } catch (_) {}
+    }
+    // INVARIANT, not a diagnosis: your own dot is where your own fix is. Whatever happened
+    // above -- skipped, swallowed, or moved back afterwards by something else -- a dot more
+    // than ~300 ft from the fix in hand is wrong, and it is wrong in the one place where
+    // being wrong matters most, because it is the dot you navigate by. Snapped rather than
+    // animated: a mile and a half of gliding would be a lie about having travelled it.
+    // This runs on every fix, so it also repairs a dot that something else drags away later.
+    try {
+      var _mk = userMarkers[userId];
+      if (_mk && _mk.getLngLat && _mk.setLngLat && groupName && !window._soloMode) {
+        var _ll = _mk.getLngLat();
+        if (_ll && metersApart(_ll.lat, _ll.lng, lat, lng) > 91) {   // 91 m ≈ 300 ft
+          _mk.setLngLat([lng, lat]);
+          window._meSnap = (window._meSnap || 0) + 1;
+        }
       }
     } catch (e) {}
     // How long since the previous self fix. Reported in diag because "the map jumps" and
@@ -18583,6 +18611,26 @@ function startLocationSharing() {
             return Math.round(2 * R * Math.asin(Math.sqrt(h))) + 'ft';   // dot vs true position
           } catch (e) { return 'err'; }
         })(),
+        // The dot, the fix and the row, as numbers. meMk gives the distance between the first
+        // two and that was not enough to tell which one is wrong.
+        meAt: (function () {
+          try {
+            var m = userMarkers[userId];
+            if (!m || !m.getLngLat) return '';
+            var ll = m.getLngLat();
+            return ll.lat.toFixed(5) + ',' + ll.lng.toFixed(5);
+          } catch (e) { return 'err'; }
+        })(),
+        fixAt: (function () {
+          try {
+            var g = window._lastGoodFix;
+            return g ? (g.lat.toFixed(5) + ',' + g.lng.toFixed(5)) : '';
+          } catch (e) { return 'err'; }
+        })(),
+        meSnap: window._meSnap || 0,          // times the invariant had to rescue the dot
+        meAnim: window._meAnim || 0,          // times the own-dot move actually ran
+        meAnimErr: window._meAnimErr || 0,    // times it threw
+        meAnimWhy: window._meAnimWhy || '',   // why it was skipped, when it was
         pinChk: window._pinCheck || '',
         ts: now
       });
