@@ -5091,7 +5091,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 945;
+var APP_BUILD = 946;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14877,6 +14877,24 @@ function enterMap(name, group, uid) {
       // before reload (as EXIT used to rely on solely) can still lose the race if any
       // reconnect blip fires in between and silently re-queues a fresh removal.
       window._connWatchUnsub = fb.onValue(fb.ref(fb.db, '.info/connected'), function(s) {
+        // Record the transition BEFORE the early return below. The existing watcher only ever
+        // acted on "connected", so a socket that went down and stayed down left no trace at
+        // all -- which is exactly the state that makes queued writes look like successful
+        // ones. Both edges are now timestamped and the longest outage is kept.
+        try {
+          var _up = s.val() === true;
+          if (_up) {
+            if (window._connDownSince) {
+              var _d = Date.now() - window._connDownSince;
+              if (_d > (window._connDownMax || 0)) window._connDownMax = _d;
+            }
+            window._connDownSince = 0;
+            window._connUpTs = Date.now();
+          } else if (!window._connDownSince) {
+            window._connDownSince = Date.now();
+          }
+          window._connOk = _up;
+        } catch (e) {}
         if (s.val() !== true) return;
         try {
           // DELETING the presence row is the destructive branch, and it was being chosen
@@ -18106,9 +18124,26 @@ function startLocationSharing() {
       }
     } catch (e) {}
     if (groupName && !window._roomClosed && _roomWritable(groupName)) {
-      fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload); _fgMark(groupName);
+      // wrOk counts the CALL. wrAck counts the server agreeing it happened. They are not the
+      // same number and the gap between them is the whole of this bug -- see the note above.
       window._wrOk = (window._wrOk || 0) + 1;
       window._lastWriteTs = now;
+      try {
+        var _wp = fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), _fixPayload);
+        if (_wp && typeof _wp.then === 'function') {
+          _wp.then(function () {
+            window._wrAck = (window._wrAck || 0) + 1;
+            window._lastAckTs = Date.now();
+          }, function (e) {
+            window._wrErr = (window._wrErr || 0) + 1;
+            try { window._wrErrMsg = String((e && (e.code || e.message)) || e).slice(0, 80); } catch (_) {}
+          });
+        }
+      } catch (e) {
+        window._wrErr = (window._wrErr || 0) + 1;
+        try { window._wrErrMsg = String(e && (e.code || e.message) || e).slice(0, 80); } catch (_) {}
+      }
+      _fgMark(groupName);
     } else {
       // A position produced and then thrown away. This is the state that looked, from every
       // other angle, like a device that was simply off -- so it gets counted and reported.
@@ -18525,6 +18560,15 @@ function startLocationSharing() {
         wrOk: window._wrOk || 0,
         wrSkip: window._wrSkip || 0,
         wrSkipWhy: window._wrSkipWhy || '',
+        // Issued vs acknowledged. wrOk - wrAck is the number of positions this device believes
+        // it sent that the server never confirmed.
+        wrAck: window._wrAck || 0,
+        wrErr: window._wrErr || 0,
+        wrErrMsg: window._wrErrMsg || '',
+        ackAgo: window._lastAckTs ? Math.round((now - window._lastAckTs) / 1000) : -1,
+        connOk: window._connOk === undefined ? null : !!window._connOk,
+        connDown: window._connDownSince ? Math.round((now - window._connDownSince) / 1000) : 0,
+        connDownMax: Math.round((window._connDownMax || 0) / 1000),
         meMk: (function () {
           try {
             if (!userMarkers[userId]) return 'none';
