@@ -1,3 +1,12 @@
+// Write health for a crew, read-only.
+//
+//   node tools/write-health.mjs
+//
+// Per device: how old its position row is, and the counters that say whether its writes are
+// reaching the server at all -- wrOk (issued) vs wrAck (acknowledged), wrErr with the error
+// text, and connDown. wrOk minus wrAck is the number of positions a phone believes it sent
+// that never landed; that gap is invisible from inside the app, which is how it hid for
+// weeks. meMk is how far that device's own dot is drawn from its own fix.
 import { readFileSync } from 'node:fs';
 import admin from 'firebase-admin';
 admin.initializeApp({credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),databaseURL:'https://tracker-58b87-default-rtdb.firebaseio.com'});
