@@ -108,7 +108,32 @@ diff --git a/node_modules/@capacitor-community/background-geolocation/ios/Plugin
 index d4a5965..8f030f3 100644
 --- a/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
 +++ b/node_modules/@capacitor-community/background-geolocation/ios/Plugin/Swift/Plugin.swift
-@@ -130,8 +130,17 @@ public class BackgroundGeolocation: CAPPlugin,
+@@ -111,7 +111,23 @@ public class BackgroundGeolocation: CAPPlugin,
+             }
+             manager.distanceFilter = distanceFilter!
+             manager.allowsBackgroundLocationUpdates = background
+-            manager.showsBackgroundLocationIndicator = background
++            // GroundLink patch (see native-app/patches/): FALSE, not `background`.
++            //
++            // This is the switch behind the blue location indicator iOS shows while an app
++            // uses location in the background -- the thing Laura has been looking at all day
++            // and hates. Upstream ties it to `background`, so turning on background tracking
++            // turned on a permanent blue marker in her status bar.
++            //
++            // Apple documents this property for exactly this purpose and it is not a way of
++            // hiding anything: the small location arrow still appears whenever location is in
++            // use, the permission is still Always and still revocable, and GroundLink still
++            // appears in Settings > Privacy > Location Services with its full history. What
++            // goes away is the persistent blue banner.
++            //
++            // Same judgement, and the same precedent, as the Android half of this patch, which
++            // already drops that platform's permanent status-bar icon to match how every other
++            // family-location app behaves.
++            manager.showsBackgroundLocationIndicator = false
+             manager.pausesLocationUpdatesAutomatically = false
+             self.watchers.append(watcher)
+             if call.getBool("requestPermissions") != false {
+@@ -130,8 +146,17 @@ public class BackgroundGeolocation: CAPPlugin,
                  if (
                      background && status == .authorizedWhenInUse
                  ) {
