@@ -5091,7 +5091,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 947;
+var APP_BUILD = 948;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17944,19 +17944,33 @@ function startLocationSharing() {
       window._meAnimErr = (window._meAnimErr || 0) + 1;
       try { window._meAnimWhy = 'threw: ' + String((e && e.message) || e).slice(0, 60); } catch (_) {}
     }
-    // INVARIANT, not a diagnosis: your own dot is where your own fix is. Whatever happened
-    // above -- skipped, swallowed, or moved back afterwards by something else -- a dot more
-    // than ~300 ft from the fix in hand is wrong, and it is wrong in the one place where
-    // being wrong matters most, because it is the dot you navigate by. Snapped rather than
-    // animated: a mile and a half of gliding would be a lie about having travelled it.
-    // This runs on every fix, so it also repairs a dot that something else drags away later.
+    // INVARIANT: your own dot is where your own fix is. Every fix, every distance.
+    //
+    // 947 first shipped this as a >300 ft check only, which was wrong, and wrong in a way
+    // that mattered precisely on the phone it was written for. The glide above is what
+    // normally moves the dot -- any distance, a ten-foot step included -- so a "only if it is
+    // badly out" net looks harmless. But on a phone where the glide is NOT running, that net
+    // is the only thing left moving the dot, and the dot then jumps in 300-foot steps and
+    // sits still between them. The backstop has to cover the case it exists for.
+    //
+    // So: if the glide ran, leave it alone -- it is already carrying the dot smoothly. If it
+    // did not run, for any of the reasons recorded above, place the dot at the fix
+    // regardless of distance. And independently, snap any dot that is more than ~300 ft out,
+    // which catches the different failure where something moves it back AFTER the glide.
     try {
       var _mk = userMarkers[userId];
       if (_mk && _mk.getLngLat && _mk.setLngLat && groupName && !window._soloMode) {
         var _ll = _mk.getLngLat();
-        if (_ll && metersApart(_ll.lat, _ll.lng, lat, lng) > 91) {   // 91 m ≈ 300 ft
-          _mk.setLngLat([lng, lat]);
-          window._meSnap = (window._meSnap || 0) + 1;
+        var _off = _ll ? metersApart(_ll.lat, _ll.lng, lat, lng) : 0;
+        var _glided = (window._meAnimWhy === '');   // set only when the glide actually ran
+        if (!_ll || !_glided || _off > 91) {        // 91 m ≈ 300 ft
+          // No animation. When the glide is dead this fires every fix a few feet at a time,
+          // which reads as movement; when the dot is a mile out, gliding it would be a lie
+          // about having travelled that ground.
+          if (!_ll || _off > 0.5) {
+            _mk.setLngLat([lng, lat]);
+            window._meSnap = (window._meSnap || 0) + 1;
+          }
         }
       }
     } catch (e) {}
