@@ -113,6 +113,12 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    // Two NATIVE changes, which is the whole of what a new build can carry. Everything else
+    // shipped today (940-949) is web-layer and reached every phone from the server already.
+    '1.0.12': [
+      '- The blue location marker no longer sits in your status bar while GroundLink is running in the background',
+      '- New app icon',
+    ],
     // Written from the iOS-native commits between the 1.0.10 release (4 Oct) and this build
     // (8 Oct): 1ba5eae, c30d408, 161a9cd. The rest of that range is web-layer work, which
     // reaches every phone from the server and does not belong in an App Store note.
