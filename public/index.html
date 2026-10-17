@@ -5096,7 +5096,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 953;
+var APP_BUILD = 954;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18941,11 +18941,19 @@ window._presenceOf = function (uid, data) {
     return { key: 'check', label: 'CHECK PHONE', color: '#E0A05A', calm: false,
              line: 'Quiet for ' + ageStr, why: why };
   }
-  if (age < PARKED_MAX_MS) {
+  // iOS 1.0.13 writes hbTs on every wake-time heartbeat: the phone was HEARD FROM then, even
+  // though its position (fixTs) is older. That is the difference between a parked phone that
+  // is alive and one that is dead, and it lifts the 8-hour cap: a phone heard from in the last
+  // half hour is parked, however long it has sat there.
+  var hb = data.hbTs || 0;
+  var hbAge = hb ? now - hb : Infinity;
+  var heard = hbAge < 30 * 60 * 1000;
+  if (age < PARKED_MAX_MS || heard) {
     // The honest sentence. It says where they are, that nothing is wrong, and exactly how old
     // the reading is -- never that it is current.
+    var hbStr = !heard ? '' : hbAge < 90000 ? Math.max(1, Math.round(hbAge / 1000)) + 's' : Math.round(hbAge / 60000) + 'm';
     return { key: 'parked', label: 'PARKED', color: '#2ec4b6', calm: true,
-             line: 'Parked · last fix ' + ageStr + ' ago', why: '' };
+             line: 'Parked · last fix ' + ageStr + ' ago' + (heard && hbAge > 60000 ? ' · heard ' + hbStr + ' ago' : ''), why: '' };
   }
   return { key: 'stale', label: 'LAST KNOWN', color: '#a9b4bf', calm: true,
            line: 'Last known · ' + ageStr + ' ago', why: '' };

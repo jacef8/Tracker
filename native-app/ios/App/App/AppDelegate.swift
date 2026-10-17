@@ -233,7 +233,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // works from the persisted last fix, so a relaunched process is no longer mute until
             // CoreLocation happens to hand over a new position. This timer only lives while the
             // process does -- the wake path (launch/visit/region/push/bgr) carries the real load.
-            if Date().timeIntervalSince(self.lastNativeReportAt) > 170 { self.wakeHeartbeat(reason: "timer") }
+            let last = max(self.lastNativeReportAt, self.lastHeartbeatAt)
+            if Date().timeIntervalSince(last) > 170 { self.wakeHeartbeat(reason: "timer") }
         }
         // A UI-less relaunch (launchKind decided at the top) has NOTHING else that will touch the
         // row until a new fix arrives -- which a parked phone may never produce -- so say "alive,
@@ -888,7 +889,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     /// Nothing the web layer claims (rest, path, hereSince) is touched by a heartbeat.
     /// `done` fires once, on the main queue. Main queue only.
     private func wakeHeartbeat(reason: String, fix: CLLocation? = nil, done: ((Bool) -> Void)? = nil) {
-        noteWake(reason)
+        // The timer is the one caller that is NOT a wake -- it only runs while the process is
+        // already alive -- so it stays out of the tally that exists to measure real wakes.
+        if reason != "timer" { noteWake(reason) }
         if let f = fix { reportFixInBackground(f, force: true, done: done); return }
         guard let cfg = nativeWriteConfig(),
               let dbUrl = cfg["dbUrl"] as? String,
@@ -896,7 +899,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
               let uid = cfg["uid"] as? String,
               let rooms = cfg["rooms"] as? [String]
         else { done?(false); return }
-        lastNativeReportAt = Date()
+        // NOT lastNativeReportAt. That is the 10-second report throttle, and a heartbeat is not a
+        // report: stamping it here meant the real fix CoreLocation delivers a second or two after
+        // a relaunch was thrown away as "too soon", and a parked phone never gets another. The
+        // timer below keys off this instead.
+        lastHeartbeatAt = Date()
 
         let now = Int(Date().timeIntervalSince1970 * 1000)
         // `ts` is only refreshed when an honest `fixTs` goes with it (the web reads fixTs || ts).
@@ -1238,6 +1245,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     private var lastNativeReportAt: Date = .distantPast
+    /// When the last no-fix heartbeat went out. Kept apart from lastNativeReportAt on purpose:
+    /// a heartbeat must never make a real fix look "too soon" to report.
+    private var lastHeartbeatAt: Date = .distantPast
     private static let nativeReportMinInterval: TimeInterval = 10
     private func reportFixInBackground(_ loc: CLLocation, force: Bool = false, done: ((Bool) -> Void)? = nil) {
         if !force && Date().timeIntervalSince(lastNativeReportAt) < Self.nativeReportMinInterval { done?(false); return }

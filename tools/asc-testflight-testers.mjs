@@ -113,6 +113,11 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    '1.0.13': [
+      '- Your phone checks in with the family map every time iPhone gives it a chance, including when you arrive somewhere or leave, so a parked phone shows as parked and still connected instead of looking offline',
+      '- The map no longer pretends an old position is new: it shows when your phone was last heard from and, separately, when it last actually moved',
+      '- If a location update fails to send, the phone remembers it and sends it the next time it wakes',
+    ],
     // Two NATIVE changes, which is the whole of what a new build can carry. Everything else
     // shipped today (940-949) is web-layer and reached every phone from the server already.
     '1.0.12': [

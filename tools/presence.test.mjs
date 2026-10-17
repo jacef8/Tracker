@@ -35,6 +35,8 @@ const cases = [
   ['noGps flag but real coords (the stale-flag trap)', { ...base, fixTs: ago(1), noGps: true }, 'live'],
   ['never reported',           { lat: 0, lng: 0 },                                           'stale'],
   ['Android, no oss block, parked', { ...base, fixTs: ago(43), batt: 60 },                   'parked'],
+  ['iPhone parked 11 h, heard from 12 min ago (hbTs)', { ...base, fixTs: ago(660), hbTs: ago(12), oss: iosOk }, 'parked'],
+  ['iPhone parked 11 h, NOT heard from for 2 h', { ...base, fixTs: ago(660), hbTs: ago(120), oss: iosOk }, 'stale'],
 ];
 
 let fail = 0;
