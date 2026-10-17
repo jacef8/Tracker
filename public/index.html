@@ -5091,7 +5091,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 949;
+var APP_BUILD = 950;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10948,8 +10948,17 @@ window._loadHomeShot = function () {
 // Three states, not two. "Follow phone" is the sensible default, but a phone on
 // auto-brightness in a truck decides it is night at 4pm under a canopy and takes the map
 // with it -- so the two pinned states exist and win.
+// Default NIGHT, not 'auto'. 'auto' follows the phone, and until 943 that was harmless
+// because the skin itself was opt-in, so nobody ever landed in daylight by accident. Making
+// the skin the default handed every phone set to Light appearance a palette that had never
+// been checked end to end -- measured the same day: app name and group chip WHITE ON WHITE
+// (contrast 1.0), the Crews/Share/Sign-out buttons the same, and the map dock showing dark
+// ink on its dark bar. Reported from a real phone within hours.
+//
+// So daylight is opt-in again while it gets a proper pass. Anyone who has already chosen
+// 'day' keeps it -- this only changes what happens when nothing was ever chosen.
 window._dayPref = function () {
-  try { return localStorage.getItem('gl_daylight') || 'auto'; } catch (e) { return 'auto'; }
+  try { return localStorage.getItem('gl_daylight') || 'night'; } catch (e) { return 'night'; }
 };
 window._applyDaylight = function () {
   try {
@@ -29429,6 +29438,24 @@ try {
   setTimeout(_syncTopbarH, 600);
 } catch (e) {}
 
+// Pure, so it can be tested on its own: see tools/followpad.test.mjs. Takes the padding we
+// want, the part of it that is opaque chrome, and the canvas height; returns what is legal.
+window._clampVertPad = function (top, bottom, chromeTop, chromeBottom, ch) {
+  var budget = ch * 0.45;
+  if (!(ch > 0) || top + bottom <= budget) return { top: top, bottom: bottom };
+  var room = budget - (chromeTop + chromeBottom);
+  if (room >= 0) {
+    // Take it out of the marker reserve and stop at the bars. A dot can sit close to the edge;
+    // it cannot sit behind the topbar.
+    var extraT = top - chromeTop, extraB = bottom - chromeBottom, extra = extraT + extraB;
+    var k = extra > 0 ? Math.max(0, Math.min(1, room / extra)) : 0;
+    return { top: chromeTop + extraT * k, bottom: chromeBottom + extraB * k };
+  }
+  // The bars alone do not fit the budget. Nothing can be framed clear of both, so fall back to
+  // the proportional squeeze rather than hand cameraForBounds something it will throw on.
+  var sy = budget / (top + bottom);
+  return { top: top * sy, bottom: bottom * sy };
+};
 function _followPadding() {
   var top = 100, bottom = 130; // fallback if the elements are ever missing
   try {
@@ -29464,6 +29491,10 @@ function _followPadding() {
   var side = MARKER_SIDE_PAD;
   try { side += Math.min(72, map.getCanvas().clientWidth * 0.06); } catch (e) { side += 72; }
   var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: side, right: side };
+  // `top` and `bottom` above are the OCCLUDED heights -- what the bars actually cover. Keep
+  // them, because the clamp below has to know which part of the padding is furniture and
+  // which part is courtesy.
+  var chromeTop = top, chromeBottom = bottom;
   // Clamp against the actual canvas. cameraForBounds THROWS when padding exceeds the viewport,
   // and _groupFollowTick swallows that into `if (!cam) return true` — a silent no-op that
   // repeats every tick, so group-follow looks switched on while the camera never moves.
@@ -29476,10 +29507,9 @@ function _followPadding() {
     if (cw > 0 && pad.left + pad.right > cw * 0.45) {
       var sx = (cw * 0.45) / (pad.left + pad.right); pad.left *= sx; pad.right *= sx;
     }
-    if (ch > 0 && pad.top + pad.bottom > ch * 0.45) {
-      // Scale top and bottom together so the group still sits clear of BOTH bars rather than
-      // being shoved under one of them.
-      var sy = (ch * 0.45) / (pad.top + pad.bottom); pad.top *= sy; pad.bottom *= sy;
+    if (ch > 0) {
+      var _v = window._clampVertPad(pad.top, pad.bottom, chromeTop, chromeBottom, ch);
+      pad.top = _v.top; pad.bottom = _v.bottom;
     }
   } catch (e) {}
   return pad;
