@@ -432,9 +432,19 @@ app.post('/bump', rateLimit(30, 60000), requireUser, async function(req, res) {
 // the app in the background, it takes one fix, writes it, and sleeps again.
 //
 // The thresholds are the whole design, so they are named rather than buried:
-const WAKE_SWEEP_MS    = 5 * 60 * 1000;       // how often we look for quiet phones
-const WAKE_STALE_MS    = 15 * 60 * 1000;      // quiet this long and we start poking
-const WAKE_COOLDOWN_MS = 10 * 60 * 1000;      // a recently-quiet phone: poke at most this often
+const WAKE_SWEEP_MS    = 2 * 60 * 1000;       // how often we look for quiet phones (was 5)
+const WAKE_STALE_MS    = 15 * 60 * 1000;      // iPhone: quiet this long and we start poking
+// ANDROID GETS CHASED FAST. Measured 2026-10-17 on a Samsung at 66 mph: the moment the app went
+// to the background the WebView went dormant -- fixes, writes and diag all stopped in the same
+// second -- while the headless service sat in STANDBY, because MainActivity only promotes it
+// when the Activity is finished or destroyed, never when it is merely hidden. Until that is
+// fixed natively, the server's bump is the only thing that activates the background writer,
+// and it was waiting fifteen minutes to send it. Three minutes of silence from a phone that was
+// reporting every ten seconds is already a certainty, not a guess. No push budget applies to
+// Android high-priority data messages, so the cost of being wrong is one ignored push.
+const WAKE_STALE_ANDROID_MS = 3 * 60 * 1000;
+const WAKE_COOLDOWN_MS = 10 * 60 * 1000;      // iPhone: a recently-quiet phone, poke at most this often
+const WAKE_COOLDOWN_ANDROID_MS = 4 * 60 * 1000;
 // Two speeds, because one threshold cannot serve both cases. A phone quiet for twenty minutes
 // is asleep and very likely to answer, so chase it hard. A phone quiet for days has probably
 // been force-quit or has Background App Refresh off, and will most likely ignore us -- but
@@ -448,10 +458,12 @@ const WAKE_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;   // a week of silence is unins
 // one that mattered. Every 10 minutes was 6 an hour. iPhones (they report oss.iosVer) are poked
 // at most every 20 minutes; Android has no such budget for high-priority data messages.
 const WAKE_IOS_COOLDOWN_MS = 20 * 60 * 1000;
+function _isIos(u) { return !!(u && u.oss && u.oss.iosVer); }
 function _wakeCooldown(u, age) {
   if (age > WAKE_SLOW_AFTER_MS) return WAKE_SLOW_COOLDOWN_MS;
-  return (u && u.oss && u.oss.iosVer) ? WAKE_IOS_COOLDOWN_MS : WAKE_COOLDOWN_MS;
+  return _isIos(u) ? WAKE_IOS_COOLDOWN_MS : WAKE_COOLDOWN_ANDROID_MS;
 }
+function _wakeStale(u) { return _isIos(u) ? WAKE_STALE_MS : WAKE_STALE_ANDROID_MS; }
 const wakeLastSent = new Map();               // uid -> ts
 
 // Tell the REST of the Crew when someone's background sharing breaks.
@@ -574,7 +586,7 @@ async function keepAliveSweep() {
       const batt = (typeof u.batt === 'number') ? u.batt : (u.oss && typeof u.oss.batt === 'number' ? u.oss.batt : null);
       const chg = (u.chg === 1) || !!(u.oss && u.oss.charging);
       if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000, batt: batt, chg: chg, battAt: (u.fixTs || u.ts || 0) });
-      if (age < WAKE_STALE_MS || age > WAKE_GIVE_UP_MS) continue;
+      if (age < _wakeStale(u) || age > WAKE_GIVE_UP_MS) continue;
       if (now - (wakeLastSent.get(uid) || 0) < _wakeCooldown(u, age)) continue;
       targets.set(uid, u.name);
     }
