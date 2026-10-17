@@ -88,9 +88,18 @@ public class HeadlessTrackerService extends Service {
 
     // Called from BootReceiver (fresh boot, no MainActivity involved at all) and internally via
     // the onTaskRemoved restart alarm. No "standby" extra — defaults to active.
-    public static void startActive(Context ctx) {
+    public static void startActive(Context ctx) { startActive(ctx, ""); }
+
+    // `reason` rides along so the service can tell a routine promotion (app hidden, boot) from a
+    // BUMP -- the server's "you have been quiet for 3+ minutes" push. Measured 2026-10-17 on
+    // 1.4.6: parked after a drive, the page went silent for 65 minutes with the service alive
+    // the whole time, because every bump landed on "already active, no-op". A bump is, by
+    // definition, evidence that the running page is not writing; the right response is to
+    // start the page over, not to leave it be.
+    public static void startActive(Context ctx, String reason) {
         try {
             Intent i = new Intent(ctx, HeadlessTrackerService.class);
+            if (reason != null && !reason.isEmpty()) i.putExtra("reason", reason);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ctx.startForegroundService(i);
             } else {
@@ -135,10 +144,17 @@ public class HeadlessTrackerService extends Service {
         // (e.g. low memory) — resume whatever mode it was last in rather than defaulting away
         // from active tracking. Only an explicit standby request should ever demote it.
         boolean standby = intent != null && intent.getBooleanExtra("standby", false);
-        Log.i(TAG, "onStartCommand: intent=" + (intent == null ? "null" : "present") + " standby=" + standby + " currentActive=" + active);
+        String reason = intent != null ? intent.getStringExtra("reason") : null;
+        Log.i(TAG, "onStartCommand: intent=" + (intent == null ? "null" : "present") + " standby=" + standby + " reason=" + reason + " currentActive=" + active);
         try {
             if (standby) {
                 demoteToStandby();
+            } else if (active && "bump".equals(reason)) {
+                // Already active AND the server says we have been quiet: the page is alive but
+                // not reporting. Reload it rather than no-op (see startActive(Context, String)).
+                Log.i(TAG, "bump while active -- reloading the headless page");
+                try { if (webView != null) webView.loadUrl(HEADLESS_URL); else ensureWebView(); }
+                catch (Exception e) { Log.e(TAG, "bump reload failed", e); }
             } else {
                 promoteToActive();
             }

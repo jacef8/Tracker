@@ -35,8 +35,8 @@ public class GLMessagingService extends MessagingService {
                 Log.i(TAG, "bump: app is in front — the in-app path handles it");
                 return;
             }
-            Log.i(TAG, "bump: app not in front — starting background tracker");
-            HeadlessTrackerService.startActive(getApplicationContext());
+            Log.i(TAG, "bump: app not in front — starting (or restarting) background tracker");
+            HeadlessTrackerService.startActive(getApplicationContext(), "bump");
         } catch (Exception e) {
             Log.e(TAG, "bump handling failed", e);
         }

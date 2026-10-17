@@ -4,7 +4,7 @@
 <body>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getDatabase, ref, set, update, push, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // Minimal, UI-less location reporter — hosted inside HeadlessTrackerService (native Android)
@@ -181,6 +181,20 @@
         }
         payload.path = _keep.map(function (q) { return [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6, q[2]]; });
       }
+    } catch (e) {}
+    // Health beacon, readable from the server without the main app ever opening: who this page
+    // is signed in as, when it last got an ack, the last refusal, and how many heartbeats it has
+    // sent. diag/<uid> only needs a signed-in user, so this lands even when position writes are
+    // refused -- which is exactly when it is needed. (The main page's own diag SET wipes it
+    // when the app is open; that is fine, the app's diag covers that case.)
+    try {
+      var _who = '';
+      try { var _cu = auth.currentUser; _who = _cu ? ((_cu.isAnonymous ? 'anon:' : 'acct:') + _cu.uid.slice(0, 8)) : 'nobody'; } catch (e) {}
+      window._hlBeats = (window._hlBeats || 0) + (pos._heartbeat ? 1 : 0);
+      window._hlWrites = (window._hlWrites || 0) + 1;
+      var _hl = { ts: _nowTs, who: _who, writes: window._hlWrites, beats: window._hlBeats, heartbeat: !!pos._heartbeat,
+                  ack: +(localStorage.getItem('gl_hl_ack') || 0), err: localStorage.getItem('gl_hl_err') || '' };
+      update(ref(db, 'gl/' + keys[0] + '/diag/' + uid), { hl: _hl }).catch(function () {});
     } catch (e) {}
     keys.forEach(function (k) {
       try {

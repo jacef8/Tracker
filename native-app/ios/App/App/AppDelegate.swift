@@ -7,6 +7,7 @@ import WebKit
 import AVFoundation
 import PushKit
 import CallKit
+import BackgroundTasks   // BGAppRefreshTask (iOS 13+, no guard needed) -- see registerBgRefresh
 import PushToTalk   // iOS 16+ walkie-talkie framework (used only under @available guards below)
 // Hard link-time reference for the sign-in plugin — see didFinishLaunching. Without any
 // compile-time use, the static CapacitorFirebaseAuthentication framework can end up absent
@@ -68,6 +69,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private var lastBgFixAt: TimeInterval = 0
     private var fgBridgeSent: Int = 0
     /// Where this phone was when it last reported, so a write can tell whether it has moved.
+    /// An anchor: advanced only when a fix is a real distance from it (see writeFixNatively).
     private var lastReportedLoc: CLLocation?
     /// What the phone's motion chip says this person is doing: still, walking, running, cycling
     /// or driving. This is the step-counter coprocessor, not GPS -- it costs almost nothing and
@@ -103,6 +105,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private let sessionStart = Date()
     private func isLeftover(_ loc: CLLocation) -> Bool { return loc.timestamp < sessionStart }
     private var staleFixTimer: Timer?
+
+    // ── Wake path (2026-10-17) ─────────────────────────────────────────────────────────
+    // Measured on the family's phones: a drive produces fixes, then the parked phone goes dark
+    // for hours, and every iPhone is dark 9-13 h overnight. Once iOS suspends or ends the process
+    // nothing above runs, so the row simply stops -- indistinguishable from the app being dead.
+    // Every way back into this process (location relaunch, region crossing, visit, push, system
+    // refresh, timer) now funnels through wakeHeartbeat(), which writes an HONEST row (fresh ts,
+    // the ORIGINAL fixTs), retries a fix that never landed, and records what woke us so the
+    // result can be read off the phones instead of guessed.
+    private static let kWakesKey   = "gl_wakes"
+    private static let kLastFixKey = "gl_last_fix"
+    private static let bgRefreshId = "com.groundlink.ios.refresh"   // must match Info.plist
+    private var lastWakeReason = ""
+    private var lastWakeAt: TimeInterval = 0
+    /// "ui" | "location" | "push" | "bg" -- how THIS process was started (oss.launch).
+    private var launchKind = "ui"
+    private let procStartMs = Int(Date().timeIntervalSince1970 * 1000)
+    private var slcCounted = false
+    /// Native writes currently in flight; the shared background task ends when this hits 0.
+    private var inflightWrites = 0
+    /// Foreground fixes arrive several times a second; the persisted record needs one now and then.
+    private var lastFgSaveAt: Date = .distantPast
 
     // ── Voice audio session bridge (2026-08-15) ────────────────────────────────────────
     // The web voice layer (voice.js) already calls window.GLAudioRouter.startVoiceService() /
@@ -140,6 +164,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Forces the linker to keep the sign-in plugin's class (see the import note above).
         _ = FirebaseAuthenticationPlugin.self
+        // How this process was started, decided first so every `oss` written during this launch
+        // (the authorization callback's status write included) names it. launchOptions[.location]
+        // means iOS relaunched us purely for a location event: no UI will ever be shown for this
+        // launch and the Capacitor bridge/live web app won't load. Acted on at the bottom.
+        if launchOptions?[.location] != nil { launchKind = "location" }
+        else if launchOptions?[.remoteNotification] != nil { launchKind = "push" }
+        else if UIApplication.shared.applicationState == .background { launchKind = "bg" }
         // Battery for the fix payload. iOS forbids the WEB battery API entirely, but the native
         // one is unrestricted (it's how Life360 reports iPhone battery). Read here, injected
         // into headless.html alongside each fix — see sendPendingFix.
@@ -175,12 +206,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         if CLLocationManager.significantLocationChangeMonitoringAvailable() {
             mgr.startMonitoringSignificantLocationChanges()
         }
+        // Visits: iOS's own arrive/depart detector. It fires minutes after the phone settles
+        // somewhere and again when it leaves, relaunches a terminated app, and costs nothing --
+        // exactly the two moments a parked phone has been silent at. Needs Always; with While
+        // Using it simply delivers nothing. Handled in locationManager(_:didVisit:).
+        mgr.startMonitoringVisits()
         bgLocationManager = mgr
         startActivityUpdates()
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
         restoreHereRegion()      // and the anchor on the last known position, before any fix lands
         setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
         setupPushToTalk()        // iOS 16+ Push to Talk framework (ringless walkie-talkie)
+        registerBgRefresh()      // BGTaskScheduler.register MUST happen before this method returns
         // A stationary device (moved less than distanceFilter) never gets another
         // didUpdateLocations callback at all, so its last-known fix would otherwise go stale in
         // Firebase after a few minutes and look exactly like tracking had silently stopped, even
@@ -192,15 +229,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // Same foreground guard as locationManager(_:didUpdateLocations:) below — while
             // active, the main WebView's own path is already keeping this fresh continuously.
             if UIApplication.shared.applicationState == .active { return }
-            let sinceLast = self.lastReportedAt.map { Date().timeIntervalSince($0) } ?? .infinity
-            if sinceLast > 170, let loc = self.bgLocationManager?.location, !self.isLeftover(loc) {
-                self.reportFixInBackground(loc, force: true)
-            }
+            // A heartbeat, not a re-report: fresh ts/hbTs, ORIGINAL fixTs, nothing cleared. It
+            // works from the persisted last fix, so a relaunched process is no longer mute until
+            // CoreLocation happens to hand over a new position. This timer only lives while the
+            // process does -- the wake path (launch/visit/region/push/bgr) carries the real load.
+            if Date().timeIntervalSince(self.lastNativeReportAt) > 170 { self.wakeHeartbeat(reason: "timer") }
         }
-        // launchOptions[.location] != nil means iOS relaunched us purely for this — no UI will
-        // ever be shown for this launch, and the Capacitor bridge/live web app won't load. That's
-        // fine: the actual fix report happens from locationManager(_:didUpdateLocations:) below,
-        // independent of whether the normal app UI ever starts up during this process lifetime.
+        // A UI-less relaunch (launchKind decided at the top) has NOTHING else that will touch the
+        // row until a new fix arrives -- which a parked phone may never produce -- so say "alive,
+        // here is my last honest fix" right now, and schedule the next system refresh.
+        if launchKind == "location" || launchKind == "bg" {
+            wakeHeartbeat(reason: "launch")   // "push" launches are reported by didReceiveRemoteNotification
+        }
+        if launchKind != "ui" { scheduleBgRefresh() }
         return true
     }
 
@@ -212,6 +253,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     func applicationDidEnterBackground(_ application: UIApplication) {
         // Back to the coarse, cheap setting the battery budget is built around.
         setLocationFidelity(foreground: false)
+        // Ask iOS for a background refresh later on; it decides when (see scheduleBgRefresh).
+        scheduleBgRefresh()
         // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
         // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
     }
@@ -225,31 +268,31 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     // Silent-push wake ("bump"). A content-available push relaunches this app from suspension
-    // AND from system termination (though never from a user force-quit — nothing does, for any
-    // app). The server's /bump endpoint sends one when someone taps Refresh on a stale member;
-    // this handler grabs the current location and reports it through the proven headless path,
-    // which is exactly the Life360 "member refreshes right when you look at them" behaviour.
+    // AND from system termination, though never from a user force-quit. (That is true of this
+    // path and of Background App Refresh; the LOCATION paths -- significant change, regions,
+    // visits -- are documented to relaunch even a force-quit app, which is why they carry the
+    // load.) The server's /bump endpoint sends one when someone taps Refresh on a stale member
+    // or a phone has gone quiet; this handler reports through the wake path, which is exactly
+    // the Life360 "member refreshes right when you look at them" behaviour.
     // The remote-notification background mode is already declared in Info.plist.
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        // Whatever happens next, record the settings: if there is no position to send, this is
-        // the only thing the Crew will learn about why.
-        writeStatusNatively()
+        var finished = false
+        let finish: (UIBackgroundFetchResult) -> Void = { r in if !finished { finished = true; completionHandler(r) } }
         if let loc = bgLocationManager?.location, !isLeftover(loc) {
-            reportFixInBackground(loc, force: true)
-            // Give the headless write a moment before iOS suspends us again.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { completionHandler(.newData) }
+            // Alive with a position from this process: a real report, settings riding along.
+            wakeHeartbeat(reason: "push", fix: loc) { ok in finish(ok ? .newData : .noData) }
         } else {
-            // Relaunched by this push: the cached position predates this launch and could be
-            // hours old and miles away. Ask for a real one — didUpdateLocations reports it — and
-            // stay awake long enough for it to arrive (iOS allows ~30 s here).
-            bgLocationManager?.requestLocation()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-                let got = (self?.lastReportedAt.map { Date().timeIntervalSince($0) < 25 }) ?? false
-                completionHandler(got ? .newData : .noData)
-            }
+            // Relaunched by this push. requestLocation() does nothing while the continuous session
+            // started in didFinishLaunching is running (Apple's documented behaviour), so it is not
+            // called: that session delivers its first fix on its own and didUpdateLocations reports
+            // it. Meanwhile say "alive" now with the last honest fix, so the row refreshes even if
+            // no new position ever arrives on this wake.
+            wakeHeartbeat(reason: "push") { ok in finish(ok ? .newData : .noData) }
         }
+        // iOS allows ~30 s here; never leave the handler un-completed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25) { finish(.noData) }
     }
 
     // ── Native geofences (Places) ────────────────────────────────────────────────────────
@@ -312,16 +355,51 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
+    /// The position a region event itself vouches for: the boundary just crossed. On a relaunch
+    /// the manager's cached fix predates this process and may be miles away (isLeftover), while
+    /// the region says where we are to within its radius -- carried as horizontalAccuracy.
+    private func regionLocation(_ region: CLRegion, exiting: Bool) -> CLLocation? {
+        guard let cr = region as? CLCircularRegion else { return nil }
+        return CLLocation(coordinate: cr.center, altitude: 0,
+                          horizontalAccuracy: exiting ? cr.radius * 1.5 : cr.radius, verticalAccuracy: -1,
+                          course: -1, speed: -1, timestamp: Date())
+    }
+    /// A fix from THIS process if there is one, else whatever the event itself can vouch for.
+    private func bestFix(_ manager: CLLocationManager, or fallback: CLLocation?) -> CLLocation? {
+        if let cur = manager.location, !isLeftover(cur) { return cur }
+        return fallback
+    }
+
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        if let loc = manager.location { reportFixInBackground(loc, force: true) }
+        wakeHeartbeat(reason: "region", fix: bestFix(manager, or: regionLocation(region, exiting: false)))
     }
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
-        if let loc = manager.location {
-            reportFixInBackground(loc, force: true)
-            // Leaving the anchor is exactly when a new one is needed: re-anchor here so the next
-            // departure wakes us too. Without this the phone gets one relaunch and no more.
-            if region.identifier == hereRegionId { updateHereRegion(loc) }
-        }
+        let fix = bestFix(manager, or: regionLocation(region, exiting: true))
+        wakeHeartbeat(reason: "region", fix: fix)
+        // Leaving the anchor is exactly when a new one is needed: re-anchor here so the next
+        // departure wakes us too. Without this the phone gets one relaunch and no more.
+        if region.identifier == hereRegionId, let f = fix { updateHereRegion(f) }
+    }
+
+    /// iOS decided this phone ARRIVED somewhere or LEFT it (startMonitoringVisits, above). Slow by
+    /// design -- minutes after the fact -- but it fires for a parked phone that nothing else wakes,
+    /// and it relaunches a terminated app. Pure wake trigger plus an honest position; the web
+    /// layer keeps its own arrive/leave logic.
+    func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        // departureDate == distantFuture means "still here" (an arrival); otherwise a departure.
+        let arrived = visit.departureDate == Date.distantFuture
+        var when = arrived ? visit.arrivalDate : visit.departureDate
+        // arrivalDate is distantPast when the visit began before we were allowed to watch.
+        if when == Date.distantPast || when == Date.distantFuture { when = Date() }
+        // The visit's own coordinate IS a position fix: honest timestamp = when they got there
+        // (or left), honest accuracy = what iOS reports, speed 0 on arrival (they are parked).
+        let vloc = CLLocation(coordinate: visit.coordinate, altitude: 0,
+                              horizontalAccuracy: max(10, visit.horizontalAccuracy), verticalAccuracy: -1,
+                              course: -1, speed: arrived ? 0 : -1, timestamp: when)
+        var fix = vloc
+        if let cur = manager.location, !isLeftover(cur), cur.timestamp > vloc.timestamp { fix = cur }
+        wakeHeartbeat(reason: arrived ? "visit" : "depart", fix: fix)
+        updateHereRegion(fix)
     }
 
     // Pull identity + places out of the LIVE web app whenever it comes to the foreground —
@@ -354,11 +432,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 self.syncMonitoredRegions()
             }
             // Identity + fan-out targets, so background fixes can be written natively without
-            // booting a WebView at all (see writeFixNatively).
-            wv.evaluateJavaScript("window.__nativeWriteConfig ? window.__nativeWriteConfig() : ''") { result, _ in
-                guard let json = result as? String, !json.isEmpty else { return }
-                UserDefaults.standard.set(json, forKey: "gl_native_write_cfg")
+            // booting a WebView at all (see writeFixNatively). Never let a half-ready snapshot
+            // (rooms: [] before the version is known, or no refresh token before sign-in finishes)
+            // replace a working one: that disabled the native writer until the next foreground.
+            // Taken now and again at +12 s, when the page has had time to finish signing in.
+            let takeWriteConfig: () -> Void = { [weak self] in
+                guard let self = self,
+                      let bridgeVC = self.window?.rootViewController as? CAPBridgeViewController,
+                      let wv = bridgeVC.webView else { return }
+                wv.evaluateJavaScript("window.__nativeWriteConfig ? window.__nativeWriteConfig() : ''") { result, _ in
+                    guard let json = result as? String, !json.isEmpty,
+                          let d = json.data(using: .utf8),
+                          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                          let rooms = o["rooms"] as? [String], !rooms.isEmpty else { return }
+                    let rt = (o["rt"] as? String) ?? ""
+                    if rt.isEmpty, let old = self.nativeWriteConfig(), !(((old["rt"] as? String) ?? "").isEmpty) { return }
+                    UserDefaults.standard.set(json, forKey: "gl_native_write_cfg")
+                }
             }
+            takeWriteConfig()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { takeWriteConfig() }
             // Push the OS settings that decide whether background location survives. These are
             // read-only — we can't change any of them — but "why does this phone keep going
             // offline" can't be answered without them: Low Power Mode, While-Using instead of
@@ -431,6 +524,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             d["act"] = currentActivity
             d["actAt"] = Int(activityStartedAt * 1000)
         }
+        // What woke this process and how often each wake source has fired, so the family can
+        // see which of iOS's doors actually open on their phones (persisted across relaunches).
+        let wakeReason = lastWakeReason.isEmpty ? (UserDefaults.standard.string(forKey: "gl_wake_last") ?? "") : lastWakeReason
+        if !wakeReason.isEmpty { d["wake"] = wakeReason }
+        let wakeAt = lastWakeAt > 0 ? lastWakeAt : UserDefaults.standard.double(forKey: "gl_wake_at")
+        if wakeAt > 0 { d["wakeAt"] = Int(wakeAt * 1000) }
+        if let w = UserDefaults.standard.dictionary(forKey: AppDelegate.kWakesKey) as? [String: Int], !w.isEmpty { d["wakes"] = w }
+        d["launch"] = launchKind
+        d["procAt"] = procStartMs
         d["locServices"] = CLLocationManager.locationServicesEnabled()
         let refresh = UIApplication.shared.backgroundRefreshStatus
         d["bgRefresh"] = (refresh == .available)
@@ -487,6 +589,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // that iOS does not remember between launches, so the page asking for it produced the
             // "allow location" prompt on every single open — and a declined prompt left the dot
             // dead even with the app in front. One session, asked for once, natively.
+            // The page writes this one, but the native record must still hold the newest
+            // position so a later UI-less relaunch heartbeats from it, not from hours ago.
+            if Date().timeIntervalSince(lastFgSaveAt) > 15 {
+                lastFgSaveAt = Date()
+                saveLastFix(loc, sent: true, clearHere: false)
+            }
             bridgeFixToWeb(loc)
             return
         }
@@ -494,7 +602,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         lastBgFixAt = Date().timeIntervalSince1970
         updateBgMotion(loc)
         for l in locations { pathPush(l) }
-        reportFixInBackground(loc)
+        if launchKind == "location" && !slcCounted {
+            // The first background fix of a process iOS relaunched for location is the event it
+            // relaunched us for (significant change, or a region crossing that beat the region
+            // callback). Count it and force it out; the rest of the session is ordinary tracking.
+            slcCounted = true
+            wakeHeartbeat(reason: "slc", fix: loc)
+        } else {
+            reportFixInBackground(loc)
+        }
     }
 
     // Granted While Using → ask for Always, once, so background sharing works without a trip
@@ -715,8 +831,151 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
-    // Returns true if it handled the write, false to fall through to the WebView path.
-    private func writeFixNatively(_ loc: CLLocation) -> Bool {
+    // MARK: - Wake heartbeat (the ONE path every background entry goes through)
+
+    /// Record what woke us. Persisted, because every relaunch is a fresh process and an
+    /// in-memory counter would read 1 forever.
+    private func noteWake(_ reason: String) {
+        lastWakeReason = reason
+        lastWakeAt = Date().timeIntervalSince1970
+        let d = UserDefaults.standard
+        var w = (d.dictionary(forKey: AppDelegate.kWakesKey) as? [String: Int]) ?? [:]
+        w[reason] = (w[reason] ?? 0) + 1
+        d.set(w, forKey: AppDelegate.kWakesKey)
+        d.set(reason, forKey: "gl_wake_last")
+        d.set(lastWakeAt, forKey: "gl_wake_at")
+    }
+
+    /// The newest position this phone has produced, kept across relaunches. `sent` stays false
+    /// until a native write of it got HTTP 2xx, so the next wake can re-send a fix that never
+    /// landed. `fixTs` lets writeFixNatively store the exact value it put on the row.
+    private func saveLastFix(_ loc: CLLocation, sent: Bool, clearHere: Bool, fixTs: Int? = nil) {
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        var r: [String: Any] = [
+            "lat": loc.coordinate.latitude,
+            "lng": loc.coordinate.longitude,
+            "acc": Int((max(0, loc.horizontalAccuracy) * 3.28084).rounded()),   // feet, like the row
+            "fixTs": fixTs ?? min(Int(loc.timestamp.timeIntervalSince1970 * 1000), nowMs),
+            "sent": sent,
+            "clearHere": clearHere,
+            "savedAt": nowMs
+        ]
+        if loc.speed >= 0 { r["spd"] = Int((loc.speed * 2.23694).rounded()) }
+        UserDefaults.standard.set(r, forKey: AppDelegate.kLastFixKey)
+    }
+
+    private func markLastFixSent(fixTs: Int) {
+        let d = UserDefaults.standard
+        guard var r = d.dictionary(forKey: AppDelegate.kLastFixKey),
+              (r["fixTs"] as? NSNumber)?.intValue == fixTs else { return }   // a newer fix replaced it
+        r["sent"] = true
+        d.set(r, forKey: AppDelegate.kLastFixKey)
+    }
+
+    /// The persisted last fix as a position, so a relaunched process knows where it last reported
+    /// from (lastReportedLoc is empty in a fresh process).
+    private func persistedLastFixLocation() -> CLLocation? {
+        guard let r = UserDefaults.standard.dictionary(forKey: AppDelegate.kLastFixKey),
+              let lat = (r["lat"] as? NSNumber)?.doubleValue,
+              let lng = (r["lng"] as? NSNumber)?.doubleValue else { return nil }
+        return CLLocation(latitude: lat, longitude: lng)
+    }
+
+    /// Called from EVERY background entry point. With `fix` (a genuinely new position) it goes
+    /// out as a full report. Without one it re-writes the last known fix with a fresh `ts`/`hbTs`
+    /// and the ORIGINAL `fixTs`, so viewers can tell "parked and alive" from "dead" without ever
+    /// being told the position is newer than it is. `oss` rides along naming the wake reason.
+    /// Nothing the web layer claims (rest, path, hereSince) is touched by a heartbeat.
+    /// `done` fires once, on the main queue. Main queue only.
+    private func wakeHeartbeat(reason: String, fix: CLLocation? = nil, done: ((Bool) -> Void)? = nil) {
+        noteWake(reason)
+        if let f = fix { reportFixInBackground(f, force: true, done: done); return }
+        guard let cfg = nativeWriteConfig(),
+              let dbUrl = cfg["dbUrl"] as? String,
+              let apiKey = cfg["apiKey"] as? String,
+              let uid = cfg["uid"] as? String,
+              let rooms = cfg["rooms"] as? [String]
+        else { done?(false); return }
+        lastNativeReportAt = Date()
+
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        // `ts` is only refreshed when an honest `fixTs` goes with it (the web reads fixTs || ts).
+        var body: [String: Any] = ["hbTs": now, "oss": settingsDict()]
+        var rec = UserDefaults.standard.dictionary(forKey: AppDelegate.kLastFixKey)
+        if let cur = bgLocationManager?.location, !isLeftover(cur) {
+            // A fix this process produced but never wrote (throttled, or its write failed) is
+            // newer than the record: adopt it, unsent, so this heartbeat becomes its retry.
+            let curTs = min(Int(cur.timestamp.timeIntervalSince1970 * 1000), now)
+            if ((rec?["fixTs"] as? NSNumber)?.intValue ?? 0) < curTs {
+                saveLastFix(cur, sent: false, clearHere: false, fixTs: curTs)
+                rec = UserDefaults.standard.dictionary(forKey: AppDelegate.kLastFixKey)
+            }
+        }
+        let recFixTs = (rec?["fixTs"] as? NSNumber)?.intValue ?? 0
+        if let saved = rec, recFixTs > 0,
+           let lat = (saved["lat"] as? NSNumber)?.doubleValue,
+           let lng = (saved["lng"] as? NSNumber)?.doubleValue {
+            body["ts"] = now
+            body["lat"] = lat
+            body["lng"] = lng
+            body["fixTs"] = min(recFixTs, now)
+            if let acc = (saved["acc"] as? NSNumber)?.intValue { body["accuracy"] = acc }
+            if (saved["sent"] as? Bool) != true {
+                // This fix never landed: the heartbeat is its retry, so carry the claims it owned.
+                if let spd = (saved["spd"] as? NSNumber)?.intValue { body["spd"] = spd }
+                if (saved["clearHere"] as? Bool) == true { body["hereSince"] = NSNull() }
+                body["noGps"] = NSNull()
+            }
+        }
+        let lvl = UIDevice.current.batteryLevel
+        if lvl >= 0 {
+            body["batt"] = Int((lvl * 100).rounded())
+            let st = UIDevice.current.batteryState
+            body["chg"] = (st == .charging || st == .full) ? 1 : 0
+        }
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { done?(false); return }
+
+        beginWriteTask()
+        withAuthToken(apiKey: apiKey, rt: (cfg["rt"] as? String) ?? "") { [weak self] token in
+            guard let token = token else {
+                // No sign-in to write with. The heartbeat has no WebView fallback (a page load is
+                // too much for a ~10-second wake); the next wake simply tries again.
+                DispatchQueue.main.async { self?.writeDone(); self?.endBackgroundTaskIfNeeded(); done?(false) }
+                return
+            }
+            let group = DispatchGroup()
+            var failed = false
+            let lock = NSLock()
+            for room in rooms {
+                guard let u = URL(string: "\(dbUrl)/gl/\(room)/users/\(uid).json?auth=\(token)") else { continue }
+                var r = URLRequest(url: u)
+                r.httpMethod = "PATCH"
+                r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                r.httpBody = payload
+                r.timeoutInterval = 20
+                group.enter()
+                URLSession.shared.dataTask(with: r) { _, resp, _ in
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    if code < 200 || code >= 300 { lock.lock(); failed = true; lock.unlock() }
+                    if code == 401 || code == 403 { self?.cachedAuthToken = nil }   // re-mint next time
+                    group.leave()
+                }.resume()
+            }
+            group.notify(queue: .main) {
+                if !failed {
+                    self?.lastReportedAt = Date()
+                    if recFixTs > 0 { self?.markLastFixSent(fixTs: recFixTs) }
+                }
+                self?.writeDone()
+                self?.endBackgroundTaskIfNeeded()
+                done?(!failed)
+            }
+        }
+    }
+
+    // Returns true if it handled the write, false to fall through to the WebView path. `done`
+    // fires once, on the main queue, with whether every room took the PATCH.
+    private func writeFixNatively(_ loc: CLLocation, done: ((Bool) -> Void)? = nil) -> Bool {
         guard let cfg = nativeWriteConfig(),
               let dbUrl = cfg["dbUrl"] as? String,
               let apiKey = cfg["apiKey"] as? String,
@@ -726,6 +985,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         else { return false }
 
         let ts = Int(Date().timeIntervalSince1970 * 1000)
+        // The moment CoreLocation took THIS position -- never now. Clamped for clock skew.
+        let fixTs = min(Int(loc.timestamp.timeIntervalSince1970 * 1000), ts)
         var body: [String: Any] = [
             "lat": loc.coordinate.latitude,
             "lng": loc.coordinate.longitude,
@@ -733,14 +994,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             "name": name,
             "dev": (cfg["dev"] as? String) ?? "phone",
             "ts": ts,
-            // fixTs marks a position confirmed by a REAL fix — the web layer uses it to tell
-            // "app alive" from "position current". This is always a genuine CLLocation.
-            "fixTs": isLeftover(loc) ? Int(loc.timestamp.timeIntervalSince1970 * 1000) : ts,
+            "hbTs": ts,   // "the app said something at" -- every native write is also a heartbeat
+            // fixTs is WHEN CoreLocation took this position -- the web layer uses it to tell
+            // "app alive" (ts) from "position current" (fixTs). Never stamped with now: the old
+            // heartbeat re-sent an hours-old fix as fixTs = now, so a parked phone read LIVE
+            // until the process died and then dropped straight to stale.
+            "fixTs": fixTs,
             "trail": true,
             "priv": (cfg["priv"] as? Int) ?? 0,
             "spdH": (cfg["spdH"] as? Int) ?? 0
         ]
-        if loc.speed >= 0 { body["spd"] = Int((loc.speed * 2.23694).rounded()) }
+        // This is a PATCH: an unknown speed must CLEAR the field, or the last moving speed outlives
+        // the car stopping and a quiet row reads "signal lost while moving" for a parked phone.
+        if loc.speed >= 0 { body["spd"] = Int((loc.speed * 2.23694).rounded()) } else { body["spd"] = NSNull() }
         // The settings ride along, so a viewer can tell "fine" from "about to go quiet".
         body["oss"] = settingsDict()
         // The route since the last report, so viewers animate the corners instead of cutting them.
@@ -757,8 +1023,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // for a claim about the present: the anchor survived while the phone drove six miles and
         // the card read "Here 2h 40m". If this fix is a real distance from the last one we
         // reported, that claim is false, so clear it and let the web layer set it again.
-        if let prev = lastReportedLoc, prev.distance(from: loc) > 60 { body["hereSince"] = NSNull() }
-        lastReportedLoc = loc
+        // "Where we last reported from" is an ANCHOR: it only advances once the phone has really
+        // moved, so a slow walk of 50-metre fixes still counts as leaving instead of every fix
+        // being "only 50 m from the last one" forever. A fresh process starts from the persisted
+        // record rather than from an empty memory.
+        if lastReportedLoc == nil { lastReportedLoc = persistedLastFixLocation() }
+        let moved = lastReportedLoc.map { $0.distance(from: loc) > 60 } ?? false
+        if moved { body["hereSince"] = NSNull() }
+        if moved || lastReportedLoc == nil { lastReportedLoc = loc }
         // Everything else the web layer writes that is a CLAIM ABOUT THE PRESENT rather than a
         // setting. This is a PATCH, so anything not named here survives untouched -- which is
         // right for a chosen colour or a privacy flag, and wrong for an assertion that this
@@ -769,7 +1041,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // Audited 2026-10-05 after three separate bugs of exactly this shape: a route two miles
         // from the position carrying it, a noGps flag hiding a phone that was reporting, and a
         // "Here 2h 40m" that outlived a six mile drive.
-        body["rest"] = NSNull()          // parked flag
+        if moved { body["rest"] = NSNull() }   // parked flag: only false once we have actually moved
         body["claiming"] = NSNull()      // startup placeholder
         body["bgf"] = NSNull()           // background-failure tally
         // Deliberately NOT cleared, because they are settings and not claims:
@@ -782,6 +1054,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             let st = UIDevice.current.batteryState
             body["chg"] = (st == .charging || st == .full) ? 1 : 0
         }
+        // Remember this fix as unsent; the next wake re-sends it if nothing below gets a 2xx.
+        saveLastFix(loc, sent: false, clearHere: body["hereSince"] != nil, fixTs: fixTs)
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return false }
 
         // ── Trail history (2026-08-22) ────────────────────────────────────────────────────
@@ -822,13 +1096,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
         withAuthToken(apiKey: apiKey, rt: (cfg["rt"] as? String) ?? "") { [weak self] token in
             guard let token = token else {
-                // Couldn't authenticate — let the WebView path try instead of dropping the fix.
-                DispatchQueue.main.async { self?.reportFixViaWebView(loc) }
+                // Couldn't authenticate — hand the fix to the WebView path instead of dropping it.
+                DispatchQueue.main.async { self?.writeDone(); self?.reportFixViaWebView(loc); done?(false) }
                 return
             }
             let group = DispatchGroup()
-            // Checked this time. A refused write used to vanish without a trace.
+            // Checked this time. A refused write used to vanish without a trace -- and so did a
+            // timeout or a 5xx, while the fix had already been counted as reported.
             var denied = false
+            var failed = false
             let deniedLock = NSLock()
             for room in rooms {
                 // PATCH, not PUT: merge into the existing row so fields this native path doesn't
@@ -842,7 +1118,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                 group.enter()
                 URLSession.shared.dataTask(with: r) { _, resp, _ in
                     let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    if code == 401 || code == 403 { deniedLock.lock(); denied = true; deniedLock.unlock() }
+                    deniedLock.lock()
+                    if code == 401 || code == 403 { denied = true }
+                    if code < 200 || code >= 300 { failed = true }   // transport error => code 0 => failed
+                    deniedLock.unlock()
                     group.leave()
                 }.resume()
             }
@@ -864,10 +1143,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                     // The database refused this sign-in. Drop it and let the WebView path, which
                     // is signed in as the app itself, deliver the fix rather than losing it.
                     self?.cachedAuthToken = nil
+                    self?.writeDone()
                     self?.reportFixViaWebView(loc)
+                    done?(false)
                     return
                 }
+                if !failed {
+                    // Only now is this fix "reported": every room took it. A failed one stays in
+                    // the persisted record as unsent and the next wakeHeartbeat re-sends it.
+                    self?.lastReportedAt = Date()
+                    self?.markLastFixSent(fixTs: fixTs)
+                }
+                self?.writeDone()
                 self?.endBackgroundTaskIfNeeded()
+                done?(!failed)
             }
         }
         return true
@@ -950,16 +1239,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     private var lastNativeReportAt: Date = .distantPast
     private static let nativeReportMinInterval: TimeInterval = 10
-    private func reportFixInBackground(_ loc: CLLocation, force: Bool = false) {
-        if !force && Date().timeIntervalSince(lastNativeReportAt) < Self.nativeReportMinInterval { return }
+    private func reportFixInBackground(_ loc: CLLocation, force: Bool = false, done: ((Bool) -> Void)? = nil) {
+        if !force && Date().timeIntervalSince(lastNativeReportAt) < Self.nativeReportMinInterval { done?(false); return }
         lastNativeReportAt = Date()
-        lastReportedAt = Date()
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
-            self?.endBackgroundTaskIfNeeded()
-        }
+        // lastReportedAt is NOT stamped here any more: it now means "a write was confirmed" and
+        // is set on HTTP success in writeFixNatively / wakeHeartbeat. Stamping it before a byte
+        // went out is how a lost fix passed for a delivered one.
+        beginWriteTask()
         // Native REST first — no page load, no SDK, nothing to time out.
-        if writeFixNatively(loc) { return }
+        if writeFixNatively(loc, done: done) { return }
+        writeDone()
         reportFixViaWebView(loc)
+        done?(false)
     }
 
     private func reportFixViaWebView(_ loc: CLLocation) {
@@ -1056,10 +1347,77 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         endBackgroundTaskIfNeeded()
     }
 
+    /// One background-task assertion shared by every write in flight. The old code began a NEW
+    /// task on every report and overwrote the identifier, so an overlapping report (a region exit
+    /// landing while a PATCH was still out) leaked the earlier task unended -- the kind of
+    /// assertion iOS kills an app for. Balanced: every beginWriteTask() has exactly one writeDone().
+    /// Main queue only.
+    private func beginWriteTask() {
+        inflightWrites += 1
+        guard bgTask == .invalid else { return }
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "GLLocationFix") { [weak self] in
+            // iOS is about to end it for us: end it cleanly now. Writes still in flight finish or
+            // time out on their own and drain the counter; the next one begins a fresh task.
+            self?.endWriteTaskNow()
+        }
+        let id = bgTask
+        // Hard ceiling inside the ~30 s iOS grants: never hold the assertion on a hung request.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 28) { [weak self] in
+            guard let self = self, self.bgTask == id else { return }
+            self.endWriteTaskNow()
+        }
+    }
+
+    /// One write finished (success or failure). Main queue only.
+    private func writeDone() { inflightWrites = max(0, inflightWrites - 1) }
+
+    /// End the shared assertion once nothing is in flight. The WebView fallback path calls this
+    /// from its own timers; while a native write is still out it is a no-op and the native
+    /// completion ends the task instead.
     private func endBackgroundTaskIfNeeded() {
-        if bgTask != .invalid {
-            UIApplication.shared.endBackgroundTask(bgTask)
-            bgTask = .invalid
+        guard inflightWrites == 0 else { return }
+        endWriteTaskNow()
+    }
+
+    /// End the assertion regardless of the counter: iOS is expiring it, or the ceiling was hit.
+    private func endWriteTaskNow() {
+        guard bgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTask)
+        bgTask = .invalid
+    }
+
+    // MARK: - Background App Refresh (BGTaskScheduler)
+    // Info.plist has declared the `fetch` background mode for years with nothing behind it: no
+    // register, no request, no permitted identifier. This is what the mode is for. The identifier
+    // must be listed under BGTaskSchedulerPermittedIdentifiers or submit() throws .notPermitted.
+    // `processing` is only for BGProcessingTask and is NOT required.
+    private func registerBgRefresh() {
+        _ = BGTaskScheduler.shared.register(forTaskWithIdentifier: AppDelegate.bgRefreshId, using: DispatchQueue.main) { [weak self] task in
+            guard let self = self, let refresh = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
+            self.handleBgRefresh(refresh)
+        }
+    }
+
+    /// One-shot by design: re-armed on every background entry and inside the handler itself.
+    /// iOS decides the real cadence (Background App Refresh on, not Low Power Mode, app usage) --
+    /// expect a few runs a day at best, clustered before the phone's usual pickup time, none
+    /// after a force-quit. Cheap insurance, never a schedule.
+    private func scheduleBgRefresh() {
+        let req = BGAppRefreshTaskRequest(identifier: AppDelegate.bgRefreshId)
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        do { try BGTaskScheduler.shared.submit(req) } catch { /* not permitted / refresh off: nothing to do */ }
+    }
+
+    private func handleBgRefresh(_ task: BGAppRefreshTask) {
+        scheduleBgRefresh()
+        var finished = false
+        let complete: (Bool) -> Void = { ok in if !finished { finished = true; task.setTaskCompleted(success: ok) } }
+        task.expirationHandler = { complete(false) }
+        // A position from THIS process is a real fix; otherwise a heartbeat from the persisted one.
+        if let loc = bgLocationManager?.location, !isLeftover(loc) {
+            wakeHeartbeat(reason: "bgr", fix: loc, done: complete)
+        } else {
+            wakeHeartbeat(reason: "bgr", done: complete)
         }
     }
 
