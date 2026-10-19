@@ -5096,7 +5096,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 954;
+var APP_BUILD = 955;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5763,6 +5763,15 @@ function _setGroupBadge(el, extraCount) {
 }
 // Reset a marker to its normal solo look (plain circle, its own initials) — used both for
 // markers that were never grouped and ones that just split back apart.
+// Grey means "we cannot see this person right now", nothing weaker. A parked phone is a
+// phone we CAN see -- it just is not moving -- so it keeps its colour. Alert states keep
+// theirs too, because this filter hits the ring as well and would mute the warning.
+// Falls back to the old live/not-live rule for a marker created before _tone exists
+// (your own dot, set in onGpsFix).
+window._mkTone = function (m) {
+  try { return (m && m._tone) || (m && m._isLive ? 'live' : 'gone'); } catch (e) { return 'gone'; }
+};
+window._mkIsGrey = function (m) { return window._mkTone(m) === 'gone'; };
 function _applyMarkerSolo(mk) {
   var el = mk && mk._el; if (!el) return;
   // Coming out of a merge: the oval was drawn at the group's centroid, so put this marker back
@@ -5790,7 +5799,7 @@ function _applyMarkerSolo(mk) {
   // stories depending on how far out the map happened to be, which is how it got reported:
   // "why is this flashing red, and zoomed out it was completely greyed."
   // Greyscale is the cue that survives bright sun, where a thin ring does not.
-  try { el.style.filter = mk._isLive ? '' : 'grayscale(1) brightness(.78)'; } catch (e) {}
+  try { el.style.filter = window._mkIsGrey(mk) ? 'grayscale(1) brightness(.78)' : ''; } catch (e) {}
   el.style.opacity = mk._soloOpacity || '1';   // drop any fade inherited from a merged oval
   var initEl = el.querySelector('.mk-initials');
   if (initEl) {
@@ -5868,7 +5877,7 @@ function _applyMarkerMerged(primary, members) {
     var _sig = shown.join(',') + '|' + labels.map(function (l) { return l.txt + (l.sub || ''); }).join(',')
              + '|' + shown.map(function (u) {
                  var m = userMarkers[u];
-                 return (m && m._isLive ? '1' : '0') + ((m && m._fillColor) || '');
+                 return window._mkTone(m) + ((m && m._fillColor) || '');
                }).join(',');
     var _cellsUnchanged = (el.__cellSig === _sig && initEl.children.length === shown.length);
     el.__cellSig = _sig;
@@ -5886,11 +5895,11 @@ function _applyMarkerMerged(primary, members) {
       try { ava = window._avatarSrc(u) || ''; } catch (e) {}
       // Each half carries its OWN status: a person who has stopped reporting greys out without
       // dragging the people beside them down with it.
-      var liveU = !!(m && m._isLive);
-      // .65 is the same fade a stale dot gets standing alone, so a person looks equally
-      // faded whether or not someone is beside them. Greyscale is the extra cue.
-      var dim = liveU ? '' : 'filter:grayscale(1) brightness(.78);';
-      var cellCls = 'mk-cell ' + (liveU ? 'live' : 'stale');
+      // Each half carries its own tone, so one person going quiet never drags the faces
+      // beside them down with it (and a parked neighbour is not greyed for standing still).
+      var toneU = window._mkTone(m);
+      var dim = (toneU === 'gone') ? 'filter:grayscale(1) brightness(.78);' : '';
+      var cellCls = 'mk-cell ' + toneU;
       if (ava) {
         return '<span class="' + cellCls + '" style="flex:1;height:100%;' + dim + 'background-color:' + col +
           ';background-image:url(&quot;' + ava +
@@ -8744,8 +8753,15 @@ window._ringCss = (function () {
       '.mk-cell{position:relative}' +
       '.mk-cell::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px}' +
       '.mk-cell.live::after{background:#00e676;animation:glCellLive 2.6s ease-in-out infinite}' +
+      // Parked is CALM: teal, and still, because a pulsing stripe reads as "look at me".
+      '.mk-cell.parked::after{background:#2ec4b6}' +
+      // Only a real problem pulses amber.
+      '.mk-cell.alert::after{background:#FF9F0A;animation:glCellStale 2.6s ease-in-out infinite}' +
+      '.mk-cell.gone::after{background:#8b949e}' +
+      // Kept so an oval rendered before this build (or by any path that still passes the old
+      // class) does not lose its stripe entirely.
       '.mk-cell.stale::after{background:#FF9F0A;animation:glCellStale 2.6s ease-in-out infinite}' +
-      '@media (prefers-reduced-motion:reduce){.mk-cell.live::after,.mk-cell.stale::after{animation:none;opacity:1}}' +
+      '@media (prefers-reduced-motion:reduce){.mk-cell.live::after,.mk-cell.alert::after,.mk-cell.stale::after{animation:none;opacity:1}}' +
       '.mk-ring-live{animation:glRingLive 2.6s ease-in-out infinite}' +
       '.mk-ring-stale{animation:glRingStale 2.6s ease-in-out infinite}' +
       // A ring that cannot move still has to say the same thing, so it keeps a solid halo.
@@ -19482,6 +19498,12 @@ function listenUsers() {
       // Your own dot uses YOUR chosen color everywhere now, including on your own device —
       // no more hardcoded gold. Border stays status-based (live/resting/stale) for everyone,
       // including yourself, so it's consistent rather than a special case just for "you".
+      // Which of the four tones this marker wears. Set from the presence judgement (944), not
+      // from the four-minute live window -- see the note at _applyMarkerSolo's filter line.
+      const _tone = (_pres.key === 'live') ? 'live'
+                  : (_pres.key === 'parked') ? 'parked'
+                  : (_pres.key === 'check' || _pres.key === 'lost') ? 'alert'
+                  : 'gone';
       let fillColor   = _autoColors[uid] || (isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid)));
       // Everyone in a room gets a DISTINGUISHABLE color. Two devices on one account sync the
       // same chosen color (data.color rides the shared profile), so a phone + tablet rendered
@@ -19828,6 +19850,7 @@ function listenUsers() {
         } catch (e) {}
         userMarkers[uid]._ll = [data.lng, data.lat];
         userMarkers[uid]._isLive = isLive;
+        userMarkers[uid]._tone = _tone;
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._ts = data.fixTs || data.ts || 0;   // WHEN that position was taken — see the merge slack
         userMarkers[uid]._acc = +data.accuracy || 0;        // HOW precisely — see the merge slack
