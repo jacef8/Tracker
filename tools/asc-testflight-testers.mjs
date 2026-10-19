@@ -26,7 +26,7 @@ const mode = (process.argv[2] || 'list').toLowerCase();
 const inviteAll = process.argv.includes('--all');
 // Positional arg for diagnose/addgroup: the tester's email.
 const argEmail = (process.argv[3] || '').trim().toLowerCase();
-if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'groups', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add', 'submitversion'].includes(mode)) {
+if (!['list', 'invite', 'diagnose', 'addgroup', 'builds', 'groups', 'internal', 'assignbuild', 'appstore', 'listing', 'publiclink', 'verify', 'add', 'submitversion'].includes(mode)) {
   console.error('usage: asc-testflight-testers.mjs [verify|list|invite|diagnose|addgroup|builds|assignbuild|appstore|listing|publiclink] [email] [--all|--enable]');
   process.exit(2);
 }
@@ -249,6 +249,66 @@ if (mode === 'add') {
   console.log(attach.ok ? '+ attached — invitation on its way'
     : `! attach FAILED (HTTP ${attach.status}): ${attach.json?.errors?.map(e => e.detail || e.title).join('; ') || attach.text.slice(0, 200)}`);
   process.exit(attach.ok ? 0 : 1);
+}
+
+// ── internal ──────────────────────────────────────────────────────────────────────────
+// Make someone an INTERNAL tester: they get every build the minute it finishes processing,
+// with no Beta App Review in the way. Apple only allows App Store Connect USERS in internal
+// groups, so this is two steps:
+//   1. invite them as a user (role DEVELOPER, this app only) -- Apple emails the invitation;
+//   2. once they have accepted, add them to the internal group. Re-running this mode after
+//      acceptance does step 2; before acceptance it reports "invitation pending" and stops.
+// The second argument is the email; the name is read from INTERNAL_NAME ("First Last").
+if (mode === 'internal') {
+  if (!argEmail) { console.error('internal needs an email'); process.exit(2); }
+  const nm = (process.env.INTERNAL_NAME || '').trim().split(/\s+/);
+  const first = nm[0] || 'Tester', last = nm.slice(1).join(' ') || '-';
+
+  const groupsRes = await asc('GET', `/apps/${app.id}/betaGroups?limit=200`);
+  const internal = (groupsRes.json?.data || []).find(g => g.attributes?.isInternalGroup);
+  if (!internal) { console.error('No internal beta group exists.'); process.exit(1); }
+
+  // Already a user?
+  const users = await asc('GET', `/users?filter[username]=${encodeURIComponent(argEmail)}&limit=5`);
+  if (!users.ok) { console.error(`! could not list users (HTTP ${users.status}): ${users.text.slice(0, 300)}`); process.exit(1); }
+  const user = (users.json?.data || [])[0];
+
+  if (!user) {
+    const pend = await asc('GET', `/userInvitations?filter[email]=${encodeURIComponent(argEmail)}&limit=5`);
+    if ((pend.json?.data || []).length) {
+      console.log(`= invitation already pending for ${argEmail} -- waiting for her to accept the email from Apple, then re-run.`);
+      process.exit(0);
+    }
+    const inv = await asc('POST', '/userInvitations', {
+      data: {
+        type: 'userInvitations',
+        attributes: { email: argEmail, firstName: first, lastName: last, roles: ['DEVELOPER'],
+                      allAppsVisible: false, provisioningAllowed: false },
+        relationships: { visibleApps: { data: [{ type: 'apps', id: app.id }] } },
+      },
+    });
+    if (!inv.ok) {
+      console.error(`! invite FAILED (HTTP ${inv.status}): ${inv.json?.errors?.map(e => e.detail || e.title).join('; ') || inv.text.slice(0, 300)}`);
+      process.exit(1);
+    }
+    console.log(`+ invited ${first} ${last} <${argEmail}> as an App Store Connect user (Developer, this app only).`);
+    console.log('  Apple is emailing her now. Once she accepts, re-run this mode to add her to the internal group.');
+    process.exit(0);
+  }
+
+  // A user: put her in the internal group (as a beta tester under the same email).
+  let bt = (await asc('GET', `/betaTesters?filter[email]=${encodeURIComponent(argEmail)}&filter[apps]=${app.id}&limit=5`)).json?.data?.[0];
+  if (!bt) {
+    const c = await asc('POST', '/betaTesters', { data: { type: 'betaTesters', attributes: { email: argEmail, firstName: first, lastName: last },
+      relationships: { betaGroups: { data: [{ type: 'betaGroups', id: internal.id }] } } } });
+    console.log(c.ok ? `+ ${argEmail} added to internal group "${internal.attributes?.name}"`
+      : `! add FAILED (HTTP ${c.status}): ${c.json?.errors?.map(e => e.detail || e.title).join('; ') || c.text.slice(0, 300)}`);
+    process.exit(c.ok ? 0 : 1);
+  }
+  const at = await asc('POST', `/betaGroups/${internal.id}/relationships/betaTesters`, { data: [{ type: 'betaTesters', id: bt.id }] });
+  console.log(at.ok ? `+ ${argEmail} added to internal group "${internal.attributes?.name}" -- she gets every build immediately now`
+    : `! attach FAILED (HTTP ${at.status}): ${at.json?.errors?.map(e => e.detail || e.title).join('; ') || at.text.slice(0, 300)}`);
+  process.exit(at.ok ? 0 : 1);
 }
 
 // ── publiclink ────────────────────────────────────────────────────────────────────────
