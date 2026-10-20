@@ -3,9 +3,9 @@
 import { readFileSync } from 'node:fs';
 import admin from 'firebase-admin';
 admin.initializeApp({
-  credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
+  credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',
 });
-await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-955' });
+await admin.database().ref('_forceReload').set({ ts: Date.now(), by: 'build-956' });
 console.log('force reload sent');
 process.exit(0);

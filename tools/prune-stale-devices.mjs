@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import admin from 'firebase-admin';
 
-const KEY  = 'C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const KEY  = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
 const ROOM = 'our_crew';
 const MIN_STALE_MIN = 30;
 

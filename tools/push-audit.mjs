@@ -3,7 +3,7 @@
 // that exact key. If nobody registered under the id the row carries, the push silently no-ops.
 import { readFileSync } from 'node:fs';
 import admin from 'firebase-admin';
-const KEY = 'C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const KEY = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(readFileSync(KEY, 'utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',

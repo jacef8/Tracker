@@ -17,7 +17,7 @@ import admin from 'firebase-admin';
 
 const apply = process.argv.includes('--apply');
 admin.initializeApp({
-  credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Downloads/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
+  credential: admin.credential.cert(JSON.parse(readFileSync('C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json','utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',
 });
 const db = admin.database();

@@ -558,6 +558,43 @@ async function shareWatchPass(room, users) {
   }
 }
 
+// uid -> last authorization string we saw, so a change is detected without re-reading.
+const authSeen = new Map();
+
+function _authWord(oss) {
+  if (!oss || !oss.iosVer) return '';                 // Android/PC: no such setting
+  if (oss.locDenied) return 'denied';
+  if (oss.locAlways) return 'always';
+  if (oss.locWhenInUse) return 'whenInUse';
+  return 'none';
+}
+
+async function authWatchPass(room, users) {
+  for (const [uid, u] of Object.entries(users || {})) {
+    const word = _authWord(u && u.oss);
+    if (!word) continue;
+    const path = 'gl/_authLog/' + uid;
+    let prev = authSeen.get(uid);
+    if (prev === undefined) {
+      // First sighting this process: read the stored value so a restart does not log a
+      // phantom change (the exact failure mode of the in-app counter).
+      try { const rec = await _dbGet(path + '/now'); prev = rec || null; } catch (e) { prev = null; }
+    }
+    if (prev === word) continue;
+    authSeen.set(uid, word);
+    const at = Date.now();
+    try {
+      await adminDb.ref(path).update({ now: word, at: at, name: (u.name || ''), ios: u.oss.iosVer || '' });
+      // The history is what answers "how often, and when". Keyed by time so it sorts itself.
+      await adminDb.ref(path + '/log/' + at).set({
+        from: prev || '?', to: word, ios: u.oss.iosVer || '', bgRefresh: !!u.oss.bgRefresh,
+        lowPower: !!u.oss.lowPower, precise: !!u.oss.precise, batt: (u.oss.batt ?? null), room: room,
+      });
+      console.log('auth-watch: ' + (u.name || uid.slice(0, 8)) + ' ' + (prev || '?') + ' -> ' + word);
+    } catch (e) {}
+  }
+}
+
 async function keepAliveSweep() {
   if (!fcmAdmin || !adminDb) return;
   let rooms;
@@ -577,6 +614,7 @@ async function keepAliveSweep() {
     if (!cfg || !cfg.circle) continue;
     try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { continue; }
     try { await shareWatchPass(room, users); } catch (e) {}
+    try { await authWatchPass(room, users); } catch (e) {}
     for (const [uid, u] of Object.entries(users || {})) {
       if (!u || !u.name) continue;
       if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
