@@ -5096,7 +5096,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 955;
+var APP_BUILD = 956;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -19498,12 +19498,6 @@ function listenUsers() {
       // Your own dot uses YOUR chosen color everywhere now, including on your own device —
       // no more hardcoded gold. Border stays status-based (live/resting/stale) for everyone,
       // including yourself, so it's consistent rather than a special case just for "you".
-      // Which of the four tones this marker wears. Set from the presence judgement (944), not
-      // from the four-minute live window -- see the note at _applyMarkerSolo's filter line.
-      const _tone = (_pres.key === 'live') ? 'live'
-                  : (_pres.key === 'parked') ? 'parked'
-                  : (_pres.key === 'check' || _pres.key === 'lost') ? 'alert'
-                  : 'gone';
       let fillColor   = _autoColors[uid] || (isMine ? (window._myColor || userColor(userId)) : (_getUserColorOverride(uid) || data.color || userColor(uid)));
       // Everyone in a room gets a DISTINGUISHABLE color. Two devices on one account sync the
       // same chosen color (data.color rides the shared profile), so a phone + tablet rendered
@@ -19524,6 +19518,15 @@ function listenUsers() {
       // `isLive || isResting` was reaching for, except it also stays calm for a phone that has
       // been parked for three hours and goes amber for one whose owner needs to check it.
       const _pres = window._presenceOf(uid, data);
+      // Which of the four tones this marker wears (see _applyMarkerSolo's filter line). It has
+      // to live HERE, after _pres: 955 declared it 23 lines earlier, next to fillColor, where
+      // reading _pres hit the temporal dead zone and threw on the first row of every snapshot
+      // -- so no marker and no People row rendered at all. `const` has no hoisted value, and a
+      // syntax check cannot see it; only running the render path does.
+      const _tone = (_pres.key === 'live') ? 'live'
+                  : (_pres.key === 'parked') ? 'parked'
+                  : (_pres.key === 'check' || _pres.key === 'lost') ? 'alert'
+                  : 'gone';
       const borderColor = _pres.calm ? '#00e676' : '#E0A05A';
       const ringClass   = isLive ? 'mk-ring-live' : _pres.calm ? '' : 'mk-ring-stale';
       // Someone else's hunt mode, straight off their own published expiry.
