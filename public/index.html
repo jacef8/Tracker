@@ -4936,6 +4936,16 @@
       <span style="color:var(--muted);font-size:18px;padding:0 1px">›</span>
     </div>
     </div>
+    <!-- ACCOUNT. Last, under its own heading: everything above is a preference you can flip
+         back; this one ends the session and needs signing in again on a phone keyboard. -->
+    <div id="set-account-group" style="display:none">
+      <div class="section-title" style="margin:14px 0 7px">Account</div>
+      <div id="set-account-who" style="font-size:11px;color:var(--muted);margin:0 2px 8px"></div>
+      <div id="set-signout-row" onclick="window._settingsSignOut()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+        <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--danger);flex-shrink:0"><use href="#ic-x"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Sign out</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Signs this device out of your account. Your crews stay where they are; you will need to sign in again to see them.</div></div></div>
+        <span style="color:var(--muted);font-size:18px;padding:0 1px">&rsaquo;</span>
+      </div>
+    </div>
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.7">
       <div>Screen stays awake automatically while tracking.</div>
       <div>GroundLink &middot; <a href="/privacy.html" style="color:var(--accent);text-decoration:none">Privacy Policy</a></div>
@@ -5096,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 956;
+var APP_BUILD = 957;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -10293,7 +10303,7 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
-function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); }
+function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); try { window._syncSettingsAccountRow(); } catch (e) {} }
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
@@ -10978,6 +10988,34 @@ window._loadHomeShot = function () {
 //
 // So daylight is opt-in again while it gets a proper pass. Anyone who has already chosen
 // 'day' keeps it -- this only changes what happens when nothing was ever chosen.
+// Sign out from inside the app. The entry screen's button has always existed; this is the
+// same call, reachable without leaving the map first. Confirmed because a mis-tap costs a
+// sign-in on a phone, and the row only appears for a real signed-in account.
+window._settingsSignOut = function () {
+  try {
+    var cu = null;
+    try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+    var who = (cu && !cu.isAnonymous && (cu.email || cu.displayName)) || '';
+    var msg = who ? ('Sign out of ' + who + '?') : 'Sign out of this account?';
+    if (!window.confirm(msg + '\n\nYour crews and pins stay where they are. You will need to sign in again on this device to see them.')) return;
+    if (window.GLAuth && window.GLAuth.signOutUser) window.GLAuth.signOutUser();
+    else if (typeof toast === 'function') toast('Still loading — try again in a second', 2400);
+  } catch (e) {}
+};
+// Shown only for a real account: a device that was never signed in has nothing to sign out
+// of, and offering it there would just raise a question it cannot answer.
+window._syncSettingsAccountRow = function () {
+  try {
+    var g = document.getElementById('set-account-group');
+    if (!g) return;
+    var cu = null;
+    try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
+    var on = !!(cu && !cu.isAnonymous);
+    g.style.display = on ? 'block' : 'none';
+    var w = document.getElementById('set-account-who');
+    if (w && on) w.textContent = 'Signed in as ' + (cu.email || cu.displayName || 'your account');
+  } catch (e) {}
+};
 window._dayPref = function () {
   try { return localStorage.getItem('gl_daylight') || 'night'; } catch (e) { return 'night'; }
 };
