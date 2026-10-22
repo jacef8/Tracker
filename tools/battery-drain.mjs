@@ -8,7 +8,7 @@
 import admin from 'firebase-admin';
 import fs from 'fs';
 
-const SA = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const SA = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-1f0441c5d4.json';
 admin.initializeApp({ credential: admin.credential.cert(JSON.parse(fs.readFileSync(SA, 'utf8'))), databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com' });
 const db = admin.database();
 

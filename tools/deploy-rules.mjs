@@ -6,7 +6,7 @@ import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
 
-const SA = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const SA = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-1f0441c5d4.json';
 const DB = 'https://tracker-58b87-default-rtdb.firebaseio.com';
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 

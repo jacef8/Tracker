@@ -2,7 +2,7 @@
 // full send path and report the verdict WITHOUT delivering anything — nobody's phone buzzes.
 import { readFileSync } from 'node:fs';
 import admin from 'firebase-admin';
-const KEY = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const KEY = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-1f0441c5d4.json';
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(readFileSync(KEY, 'utf8'))),
   databaseURL: 'https://tracker-58b87-default-rtdb.firebaseio.com',

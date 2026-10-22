@@ -22,7 +22,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import admin from 'firebase-admin';
 
-const KEY = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-b52a441649.json';
+const KEY = 'C:/Users/jford/Documents/GroundLink/.keys/tracker-58b87-firebase-adminsdk-fbsvc-1f0441c5d4.json';
 const SKIP_RECENT_MIN = 30;
 // Rows that are not a real person and should go regardless of age.
 const JUNK_NAMES = [/^test$/i, /^testing$/i, /^demo$/i];
