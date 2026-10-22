@@ -1192,6 +1192,35 @@ app.get('/version', function(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.send(CURRENT_VERSION);
 });
+
+// Is the server actually able to reach Firebase, and is push alive?
+//
+// FIREBASE_SERVICE_ACCOUNT is parsed inside a try/catch that only warns (see the FCM block
+// above). A malformed value -- a mangled newline in the private key, a truncated paste, a
+// rotation that did not survive the trip through a dashboard -- leaves the server running
+// and silently kills EVERYTHING server-side: the keep-alive sweep, the wake pushes, the
+// share-watch alerts, the auth log, the prune. Nothing outside the logs would say so, and
+// the family would simply start going dark again with no explanation.
+//
+// Written during the 2026-10-21 Railway credential rotation, where the new key had to be
+// pasted in blind (Railway returns variable values redacted) and there was no way to tell
+// from outside whether it had taken. Public on purpose: it exposes no secret, only whether
+// the pieces initialised, so it can be curled from anywhere right after a deploy.
+app.get('/health', function (req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    version: CURRENT_VERSION,
+    firebaseAdmin: !!fcmAdmin,            // service account parsed and initialised
+    database: !!adminDb,                  // admin DB handle (server-side reads/writes)
+    webPush: !!pushReady,                 // VAPID pair present and valid
+    apns: !!(process.env.APNS_KEY_P8 && process.env.APNS_KEY_ID && process.env.APNS_TEAM_ID),
+    keyId: (function () {                 // WHICH key, so a rotation can be confirmed
+      try { return (JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}').private_key_id || '').slice(0, 8); }
+      catch (e) { return 'UNPARSEABLE'; }
+    })(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+});
 // /join — always shows join screen regardless of saved session
 // Parcel lookup proxy — avoids CORS block on ArcGIS from browser
 // Parcel lookup — returns a URL to Liberty County's public property search
