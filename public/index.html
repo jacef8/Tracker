@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 957;
+var APP_BUILD = 958;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12651,8 +12651,16 @@ window._renderHomeAnchor = function () {
     var lab = document.getElementById('ha-label');
     // A huge 0 over an empty ring is accurate and useless. When nobody is live, say what IS
     // true -- how many people are in reach at all -- so the screen still answers something.
+    var nCrews = Object.keys(circles).length;
+    // Has the per-crew people list actually come back? A crew with a key in `detail` has been
+    // answered for (even if the answer was nobody); a crew with no key has not been answered
+    // yet. Counting zeros cannot tell those apart, which is the whole bug.
+    var answered = Object.keys(circles).filter(function (k) { return detail[k]; }).length;
     if (lab) {
-      lab.textContent = !total ? 'no crews yet'
+      lab.textContent =
+        !nCrews ? 'no crews yet'
+        : answered < nCrews ? (nCrews + (nCrews === 1 ? ' crew · checking…' : ' crews · checking…'))
+        : !total ? (nCrews + (nCrews === 1 ? ' crew · nobody in it yet' : ' crews · nobody in them yet'))
         : (live ? (live === 1 ? 'person sharing now' : 'people sharing now')
                 : (total + (total === 1 ? ' person · nobody sharing' : ' people · nobody sharing')));
     }
@@ -12667,7 +12675,8 @@ window._renderHomeAnchor = function () {
           '<span class="nm">' + _escHtml(r.name) + '</span>' +
           '<span class="ct">' + r.on + '/' + r.n + '</span>' +
         '</button>';
-      }).join('') || '<div style="text-align:center;color:var(--muted);font-size:12.5px;padding:6px 2px">No crews yet — start one below.</div>';
+      }).join('') || ('<div style="text-align:center;color:var(--muted);font-size:12.5px;padding:6px 2px">' +
+        (nCrews ? 'Loading your crews…' : 'No crews yet — start one below.') + '</div>');
     }
   } catch (e) {}
 };
