@@ -22,12 +22,21 @@ const db = admin.database();
 const now = Date.now();
 const DAYS = (ms) => (ms > 0 ? (ms / 86400000).toFixed(1) + 'd ago' : '?');
 const et = (ts) => new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' });
+// Sign in with Apple hands out an opaque @privaterelay.appleid.com address, so a known person
+// behind one can never be recognised by their email. These are listed by uid instead.
+//   KF7EaRAs… = Allie Roberts (relay address, member of friendssss + the_best_gra)
+const KNOWN_UID = new Set(['KF7EaRAsQgVzzjn2Yw7jsG5JuMz2']);
 const findings = [];
 const flag = (sev, what) => { findings.push({ sev, what }); console.log(`  ${sev === 'HIGH' ? '!!' : sev === 'MED' ? '! ' : '. '} ${what}`); };
 
 // The people who are supposed to be here. Anything outside this is worth a look, which is the
 // point -- not an accusation, a shortlist.
-const KNOWN_EMAIL = /@(gtcom\.net|libertyclerk\.com)$|^(jaceford08|lgford113|lexiford713|jaredroberts10|rennergaderoberts|alliecatroberts10|stepheniefroberts|tyler\.stoutamire|dalynnsmith1|presleyford6|kelleyf0530|justinfordei|tessabyler9|pagewahlquist|adamonealwalker|rudddeee|jared)@/i;
+// groundlinkapp@gmail.com is the project's own owner account -- it holds Owner on the
+// GroundLink Google Cloud project and exists in Firebase Auth from the Oct 6 2026 setup
+// (signed in once, at creation). Confirmed intentional by Jace 2026-10-23. Without it here
+// this audit raises a HIGH "unrecognised account" on every single run, which is how a real
+// finding gets lost in noise.
+const KNOWN_EMAIL = /@(gtcom\.net|libertyclerk\.com)$|^(groundlinkapp|jaceford08|lgford113|lexiford713|jaredroberts10|rennergaderoberts|alliecatroberts10|stepheniefroberts|tyler\.stoutamire|dalynnsmith1|presleyford6|kelleyf0530|justinfordei|tessabyler9|noahbyler9|pagewahlquist|adamonealwalker|rudddee|jared)@/i;
 
 console.log('GroundLink security audit —', et(now));
 console.log('Project: tracker-58b87\n');
@@ -39,14 +48,7 @@ do { const r = await admin.auth().listUsers(1000, tok); users = users.concat(r.u
 const anon = users.filter((u) => u.providerData.length === 0);
 const named = users.filter((u) => u.providerData.length > 0);
 console.log(`  ${users.length} total — ${named.length} signed-in accounts, ${anon.length} anonymous device sessions`);
-for (const u of named.sort((a, b) => new Date(b.metadata.creationTime) - new Date(a.metadata.creationTime))) {
-  const email = u.email || u.providerData[0]?.email || '(no email)';
-  const age = now - new Date(u.metadata.creationTime).getTime();
-  const line = `${email}  via ${u.providerData.map((p) => p.providerId).join(',')}  created ${DAYS(age)}  last sign-in ${u.metadata.lastSignInTime ? DAYS(now - new Date(u.metadata.lastSignInTime).getTime()) : 'never'}`;
-  if (!KNOWN_EMAIL.test(email)) flag('HIGH', 'UNRECOGNISED ACCOUNT: ' + line);
-  else if (age < 7 * 86400000) flag('LOW', 'recently created (expected? ) ' + line);
-  else console.log('    ok  ' + line);
-}
+// Deferred to section 3b, once crew membership is known -- severity depends on it.
 // A burst of anonymous users is normal here (headless.html used to mint them); a burst since
 // the incident window is still worth seeing.
 const anonRecent = anon.filter((u) => now - new Date(u.metadata.creationTime).getTime() < 3 * 86400000);
@@ -70,6 +72,7 @@ try {
 
 // ── 3. Rooms, admins, membership ────────────────────────────────────────────────────────
 console.log('\nROOMS AND WHO CONTROLS THEM');
+const crewsOf = {};
 const rooms = (await db.ref('gl').get({ shallow: true })).val() || {};
 const roomNames = Object.keys(rooms).filter((k) => !k.startsWith('_'));
 console.log(`  ${roomNames.length} rooms`);
@@ -78,6 +81,7 @@ for (const u of named) acctName[u.uid] = u.email || u.uid.slice(0, 8);
 for (const r of roomNames) {
   const cfg = (await db.ref(`gl/${r}/config`).get()).val() || {};
   const members = (await db.ref(`gl/${r}/members`).get()).val() || {};
+  for (const uid of Object.keys(members)) (crewsOf[uid] = crewsOf[uid] || []).push(r);
   const admins = Object.keys(cfg.admins || {});
   const owner = cfg.owner || '';
   const created = cfg.createdAt ? DAYS(now - cfg.createdAt) : '?';
@@ -87,6 +91,25 @@ for (const r of roomNames) {
   else console.log('    ' + line);
   if (cfg.createdAt && now - cfg.createdAt < 3 * 86400000) flag('LOW', `room created in the last 3 days: ${r} (${et(cfg.createdAt)})`);
 }
+
+// ── 3b. Accounts, ranked by what they can actually see ──────────────────────────────────
+// An account that belongs to no crew sees nobody and appears to nobody, whatever its email --
+// on a family-location app that distinction is the whole point, so it sets the severity. This
+// used to raise 14 identical HIGHs, which is the same as raising none.
+console.log('');
+console.log('ACCOUNTS NOT ON THE KNOWN LIST');
+let unknownInCrew = 0, unknownIdle = 0;
+for (const u of named.sort((a, b) => new Date(b.metadata.creationTime) - new Date(a.metadata.creationTime))) {
+  const email = u.email || u.providerData[0]?.email || '(no email)';
+  if (KNOWN_EMAIL.test(email) || KNOWN_UID.has(u.uid)) continue;
+  const crews = crewsOf[u.uid] || [];
+  const seen = u.metadata.lastSignInTime ? DAYS(now - new Date(u.metadata.lastSignInTime).getTime()) : 'never';
+  const line = `${email}  crews=${crews.join(',') || 'none'}  last sign-in ${seen}`;
+  if (crews.length) { unknownInCrew++; flag('HIGH', `UNKNOWN ACCOUNT INSIDE A CREW: ${line}`); }
+  else { unknownIdle++; flag('LOW', `unknown account, in no crew (sees nobody): ${line}`); }
+}
+console.log(`  ${unknownInCrew} inside a crew, ${unknownIdle} in no crew`);
+if (!unknownInCrew) console.log('  no unexpected account is inside any crew.');
 
 // ── 4. Devices ──────────────────────────────────────────────────────────────────────────
 console.log('\nDEVICES');
@@ -98,9 +121,30 @@ for (const [dev, rec] of Object.entries(devOwner)) {
   (byAcct[a] = byAcct[a] || []).push({ dev, ts: rec.ts || 0 });
 }
 console.log(`  ${Object.keys(devOwner).length} devices mapped to ${Object.keys(byAcct).length} accounts`);
+// Three different things used to come out of here as one HIGH finding, because acctName only
+// indexes SIGNED-IN accounts and everything else fell through as "unknown":
+//
+//   named account      -> fine
+//   anonymous session  -> also fine, and the common case: a phone that never signed in. There
+//                         are ~1760 of these, so flagging them HIGH buried the real signal
+//                         under ten identical alarms on every run.
+//   uid not in Auth     -> THE one worth waking up for. gl/_devOwner is written by the client
+//                         and is forgeable, so a mapping to an account that does not exist is
+//                         either a forged claim on a device or a deleted account still holding
+//                         devices.
+const authUids = new Set(users.map((u) => u.uid));
 for (const [a, list] of Object.entries(byAcct)) {
   const who = acctName[a];
-  if (!who) { flag('HIGH', `DEVICES OWNED BY AN UNKNOWN ACCOUNT ${a.slice(0, 10)} — ${list.length} device(s)`); continue; }
+  if (!who) {
+    if (!authUids.has(a)) {
+      flag('HIGH', `DEVICE MAPPED TO AN ACCOUNT THAT DOES NOT EXIST: ${a.slice(0, 10)} — ${list.length} device(s), claimed ${list.map((d) => et(d.ts)).join('; ')}`);
+    } else {
+      // Anonymous and real. Only interesting if the claim is brand new.
+      const recent = list.filter((d) => now - d.ts < 3 * 86400000);
+      if (recent.length) flag('LOW', `anonymous session ${a.slice(0, 10)} claimed ${recent.length} device(s) in the last 3 days (${recent.map((d) => et(d.ts)).join('; ')})`);
+    }
+    continue;
+  }
   const recent = list.filter((d) => now - d.ts < 3 * 86400000);
   if (recent.length) flag('LOW', `${who}: ${recent.length} device link(s) created in the last 3 days (${recent.map((d) => et(d.ts)).join('; ')})`);
 }
