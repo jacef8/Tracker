@@ -569,10 +569,24 @@ function _authWord(oss) {
   return 'none';
 }
 
-async function authWatchPass(room, users) {
+// Collected across the WHOLE sweep, then judged once per device -- see the note below.
+const authSweep = new Map();   // uid -> { word, u, room, at }
+
+function authWatchCollect(room, users) {
   for (const [uid, u] of Object.entries(users || {})) {
     const word = _authWord(u && u.oss);
     if (!word) continue;
+    // The freshest row wins. oss.at is when the phone last reported its settings; a row in a
+    // crew the person has not opened in a week says nothing about their settings today.
+    const at = (u.oss && u.oss.at) || u.fixTs || u.ts || 0;
+    const cur = authSweep.get(uid);
+    if (!cur || at > cur.at) authSweep.set(uid, { word, u, room, at });
+  }
+}
+
+async function authWatchJudge() {
+  for (const [uid, rec] of authSweep) {
+    const word = rec.word, u = rec.u, room = rec.room;
     const path = 'gl/_authLog/' + uid;
     let prev = authSeen.get(uid);
     if (prev === undefined) {
@@ -589,10 +603,18 @@ async function authWatchPass(room, users) {
       await adminDb.ref(path + '/log/' + at).set({
         from: prev || '?', to: word, ios: u.oss.iosVer || '', bgRefresh: !!u.oss.bgRefresh,
         lowPower: !!u.oss.lowPower, precise: !!u.oss.precise, batt: (u.oss.batt ?? null), room: room,
+        // WHEN the phone actually reported these settings, and how old that was when we read
+        // it. Two writers share this row -- the native layer stamps a LIVE reading, the
+        // WebView rides along a cached one it may have restored from localStorage up to seven
+        // days old -- so a "change" that is really the stale copy landing on top is only
+        // distinguishable by this. J-Rod's 277 logged flips on 2026-10-20..22 are that.
+        ossAt: (u.oss.at || 0),
+        ossAgeSec: (u.oss.at ? Math.round((Date.now() - u.oss.at) / 1000) : -1),
       });
       console.log('auth-watch: ' + (u.name || uid.slice(0, 8)) + ' ' + (prev || '?') + ' -> ' + word);
     } catch (e) {}
   }
+  authSweep.clear();
 }
 
 async function keepAliveSweep() {
@@ -614,7 +636,7 @@ async function keepAliveSweep() {
     if (!cfg || !cfg.circle) continue;
     try { users = await _dbGet('gl/' + room + '/users'); } catch (e) { continue; }
     try { await shareWatchPass(room, users); } catch (e) {}
-    try { await authWatchPass(room, users); } catch (e) {}
+    try { authWatchCollect(room, users); } catch (e) {}
     for (const [uid, u] of Object.entries(users || {})) {
       if (!u || !u.name) continue;
       if (typeof u.lat !== 'number' && typeof u.lng !== 'number') continue;  // never reported at all
@@ -629,6 +651,9 @@ async function keepAliveSweep() {
       targets.set(uid, u.name);
     }
   }
+
+  // Every room has been walked; now decide, once per device, from its freshest row.
+  try { await authWatchJudge(); } catch (e) {}
 
   for (const [uid, name] of targets) {
     wakeLastSent.set(uid, now);   // stamp before sending: a failure should still respect the cooldown
