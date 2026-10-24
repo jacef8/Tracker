@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 963;
+var APP_BUILD = 964;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5492,7 +5492,9 @@ function _writeRun(base, route, endRec, extra) {
   } catch (e) {}
 }
 
-function _animateMarker(marker, toLng, toLat, path) {
+// opts (remote members only -- see the feed call in _processUsersSnapInner): { fixTs, remote }.
+// fixTs is the reporter's own clock on this row; own-dot calls pass nothing and keep the old rule.
+function _animateMarker(marker, toLng, toLat, path, opts) {
   if (!marker) return;
   // A merged oval's POSITION is owned by the grouping pass, which puts it at the centroid of the
   // people in it (845). Animating this same marker to one member's own coordinates fights that:
@@ -5509,6 +5511,10 @@ function _animateMarker(marker, toLng, toLat, path) {
       marker._ll = [toLng, toLat];
       try { if (window._updateTrailTip) window._updateTrailTip(_gu, toLng, toLat); } catch (e) {}
       try { _updateMarkerGrouping(true); } catch (e) {}   // re-centre the oval on the new centroid
+      // This report still counts as an arrival. Without the stamp the viewer gap measured on the
+      // first glide after the oval splits spans the whole merged spell, and the dot crawls out of
+      // it for up to 30 s. Only _lastFixAt: _lastGapMs is the camera's and nothing moved here.
+      marker._lastFixAt = performance.now();
       return;
     }
   } catch (e) {}
@@ -5517,13 +5523,31 @@ function _animateMarker(marker, toLng, toLat, path) {
   if (!cur) { var l = marker.getLngLat(); cur = [l.lng, l.lat]; }
   var fromLng = cur[0], fromLat = cur[1];
   if ((Math.abs(toLng - fromLng) + Math.abs(toLat - fromLat)) > 0.05) {
+    // Stamp the arrival here too, or the glide that follows a teleport measures its gap from
+    // the report BEFORE the jump and inherits all that dead time. _lastGapMs stays as it was.
+    marker._lastFixAt = performance.now();
     marker.setLngLat([toLng, toLat]); marker._curLngLat = [toLng, toLat]; return; // teleport
   }
   // Travel for as long as the gap between fixes actually is, so movement is continuous rather
   // than a fixed sprint followed by a wait. Measured per marker: a phone reporting every second
   // and one reporting every four need different glides, and neither is 1400ms.
   var _nowMs = performance.now();
-  var _gap = marker._lastFixAt ? (_nowMs - marker._lastFixAt) : 1400;
+  // Two clocks can measure that gap. The viewer's -- time since this marker last took a report --
+  // is jittered by the 400 ms render coalescing and inflated by every pause in arrivals: after
+  // the tab was hidden, after a teleport, when a parked member sets off. The first glide after
+  // any of those crawled for up to 30 s. The reporter's own clock is already on the row (fixTs,
+  // against the previous report's fixTs the marker keeps in _ts) and is the rhythm the phone
+  // actually moves at, so consecutive legs paced to it run evenly. Trusted only when it looks
+  // like an interval, and never allowed to make a glide LONGER than the viewer gap would.
+  var _vGap = marker._lastFixAt ? (_nowMs - marker._lastFixAt) : 1400;          // viewer arrival gap (today's rule)
+  var _rGap = (opts && opts.fixTs > 0 && marker._ts > 0) ? (opts.fixTs - marker._ts) : NaN;   // the reporter's own interval
+  var _gap = _vGap;
+  if (isFinite(_rGap) && _rGap > 300 && _rGap < 60000) {
+    // Two writers on one row can produce a fixTs pair that is not an interval (web receive time
+    // against CoreLocation time). An implied speed over 150 mph says so; fall back to the viewer gap.
+    var _mphR = (metersApart(fromLat, fromLng, toLat, toLng) / (_rGap / 1000)) * 2.23694;
+    if (_mphR <= 150) _gap = Math.min(_vGap, _rGap);
+  }
   marker._lastFixAt = _nowMs;
   // A little longer than the observed gap: arriving fractionally late keeps the dot moving
   // through the handover, where arriving early puts a visible stop in it.
@@ -19793,7 +19817,9 @@ function listenUsers() {
         var _rep = (data.fixTs || data.ts || 0) + '@' + data.lng + ',' + data.lat;
         if (!isMine && isLive && userMarkers[uid]._lastRep !== _rep) {
           userMarkers[uid]._lastRep = _rep;
-          _animateMarker(userMarkers[uid], data.lng, data.lat, data.path);
+          // Hand the glide the reporter's own clock. _ts still holds the PREVIOUS report's time
+          // here (it is restamped further down), so the pair is this person's real interval.
+          _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true });
           if (followUid === uid) _followRecenter(data.lng, data.lat);
         }
         // Update appearance
