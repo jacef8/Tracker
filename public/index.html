@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 962;
+var APP_BUILD = 963;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -29545,7 +29545,16 @@ window._closeMemberSheet = function() {
   try { window._msAgeStop(); } catch (e) {}
   var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
   document.body.classList.remove('member-open');
-  try { map.setPadding({ top: 0, left: 0, right: 0, bottom: 0 }); } catch (e) {}
+  // Hand the standing padding back to the chrome in ONE change. Zeroing it here and letting
+  // the next group-follow tick re-assert the toolbar padding was a second visible jump on
+  // close, right after the one the sheet itself caused. _applyChromePadding is the load-time
+  // baseline (it also recomputes the pan-safe min zoom, which the sheet's taller padding had
+  // left stale); it lives inside initMap, so the typeof covers a close before the map exists.
+  // Runs AFTER member-open comes off so #map-controls has its height back when measured.
+  try {
+    if (typeof window._applyChromePadding === 'function') window._applyChromePadding();
+    else map.setPadding(_followPadding());
+  } catch (e) {}
 };
 // ── Consolidation (Stage 2): ONE person sheet, reachable from every entry point ──
 // The rich member sheet above is built per-marker inside listenUsers and only exists for
@@ -29689,6 +29698,29 @@ window._clampVertPad = function (top, bottom, chromeTop, chromeBottom, ch) {
   // the proportional squeeze rather than hand cameraForBounds something it will throw on.
   var sy = budget / (top + bottom);
   return { top: top * sy, bottom: bottom * sy };
+};
+// While the member sheet is open the TRANSFORM padding belongs to the sheet (_sheetPad). The fit
+// adds the marker reserves on top of whatever is standing and never runs the sheet height through
+// _clampVertPad -- that clamp assumes the chrome is the topbar and the toolbar (see the build-950
+// case in tools/followpad.test.mjs), and a 330px sheet is neither. Pure, like _clampVertPad above,
+// so tools/sheetpad.test.mjs can run it on its own. gp: the padding the map is standing on;
+// fp: _followPadding(), used for its sides and as the floor under the top; ch: canvas height in px.
+window._sheetFitPad = function (gp, fp, ch) {
+  gp = gp || {}; fp = fp || {};
+  var RES_T = 30, RES_B = 125;                        // the same reserves _followPadding adds
+  var top = gp.top || 0, bottom = gp.bottom || 0;
+  var spare = (ch || 0) - top - bottom;               // canvas left between topbar and sheet
+  // Keep at least 120px of usable band: shrink the RESERVES, never the sheet, when it is short.
+  var k = spare > 0 ? Math.max(0, Math.min(1, (spare - 120) / (RES_T + RES_B))) : 0;
+  // On a window 700px and wider the sheet is docked at the left and _sheetPad reserves nothing at
+  // the top (the sheet is not under the topbar there), so the top of this fit was the 30px marker
+  // reserve alone: a tall group's northernmost dot landed about 77px from the top, against a 70px
+  // topbar at 1000x800 and a 139px one at 768x1024 -- the build-950 pin-behind-the-topbar defect
+  // back on desktop and tablet. Floor the top at the chrome clearance _followPadding already
+  // measures (the topbar is still showing while the sheet is open; only the toolbar is hidden).
+  // On a phone the sheet pad already starts at topbar+12, so the floor changes nothing there.
+  return { top: Math.max(top + RES_T * k, fp.top || 0), bottom: bottom + RES_B * k,
+           left: Math.max(gp.left || 0, fp.left || 0), right: Math.max(gp.right || 0, fp.right || 0) };
 };
 function _followPadding() {
   var top = 100, bottom = 130; // fallback if the elements are ever missing
@@ -29960,33 +29992,50 @@ function _groupFollowTick(force) {
   // call does two getBoundingClientRect()s. That is ten forced layout flushes a second, on
   // the same thread as the 60fps camera loop. Nothing in the tick changes layout between
   // them, and three independent reads could legitimately disagree.
-  var _pad = _followPadding();
+  //
+  // With the member sheet open, _followPadding cannot see the sheet at all: #map-controls is
+  // display:none under body.member-open, so its 130px fallback stands and the result differs
+  // from the standing _sheetPad by far more than a pixel. The re-assert below then fired the
+  // moment the 5s peek pause lapsed -- tap a parked member, the camera flies to them, ~5s later
+  // the map jerks and slides back out to a group framing fitted UNDER the sheet, and closing the
+  // sheet jerked again. While the sheet is open it owns the transform padding; the fit goes
+  // inside it and nothing here writes setPadding.
+  var _sheetOpen = false; try { _sheetOpen = document.body.classList.contains('member-open'); } catch (e) {}
+  var _pad;
+  if (_sheetOpen) {
+    // The sheet owns the transform padding while it is open: fit inside it, never re-assert.
+    var _standing = null, _canvasH = 0;
+    try { _standing = (typeof map.getPadding === 'function') ? map.getPadding() : null; _canvasH = map.getCanvas().clientHeight; } catch (e) {}
+    _pad = window._sheetFitPad(_standing || _sheetPad(), _followPadding(), _canvasH);
+  } else {
+    _pad = _followPadding();
+    // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
+    // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
+    // Re-assert the chrome padding before fitting — do NOT trust it to still be right.
+    //
+    // Since 477 this tick passes no padding of its own and relies entirely on the transform
+    // padding from map.setPadding(). But that value is persistent GLOBAL state, and several
+    // camera calls overwrite it: the member-sheet fly-to sets {top:0,left:0,right:0,bottom:240}
+    // and _drawSavedTrack's fitBounds sets a flat 60. Opening a member sheet — which is how you
+    // reach someone's trail — therefore left horizontal padding at ZERO, and group-follow then
+    // fitted the group flush to the screen edges with the pins half cut off. Reported on-device
+    // 2026-07-29, immediately after viewing a track.
+    //
+    // Only written when it has actually drifted: setPadding triggers a transform update, and
+    // doing that every second would fight the eased camera.
+    try {
+      var _havePad = (typeof map.getPadding === 'function') ? map.getPadding() : null;
+      var _off = !_havePad || ['top', 'bottom', 'left', 'right'].some(function (k) {
+        return Math.abs((_havePad[k] || 0) - _pad[k]) > 1;
+      });
+      if (_off) map.setPadding(_pad);
+    } catch (e) {}
+  }
   try {
     window._gfDbg = 'cv=' + Math.round(map.getCanvas().clientWidth) + 'x' + Math.round(map.getCanvas().clientHeight)
       + ' pad=' + Math.round(_pad.top) + '/' + Math.round(_pad.bottom) + '/' + Math.round(_pad.left) + '/' + Math.round(_pad.right)
       + ' cur=' + map.getZoom().toFixed(2);
     window._gfDbg += ' n=' + pts.length;
-  } catch (e) {}
-  // Comfortable buffer so edge members aren't clipped by the top bar, the bottom toolbar,
-  // or the screen edge — measured live each tick (see _followPadding) rather than guessed.
-  // Re-assert the chrome padding before fitting — do NOT trust it to still be right.
-  //
-  // Since 477 this tick passes no padding of its own and relies entirely on the transform
-  // padding from map.setPadding(). But that value is persistent GLOBAL state, and several
-  // camera calls overwrite it: the member-sheet fly-to sets {top:0,left:0,right:0,bottom:240}
-  // and _drawSavedTrack's fitBounds sets a flat 60. Opening a member sheet — which is how you
-  // reach someone's trail — therefore left horizontal padding at ZERO, and group-follow then
-  // fitted the group flush to the screen edges with the pins half cut off. Reported on-device
-  // 2026-07-29, immediately after viewing a track.
-  //
-  // Only written when it has actually drifted: setPadding triggers a transform update, and
-  // doing that every second would fight the eased camera.
-  try {
-    var _havePad = (typeof map.getPadding === 'function') ? map.getPadding() : null;
-    var _off = !_havePad || ['top', 'bottom', 'left', 'right'].some(function (k) {
-      return Math.abs((_havePad[k] || 0) - _pad[k]) > 1;
-    });
-    if (_off) map.setPadding(_pad);
   } catch (e) {}
   // cameraForBounds is gone. Once _zoomForBounds computed the fit directly, the only thing
   // still taken from it was cam.center -- and because the chrome padding is already on the map
