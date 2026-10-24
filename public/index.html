@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 964;
+var APP_BUILD = 965;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -17201,6 +17201,17 @@ const LIVE_MAX_ACC_M = 150;           // a fix this bad noticeably drifts the pi
 const LIVE_HOLD_MAX_MS = 3 * 60 * 1000; // never hold longer than this — a chronically bad-GPS
                                          // device should still drift toward reality eventually,
                                          // not freeze forever at its very first fix
+const LIVE_HOLD_LAPSE_MS = 30 * 60 * 1000; // viewer-side hold only (_goodFix in the users loop):
+                                           // refused fixes further apart than this on the FIXES'
+                                           // own clock are separate episodes, so the
+                                           // LIVE_HOLD_MAX_MS window starts over. A parked phone
+                                           // re-sends one refused fix for hours; measured from
+                                           // the first refusal alone, a second lone cell-tower
+                                           // fix hours later read "refused for hours" and walked
+                                           // the dot miles onto it. Keep this well above the
+                                           // ~15 min cadence of a Precise-Location-off iPhone,
+                                           // or that phone restarts the window on every fix and
+                                           // sticks at its old spot for good
 let lastBreadcrumbPos = null;
 let lastBreadcrumbTs = 0;
 
@@ -18750,6 +18761,9 @@ function startLocationSharing() {
         // a count since page load, and whose row threw last with the start of the message.
         rowErrN: window._rowErrN || 0,
         rowErr: (window._rowErr && (String(window._rowErr.uid).slice(0, 6) + ' ' + window._rowErr.msg)) || '',
+        // Rows the LAST render held at their last believed spot (the coarse-fix hold in
+        // _processUsersSnapInner): non-zero means some phone is sending fixes the viewer refuses.
+        heldN: window._heldN || 0,
         camLock: window._camLockUid ? 1 : 0,
         // Group-follow state, so "it only zoomed to me" can be diagnosed from the data instead
         // of reasoned about: gfOn = the 1s tick is running, gfPts = how many members that tick
@@ -19353,6 +19367,16 @@ function listenUsers() {
     const allUsers = snap.val() || {};
     try { Object.keys(allUsers).forEach(function (k) { _settleMemberRow(allUsers[k]); }); } catch (e) {}
     const now = Date.now();
+    // The last position we BELIEVED for each member, for the coarse-fix hold in the row loop
+    // below: uid -> { lat, lng, acc (FEET, as on the row), ts (the fix's own clock), heldSince
+    // and heldLast (the fix clocks of the first and the latest fix we refused, while a hold is
+    // on; absent otherwise) }. On window, not on userMarkers[uid]: the hold has to apply before
+    // a marker exists and survive the marker being removed and re-created (hide toggles), and
+    // it is per person, not per dot.
+    // _heldN is how many rows THIS render held at their last believed spot -- _writeDiag
+    // carries it so a hold is visible from outside, next to rowErrN.
+    window._goodFix = window._goodFix || {};
+    window._heldN = 0;
     // Feed the room-index writer: this is the freshest read of the current room's presence,
     // and the writer derives live/resting counts + a few names from it. Throttled inside the
     // writer, so calling it on every snapshot is cheap.
@@ -19653,6 +19677,79 @@ function listenUsers() {
       // plus the latitude range Mapbox itself enforces. 0,0 still reads as no GPS.
       const hasGps   = isFinite(+data.lat) && isFinite(+data.lng) && (data.lat !== 0 || data.lng !== 0)
                     && Math.abs(+data.lat) <= 90 && Math.abs(+data.lng) <= 180;
+      // ── Coarse-fix hold (viewer side) ──────────────────────────────────────────────────
+      // Seen live 2026-10-24: a native iPhone PATCHed its row with a cell-tower fix -- error
+      // radius 18190 ft (3.45 mi), position 2.89 mi from the last one. That fix cannot tell
+      // those two spots apart, yet every viewer's dot for her skipped 2.89 miles on it and
+      // skipped back on the next good fix: the "skipping around on the map". The web WRITER
+      // already refuses to broadcast such a fix (the _lastGoodFix filter in the fix handler:
+      // hold when accuracy is past LIVE_MAX_ACC_M, or when the implied speed is past
+      // TRAIL_MAX_MPH with a WORSE accuracy than the held fix, never for longer than
+      // LIVE_HOLD_MAX_MS), but the native iOS and Android reporters write raw coordinates with
+      // no gate, and this loop only ever used data.accuracy for the ± label and the merge
+      // slack. Mirroring the writer's rule here covers every writer at once with a web deploy.
+      //
+      // Read-side only. `data` is this row's local copy, so substituting the held coordinates
+      // once here makes the marker create, the glide, _ll (what a merged oval is centred on),
+      // the sheet coordinates and the distance line all agree, and NOTHING is written back.
+      // accuracy, ts, fixTs, spd and batt stay RAW so the ± label, the age and the battery line
+      // stay honest -- the sheet reads ±18190 ft at the held spot, exactly as the writer does
+      // ("only the broadcast coordinates hold"). Never your own row: that dot is driven by
+      // onGpsFix from the phone's own already-filtered fixes, and the glide below skips it too.
+      // Row accuracy is FEET (the writer rounds metres * 3.28084); LIVE_MAX_ACC_M is METRES.
+      if (hasGps && !isMine) {
+        var _gf = window._goodFix[uid];
+        var _accFt = +data.accuracy || 0;
+        var _fixAtMs = data.fixTs || data.ts || now;
+        if (!_gf) {
+          // First fix we have ever seen for this person: something beats nothing.
+          window._goodFix[uid] = { lat: +data.lat, lng: +data.lng, acc: _accFt, ts: _fixAtMs };
+        } else {
+          var _hDistM = metersApart(_gf.lat, _gf.lng, +data.lat, +data.lng);
+          var _hDtSec = Math.max(1, (_fixAtMs - _gf.ts) / 1000);
+          var _hMph = (_hDistM / _hDtSec) * 2.23694;
+          var _hWildlyBad = _accFt > LIVE_MAX_ACC_M * 3.28084;
+          var _hTeleport = _hMph > TRAIL_MAX_MPH && _accFt > _gf.acc;   // a sharper fix is believed
+          // A fix that lands where the dot already is (under 1 m, the glide's own "already
+          // there") has nothing to hold: once a coarse fix IS believed, the heartbeat that
+          // re-sends it must not count as a refusal, or heldN reads 1 with the dot unmoved.
+          if (_hDistM >= 1 && (_hWildlyBad || _hTeleport)) {
+            // The writer releases a hold after LIVE_HOLD_MAX_MS of its OWN clock, which works
+            // there because watchPosition hands it a fix every few seconds, so "how old is the
+            // last good fix" and "how long have fixes been refused" are the same number. Here
+            // they are not: rows arrive sparse, a parked native iPhone re-sends the SAME fix
+            // (original fixTs, fresh ts) for hours, and a web rest beat bumps only ts. So the
+            // window is measured on the FIXES' clock, from the first fix refused: the hold ends
+            // when a refused fix is stamped LIVE_HOLD_MAX_MS past that one -- the phone has been
+            // saying "not there" for three minutes, so it is probably right (a chronically coarse
+            // phone still drifts toward reality). Never on this viewer's clock: that let one
+            // coarse fix with no follow-up walk onto the map three minutes later anyway, at a
+            // different moment on every viewer, and let a reporter clock ten minutes ahead hold
+            // for thirteen. And never from the last GOOD fix: a phone quiet for half an hour
+            // whose first new fix is a cell tower would have skipped the hold entirely.
+            //
+            // The window also LAPSES when refusals stop. A parked iPhone re-sends the refused fix
+            // A for hours (every heartbeat is another refusal of A, same fixTs), so a second lone
+            // cell fix Z hours later measured "refused since A" as hours, was believed on first
+            // sight, and the dot walked 2.89 mi onto Z and back -- the very skip this hold is for.
+            // So the window restarts when the refused fix is LIVE_HOLD_LAPSE_MS past the LATEST
+            // one refused (heldLast): refusals that far apart are separate episodes.
+            if (!_gf.heldSince || (_fixAtMs - (_gf.heldLast || _gf.heldSince)) > LIVE_HOLD_LAPSE_MS) _gf.heldSince = _fixAtMs;
+            _gf.heldLast = Math.max(_gf.heldLast || 0, _fixAtMs);
+            if ((_fixAtMs - _gf.heldSince) > LIVE_HOLD_MAX_MS) {
+              // RELEASE: the person may genuinely be somewhere only coarse fixes can see.
+              window._goodFix[uid] = { lat: +data.lat, lng: +data.lng, acc: _accFt, ts: _fixAtMs };
+            } else {
+              // HOLD: this row renders at the last believed spot. No path either -- a route
+              // towards a coordinate we do not believe is not a route the dot should walk.
+              data = Object.assign({}, data, { lat: _gf.lat, lng: _gf.lng, path: null, _held: true });
+              window._heldN = (window._heldN || 0) + 1;
+            }
+          } else {
+            window._goodFix[uid] = { lat: +data.lat, lng: +data.lng, acc: _accFt, ts: _fixAtMs };
+          }
+        }
+      }
       const _ago      = ageMin < 60 ? ageMin + 'm ago'
                       : ageMin < 48 * 60 ? Math.floor(ageMin/60) + 'h ago'
                       : (ageMin / 1440).toFixed(1) + 'd ago';
@@ -19817,10 +19914,25 @@ function listenUsers() {
         var _rep = (data.fixTs || data.ts || 0) + '@' + data.lng + ',' + data.lat;
         if (!isMine && isLive && userMarkers[uid]._lastRep !== _rep) {
           userMarkers[uid]._lastRep = _rep;
-          // Hand the glide the reporter's own clock. _ts still holds the PREVIOUS report's time
-          // here (it is restamped further down), so the pair is this person's real interval.
-          _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true });
-          if (followUid === uid) _followRecenter(data.lng, data.lat);
+          // A HELD row (the coarse-fix hold above) carries a new fixTs with the old coordinates,
+          // so _rep changes but the target is where the dot already sits. _animateMarker is not
+          // a no-op there: it cancels whatever is in flight and runs a frame loop to the same
+          // spot, restamping its pacing clock. Nothing to show, so nobody animates. Only when
+          // the dot is actually there -- a hold that lands mid-glide lets that glide finish.
+          var _glide = true;
+          if (data._held) {
+            try {
+              var _curLL = userMarkers[uid]._curLngLat;
+              if (!_curLL) { var _gl = userMarkers[uid].getLngLat(); _curLL = [_gl.lng, _gl.lat]; }
+              if (metersApart(_curLL[1], _curLL[0], data.lat, data.lng) < 1) _glide = false;
+            } catch (e) {}
+          }
+          if (_glide) {
+            // Hand the glide the reporter's own clock. _ts still holds the PREVIOUS report's time
+            // here (it is restamped further down), so the pair is this person's real interval.
+            _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true });
+            if (followUid === uid) _followRecenter(data.lng, data.lat);
+          }
         }
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
