@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 960;
+var APP_BUILD = 961;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -14951,6 +14951,12 @@ function enterMap(name, group, uid) {
         lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), claiming: true
       });
     }
+    // Placeholder or not, the FIRST fix in this room must write a full named row. With battery
+    // saver idle the fix path's idle gate (and the 10 s report gate) would hold it for up to
+    // 4 minutes; the placeholder is deleted at 30 s, and the rest beat now merges only
+    // {ts, rest}, so a nameless stub (dropped by the d.name filter) would be all a viewer saw
+    // of us -- missing from the room, not crashing it. Open both gates for this one fix.
+    window._bsLastWrite = 0; window._forceReport = true;
     // Only log a "joined" event for a genuine fresh join — not for resuming a session that
     // was already live a moment ago (auto-resume after EXIT, a snapshot re-fire, etc.). That
     // mismatch — "X joined" showing up right as X actually left, or showing up again for a
@@ -17270,6 +17276,12 @@ function toggleLocationShare(share) {
     toast('Location hidden — you can still chat & view the map', 2600);
   } else {
     toast('Location sharing on');
+    // The priming fix below has to reach the row. With battery saver idle, the fix path's idle
+    // gate drops every fix until BS_HEARTBEAT_MS after the last write, and the report-rate gate
+    // drops it inside 10 s of the last report -- so "sharing on" left hidden:true on the row for
+    // up to 4 minutes. (The old rest beat healed that by accident; it no longer writes a
+    // position.) Open both gates so this one fix un-hides us right now.
+    window._bsLastWrite = 0; window._forceReport = true;
     if (navigator.geolocation && window._onGpsFix) {
       navigator.geolocation.getCurrentPosition(window._onGpsFix, function(){},
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
@@ -18817,16 +18829,35 @@ function startLocationSharing() {
         }
       } catch(_) {}
     } else if (window._batterySaver && window._bsIdle) {
-      // Battery-saver "resting": send a SLOW heartbeat (about every BS_HEARTBEAT_MS) that keeps
-      // us in the member count as "resting" with our last position. (We used to write NOTHING
-      // here, so two people sitting still both aged out and the in-room count dropped to 0.)
+      // Battery-saver "resting": a SLOW heartbeat (about every BS_HEARTBEAT_MS) that keeps us
+      // in the member count as "resting". (We used to write NOTHING here, so two people sitting
+      // still both aged out and the in-room count dropped to 0.) LIVENESS ONLY -- ts, rest and
+      // the battery reading. This used to fbSet the WHOLE row from window._lastGPS with accuracy
+      // 0 and no fixTs, and the family saw two things from that. A parked phone with the app in
+      // front wore a green LIVE ring while its dot glided up to a few hundred feet every 4 min
+      // with the sheet reading +/-0 ft (two parked phones at one address merged and split). And
+      // after a sleep/wake the overdue timer ran BEFORE any fix while _bsIdle was still true, so
+      // the PRE-SLEEP position went out stamped ts: now -- a viewer whose dot sat at the native-
+      // PATCHed real position teleported 17 miles back, then corrected on the next real fix.
+      // The same write also erased fixTs, oss, hbTs, priv, color, batt, chg, path and spd on
+      // every beat (the clobber class 960 fixed for oss). A merge leaves the last REPORTED
+      // coordinates, fixTs and accuracy alone: _rep does not change, nobody animates, and
+      // presence ages honestly to PARKED through fixTs. The row is always created by a full
+      // named fix first (room entry and unhide force one), so this never has to build a row.
       if (!window._bsRestBeat || (Date.now() - window._bsRestBeat) >= BS_HEARTBEAT_MS) {
         window._bsRestBeat = Date.now();
-        var _g = window._lastGPS;
+        var _hb = { ts: Date.now(), rest: true };
+        // Refresh batt/chg where the platform exposes them (Android WebView, desktop) so a
+        // reading held over from the last fix can't age into a false CHECK PHONE.
+        if (typeof window._battPct === 'number') { _hb.batt = window._battPct; _hb.chg = window._battChg ? 1 : 0; }
         try {
-          if (_g) fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-            { lat: _g.lat, lng: _g.lng, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), rest: true });
-          else fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/ts'), Date.now());
+          if (window._fb && typeof window._fb.update === 'function') {
+            window._fb.update(fbRef(db, 'gl/' + groupName + '/users/' + userId), _hb).catch(function () {});
+          } else {
+            // No update(): child writes, which still touch nothing but liveness.
+            fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/ts'), _hb.ts);
+            fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId + '/rest'), true);
+          }
         } catch (_) {}
       }
       return;
