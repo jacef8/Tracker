@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 965;
+var APP_BUILD = 966;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5519,6 +5519,25 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     }
   } catch (e) {}
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
+  // Just back from the background (the feed's visibilitychange handler opens the window): everyone
+  // goes where they are now, then motion resumes from there. Gliding here would sprint the dot
+  // through up to 30 s of catch-up from a spot that is minutes old. Remote rows only: the own dot
+  // is driven by its own GPS and the build-948 invariant under onGpsFix owns it; those calls pass
+  // no opts and never reach this branch.
+  if (opts && opts.remote && Date.now() < (window._resumeSnapUntil || 0)) {
+    marker.setLngLat([toLng, toLat]); marker._curLngLat = [toLng, toLat];
+    // Arrival stamped so the first glide after the window measures from here, not from before the
+    // hide. The camera gap is cleared rather than kept: a placement measures no interval, and the
+    // pre-hide cadence (up to 12 s) is nothing a dot that is already there should be eased by.
+    marker._lastFixAt = performance.now();
+    delete marker._lastGapMs;
+    // The camera. For the followed member it rides in step() below, one frame at a time -- and a
+    // placement runs no frames, so without this the dot lands off-screen and nothing comes after
+    // it (see _camPlace).
+    try { _camPlace(marker._uid, toLng, toLat); } catch (e) {}
+    try { if (marker._uid && window._updateTrailTip) window._updateTrailTip(marker._uid, toLng, toLat); } catch (e) {}
+    return;
+  }
   var cur = marker._curLngLat;
   if (!cur) { var l = marker.getLngLat(); cur = [l.lng, l.lat]; }
   var fromLng = cur[0], fromLat = cur[1];
@@ -5702,6 +5721,27 @@ function _followRecenter(lng, lat) {
     var _gap = 0;
     try { var _m = userMarkers[followUid]; if (_m) _gap = _m._lastGapMs || 0; } catch (e) {}
     var _o = { center: [lng, lat], duration: _camDur(_gap), easing: function (t) { return t; } };
+    var _p = _camPad(); if (_p) _o.padding = _p;
+    map.easeTo(_o);
+  } catch (e) {}
+}
+// The resume catch-up PLACES a dot (the remote branch of _animateMarker, the non-live branch of
+// _processUsersSnapInner), and a placement runs no frames. The frame loop in step() is what carries
+// the camera for the locked member -- follow-one, or group follow with a single framed member,
+// which is a desktop viewer with no GPS watching one child -- so after a placement nothing moved
+// the camera to the dot: follow-one caught up on the next 3 s doFollow tick, group follow not until
+// the next glide's first frame (a report interval for a live child, never for a parked one), and
+// _followRecenter stands down whenever _camLockUid is set, which _followUser always does. Carry the
+// camera with the placement. With group follow on this stands down the way _applyCameraOnSelfFix
+// does: the render re-fits from the placed dots with one forced tick instead (see the end of
+// _processUsersSnapInner), and that covers a group of one as well.
+function _camPlace(uid, lng, lat) {
+  try {
+    if (typeof fitAllInterval !== 'undefined' && fitAllInterval) return;   // group follow re-fits after the render
+    var _camUid = window._camLockUid || (typeof followUid !== 'undefined' ? followUid : null);
+    if (!uid || uid !== _camUid) return;
+    if (Date.now() < (window._followPausedUntil || 0)) return;            // user is interacting -- don't stomp
+    var _o = { center: [lng, lat], duration: 800, easing: function (t) { return t; } };
     var _p = _camPad(); if (_p) _o.padding = _p;
     map.easeTo(_o);
   } catch (e) {}
@@ -13514,8 +13554,36 @@ window._feedsResume = function () {
 try {
   document.addEventListener('visibilitychange', function () {
     clearTimeout(window._feedPauseTimer);
-    if (document.hidden) window._feedPauseTimer = setTimeout(function () { if (document.hidden) window._feedsPause(); }, 45000);
-    else window._feedsResume();
+    if (document.hidden) {
+      window._glHiddenAt = Date.now();
+      window._feedPauseTimer = setTimeout(function () { if (document.hidden) window._feedsPause(); }, 45000);
+      return;
+    }
+    window._feedsResume();
+    // Back after a real absence (a tab flick does not count): nothing on the map is where it is
+    // now. A member who moved glides there from the old spot -- a catch-up sprint of up to 30 s --
+    // and a member whose row aged past LIVE_MS is never moved at all, so the dot sits a block from
+    // its own chip, leader and cluster tap, which all read the new coordinate. Open an 8 s window
+    // in which the feed PLACES everyone at their current row (the remote branch of _animateMarker
+    // and the non-live branch in _processUsersSnapInner) and motion resumes from there. 8 s covers
+    // iOS's slower SDK reconnect; under 20 s hidden nothing happens.
+    if (Date.now() - (window._glHiddenAt || 0) > 20000) {
+      window._resumeSnapUntil = Date.now() + 8000;
+      // Stamp every marker's arrival clock to NOW, not zero: a member who sends no row inside the
+      // window still measures its next glide from the resume -- not from before the hide (a 30 s
+      // crawl) and not the 1400 ms default sprint a zero would mean.
+      try {
+        Object.keys(userMarkers).forEach(function (u) { var m = userMarkers[u]; if (m) m._lastFixAt = performance.now(); });
+      } catch (e) {}
+      // Group follow eased from the old camera toward whatever the throttled tick last published.
+      // A forced tick re-engages at once -- the same path a Show Group tap takes (force bypasses
+      // the interaction pause and the hysteresis). It can only frame the dots where they still
+      // are: the snapshot lands after this handler, so the first render inside the window re-fits
+      // once more from the placed dots (see the end of _processUsersSnapInner).
+      try {
+        if (typeof fitAllInterval !== 'undefined' && fitAllInterval && typeof _groupFollowTick === 'function') _groupFollowTick(true);
+      } catch (e) {}
+    }
   });
 } catch (e) {}
 window._circleUsersAll = {};   // circleKey -> { uid: userData }, latest snapshot per circle
@@ -19933,6 +20001,23 @@ function listenUsers() {
             _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true });
             if (followUid === uid) _followRecenter(data.lng, data.lat);
           }
+        } else if (!isMine && !isLive && Date.now() < (window._resumeSnapUntil || 0) && userMarkers[uid]._lastRep !== _rep) {
+          // Just back from the background (the feed's visibilitychange handler opens the window)
+          // and this row aged past LIVE_MS while the tab was away. The branch above never moves a
+          // non-live row, so a PARKED member's dot stayed where this viewer last drew it while _ll,
+          // the chip, the leader and the cluster tap -- all set from this same row further down --
+          // pointed at the new coordinate: a dot a block from its own label. Placement only, no
+          // glide: nobody watched this person travel and the row is minutes old.
+          userMarkers[uid]._lastRep = _rep;
+          // A glide that was in flight when the tab went away is still parked in _anim (rAF does
+          // not run hidden); its one remaining frame would land on the PRE-hide target and undo
+          // this placement with _rep already consumed. Cancel it first, as every placement does.
+          if (userMarkers[uid]._anim) { cancelAnimationFrame(userMarkers[uid]._anim); userMarkers[uid]._anim = null; }
+          var _cl = userMarkers[uid]._curLngLat || (function () { var g = userMarkers[uid].getLngLat(); return [g.lng, g.lat]; })();
+          if (metersApart(_cl[1], _cl[0], data.lat, data.lng) > 30) {   // ~100 ft: GPS wobble is not a move
+            userMarkers[uid].setLngLat([data.lng, data.lat]); userMarkers[uid]._curLngLat = [data.lng, data.lat];
+            _camPlace(uid, data.lng, data.lat);   // a placed dot takes the camera with it if this is who it follows
+          }
         }
         // Update appearance
         const el = userMarkers[uid]._el || userMarkers[uid].getElement();
@@ -20519,6 +20604,20 @@ function listenUsers() {
     // Riding together / standing right next to each other — merge into one dot + badge
     // now that every marker for this snapshot has an up-to-date _ll.
     try { _updateMarkerGrouping(); } catch (e) {}
+
+    // Just back from the background with group follow on (the resume window is open): the forced
+    // tick the visibilitychange handler ran saw the dots where they WERE -- this snapshot had not
+    // landed -- so it eased onto spots the placements above have just moved away from, and its
+    // single-member branch hands the camera to a frame loop a placement never runs. Re-frame once
+    // per window from where the dots now are. Group follow only: follow-one is carried at the
+    // placement itself (_camPlace).
+    try {
+      if (typeof fitAllInterval !== 'undefined' && fitAllInterval && typeof _groupFollowTick === 'function'
+          && Date.now() < (window._resumeSnapUntil || 0) && window._resumeFramedFor !== window._resumeSnapUntil) {
+        window._resumeFramedFor = window._resumeSnapUntil;
+        _groupFollowTick(true);
+      }
+    } catch (e) {}
 
     // A PC/desktop viewer typically has no local GPS, so onGpsFix's own "default to Follow
     // Group on first entering the map" (above) never fires for them at all — that logic is
