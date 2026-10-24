@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 966;
+var APP_BUILD = 967;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5601,7 +5601,8 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     } catch (e) { path = null; }
   }
   // Waypoints: where the dot is now, the route the phone actually took, then the new position.
-  // Each leg gets a share of the glide proportional to its length, so the speed stays even.
+  // Each leg gets a share of the glide proportional to its length on the ground, so the speed
+  // stays even.
   var _wp = [[fromLng, fromLat]];
   if (path && path.length) {
     for (var _pi = 0; _pi < path.length; _pi++) {
@@ -5616,8 +5617,15 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
   }
   _wp.push([toLng, toLat]);
   var _seg = [], _total = 0;
+  // Leg lengths in raw degrees hand the time out unevenly: a degree of longitude is only cos(lat)
+  // as long as a degree of latitude (about 13% shorter at 30 N), so an east-west leg got 13% more
+  // of the glide per foot than a north-south one and the dot visibly braked or sped up round
+  // every corner. Scaling longitude by cos(lat) makes _seg and _total proportional to real ground
+  // distance. _atFraction walks within a leg by the fraction u, which the scale does not touch,
+  // so nothing else changes. The `|| 1` guards cos = 0 at the poles.
+  var _cosLat = Math.cos(fromLat * Math.PI / 180) || 1;
   for (var _si = 1; _si < _wp.length; _si++) {
-    var _dx = _wp[_si][0] - _wp[_si - 1][0], _dy = _wp[_si][1] - _wp[_si - 1][1];
+    var _dx = (_wp[_si][0] - _wp[_si - 1][0]) * _cosLat, _dy = _wp[_si][1] - _wp[_si - 1][1];
     var _len = Math.sqrt(_dx * _dx + _dy * _dy);
     _seg.push(_len); _total += _len;
   }
