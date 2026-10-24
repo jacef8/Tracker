@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 961;
+var APP_BUILD = 962;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18722,6 +18722,10 @@ function startLocationSharing() {
         frameGap: window._maxFrameGap || 0,     // worst ms between frames — >50 means the page froze
         snapMs: window._snapMs || 0,            // last presence-snapshot handler duration
         snapMax: window._snapMax || 0,
+        // Member rows the render loop had to skip (the per-row catch in _processUsersSnapInner):
+        // a count since page load, and whose row threw last with the start of the message.
+        rowErrN: window._rowErrN || 0,
+        rowErr: (window._rowErr && (String(window._rowErr.uid).slice(0, 6) + ' ' + window._rowErr.msg)) || '',
         camLock: window._camLockUid ? 1 : 0,
         // Group-follow state, so "it only zoomed to me" can be diagnosed from the data instead
         // of reasoned about: gfOn = the 1s tick is running, gfPts = how many members that tick
@@ -19560,6 +19564,9 @@ function listenUsers() {
       // other's, making the whole list visibly shuffle several times a second.
       return (a[1].name || '').localeCompare(b[1].name || '') || a[0].localeCompare(b[0]);
     }).forEach(([uid, data]) => {
+      // The whole row is one try. A throw anywhere in here used to leave the forEach and abort
+      // the render for every member sorted after this one -- see the catch at the bottom.
+      try {
       const isMine   = uid === userId;
       // You've chosen to hide this person's dot from your own map — doesn't touch their
       // sharing or the room roster, purely a local viewing preference (gl_member_hidden).
@@ -19610,7 +19617,18 @@ function listenUsers() {
       // by the fixes that follow. Lexi vanished off the map for exactly this: reporting every
       // few minutes with a stale noGps from hours earlier still attached. Same trap as the
       // stale route in 817.
-      const hasGps   = (data.lat !== 0 || data.lng !== 0);
+      // Finite AND in range, not merely "not 0,0". A first-ever join whose geolocation prompt
+      // sits unanswered leaves a row with a name and no coordinates at all: the claiming
+      // placeholder is deleted at 30 s and the heartbeat / markNoGps recreate the row without
+      // lat/lng, and the next foregrounding stamps a ts that gets it through the display filter.
+      // `undefined !== 0` is true, so the create path below handed Mapbox
+      // setLngLat([undefined, undefined]) and it threw 'Invalid LngLat object: (NaN, NaN)'.
+      // Nothing caught it (see the catch at the bottom of this row), so every member sorted
+      // after that row lost their dot update and their People row on EVERY viewer until the ts
+      // aged out -- and again each time that device came to front. Same test _presenceOf uses,
+      // plus the latitude range Mapbox itself enforces. 0,0 still reads as no GPS.
+      const hasGps   = isFinite(+data.lat) && isFinite(+data.lng) && (data.lat !== 0 || data.lng !== 0)
+                    && Math.abs(+data.lat) <= 90 && Math.abs(+data.lng) <= 180;
       const _ago      = ageMin < 60 ? ageMin + 'm ago'
                       : ageMin < 48 * 60 ? Math.floor(ageMin/60) + 'h ago'
                       : (ageMin / 1440).toFixed(1) + 'd ago';
@@ -20154,6 +20172,23 @@ function listenUsers() {
       // visitor's own row stays in Visitors, where the Join button below sits with it.
       if (_crewRoom) ((window._rosterHas(uid) || (uid === userId && _isCircleMember(groupName))) ? _rowsCrew : _rowsVis).push(row);
       else _rowsPlain.push(row);   // buffered so the person-collapse below applies here too
+      } catch (_re) {
+        // One malformed row must never take the rest of the room with it. A row with no
+        // coordinates threw inside Mapbox's setLngLat and the exception left this forEach:
+        // everyone sorted after it kept a frozen dot, lost their People row, and the grouping
+        // pass below never ran -- on every viewer, for as long as that row passed the display
+        // filter. _processUsersSnap is try/FINALLY, so nothing above caught it either.
+        // Recorded, not reported: NOT _evt / writeDebugLog, which fbPush to gl/<room>/debug and
+        // would do so on every 400 ms render for a persistent throw. Warned once per uid+message
+        // so the console says what happened without scrolling; _writeDiag carries the count.
+        try {
+          var _rk = uid + '|' + String((_re && _re.message) || _re).slice(0, 80);
+          window._rowErrN = (window._rowErrN || 0) + 1;
+          window._rowErr = { uid: uid, msg: _rk.slice(uid.length + 1), ts: Date.now() };
+          window._rowErrSeen = window._rowErrSeen || {};
+          if (!window._rowErrSeen[_rk]) { window._rowErrSeen[_rk] = 1; console.warn('[GL] member row skipped:', uid, _re); }
+        } catch (_) {}
+      }
     });
 
     // Crew members without a live/recent presence entry still belong in the list — otherwise
