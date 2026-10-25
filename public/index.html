@@ -384,6 +384,69 @@
     font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700;
     color: rgba(255,255,255,.62); font-variant-numeric: tabular-nums;
   }
+  /* ── "Active now": the people behind the ring's number ─────────────────────────────────
+     Tapping the ring used to jump to a crew map; it now opens this list (owner, 2026-10-25:
+     "the natural click would be to show me those active people"). A raised housing over the
+     home screen: opaque, no blur, 56px rows, body text 16px, ink tokens rather than a grey.
+     z-index 950 is the settings sheet's level -- over the home screen (900) and under every
+     real modal (1000+). The map's own sheets sit at 300 and open UNDER the home unseen, which
+     is why this is not one of them (see the note in _homeGo). */
+  body.ui-v2 #active-sheet {
+    position: fixed; inset: 0; z-index: 950;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  body.ui-v2 #active-sheet .as-backdrop { position: absolute; inset: 0; background: var(--v2-scrim); }
+  body.ui-v2 #active-sheet .as-panel {
+    position: relative; width: min(480px, 100%); max-height: 78vh; max-height: 78dvh;
+    display: flex; flex-direction: column;
+    background: var(--v2-e1-grad); border: 1px solid var(--v2-line2); border-bottom: none;
+    border-radius: var(--v2-r) var(--v2-r) 0 0; box-shadow: var(--v2-raise);
+    padding: 14px 14px calc(var(--safe-bot) + 16px);
+  }
+  body.ui-v2 #active-sheet .as-head {
+    display: flex; align-items: center; gap: 10px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--v2-line);
+  }
+  body.ui-v2 #active-sheet .as-head b {
+    flex: 1; min-width: 0; font-family: var(--v2-geo); font-weight: 800; font-size: 19px;
+    letter-spacing: -.01em; line-height: 1.25; color: var(--v2-ink);
+  }
+  body.ui-v2 #active-sheet .as-x {
+    flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--v2-e2-grad); color: var(--v2-ink); font-size: 18px; line-height: 1;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.ui-v2 #active-sheet-list {
+    display: flex; flex-direction: column; gap: 8px; padding-top: 10px; min-height: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  /* The rows reuse .ha-row's housing and grow into a real tap target. */
+  body.ui-v2 #active-sheet .ha-row { min-height: 56px; padding: 10px 13px; }
+  body.ui-v2 #active-sheet .ha-row .dot { width: 11px; height: 11px; }
+  body.ui-v2 #active-sheet .ha-row .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.3; }
+  body.ui-v2 #active-sheet .ha-row .nm { flex: none; font-size: 17px; color: var(--v2-ink); }
+  body.ui-v2 #active-sheet .ha-row .nm small { font-size: 16px; font-weight: 600; color: var(--v2-ink2); }
+  /* Status line and crew line wrap rather than clip. One nowrap line used to carry both, and on
+     a 375px phone the ellipsis ate the crew off every PARKED row ("Parked · last fix 17m ago ·
+     hear…") -- the one word that says which map the tap opens. The crew has its own line now. */
+  body.ui-v2 #active-sheet .ha-row .ln,
+  body.ui-v2 #active-sheet .ha-row .cr { font-size: 16px; font-weight: 600; color: var(--v2-ink2); overflow-wrap: anywhere; }
+  body.ui-v2 #active-sheet .ha-row .ct { font-size: 16px; color: var(--v2-ink2) !important; }
+  body.ui-v2 #active-sheet .as-empty {
+    text-align: center; padding: 18px 8px 8px; font-size: 16px; line-height: 1.5; color: var(--v2-ink2);
+  }
+  /* Under the rows when part of the picture is missing: which crews have not answered yet. */
+  body.ui-v2 #active-sheet .as-note { text-align: center; padding: 12px 8px 0; font-size: 16px; line-height: 1.5; color: var(--v2-ink2); }
+  /* The as-of line ("As of 12m ago · refreshing…" / "Could not refresh …") sits ABOVE the rows,
+     right under the header's "now", so it is read before the status lines it qualifies. */
+  body.ui-v2 #active-sheet .as-note.as-asof { padding: 0 8px 2px; }
+  body.ui-v2 #active-sheet .as-go {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+    margin-top: 10px; padding: 14px; border-radius: 14px; border: none; cursor: pointer;
+    background: var(--v2-acc-grad); color: var(--v2-on-acc); font-size: 16px; font-weight: 800;
+    -webkit-tap-highlight-color: transparent;
+  }
   /* The tab strip becomes a segmented control sunk INTO the card, not buttons floating on it. */
   body.ui-v2 #join-tabs {
     background: var(--v2-recess) !important; border: none !important; border-radius: 14px !important;
@@ -2894,7 +2957,7 @@
       <!-- ══ ANCHOR (ui-v2) ══ The one thing this screen is for: who is out there right now.
            Hidden entirely unless the new look is on, so the classic home is untouched. -->
       <div id="home-anchor" style="display:none">
-        <button type="button" id="home-anchor-btn" onclick="window._anchorGo && window._anchorGo()" aria-label="Open your crew">
+        <button type="button" id="home-anchor-btn" onclick="window._anchorGo && window._anchorGo()" aria-label="Show who is sharing now">
           <svg viewBox="0 0 340 340" class="ha-gauge" role="img" aria-label="Crew members live now">
             <defs>
               <linearGradient id="ha-grad" x1="0" y1="1" x2="1" y2="0">
@@ -3312,6 +3375,23 @@
       </section>
     </div>
     <div id="build-stamp" style="text-align:center;font-size:10px;color:var(--muted);letter-spacing:.08em;margin-top:4px;opacity:.75">build …</div>
+  </div>
+</div>
+
+<!-- ══ ACTIVE NOW (ui-v2) ══ What the home ring's number is made of: one row per person whose
+     phone is reporting a position, LIVE above PARKED, newest first; a row opens that crew's map
+     following them. Hidden until the ring (#home-anchor-btn) is tapped. A sibling of the home
+     screen rather than a child of its scrolling card, at the settings sheet's z-index (950), so
+     it stacks over the home (900) without living inside the pager's overflow. Closes on its ✕,
+     on the backdrop, and on the hardware Back (listed with the Back handler's overlays). -->
+<div id="active-sheet" style="display:none" role="dialog" aria-modal="true" aria-labelledby="active-sheet-title">
+  <div class="as-backdrop" onclick="window._closeActiveSheet && window._closeActiveSheet()"></div>
+  <div class="as-panel">
+    <div class="as-head">
+      <b id="active-sheet-title">Nobody sharing right now</b>
+      <button type="button" class="as-x" onclick="window._closeActiveSheet && window._closeActiveSheet()" aria-label="Close">&#x2715;</button>
+    </div>
+    <div id="active-sheet-list"></div>
   </div>
 </div>
 
@@ -5106,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 968;
+var APP_BUILD = 969;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12426,10 +12506,23 @@ window._talkLoadDetail = async function () {
   await Promise.all(keys.map(async function (k) {
     try {
       var res = await Promise.all([
-        fb.get(fb.ref(fb.db, 'gl/' + k + '/users')).then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+        // A read that FAILED is not a crew with nobody in it. It used to come back as {}, the
+        // same answer as an empty crew, so one dropped request on a weak signal wrote "nobody"
+        // over the last good roster, and the ring and the "Active now" sheet said so about
+        // children who were still out. null means "no answer"; see just below.
+        fb.get(fb.ref(fb.db, 'gl/' + k + '/users')).then(function (s) { return s.val() || {}; }).catch(function () { return null; }),
         fb.get(fb.ref(fb.db, 'gl/' + k + '/voicelog')).then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
       ]);
       var users = res[0], clips = res[1];
+      if (users === null) {
+        // No answer: keep what this crew had (its people, as of readTs) instead of replacing it
+        // with nothing, and stamp WHEN the refresh failed so the sheet can say it is showing an
+        // older picture. A crew never answered for keeps no entry at all, which the ring's
+        // loader already reads as "still checking" and retries.
+        var prev = window._talkDetail[k];
+        if (prev) prev.failedAt = Date.now();
+        return;
+      }
       var now = Date.now();
       var people = Object.keys(users).map(function (uid) {
         var u = users[uid] || {};
@@ -12450,6 +12543,16 @@ window._talkLoadDetail = async function () {
         try { _pr = (typeof window._presenceOf === 'function') ? window._presenceOf(uid, u) : null; } catch (e) {}
         p.presence = _pr ? _pr.key : '';   // 'live' | 'parked' | 'check' | ... — for a future label
         p.sharing = _pr ? (_pr.key === 'live' || _pr.key === 'parked') : ((now - (p.ts || 0)) < SHARING_FRESH_MS);
+        // What the "Active now" sheet shows per row, carried from here so the sheet never has
+        // to re-read Firebase or re-classify: the classifier's own sentence and colour, which
+        // crew this copy of the row came from (a person in several crews has a row in each),
+        // and battery and speed when the phone reported them.
+        p.line  = _pr ? _pr.line  : '';
+        p.label = _pr ? _pr.label : '';
+        p.color = _pr ? _pr.color : '';
+        p.room  = k;
+        p.batt  = (typeof u.batt === 'number') ? u.batt : (u.oss && typeof u.oss.batt === 'number' ? u.oss.batt : null);
+        p.spd   = (typeof u.spd === 'number') ? u.spd : null;
         return p;
       }).filter(function (p) {
         // Every device of MINE, not just this one. A plain uid===userId check left my own PC,
@@ -12487,7 +12590,8 @@ window._talkLoadDetail = async function () {
         .sort(function (a, b) { return b.ts - a.ts; })
         .slice(0, TX_PER_CREW);
       recent.forEach(function (c) { window._talkClips[c.room + '|' + c.id] = c; });
-      window._talkDetail[k] = { people: people, unread: _talkUnreadFor(k, clips), clips: recent };
+      // readTs: when this roster was read. Every p.line is a sentence about that moment.
+      window._talkDetail[k] = { people: people, unread: _talkUnreadFor(k, clips), clips: recent, readTs: now };
     } catch (e) {}
   }));
   try { window._renderTalkSection(true); } catch (e) {}
@@ -12719,8 +12823,9 @@ window._notifyToTalk = function (uid, name) {
 // Crew's map; the Talk-all shortcut is here too so a Crew is one tap from either.
 
 // ── The home anchor (ui-v2) ─────────────────────────────────────────────────────────────────
-// Counts the people who are LIVE across your crews right now. This is the one number the home
-// screen exists to answer, so it gets the weight -- everything else on the screen supports it.
+// Counts the people who are sharing a position across your crews right now. This is the one
+// number the home screen exists to answer, so it gets the weight -- everything else on the
+// screen supports it.
 window._renderHomeAnchor = function () {
   try {
     if (!window._uiV2On || !window._uiV2On()) return;
@@ -12728,14 +12833,28 @@ window._renderHomeAnchor = function () {
     var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
     var detail = window._talkDetail || {};
     var live = 0, total = 0, rows = [];
+    // The headline counts PEOPLE, not rows. Someone in two crews has a row in each (their phone
+    // writes every crew's users node), and summing the crews read "3" over an "Active now" list
+    // of two -- the list dedupes by uid, so the ring has to as well or the number lies about the
+    // list under it. The per-crew on/n on each crew row stay per crew; that is what a crew row is.
+    var seenOn = {}, seenAll = {};
     Object.keys(circles).forEach(function (k) {
       var d = detail[k] || {};
       var people = d.people || [];
-      var on = people.filter(function (x) { return x && x.sharing; }).length;
-      live += on; total += people.length;
+      var on = 0, ts = 0;
+      people.forEach(function (x, i) {
+        if (!x) return;
+        var id = (x.uid != null) ? String(x.uid) : (k + '#' + i);   // every real row has a uid; this is for a malformed one
+        seenAll[id] = true;
+        if (x.sharing) { on++; seenOn[id] = true; }
+        // The crew's freshest report: two crews with the same count sort by who was heard from
+        // last, instead of swapping places between renders (see the sort below).
+        if ((x.ts || 0) > ts) ts = x.ts;
+      });
       rows.push({ key: k, name: (typeof _cleanName === 'function' ? _cleanName(circles[k]) : circles[k]) ||
-                  (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k), on: on, n: people.length });
+                  (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k), on: on, n: people.length, ts: ts });
     });
+    live = Object.keys(seenOn).length; total = Object.keys(seenAll).length;
     // 270 degrees of sweep = 613 of the 817 circumference. Empty reads as an empty track, which
     // is the honest picture when nobody is out.
     var pct = total ? (live / total) : 0;
@@ -12794,7 +12913,10 @@ window._renderHomeAnchor = function () {
     if (num) num.style.opacity = live ? '1' : '.55';   // present, but not shouting a zero
     var host2 = document.getElementById('ha-rows');
     if (host2) {
-      rows.sort(function (a, b) { return b.on - a.on; });
+      // Most people out first. `b.on - a.on` alone left every tie to the engine, and with most
+      // crews at 0 that is nearly every row -- equal crews swapped places from one render to
+      // the next. A tie goes to the crew heard from most recently, then to the name.
+      rows.sort(function (a, b) { return (b.on - a.on) || (b.ts - a.ts) || String(a.name).localeCompare(String(b.name)); });
       host2.innerHTML = rows.map(function (r) {
         return '<button type="button" class="ha-row" onclick="window._openCrew && window._openCrew(\'' + _escHtml(r.key) + '\')">' +
           '<span class="dot' + (r.on ? '' : ' off') + '"></span>' +
@@ -12804,21 +12926,217 @@ window._renderHomeAnchor = function () {
       }).join('') || ('<div style="text-align:center;color:var(--muted);font-size:12.5px;padding:6px 2px">' +
         (nCrews ? 'Loading your crews…' : 'No crews yet — start one below.') + '</div>');
     }
+    // The sheet lists what this ring just counted; while it is open, keep the two in step.
+    try {
+      var as = document.getElementById('active-sheet');
+      if (as && as.style.display !== 'none' && window._renderActiveSheet) window._renderActiveSheet();
+    } catch (e) {}
   } catch (e) {}
 };
-// Tapping the anchor opens the crew with the most people out; that is what you wanted when you
-// looked at the number.
+// Tapping the ring shows WHO it counted. It used to open a crew map instead: the crew with the
+// most `live` people -- but `live` is foreground-fresh (app on screen inside FG_FRESH_MS), not
+// the `sharing` the ring counts, so nearly every crew scored 0, `on > bestOn` with bestOn = -1
+// kept the FIRST key, and the tap landed on an unrelated map with the number's people nowhere
+// on it. Owner, 2026-10-25: "The number says who's active -- the natural click would be to show
+// me those active people." The old best-crew jump survives only as the sheet's empty-state button.
 window._anchorGo = function () {
   try {
-    var circles = _getCircles() || {}, detail = window._talkDetail || {};
-    var best = null, bestOn = -1;
-    Object.keys(circles).forEach(function (k) {
-      var on = ((detail[k] || {}).people || []).filter(function (x) { return x && x.live; }).length;
-      if (on > bestOn) { bestOn = on; best = k; }
-    });
-    if (best && window._openCrew) window._openCrew(best);
-    else if (window._homeGo) window._homeGo('crews');
+    var sheet = document.getElementById('active-sheet'); if (!sheet) return;
+    // What the sheet is about to draw is as old as the last roster load, and "Live · 3s ago" is
+    // a sentence about THAT moment. Nothing on the home screen reloads the roster while the app
+    // sits here or comes back to it (the loader runs on showJoinScreen, the Talk and Crews dock
+    // buttons, and the ring's first fill), so half an hour later the sheet would still say 3s.
+    // Ask for a fresh read now -- the same read-only call the Crews dock makes. Its tail runs
+    // _renderCrewsSection -> _renderHomeAnchor -> the open-sheet hook, so the list corrects
+    // itself when the data lands, without anything here waiting on it. The flag goes up before
+    // the first paint so that paint can say "refreshing…" beside the age of what it shows.
+    window._activeRefreshing = true;
+    if (window._renderActiveSheet) window._renderActiveSheet();
+    sheet.style.display = '';   // hands display back to the skin's rule (flex); 'none' is the markup default
+    var settled = function () {
+      window._activeRefreshing = false;
+      // The loader's tail re-rendered an open sheet when it had an answer. This covers the other
+      // endings -- a read that failed, a loader that bailed before reading -- so "refreshing…"
+      // never stands after the refresh has stopped.
+      try { if (sheet.style.display !== 'none' && window._renderActiveSheet) window._renderActiveSheet(); } catch (e) {}
+    };
+    try {
+      var p = window._talkLoadDetail && window._talkLoadDetail();
+      if (p && typeof p.then === 'function') p.then(settled, settled); else settled();
+    } catch (e) { settled(); }
+    // The as-of line counts up while the sheet sits open; nothing else redraws it between
+    // roster loads. Every 30 s, redraw from what is already in memory -- no read -- and stop
+    // by itself if something other than _closeActiveSheet has hidden the sheet.
+    window._activeStopTick();
+    window._activeTick = setInterval(function () {
+      try {
+        if (sheet.style.display === 'none') { window._activeStopTick(); return; }
+        if (window._renderActiveSheet) window._renderActiveSheet();
+      } catch (e) {}
+    }, 30000);
   } catch (e) {}
+};
+// The "Active now" list: every person the ring counted (p.sharing), across every crew, one row
+// each. Reads window._talkDetail and writes nothing. Someone in several crews has a row in each
+// (their phone writes every crew's users node), so dedupe by uid and keep the copy with the
+// newest ts -- the freshest reading, and the crew whose map will show the freshest dot. LIVE
+// rows first, then PARKED, each newest first.
+window._renderActiveSheet = function () {
+  try {
+    var list = document.getElementById('active-sheet-list');
+    var head = document.getElementById('active-sheet-title');
+    if (!list) return;
+    var circles = {}; try { circles = _getCircles() || {}; } catch (e) {}
+    var detail = window._talkDetail || {};
+    var byUid = {};
+    Object.keys(circles).forEach(function (k) {
+      (((detail[k] || {}).people) || []).forEach(function (p) {
+        if (!p || !p.sharing) return;
+        var cur = byUid[p.uid];
+        if (!cur || (p.ts || 0) > (cur.ts || 0)) byUid[p.uid] = p;
+      });
+    });
+    var rows = Object.keys(byUid).map(function (uid) { return byUid[uid]; });
+    rows.sort(function (a, b) {
+      return ((b.presence === 'live') - (a.presence === 'live')) || ((b.ts || 0) - (a.ts || 0));
+    });
+    var crewName = function (k) {
+      return (typeof _cleanName === 'function' ? _cleanName(circles[k]) : circles[k]) ||
+             (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k) || '';
+    };
+    // Every value in a row came from a row somebody else wrote, so all of it goes through
+    // _escHtml. The onclick arguments also lose quotes, backslashes and control characters
+    // first: _escHtml turns ' into &#39;, but the browser decodes the attribute BEFORE reading
+    // it as JavaScript, so an apostrophe in a name would end the string literal and the tap
+    // would do nothing. Dropping the character costs the follow toast one letter.
+    var lit = function (s) { return _escHtml(String(s == null ? '' : s).replace(/[\u0000-\u001f'"\\]/g, '')); };
+    // Has every crew actually answered? A crew with a key in `detail` has been heard from (even
+    // if the answer was nobody); one without has not, and an empty list over an unanswered crew
+    // is "nobody is sharing" said about children whose data simply has not arrived -- the same
+    // lie the ring's label had to stop telling (see `answered` in _renderHomeAnchor). The ring's
+    // loader flags _anchorGaveUp after its last retry; until then the answer is still coming.
+    var waiting = Object.keys(circles).filter(function (k) { return !detail[k]; });
+    var gaveUp = !!window._anchorGaveUp;
+    var waitingNote = !waiting.length ? '' :
+      '<div class="as-note">' + _escHtml((gaveUp ? 'Could not reach ' : 'Still checking ') +
+        waiting.map(crewName).join(', ') + (gaveUp ? '' : '…')) + '</div>';
+    // How old is the picture? Each crew's entry carries readTs, when its roster was read, and
+    // failedAt once a refresh got no answer (the loader keeps the last good roster rather than
+    // write "nobody" over it). Every status line is a sentence about readTs -- "Live · 3s ago"
+    // was true THEN -- so past a minute the sheet says how old it is, and names the crews whose
+    // refresh failed rather than pass an older picture off as the present one. The list is as
+    // old as its stalest crew. _txAgo is the Talk section's own age wording ("12m ago").
+    var now = Date.now(), oldest = 0, failed = [], failOldest = 0;
+    Object.keys(circles).forEach(function (k) {
+      var d = detail[k]; if (!d) return;
+      if (d.readTs && (!oldest || d.readTs < oldest)) oldest = d.readTs;
+      if (d.failedAt) { failed.push(k); if (d.readTs && (!failOldest || d.readTs < failOldest)) failOldest = d.readTs; }
+    });
+    var asOf = failed.length
+      ? 'Could not refresh ' + failed.map(crewName).join(', ') + (failOldest ? ' · showing as of ' + _txAgo(failOldest) : '')
+      : (oldest && (now - oldest) >= 60000) ? 'As of ' + _txAgo(oldest) + (window._activeRefreshing ? ' · refreshing…' : '') : '';
+    var asOfNote = asOf ? '<div class="as-note as-asof">' + _escHtml(asOf) + '</div>' : '';
+    var n = rows.length;
+    if (n) {
+      if (head) head.textContent = n + (n === 1 ? ' person sharing now' : ' people sharing now');
+      list.innerHTML = asOfNote + rows.map(function (p) {
+        var batt = (typeof p.batt === 'number') ? Math.round(p.batt) + '%' : '';
+        var crew = crewName(p.room);
+        // Status line and crew are separate elements on purpose: joined into one clipped line,
+        // the crew was the part a 375px phone cut off, and it is what says where a tap goes.
+        return '<button type="button" class="ha-row" onclick="window._activeGo(\'' + lit(p.room) + '\',\'' + lit(p.uid) + '\',\'' + lit(p.name) + '\')">' +
+          '<span class="dot" style="background:' + _escHtml(p.color || '#00e676') + ';box-shadow:0 0 10px ' + _escHtml(p.color || '#00e676') + '"></span>' +
+          '<span class="who">' +
+            '<span class="nm">' + _escHtml(p.name || 'Member') + (p.dev ? ' <small>&middot; ' + _escHtml(p.dev) + '</small>' : '') + '</span>' +
+            (p.line ? '<span class="ln">' + _escHtml(p.line) + '</span>' : '') +
+            (crew ? '<span class="cr">' + _escHtml(crew) + '</span>' : '') +
+          '</span>' +
+          (batt ? '<span class="ct">' + _escHtml(batt) + '</span>' : '') +
+        '</button>';
+      }).join('') + waitingNote;   // the people we know about, then which crews are still a blank
+      return;
+    }
+    if (waiting.length && !gaveUp) {
+      // Nothing listed because nothing has ARRIVED, not because nobody is out. No "Nobody", and
+      // no crew button -- there is nothing to pick a crew by yet. _anchorGo asked for the roster
+      // as it opened this sheet, and the loader's tail re-renders the ring, whose hook re-renders
+      // this, so the list fills in on its own.
+      if (head) head.textContent = 'Checking your crews…';
+      list.innerHTML = '<div class="as-empty">Reading who is sharing right now.</div>';
+      return;
+    }
+    // Nobody to list -- or the crews never answered. Say which, and keep the one thing the old
+    // tap did -- open a crew map -- as a button, since the ring itself no longer goes there. The
+    // crew is picked by the order the ring rows use: most sharing (all 0 here), then heard from
+    // most recently, then name. The crew rows under the ring have been display:none since the
+    // hub became a status gauge, so the sentence does not point at them.
+    if (head) head.textContent = waiting.length ? 'Could not reach your crews' : 'Nobody sharing right now';
+    var crews = Object.keys(circles).map(function (k) {
+      var r = { key: k, name: crewName(k), on: 0, ts: 0 };
+      (((detail[k] || {}).people) || []).forEach(function (x) {
+        if (!x) return;
+        if (x.sharing) r.on++;
+        if ((x.ts || 0) > r.ts) r.ts = x.ts;
+      });
+      return r;
+    });
+    crews.sort(function (a, b) { return (b.on - a.on) || (b.ts - a.ts) || String(a.name).localeCompare(String(b.name)); });
+    // Offer a crew only when there is something to pick it BY: it is the only crew, or somebody
+    // in it has been heard from. With nothing known about any of them, "first by name" is the
+    // random crew this patch exists to remove, so the button goes to the Crews list instead and
+    // the user picks.
+    var best = crews[0];
+    var grounded = !!best && (crews.length === 1 || best.ts > 0);
+    list.innerHTML = asOfNote + '<div class="as-empty">Open a crew to see where everyone was last seen.</div>' +
+      (grounded
+        ? '<button type="button" class="as-go" onclick="window._activeGo(\'' + lit(best.key) + '\')">Open ' + _escHtml(best.name) + '</button>'
+        : '<button type="button" class="as-go" onclick="window._closeActiveSheet();window._homeGo && window._homeGo(\'crews\')">Show my crews</button>');
+  } catch (e) {}
+};
+// Closing the sheet also cancels a follow that has not landed yet: the only way back to this
+// sheet is the home screen, i.e. after leaving the map the poll was waiting on. The as-of
+// redraw goes with it; a hidden sheet has nothing to count up.
+window._closeActiveSheet = function () {
+  try { var sheet = document.getElementById('active-sheet'); if (sheet) sheet.style.display = 'none'; } catch (e) {}
+  window._activeStopPoll();
+  window._activeStopTick();
+};
+// One follow-poll at a time. A second tap, or closing the sheet, must not leave the first tap's
+// poll running against a marker from another crew.
+window._activeStopPoll = function () {
+  try { if (window._activePoll) clearInterval(window._activePoll); } catch (e) {}
+  window._activePoll = null;
+};
+// The open sheet's 30 s as-of redraw (armed in _anchorGo). Cleared on close, and by the tick
+// itself once it finds the sheet hidden.
+window._activeStopTick = function () {
+  try { if (window._activeTick) clearInterval(window._activeTick); } catch (e) {}
+  window._activeTick = null;
+};
+// A row in the sheet: close it, open that crew -- the same door the Crews list uses, so no new
+// join path -- then follow the person once their marker exists. The users listener draws the
+// marker after the room mounts, which takes a moment, and _followUser on a missing marker has
+// nothing to centre on; so wait for it: every 250 ms, up to 20 times, five seconds in all. Past
+// that, stop quietly -- the map is open on their crew, which is still the right place, and a
+// toast about a dot that is not there helps nobody. userMarkers is a top-level `let` of this
+// same script block, so it is in scope here; the typeof covers a run before the map exists, the
+// way _openPersonSheet guards the same name.
+window._activeGo = function (room, uid, name) {
+  window._closeActiveSheet();
+  if (!room) return;
+  try { if (window._openCrew) window._openCrew(room); } catch (e) {}
+  if (!uid) return;
+  var tries = 0;
+  window._activePoll = setInterval(function () {
+    var m = null;
+    try { m = (typeof userMarkers !== 'undefined' && userMarkers) ? userMarkers[uid] : null; } catch (e) {}
+    if (m) {
+      window._activeStopPoll();
+      try { if (window._followUser) window._followUser(uid, name || 'Member'); } catch (e) {}
+      return;
+    }
+    if (++tries >= 20) window._activeStopPoll();
+  }, 250);
 };
 // Counts live ON the dock buttons, so the shape of your world is readable without pressing
 // anything. Only drawn when there is something to say -- a zero badge is noise.
@@ -32558,6 +32876,8 @@ window._voiceMod().then(function (m) {
     'layer-sheet': function () { if (typeof closeLayerSheet === 'function') closeLayerSheet(); else hide('layer-sheet'); },
     'offline-mode-bar': function () { if (window._cancelOfflineMode) window._cancelOfflineMode(); else hide('offline-mode-bar'); },
     'member-sheet': function () { if (window._closeMemberSheet) window._closeMemberSheet(); else hide('member-sheet'); },
+    // Its closer also cancels a follow-poll that is still waiting on a marker.
+    'active-sheet': function () { if (window._closeActiveSheet) window._closeActiveSheet(); else hide('active-sheet'); },
     'voice-log-sheet': function () { if (window._closeVoiceLog) window._closeVoiceLog(); else hide('voice-log-sheet'); },
     'saved-pins-drawer': function () {
       hide('saved-pins-drawer');
@@ -32568,7 +32888,7 @@ window._voiceMod().then(function (m) {
   };
   // Least-modal first → most-modal last; on a z-index tie the later (more modal) wins.
   var IDS = ['user-drawer','track-detail-drawer','tracks-drawer','saved-pins-drawer','places-drawer',
-    'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','settings-sheet','voice-log-sheet','layer-sheet','offline-mode-bar',
+    'member-sheet','chat-panel','pin-hub-sheet','room-info-sheet','active-sheet','settings-sheet','voice-log-sheet','layer-sheet','offline-mode-bar',
     'backup-modal','bg-setup-modal','map-sources-modal','owner-member-modal','invite-picker-modal','invite-modal',
     'pin-modal','place-modal','quick-trail-sheet','status-legend-sheet','visibility-modal','passcode-modal','set-passcode-modal','trk-name-modal','trk-confirm-modal',
     'delete-confirm-modal','color-picker-modal','voice-pick','invite-join-popup',
