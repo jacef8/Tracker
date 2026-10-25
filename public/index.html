@@ -5106,7 +5106,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 967;
+var APP_BUILD = 968;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -12433,7 +12433,24 @@ window._talkLoadDetail = async function () {
       var now = Date.now();
       var people = Object.keys(users).map(function (uid) {
         var u = users[uid] || {};
-        return { uid: uid, name: u.name || 'Member', dev: u.dev || '', ts: u.fixTs || u.ts || 0, fgTs: u.fgTs || 0, hidden: !!u.hidden, noGps: !!u.noGps, priv: u.priv };
+        var p = { uid: uid, name: u.name || 'Member', dev: u.dev || '', ts: u.fixTs || u.ts || 0, fgTs: u.fgTs || 0, hidden: !!u.hidden, noGps: !!u.noGps, priv: u.priv };
+        // Sharing a position: their phone is reporting, app open or not. This is what the home
+        // ring counts — someone driving with the phone in their pocket is very much "on", and
+        // calling that zero made the headline number contradict the map underneath it.
+        //
+        // The RULE is _presenceOf's, the same classifier the People list uses: LIVE or PARKED
+        // means sharing. It used to be its own 15-minute age test here, so the two screens
+        // could disagree — owner's screenshot 2026-10-24: the ring said "1 PERSON SHARING NOW"
+        // while Our Crew's People list showed Vanesa LIVE and Lexi PARKED (last fix 17 min,
+        // phone heard from since). One app, one answer. _presenceOf is assigned further down
+        // this same script, long before Firebase is ready to run this loader, so the age test
+        // is only a fallback for it being missing. The raw row goes in whole because the
+        // classifier reads lat/lng, hbTs, spd and oss, none of which p carries.
+        var _pr = null;
+        try { _pr = (typeof window._presenceOf === 'function') ? window._presenceOf(uid, u) : null; } catch (e) {}
+        p.presence = _pr ? _pr.key : '';   // 'live' | 'parked' | 'check' | ... — for a future label
+        p.sharing = _pr ? (_pr.key === 'live' || _pr.key === 'parked') : ((now - (p.ts || 0)) < SHARING_FRESH_MS);
+        return p;
       }).filter(function (p) {
         // Every device of MINE, not just this one. A plain uid===userId check left my own PC,
         // tablet and any older id of mine sitting in my own Talk list. _isMyOwnUid resolves a
@@ -12449,12 +12466,9 @@ window._talkLoadDetail = async function () {
       // background service and stay fresh with the app closed, which is why they were the
       // wrong signal for "can they answer a voice ping right now".
       people.forEach(function (p) {
-        // Reachable for VOICE: their app is open right now.
+        // Reachable for VOICE: their app is open right now. (p.sharing — "is their phone
+        // reporting" — is set in the mapper above, from _presenceOf.)
         p.live = !!p.fgTs && (now - p.fgTs) < FG_FRESH_MS;
-        // Sharing a position: their phone is reporting, app open or not. This is what the home
-        // screen counts — someone driving with the phone in their pocket is very much "on", and
-        // calling that zero made the headline number contradict the map underneath it.
-        p.sharing = (now - (p.ts || 0)) < SHARING_FRESH_MS;
       });
       people.sort(function (a, b) { return (b.live - a.live) || (b.ts - a.ts); });
       // The loader already pulls each Crew's voicelog to count unheard messages — keep the
@@ -12493,9 +12507,12 @@ window._talkLoadDetail = async function () {
 // touches it, so it cannot be faked by the background service.
 var FG_BEAT_MS = 45 * 1000;      // how often a visible page re-stamps
 var FG_FRESH_MS = 2 * 60 * 1000; // how recent that stamp must be to count as reachable
-// How recent a POSITION has to be to call someone "sharing now". Generous next to
-// FG_FRESH_MS because a phone at rest reports on a slow heartbeat — a quarter of an hour
-// of silence still means the phone is with them and working.
+// How recent a POSITION has to be to call someone "sharing now" when _presenceOf is not
+// available. That is the FALLBACK only: the live rule is _presenceOf's LIVE/PARKED (see the
+// mapper in _talkLoadDetail), the same classifier the People list shows, so the home ring and
+// the list cannot disagree about who is sharing. Generous next to FG_FRESH_MS because a phone
+// at rest reports on a slow heartbeat — a quarter of an hour of silence still means the phone
+// is with them and working.
 var SHARING_FRESH_MS = 15 * 60 * 1000;
 // Rooms this device has genuinely written a position into. The heartbeat may only stamp these
 // — writing fgTs anywhere else conjures a record out of nothing.
