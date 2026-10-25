@@ -171,7 +171,10 @@ for (const [label, ts] of [['_ts 0', 0], ['_ts missing', undefined]]) {
   check('glide after teleport: viewer gap is 10 s (from the teleport), reporter 10 s', m._lastGapMs === 10000, `_lastGapMs=${m._lastGapMs}`);
 }
 
-// 8. Merged oval: grouping owns the position; this member's arrival is still stamped.
+// 8. Merged oval (build 970): the member's true fix is recorded, the grouping pass is asked to
+//    rebuild the oval WITHOUT jumping it, and then the oval GLIDES like a solo dot -- it used to
+//    return here with no frame, which is why a pair at 70 mph looked frozen between fixes.
+//    tools/ovalglide.test.mjs covers the centroid target; here only the glide-engine facts.
 {
   const H = harness();
   H.clock.t = 300000;
@@ -180,8 +183,10 @@ for (const [label, ts] of [['_ts 0', 0], ['_ts missing', undefined]]) {
   const to = north(300);
   H.fn(m, LNG, to, null, { fixTs: T0 + 10000, remote: true });
   check('merged: _lastFixAt stamped to the clock', m._lastFixAt === 300000, `_lastFixAt=${m._lastFixAt}`);
-  check('merged: _curLngLat and _ll recorded, no frame, no setLngLat', atTarget(m, LNG, to) && near(m._ll[1], to) && H.rafs.length === 0 && m.sets.length === 0);
-  check('merged: grouping pass asked to re-centre, _lastGapMs untouched', H.grouping.calls === 1 && m._lastGapMs === 4321);
+  check('merged: the member\'s true fix is recorded on _ll', near(m._ll[1], to), JSON.stringify(m._ll));
+  check('merged: a glide frame IS scheduled and nothing was jumped', H.rafs.length === 1 && m.sets.length === 0, `rafs=${H.rafs.length} sets=${m.sets.length}`);
+  check('merged: grouping pass asked to rebuild the oval, once', H.grouping.calls === 1, `calls=${H.grouping.calls}`);
+  check('merged: the glide is paced by the reporter (10 s), so _lastGapMs is written', m._lastGapMs === 10000, `_lastGapMs=${m._lastGapMs}`);
 }
 
 // 9. Ten chained legs at a 10 s reporter cadence; viewer arrivals jittered +400/-400 by the

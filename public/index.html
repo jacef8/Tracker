@@ -5186,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 969;
+var APP_BUILD = 970;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5586,16 +5586,26 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     var _gu = marker._uid;
     var _grp = _gu && window._markerGroupMembers && window._markerGroupMembers[_gu];
     if (_grp && _grp.length > 1) {
-      if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
-      marker._curLngLat = [toLng, toLat];
+      // Two people riding together share one oval. This branch used to record the fix,
+      // re-centre the oval through the grouping pass and RETURN before the glide, so the oval
+      // sat still for ten seconds, jumped ~1,000 ft, and sat again under a label reading
+      // 71 mph. Now it records the member's true fix, lets the grouping pass rebuild the
+      // membership and DOM, and falls through into the ordinary glide aimed at the group's
+      // centre. _curLngLat is deliberately NOT touched: it is where the oval is drawn right
+      // now, and the glide starts from there.
       marker._ll = [toLng, toLat];
       try { if (window._updateTrailTip) window._updateTrailTip(_gu, toLng, toLat); } catch (e) {}
-      try { _updateMarkerGrouping(true); } catch (e) {}   // re-centre the oval on the new centroid
-      // This report still counts as an arrival. Without the stamp the viewer gap measured on the
-      // first glide after the oval splits spans the whole merged spell, and the dot crawls out of
-      // it for up to 30 s. Only _lastFixAt: _lastGapMs is the camera's and nothing moved here.
-      marker._lastFixAt = performance.now();
-      return;
+      marker._ovalGlide = true;                 // grouping must not jump the oval
+      try { _updateMarkerGrouping(true); } catch (e) {}
+      marker._ovalGlide = false;
+      var _cx = 0, _cy = 0, _cn = 0;
+      ((window._markerGroupMembers && window._markerGroupMembers[_gu]) || _grp).forEach(function (u) {
+        var l = userMarkers[u] && userMarkers[u]._ll;
+        if (l && isFinite(l[0]) && isFinite(l[1])) { _cx += +l[0]; _cy += +l[1]; _cn++; }
+      });
+      if (_cn) { toLng = _cx / _cn; toLat = _cy / _cn; }
+      path = null;                              // an oval has no single route to follow
+      // ...and fall through to the glide, exactly like a solo dot.
     }
   } catch (e) {}
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
@@ -6503,7 +6513,9 @@ function _updateMarkerGrouping(immediate) {
         });
         if (_n) {
           if (!_pmk._mergeTrueLL) _pmk._mergeTrueLL = _pmk._ll ? _pmk._ll.slice() : null;
-          _pmk.setLngLat([_sx / _n, _sy / _n]);
+          // A glide owns the oval's position while it runs (see the merged branch of
+          // _animateMarker); jumping it here would cancel the motion the glide is making.
+          if (!_pmk._ovalGlide && !_pmk._anim) _pmk.setLngLat([_sx / _n, _sy / _n]);
         }
       }
     } catch (_ce) {}
@@ -18008,7 +18020,11 @@ async function stopNativeBackgroundTracking() {
 // reboot, or airplane mode. Two is a pattern.
 var BGH_MIN_WINDOW_MS = 10 * 60 * 1000;   // ignore short backgrounding — iOS batches normally
 var BGH_STRIKES_TO_WARN = 2;
-window._bgHealth = { hiddenAt: 0, writeAtHide: 0 };
+window._bgHealth = { hiddenAt: 0, writeAtHide: 0, posAtHide: null, awaitFix: null };
+// How far the phone must have moved while hidden, with nothing written, before silence counts
+// as a strike. Under this it was parked, and a parked phone writing nothing is the battery
+// design working (961 stopped the rest beat republishing a position), not the OS pausing us.
+var BGH_MOVED_MIN_M = 150;   // ~500 ft
 function _bghStrikes() { try { return parseInt(localStorage.getItem('gl_bgh_strikes') || '0', 10) || 0; } catch (e) { return 0; } }
 function _bghSetStrikes(n) { try { localStorage.setItem('gl_bgh_strikes', String(n)); } catch (e) {} }
 try {
@@ -18017,6 +18033,9 @@ try {
       if (document.hidden) {
         window._bgHealth.hiddenAt = Date.now();
         window._bgHealth.writeAtHide = window._lastWriteTs || 0;
+        window._bgHealth.posAtHide = (window._lastGPS && isFinite(+window._lastGPS.lat))
+          ? { lat: +window._lastGPS.lat, lng: +window._lastGPS.lng } : null;
+        window._bgHealth.awaitFix = null;
         return;
       }
       var h = window._bgHealth;
@@ -18051,10 +18070,10 @@ try {
             return;                       // no strike: this is not what the banner is about
           }
         } catch (e) {}
-        var n = _bghStrikes() + 1;
-        _bghSetStrikes(n);
-        try { window._evt('background tracking produced no writes over ' + Math.round(span / 60000) + 'm (strike ' + n + ', verified against DB)'); } catch (e) {}
-        if (n >= BGH_STRIKES_TO_WARN) _showBgHealthBanner(Math.round(span / 60000));
+        // Nothing advanced -- but a parked phone writes nothing on purpose. Hold the verdict
+        // until the first fix after coming back says whether we moved (see the GPS handler).
+        h.awaitFix = { span: span, posAtHide: h.posAtHide || null, since: Date.now() };
+        try { window._evt('background wrote nothing over ' + Math.round(span / 60000) + 'm -- waiting for the first fix to tell parked from paused'); } catch (e) {}
       };
       try {
         var F = window._fb;
@@ -18415,6 +18434,27 @@ function startLocationSharing() {
       window._lastGoodFix = { lat: rawLat, lng: rawLng, acc: _accNow, ts: now };
     }
     window._lastGPS = { lat, lng }; // keep locally so my own 🎯 still works
+    // The watchdog's deferred verdict (see _bgHealth.awaitFix): the first fix after coming
+    // back decides whether the silence while hidden was a parked phone or a paused app.
+    try {
+      var _bh = window._bgHealth, _aw = _bh && _bh.awaitFix;
+      if (_aw) {
+        _bh.awaitFix = null;
+        if (Date.now() - _aw.since <= 3 * 60 * 1000) {
+          var _movedM = _aw.posAtHide ? metersApart(_aw.posAtHide.lat, _aw.posAtHide.lng, lat, lng) : -1;
+          if (_movedM < 0 || _movedM < BGH_MOVED_MIN_M) {
+            _bghSetStrikes(0);
+            try { window._evt(_movedM < 0 ? 'no position from before we went hidden -- cannot judge, no strike'
+                                         : 'parked while hidden (' + Math.round(_movedM * 3.28084) + ' ft) -- honest silence, no strike'); } catch (e) {}
+          } else {
+            var _bn = _bghStrikes() + 1;
+            _bghSetStrikes(_bn);
+            try { window._evt('moved ' + Math.round(_movedM * 3.28084) + ' ft while hidden ' + Math.round(_aw.span / 60000) + 'm with no writes (strike ' + _bn + ')'); } catch (e) {}
+            if (_bn >= BGH_STRIKES_TO_WARN) _showBgHealthBanner(Math.round(_aw.span / 60000));
+          }
+        }
+      }
+    } catch (e) {}
     window._lastFixTs = now;        // diagnostics: when we last got a fix
     // _lastWriteTs USED TO BE SET HERE, on every fix, with the comment "this fix triggers a DB
     // write below". It does not. The 10-second throttle returns before the write, and the room
@@ -19533,7 +19573,7 @@ window._presenceOf = function (uid, data) {
   // quiet at 64 mph did not park, it stopped being heard from.
   if ((data.spd || 0) >= 15) {
     return { key: 'lost', label: 'SIGNAL LOST', color: '#E0A05A', calm: false,
-             line: 'Signal lost ' + ageStr + ' ago, while moving', why: why };
+             line: 'Signal lost ' + ageStr + ' · moving', why: why };
   }
   if (why) {
     return { key: 'check', label: 'CHECK PHONE', color: '#E0A05A', calm: false,
@@ -19551,10 +19591,10 @@ window._presenceOf = function (uid, data) {
     // the reading is -- never that it is current.
     var hbStr = !heard ? '' : hbAge < 90000 ? Math.max(1, Math.round(hbAge / 1000)) + 's' : Math.round(hbAge / 60000) + 'm';
     return { key: 'parked', label: 'PARKED', color: '#2ec4b6', calm: true,
-             line: 'Parked · last fix ' + ageStr + ' ago' + (heard && hbAge > 60000 ? ' · heard ' + hbStr + ' ago' : ''), why: '' };
+             line: 'Parked ' + ageStr + (heard && hbAge > 60000 ? ' · heard ' + hbStr : ''), why: '' };
   }
   return { key: 'stale', label: 'LAST KNOWN', color: '#a9b4bf', calm: true,
-           line: 'Last known · ' + ageStr + ' ago', why: '' };
+           line: 'Last known ' + ageStr, why: '' };
 };
 
 // Track known users to detect joins/leaves
@@ -20420,7 +20460,7 @@ function listenUsers() {
         if (!isMine && _gps) {
           const _d = distanceMiles(_gps.lat, _gps.lng, data.lat, data.lng);
           const _b = getBearing(_gps.lat, _gps.lng, data.lat, data.lng);
-          _distLine = _d + ' from you · ' + _b;
+          _distLine = _d + ' ' + _b + ' of you';
           // How far above or below you they are, in feet. Only while 3D terrain is on: the
           // ground height comes from the loaded elevation tiles, so with terrain off there is
           // nothing to read. A tile that has not arrived yet returns null, which must stay
@@ -20471,7 +20511,7 @@ function listenUsers() {
         // A stale dot explains itself where the data allows: last-known battery + charging
         // state (Android/PC only; iOS never exposes battery, so nothing shows there).
         if (!isLive && typeof data.batt === 'number') {
-          _meta += ' · was ' + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? ', charging' : (data.batt <= 15 ? ' — LOW, not charging' : ', not charging'));
+          _meta += ' · ' + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? ' charging' : (data.batt <= 15 ? ' LOW' : ''));
         }
         // "Here for Xm" / "Moving" — how long they've been sitting at ~this spot (or that
         // they're currently in motion), from the always-on hereSince anchor written in onGpsFix.
@@ -20661,7 +20701,7 @@ function listenUsers() {
             // iOS never exposes it). Live: current charge. Stale: last KNOWN charge, marked
             // "was" — a low was-value is the likeliest answer to why the dot went quiet.
             (typeof data.batt === 'number'
-              ? ' <span style="color:' + (data.batt <= 15 && !data.chg ? '#f85149' : 'var(--muted)') + '">· ' + (isLive ? '' : 'was ') + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? String.fromCodePoint(0x26A1) : '') + '</span>'
+              ? ' <span style="color:' + (data.batt <= 15 && !data.chg ? '#f85149' : 'var(--muted)') + '">· ' + String.fromCodePoint(0x1F50B) + data.batt + '%' + (data.chg ? String.fromCodePoint(0x26A1) : '') + '</span>'
               : '') +
           '</div>' +
           // The member card's location lines, right on the row — dwell time ("Here 1h 5m" /
@@ -20675,10 +20715,8 @@ function listenUsers() {
                 (_distLine ? '<span style="color:var(--muted)">' + _distLine + '</span>' : '') +
               '</div>'
             : '') +
-          // Lat/long on the row too, tap-to-copy like the member card. stopPropagation so
-          // copying doesn't also fire the row tap (which closes the drawer and flies the map).
-          (_coordsStr ? '<div class="ustatus" style="margin-top:2px;color:#8d97a1;font-size:10.5px;cursor:pointer" onclick="event.stopPropagation();window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
-          '</div>' +
+          // Coordinates are not on the row any more: they are for copying, which the person
+          // sheet does with a button; on the list they were a third line of noise.
           // Just the one quick-talk mic now. Favorite (★), the ⋮ actions menu, and set-color
           // (avatar tap) all moved OFF the row into the person sheet the row tap opens — so the
           // row stops being a scatter of partial shortcuts and there's one place with every

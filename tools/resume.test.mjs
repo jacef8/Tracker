@@ -167,7 +167,9 @@ const atTarget = (m, lng, lat) => near(m._curLngLat[0], lng) && near(m._curLngLa
   H.fn(m, LNG, north(300), null, { fixTs: T0 + 10000, remote: true });
   check('snap: the in-flight frame is cancelled first', H.cancels.length === 1 && H.cancels[0] === 77 && m._anim === null && m.sets.length === 1, `cancels=${JSON.stringify(H.cancels)}`);
 }
-// 1g. A merged oval inside the window: grouping still owns the position (that branch runs first).
+// 1g. A merged oval inside the window (build 970): the merged branch records the member's true
+//     fix and falls through, so inside the window the oval is PLACED like any other dot -- one
+//     setLngLat, no frame, and the gap cleared because a placement measures no interval.
 {
   const H = amHarness();
   H.win._resumeSnapUntil = Date.now() + 5000;
@@ -175,7 +177,7 @@ const atTarget = (m, lng, lat) => near(m._curLngLat[0], lng) && near(m._curLngLa
   const m = makeMarker(LNG, LAT, { _lastFixAt: H.clock.t - 60000, _ts: T0, _lastGapMs: 4321 });
   const to = north(300);
   H.fn(m, LNG, to, null, { fixTs: T0 + 10000, remote: true });
-  check('merged oval in the window: no setLngLat, position recorded, _lastGapMs untouched', m.sets.length === 0 && atTarget(m, LNG, to) && m._lastGapMs === 4321 && H.rafs.length === 0);
+  check('merged oval in the window: placed once, true fix on _ll, no frame, gap cleared', m.sets.length === 1 && near(m._ll[1], to) && m._lastGapMs === undefined && H.rafs.length === 0, `sets=${m.sets.length} rafs=${H.rafs.length} gap=${m._lastGapMs}`);
 }
 // 1h. After the window: the first glide measures from the snap, not from before the hide.
 {

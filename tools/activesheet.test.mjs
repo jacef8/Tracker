@@ -258,7 +258,7 @@ await T.win._talkLoadDetail();
   check('Vanesa (family_men): room is the crew the row came from, batt 85, spd 31',
         v && v.room === 'family_men' && v.batt === 85 && v.spd === 31, v && `${v.room} ${v.batt} ${v.spd}`);
   check('Lexi: parked line, room our_crew, batt 70, spd 0 (a number, not dropped)',
-        l && l.line === 'Parked · last fix 17m ago · heard 61s ago' && l.label === 'PARKED' && l.room === 'our_crew' && l.batt === 70 && l.spd === 0,
+        l && l.line === 'Parked 17m · heard 61s' && l.label === 'PARKED' && l.room === 'our_crew' && l.batt === 70 && l.spd === 0,
         l && `${l.line} ${l.room} ${l.batt} ${l.spd}`);
   check('Laura: battery under oss only -> 42 (the fallback), still CHECK PHONE', la && la.batt === 42 && la.presence === 'check', la && `${la.batt} ${la.presence}`);
   check('Hidden: no speed reported -> null; no battery -> null', h && h.spd === null && h.batt === null, h && `${h.spd} ${h.batt}`);
@@ -295,10 +295,10 @@ await T.win._talkLoadDetail();
   check('no raw < leaked into the markup (the <3)', !/<\d/.test(html), '');
   check('markup is balanced: one <button> closed per row', (html.match(/<button /g) || []).length === 2 && (html.match(/<\/button>/g) || []).length === 2, '');
   check('status lines are the classifier\'s sentences, each in its own .ln',
-        html.includes('<span class="ln">Live · 3s ago</span>') && html.includes('<span class="ln">Parked · last fix 17m ago · heard 61s ago</span>'), '');
+        html.includes('<span class="ln">Live · 3s ago</span>') && html.includes('<span class="ln">Parked 17m · heard 61s</span>'), '');
   check('the crew sits in its own .cr element after the status line (nothing to ellipsise it away)',
         html.includes('<span class="ln">Live · 3s ago</span><span class="cr">Family Men</span>') &&
-        html.includes('heard 61s ago</span><span class="cr">Our Crew</span>'), '');
+        html.includes('heard 61s</span><span class="cr">Our Crew</span>'), '');
   check('... and never inside the status line', !/<span class="ln">[^<]*(Our Crew|Family Men)/.test(html), '');
   check('crew names: the slug is prettified, the real name kept', html.includes('Family Men') && html.includes('Our Crew') && !html.includes('family_men<'), '');
   check('battery shown as plain percent when known', html.includes('>85%<') && html.includes('>70%<'), '');
@@ -338,8 +338,8 @@ await T.win._talkLoadDetail();
   check('reload landed: the open sheet re-rendered itself (loader tail -> ring -> hook)', !fresh.includes('Live · 3s ago'), '');
   check('reload landed: the as-of line is gone (the list is current) and nothing says refreshing', !fresh.includes('as-note') && !fresh.includes('refreshing'), fresh.slice(0, 60));
   check('Vanesa: PARKED 30m ago under Our Crew (her moving family_men copy is SIGNAL LOST, not sharing)',
-        fresh.includes('<span class="ln">Parked · last fix 30m ago</span><span class="cr">Our Crew</span>'), '');
-  check('Lexi: 47m ago, no longer "heard" (her heartbeat is 31 min old)', fresh.includes('<span class="ln">Parked · last fix 47m ago</span>'), '');
+        fresh.includes('<span class="ln">Parked 30m</span><span class="cr">Our Crew</span>'), '');
+  check('Lexi: 47m ago, no longer "heard" (her heartbeat is 31 min old)', fresh.includes('<span class="ln">Parked 47m</span>'), '');
   const clicks = clicksOf(fresh);
   check('Vanesa\'s tap now goes to Our Crew, the copy that is still sharing', clicks[0] && clicks[0][0] === 'our_crew' && clicks[0][1] === 'vanesa', JSON.stringify(clicks[0]));
   check('header and ring still agree (both parked)', T.header() === '2 people sharing now' && T.ring() === '2', `${T.header()} / ring ${T.ring()}`);
@@ -435,7 +435,7 @@ await T.win._talkLoadDetail();
   check('one crew failed: the crew that answered is current (Vanesa live 5s under Our Crew, Lexi 29m/13m)',
         clicks.length === 2 && clicks[0][0] === 'our_crew' && clicks[0][1] === 'vanesa' &&
         html.includes('<span class="ln">Live · 5s ago</span><span class="cr">Our Crew</span>') &&
-        html.includes('<span class="ln">Parked · last fix 29m ago · heard 13m ago</span>'), JSON.stringify(clicks));
+        html.includes('<span class="ln">Parked 29m · heard 13m</span>'), JSON.stringify(clicks));
   check('one crew failed: the note names only that crew', html.startsWith('<div class="as-note as-asof">Could not refresh Family Men · showing as of 12m ago</div>'), html.slice(0, 100));
   check('the crew that answered carries a new readTs and no failedAt; the one that did not keeps the old read',
         E.win._talkDetail.our_crew.readTs === E.clock.t && !E.win._talkDetail.our_crew.failedAt &&
