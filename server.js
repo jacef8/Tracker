@@ -3,7 +3,7 @@ const path    = require('path');
 const webpush = require('web-push');
 const app     = express();
 const PORT    = process.env.PORT || 3000;
-const CURRENT_VERSION = '1.7';
+const CURRENT_VERSION = '1.8';
 
 // Railway sits in front of this app as a proxy — without this, req.ip is the proxy's own
 // address for every request, making per-IP rate limiting useless (everyone looks like the
@@ -466,6 +466,111 @@ function _wakeCooldown(u, age) {
 function _wakeStale(u) { return _isIos(u) ? WAKE_STALE_MS : WAKE_STALE_ANDROID_MS; }
 const wakeLastSent = new Map();               // uid -> ts
 
+// ─── WAKE OUTCOMES ──────────────────────────────────────────────────────────────
+// The sweep used to send a poke and forget it. From outside, "no token", "the token works but
+// the phone ignores it" and "the phone woke and reported" all looked the same: a device that
+// goes quiet. Three phones with working tokens kept going dark for days and nobody could say
+// which case each one was. So every poke is now remembered (wakePending) and judged on a later
+// sweep, once the row has had time to move: the phone's own clocks on the row (fixTs, ts, hbTs)
+// advanced past where they were when we poked -> answered; nothing moved for a whole cooldown
+// -> ignored. The verdicts land at gl/_wake/<uid> with a bounded log, admin-only like the other
+// gl/_* nodes, and are read by hand when a phone is in question. Nothing is loaded at boot: the
+// record is write-mostly, and the counters are server-side increments so a restart does not
+// zero them.
+//
+// Two decisions a reviewer will look for. (1) Clock skew: a phone's fixTs/ts is ITS clock and
+// our poke time is OURS, so the test is not "fix newer than the poke" but "the row's own clock
+// advanced since we poked" -- the same clock on both sides, immune to a phone running fast or
+// slow. The one false positive that leaves is a self-initiated write already in flight when we
+// poked (a window of milliseconds after a quiet spell of minutes), and that phone is alive and
+// reporting anyway, which is the question. (2) A heartbeat counts. iOS 1.0.13 answers a wake
+// with a fresh ts/hbTs and the ORIGINAL fixTs when it has no new position; that phone heard the
+// push and woke, which is exactly what the poke asked for. Treating it as ignored would demote
+// every parked iPhone to the hourly lane and starve it of the very pokes that keep it heard
+// from. The log entry says whether a fix came with the answer (fix: true/false), so "alive but
+// no GPS" is still visible. (3) One phone, several crews. The web rest beat is written to the
+// open crew only, while a fix fans out to every crew and iOS writes every room, so a phone's
+// rows do not agree with each other. The judge therefore compares the phone with ITSELF: the
+// newest clock across all of its rows now, against the newest across all of them when we poked.
+// A sibling row that was merely ahead at poke time cannot be read as an answer, and a fix that
+// landed in only one crew still counts as one.
+const WAKE_IGNORED_STREAK = 3;                // this many unanswered pokes in a row: the hourly lane
+const WAKE_LOG_KEEP = 60;                     // judged pokes kept per device at gl/_wake/<uid>/log
+// A parked web/Android row writes a liveness beat (ts, rest) every 4 minutes and nothing else
+// (build 961). The sweep ages a row by fixTs, so that phone looked quiet and was bumped every
+// cooldown for a GPS fix it had no reason to take. The beat is slower than Android's 3-minute
+// stale window, so "honestly resting" has to allow a little more than one beat.
+const WAKE_REST_BEAT_MS = 5 * 60 * 1000;
+const wakePending = new Map();                // uid -> { at, fixTs, heard, name, age, ios }: pokes awaiting a verdict (heard/fixTs: newest across the phone's rows)
+const wakeStreaks = new Map();                // uid -> consecutive ignored pokes (0 after any answer)
+const wakeLogKeys = new Map();                // uid -> [ts, ...] of log entries we know about, oldest first
+
+// The last moment the phone's own writes say it was alive. ts is refreshed by rest beats and
+// heartbeats, fixTs only by a real fix, hbTs by every native iOS write.
+function _heardAt(u) { return Math.max(u.fixTs || 0, u.ts || 0, u.hbTs || 0); }
+function _wakeLaneOf(uid, age) {
+  if ((wakeStreaks.get(uid) || 0) >= WAKE_IGNORED_STREAK) return 'ignored';
+  return age > WAKE_SLOW_AFTER_MS ? 'slow' : 'normal';
+}
+// The cooldown the sweep actually waits: a phone that has provably ignored three pokes gets one
+// an hour whatever its age -- those pushes were going nowhere, and on iOS they count against
+// the budget of the phones that DO answer. One answer puts it back on the normal cadence.
+function _wakeCooldownFor(uid, u, age) {
+  return _wakeLaneOf(uid, age) === 'ignored' ? WAKE_SLOW_COOLDOWN_MS : _wakeCooldown(u, age);
+}
+// One update() per event: the record fields, the new log entry and the prune of anything past
+// WAKE_LOG_KEEP, all in the same write. The existing log keys are read once per device per
+// process (first sighting, as authWatchJudge does) so the bound holds across restarts.
+async function _wakeRecord(uid, at, fields, entry) {
+  if (!adminDb) return;
+  const path = 'gl/_wake/' + uid;
+  try {
+    const patch = Object.assign({}, fields);
+    if (entry) {
+      let keys = wakeLogKeys.get(uid);
+      if (!keys) {
+        let log = null;
+        try { log = await _dbGet(path + '/log'); } catch (e) {}
+        keys = Object.keys(log || {}).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; });
+        wakeLogKeys.set(uid, keys);
+      }
+      while (keys.indexOf(at) >= 0) at++;     // never land on an existing key
+      keys.push(at);
+      patch['log/' + at] = entry;
+      while (keys.length > WAKE_LOG_KEEP) patch['log/' + keys.shift()] = null;
+    }
+    await adminDb.ref(path).update(patch);
+  } catch (e) { console.error('wake record:', e.message); }
+}
+// Judge one pending poke against everything the phone has written since, in any crew. Returns
+// 'answered', 'ignored', or null while it is too soon to say. `a` is the sweep's per-device
+// summary { heard, fixTs, u }: the newest row clocks across every room the phone is in, and one
+// of its rows for the platform. `age` is how quiet the sweep counts the phone as being now, the
+// same figure the poke loop takes its lane from. Called once per device after the room walk --
+// never per room -- so a phone in two crews gets one verdict and one write.
+async function _wakeJudge(uid, a, now, age) {
+  const p = wakePending.get(uid);
+  if (!p) return null;
+  let result, entry;
+  if (a.heard > p.heard) {
+    result = 'answered';
+    wakeStreaks.set(uid, 0);
+    // latencySec is the phone's clock minus ours; a negative value is a phone running behind.
+    entry = { result: result, latencySec: Math.round((a.heard - p.at) / 1000), ageSec: Math.round(p.age / 1000),
+              fix: a.fixTs > p.fixTs };   // false: woke and heartbeat, no new position
+  } else if (now - p.at >= _wakeCooldown(a.u, p.age)) {
+    result = 'ignored';
+    wakeStreaks.set(uid, (wakeStreaks.get(uid) || 0) + 1);
+    entry = { result: result, ageSec: Math.round(p.age / 1000) };
+  } else return null;
+  wakePending.delete(uid);
+  const fields = { streak: wakeStreaks.get(uid), lane: _wakeLaneOf(uid, age), lastJudgedAt: now };
+  fields[result] = fcmAdmin.database.ServerValue.increment(1);
+  if (result === 'answered') fields.lastAnsweredAt = now;
+  await _wakeRecord(uid, now, fields, entry);
+  return result;
+}
+
 // Tell the REST of the Crew when someone's background sharing breaks.
 //
 // The person it happens to is the one least able to notice. iOS asks, periodically, whether an
@@ -622,7 +727,15 @@ async function keepAliveSweep() {
   let rooms;
   try { rooms = await _roomNames(); } catch (e) { console.error('keep-alive: no room list —', e.message); return; }
   const now = Date.now();
-  const targets = new Map();   // uid -> name, deduped across crews
+  // A phone is one thing however many crews it is in, so the walk only collects and the wake
+  // decisions come after it, once per device. alive: the phone's newest clocks across EVERY row
+  // it has, fresh or stale -- what the judge compares (WAKE OUTCOMES, point 3). targets: the
+  // youngest row worth a poke per phone, which sets its cadence (see below). restSkipped:
+  // devices alive-and-parked in some crew, left alone this sweep (see WAKE_REST_BEAT_MS).
+  const alive = new Map();     // uid -> { heard, fixTs, u }
+  const targets = new Map();   // uid -> { name, age, u }
+  const restSkipped = new Set();
+  let poked = 0, answered = 0, ignored = 0;
   // Uptime: one sample per person per sweep, "current" meaning a position under 15 minutes old.
   // Until this existed there was no honest answer to "is anyone actually on the map": the only
   // time series was trail history, which records movement and so misses everyone sitting still.
@@ -646,27 +759,87 @@ async function keepAliveSweep() {
       const batt = (typeof u.batt === 'number') ? u.batt : (u.oss && typeof u.oss.batt === 'number' ? u.oss.batt : null);
       const chg = (u.chg === 1) || !!(u.oss && u.oss.charging);
       if (!was || age < 15 * 60 * 1000) seen.set(uid, { name: u.name, fresh: (was && was.fresh) || age < 15 * 60 * 1000, batt: batt, chg: chg, battAt: (u.fixTs || u.ts || 0) });
+      // Every row counts toward "when was this phone last heard from", stale ones included.
+      const a = alive.get(uid) || { heard: 0, fixTs: 0, u: u };
+      a.heard = Math.max(a.heard, _heardAt(u));
+      a.fixTs = Math.max(a.fixTs, u.fixTs || u.ts || 0);
+      alive.set(uid, a);
       if (age < _wakeStale(u) || age > WAKE_GIVE_UP_MS) continue;
-      if (now - (wakeLastSent.get(uid) || 0) < _wakeCooldown(u, age)) continue;
-      targets.set(uid, u.name);
+      // An honest rest beat inside its window: the phone is alive and parked, and a GPS fix would
+      // change nothing on the map. Counted, not recorded -- there is nothing to learn about it.
+      if (u.rest && (now - (u.ts || 0)) < Math.max(_wakeStale(u), WAKE_REST_BEAT_MS)) { restSkipped.add(uid); continue; }
+      // The youngest row worth a poke speaks for the phone. A row left behind in a crew the phone
+      // no longer opens can sit a day or more behind the one it still writes to, and before this
+      // record existed the cooldown was tested row by row, so the live row's cadence always won.
+      // It has to keep winning: first-room-wins would let a long-dead crew that happens to sort
+      // first put a phone that is minutes quiet on the hourly lane.
+      const t = targets.get(uid);
+      if (!t || age < t.age) targets.set(uid, { name: u.name, age: age, u: u });
     }
   }
 
   // Every room has been walked; now decide, once per device, from its freshest row.
   try { await authWatchJudge(); } catch (e) {}
 
-  for (const [uid, name] of targets) {
+  // Resting in the open crew is resting. The beat is written to that one room, so the phone's
+  // other rows still show the pre-rest fix and, on their own, would get it bumped anyway.
+  for (const uid of restSkipped) targets.delete(uid);
+  // The lane a record shows is the one the poke loop goes by: the age of the phone's youngest
+  // row worth a poke while it has one, its newest fix once it does not. Measured any other way,
+  // the verdict and the poke record could name different lanes for the same phone.
+  const laneAge = function (uid, a) { const t = targets.get(uid); return t ? t.age : now - a.fixTs; };
+
+  // Settle last sweep's pokes before this sweep's cooldowns are read, so a third ignored poke
+  // puts the phone on the hourly lane now, not one poke late.
+  for (const [uid] of wakePending) {
+    const a = alive.get(uid);
+    if (!a) continue;   // on no crew this sweep; the prune below drops it in time
+    const verdict = await _wakeJudge(uid, a, now, laneAge(uid, a));
+    if (verdict === 'answered') answered++; else if (verdict === 'ignored') ignored++;
+  }
+  // A phone heard from inside its stale window with no poke outstanding is alive, whatever it
+  // ignored while it was dead or out of signal. Without this the 'ignored' lane outlived the
+  // outage: the phone came back, was never poked (it was fresh), so nothing ever reset the
+  // streak, and its NEXT quiet spell started on the hourly cadence -- a child's phone that dies
+  // every evening would have been chased an hour late the following day.
+  for (const [uid, a] of alive) {
+    if (wakePending.has(uid) || !(wakeStreaks.get(uid) > 0) || now - a.heard >= _wakeStale(a.u)) continue;
+    wakeStreaks.set(uid, 0);
+    await _wakeRecord(uid, now, { streak: 0, lane: _wakeLaneOf(uid, laneAge(uid, a)) }, null);
+  }
+
+  for (const [uid, t] of targets) {
+    if (now - (wakeLastSent.get(uid) || 0) < _wakeCooldownFor(uid, t.u, t.age)) continue;
+    const a = alive.get(uid), ios = _isIos(t.u);
+    poked++;
     wakeLastSent.set(uid, now);   // stamp before sending: a failure should still respect the cooldown
     const r = await sendBump(uid);
-    if (!r.ok) console.log('keep-alive: ' + name + ' (' + uid.slice(0, 8) + ') not woken — ' + r.reason);
+    const reason = r.ok ? 'sent' : String(r.reason || 'failed');
+    const rec = { name: t.name, ios: ios, lane: _wakeLaneOf(uid, t.age), lastPokeAt: now, lastPokeFixTs: a.fixTs,
+                  pokes: fcmAdmin.database.ServerValue.increment(1), lastResult: reason };
+    if (r.ok) {
+      wakePending.set(uid, { at: now, fixTs: a.fixTs, heard: a.heard, name: t.name, age: t.age, ios: ios });
+      await _wakeRecord(uid, now, rec, null);
+    } else {
+      console.log('keep-alive: ' + t.name + ' (' + uid.slice(0, 8) + ') not woken — ' + reason);
+      // Nothing to wait for: the push never left. Judged on the spot.
+      rec.failed = fcmAdmin.database.ServerValue.increment(1);
+      await _wakeRecord(uid, now, rec, { result: 'failed', reason: reason, ageSec: Math.round(t.age / 1000) });
+    }
   }
-  if (targets.size) console.log('keep-alive: poked ' + targets.size + ' quiet device(s)');
+  if (poked || answered || ignored || restSkipped.size) {
+    console.log('keep-alive: poked ' + poked + ', answered ' + answered + ', ignored ' + ignored
+                + ', resting-skipped ' + restSkipped.size);
+  }
 
   // Clear out identities a reinstall left behind (see pruneSupersededDevices).
   try { await pruneSupersededDevices(); } catch (e) { console.error('prune:', e.message); }
 
   // Don't let the cooldown map grow forever.
-  for (const [uid, t] of wakeLastSent) if (now - t > WAKE_GIVE_UP_MS) wakeLastSent.delete(uid);
+  for (const [uid, t] of wakeLastSent) {
+    if (now - t > WAKE_GIVE_UP_MS) { wakeLastSent.delete(uid); wakeStreaks.delete(uid); wakeLogKeys.delete(uid); }
+  }
+  for (const [uid, p] of wakePending) if (now - p.at > 2 * WAKE_SLOW_COOLDOWN_MS) wakePending.delete(uid);
 
   // Record the uptime samples: gl/_uptime/<day>/<uid> = { name, samples, fresh }.
   try {
@@ -1244,6 +1417,7 @@ app.get('/health', function (req, res) {
       catch (e) { return 'UNPARSEABLE'; }
     })(),
     uptimeSec: Math.round(process.uptime()),
+    wake: { pending: wakePending.size },  // pokes awaiting a verdict (WAKE OUTCOMES); present = this build is live
   });
 });
 // /join — always shows join screen regardless of saved session
