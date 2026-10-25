@@ -201,7 +201,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         let status: CLAuthorizationStatus
         if #available(iOS 14.0, *) { status = mgr.authorizationStatus } else { status = CLLocationManager.authorizationStatus() }
         if status == .notDetermined { mgr.requestWhenInUseAuthorization() }
-        else if status == .authorizedWhenInUse { mgr.requestAlwaysAuthorization() }
+        else if status == .authorizedWhenInUse && !UserDefaults.standard.bool(forKey: "gl_asked_always") {
+            // The Always upgrade is asked for ONCE per install. Asking again after a downgrade
+            // put the phone into provisional Always, and iOS then re-asked the person within
+            // the hour -- "Change to Only While Using" is one of the two buttons -- so the
+            // prompt kept coming back until someone tapped the other one. After this, Always
+            // is set in Settings (CHECK PHONE opens it), where it is not provisional.
+            UserDefaults.standard.set(true, forKey: "gl_asked_always")
+            mgr.requestAlwaysAuthorization()
+        }
         mgr.startUpdatingLocation()
         if CLLocationManager.significantLocationChangeMonitoringAvailable() {
             mgr.startMonitoringSignificantLocationChanges()
@@ -631,7 +639,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             notifyBackgroundSharingStopped()
             pushSettingsNow()
         }
-        if now == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
+        // Deliberately NOT re-requesting Always here any more. This line was the loop: every
+        // drop to While Using asked again, iOS granted provisional Always, and the confirmation
+        // prompt came back an hour later with "Change to Only While Using" as one of its two
+        // buttons. The person is told (notifyBackgroundSharingStopped above) and sent to
+        // Settings, where an Always is permanent.
     }
 
     /// Push a fix into the page as window.__nativeFix({...}). Foreground only — the WebView is
