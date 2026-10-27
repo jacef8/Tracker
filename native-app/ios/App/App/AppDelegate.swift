@@ -723,7 +723,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func notifyBackgroundSharingStopped() {
         let c = UNMutableNotificationContent()
         c.title = "GroundLink stopped sharing in the background"
-        c.body = "iPhone set your location to \"While Using\". Open GroundLink and tap the warning to put it back to Always."
+        c.body = "Your family can't see you when your phone is locked. Tap here and GroundLink will show you the two taps to fix it."
         c.sound = .default
         let req = UNNotificationRequest(identifier: "gl-loc-downgrade-\(Int(Date().timeIntervalSince1970))",
                                         content: c, trigger: nil)

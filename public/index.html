@@ -5186,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 971;
+var APP_BUILD = 972;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -9857,12 +9857,9 @@ window._locProblems = function () {
 
 // Snoozes rather than a permanent dismiss: every one of these silently breaks the whole point
 // of the app, and a member who taps "later" once should not be invisible to the crew forever.
-window._checkLocNudge = function () {
+window._showLocNudgeCard = function (top) {
   try {
-    var probs = window._locProblems();
     var bar = document.getElementById('loc-nudge');
-    if (!probs.length) { if (bar) bar.remove(); return; }
-    var top = probs[0];
     var until = 0;
     try { until = parseInt(localStorage.getItem('gl_locnudge_' + top.k) || '0', 10) || 0; } catch (e) {}
     if (Date.now() < until) return;
@@ -9901,6 +9898,65 @@ window._checkLocNudge = function () {
     bar.querySelector('#loc-nudge-done').onclick  = function () { snooze(3 * 24 * 3600 * 1000, true); };
   } catch (e) {}
 };
+// 972: the location problems that stop sharing outright (While Using, denied, measured background
+// failure) get a full screen with numbered steps instead of a small card. Apple writes and lays
+// out its own permission popup and lets an app open only GroundLink's top page in Settings, not
+// the Location choice under it, so the steps take the person the rest of the way in our words.
+// "Not now" hides it for this visit only: it comes back every time the app is opened until the
+// phone actually reports Always, because every one of these makes the person vanish from the map.
+var _LOC_FULL_KINDS = { whenInUse: 1, denied: 1, bg: 1 };
+window._locFixNotNow = false;
+window._checkLocNudge = function () {
+  try {
+    var probs = window._locProblems();
+    var bar = document.getElementById('loc-nudge');
+    if (!probs.length) { if (bar) bar.remove(); return; }
+    var top = probs[0];
+    var isAndroid = /Android/i.test(navigator.userAgent || '');
+    if (!_LOC_FULL_KINDS[top.k] || !window.GLOpenSettings || isAndroid) { window._showLocNudgeCard(top); return; }
+    if (window._locFixNotNow) { if (bar) bar.remove(); return; }
+    if (bar && bar.getAttribute('data-k') === top.k) return;
+    if (bar) bar.remove();
+    var step = function (n, html) {
+      return '<div style="display:flex;gap:14px;align-items:flex-start;margin:0 0 18px">' +
+        '<div style="flex:0 0 40px;height:40px;border-radius:50%;background:#f0a500;color:#1a1206;font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center">' + n + '</div>' +
+        '<div style="font-size:19px;line-height:1.35;padding-top:7px;color:#fff6e3">' + html + '</div></div>';
+    };
+    bar = document.createElement('div');
+    bar.id = 'loc-nudge';
+    bar.setAttribute('data-k', top.k);
+    bar.setAttribute('role', 'dialog');
+    bar.setAttribute('aria-modal', 'true');
+    bar.style.cssText = 'position:fixed;inset:0;z-index:9200;background:#1a1206;color:#fff6e3;font-family:system-ui,sans-serif;' +
+      'display:flex;flex-direction:column;overflow:auto;' +
+      'padding:calc(env(safe-area-inset-top,0px) + 28px) 22px calc(env(safe-area-inset-bottom,0px) + 22px)';
+    bar.innerHTML =
+      '<div style="font-weight:800;font-size:26px;line-height:1.2;color:#f0a500;margin-bottom:10px">' + escapeHtmlJs(top.t) + '</div>' +
+      '<div style="font-size:17px;line-height:1.4;color:#ffe9bd;margin-bottom:26px">Your family can’t see you when your phone is locked or in your pocket. Two taps fix it.</div>' +
+      step(1, 'Tap the gold button below. It opens GroundLink in your iPhone’s Settings.') +
+      step(2, 'Tap <b>Location</b>.') +
+      step(3, 'Tap <b>Always</b>.') +
+      '<div style="font-size:16px;line-height:1.4;color:#ffe9bd;background:#2a2113;border:1px solid #6b5320;border-radius:12px;padding:12px 14px;margin:4px 0 22px">' +
+      'Later, iPhone may ask whether GroundLink can keep using your location in the background. Tap <b>Always Allow</b> so you stay on the map.</div>' +
+      '<div style="flex:1"></div>' +
+      '<button type="button" id="loc-fix-open" style="width:100%;min-height:58px;background:#f0a500;border:none;color:#1a1206;border-radius:14px;font-size:19px;font-weight:800">Open GroundLink settings</button>' +
+      '<div style="display:flex;gap:10px;margin-top:12px">' +
+      '<button type="button" id="loc-fix-later" style="flex:1;min-height:52px;background:#2a2113;border:1px solid #6b5320;color:#ffe9bd;border-radius:12px;font-size:16px;font-weight:700">Not now</button>' +
+      '<button type="button" id="loc-fix-done" style="flex:1;min-height:52px;background:#2a2113;border:1px solid #f0a500;color:#ffe9bd;border-radius:12px;font-size:16px;font-weight:700">I changed it</button>' +
+      '</div>';
+    document.body.appendChild(bar);
+    bar.querySelector('#loc-fix-open').onclick = function () { try { window.GLOpenSettings(); } catch (e) {} };
+    bar.querySelector('#loc-fix-later').onclick = function () { window._locFixNotNow = true; bar.remove(); };
+    // The phone re-reports the real setting when it comes back to the foreground, so this only
+    // hides the screen for now; if the setting is still wrong it returns on the next open.
+    bar.querySelector('#loc-fix-done').onclick = function () {
+      window._locFixNotNow = true;
+      try { localStorage.setItem('gl_bg_fails', '0'); localStorage.removeItem('gl_bg_spots'); } catch (e) {}
+      bar.remove();
+    };
+  } catch (e) {}
+};
+try { document.addEventListener('visibilitychange', function () { if (document.hidden) window._locFixNotNow = false; }); } catch (e) {}
 try { document.addEventListener('visibilitychange', function () { if (!document.hidden) window._checkLocNudge(); }); } catch (e) {}
 
 window._statGo = function (which) {
