@@ -5186,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 970;
+var APP_BUILD = 971;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5572,8 +5572,26 @@ function _writeRun(base, route, endRec, extra) {
   } catch (e) {}
 }
 
-// opts (remote members only -- see the feed call in _processUsersSnapInner): { fixTs, remote }.
-// fixTs is the reporter's own clock on this row; own-dot calls pass nothing and keep the old rule.
+// Dead reckoning past the last fix (viewer-only -- nothing here is written). Measured live on
+// 2026-10-25 (Lexi, iOS 1.0.13, 65 mph): fixes land every 15-22 s, jittering, each 1,400-2,100 ft
+// apart. The glide is paced to ONE reporter interval (964), so whenever the NEXT fix lands later
+// than the last one did, the dot reaches its target and stands still until it arrives -- "she
+// moves for a few seconds, stops for a few seconds, over and over, while the speed reads 65".
+// Any glide-to-last-point design does that. The cure is to carry on along the last heading at the
+// speed the row already reports until the next fix lands, and let that fix correct from wherever
+// the dot has got to. Bounded four ways, and off for the own dot and for anything slow.
+var EXTRAP_MIN_MPH = 3;        // a parked or walking-pace row has nothing to carry on: it stops on its fix
+var EXTRAP_MAX_FRAC = 0.6;     // never draw more than this share of the last report-to-report leg past the fix
+var EXTRAP_CAD_MULT = 1.5;     // ...nor for longer than this many of the reporter's own intervals
+var EXTRAP_MAX_MS = 30000;     // ...nor past 30 s whatever the cadence -- the glide's own ceiling
+var EXTRAP_DT_CAP_MS = 250;    // a hidden tab runs no frames; the first visible one must not jump the whole gap
+var EXTRAP_HDG_BASE_FT = 50;   // the heading is the bearing of the dot's last 50+ ft, never of two points inches apart
+var EXTRAP_BACK_FT = 30;       // a fix this far BEHIND the dot along its heading means we overshot: no tail until the next fix
+
+// opts (remote members only -- see the feed call in _processUsersSnapInner): { fixTs, remote, spd, hdg }.
+// fixTs is the reporter's own clock on this row. spd is the row's mph and hdg a heading in degrees
+// clockwise from north when the row carries one (today it never does -- see the call site); both are
+// read only by the dead-reckoning tail. Own-dot calls pass nothing and keep the old rule.
 function _animateMarker(marker, toLng, toLat, path, opts) {
   if (!marker) return;
   // A merged oval's POSITION is owned by the grouping pass, which puts it at the centroid of the
@@ -5608,7 +5626,17 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
       // ...and fall through to the glide, exactly like a solo dot.
     }
   } catch (e) {}
+  // Whether a glide (or its tail) was still running as this fix landed. If so the dot is drawn
+  // somewhere between fixes, not on one -- which the overshoot check below needs to know.
+  var _inFlight = !!marker._anim;
   if (marker._anim) { cancelAnimationFrame(marker._anim); marker._anim = null; }
+  // A fix landing mid-extrapolation ends that phase right here: the glide below starts from
+  // _curLngLat, which IS the extrapolated spot, so it re-targets with no special case. What the
+  // phase knew (its heading, how far past the fix it drew) is kept for the overshoot check below --
+  // from a phase still running, or from one that hit a bound and left the dot standing where it
+  // got to (a car that stopped reports again a minute later; the dot is past that fix either way).
+  var _wasEx = marker._extrap || marker._extrapEnded || null;
+  marker._extrap = null; marker._extrapEnded = null;
   // Just back from the background (the feed's visibilitychange handler opens the window): everyone
   // goes where they are now, then motion resumes from there. Gliding here would sprint the dot
   // through up to 30 s of catch-up from a spot that is minutes old. Remote rows only: the own dot
@@ -5655,7 +5683,13 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     // Two writers on one row can produce a fixTs pair that is not an interval (web receive time
     // against CoreLocation time). An implied speed over 150 mph says so; fall back to the viewer gap.
     var _mphR = (metersApart(fromLat, fromLng, toLat, toLng) / (_rGap / 1000)) * 2.23694;
-    if (_mphR <= 150) _gap = Math.min(_vGap, _rGap);
+    if (_mphR <= 150) {
+      _gap = Math.min(_vGap, _rGap);
+      // This reporter's real interval, smoothed: the dead-reckoning tail may run for at most
+      // EXTRAP_CAD_MULT of it. Only an ACCEPTED reporter gap feeds it -- the resume placement and
+      // the teleport return above this line, so neither can poison it with a minutes-long "interval".
+      marker._cadMs = marker._cadMs ? (0.7 * marker._cadMs + 0.3 * _rGap) : _rGap;
+    }
   }
   marker._lastFixAt = _nowMs;
   // A little longer than the observed gap: arriving fractionally late keeps the dot moving
@@ -5719,6 +5753,61 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     var _len = Math.sqrt(_dx * _dx + _dy * _dy);
     _seg.push(_len); _total += _len;
   }
+  // Dead reckoning past the last fix -- see EXTRAP_* above. Decided once here, run by step() after
+  // the glide has landed. Remote rows only, moving ones only (the row's own mph), and only once the
+  // reporter's cadence is known, so the phase has a bound in time as well as in distance.
+  var _ex = null;
+  try {
+    marker._noExtrapOnce = false;           // this fix was accepted: a previous correction is over
+    // The report-to-report leg on the ground -- every waypoint, so a merged oval's centroid leg counts
+    // the same way. 111320 m per degree; longitude is already cos(lat)-scaled.
+    var _legM = _total * 111320;
+    // The direction the dot ends up travelling: the bearing of its last EXTRAP_HDG_BASE_FT of travel,
+    // which after a corner is the road it is now on. NOT the last waypoint pair. When a report carries
+    // a route, the route's final vertex IS the fix -- rounded to 1e-6 degrees (~4 in) by _pathTake,
+    // while the row's lat/lng is raw -- so that pair is a few inches of rounding noise pointing
+    // anywhere, and a tail launched along it ran 700 ft in a random direction on every report with
+    // a bend in it. Walk back from the fix to the first waypoint far enough away to mean something
+    // and take the bearing from there; a leg shorter than that gives no tail at all (fails closed).
+    var _wb = _wp[_wp.length - 1], _baseDeg = (EXTRAP_HDG_BASE_FT / 3.28084) / 111320, _hdg = NaN;   // ft -> m -> degrees
+    for (var _hi = _wp.length - 2; _hi >= 0; _hi--) {
+      var _dE = (_wb[0] - _wp[_hi][0]) * _cosLat, _dN = _wb[1] - _wp[_hi][1];
+      if (Math.sqrt(_dE * _dE + _dN * _dN) >= _baseDeg) { _hdg = Math.atan2(_dE, _dN) * 180 / Math.PI; break; }
+    }
+    if (opts && typeof opts.hdg === 'number' && isFinite(opts.hdg)) _hdg = opts.hdg;   // the row's own course wins when there is one
+    // Overshoot: the new fix is BEHIND where the dot was drawn, measured ALONG the heading it was
+    // drawn travelling (a fix off to one side at the same progress is not behind), by more than GPS
+    // jitter -- we ran past a stop, a turn, or a car that braked. This glide corrects as usual, but
+    // does not run on past its fix: the correction points BACKWARDS, so its bearing is the wrong
+    // heading for a tail, and a dot launched along it reads as the car reversing while the row says
+    // 60 mph (a fix only 15% of the leg behind sent it 167 ft the wrong way). The next accepted fix
+    // earns the tail back (the flag is cleared at the top of this block). A fixed tolerance, not a
+    // share of the leg: in the normal case the next fix lands a whole interval AHEAD of the dot, so
+    // anything behind is a real event.
+    // The reference heading is the tail's when there was one (running, or ended on its bound with
+    // the dot standing past the fix). With no tail but a glide still in flight -- the dot drawn part
+    // way between two fixes -- it is that glide's own bearing, kept on the marker as _hdgPrev: a fix
+    // behind a mid-glide dot gets the same backwards correction (a fix 100-1,200 ft behind one sent
+    // the dot up to 700 ft the wrong way). A correction's bearing is never kept, or the forward fix
+    // after one would read as behind. Nothing is checked when the dot stood ON its fix with nothing
+    // in flight: a leg from one reported fix to the next is the truth whichever way it points, so a
+    // car that turned round, or left a lot the way it came in, has its tail back on that very fix.
+    var _refHdg = _wasEx ? _wasEx.heading : ((_inFlight && isFinite(marker._hdgPrev)) ? marker._hdgPrev : NaN);
+    if (isFinite(_refHdg)) {
+      var _thW = _refHdg * Math.PI / 180;
+      var _along = (toLat - fromLat) * 111320 * Math.cos(_thW) + (toLng - fromLng) * 111320 * _cosLat * Math.sin(_thW);
+      if (_along < -EXTRAP_BACK_FT / 3.28084) marker._noExtrapOnce = true;   // ft -> m
+    }
+    if (!marker._noExtrapOnce && isFinite(_hdg)) marker._hdgPrev = (_hdg + 360) % 360;   // the way the car is going; a correction is not
+    if (!marker._noExtrapOnce && opts && opts.remote && typeof opts.spd === 'number' && opts.spd >= EXTRAP_MIN_MPH
+        && marker._cadMs > 0 && isFinite(_hdg) && _legM > 0) {
+      // At the row's speed, but never much faster than the glide itself just moved: a stale or
+      // spiky spd must not launch a dot that has been crawling.
+      var _rate = Math.min(opts.spd / 2.23694, 1.5 * _legM / (dur / 1000));   // metres per second
+      _ex = { heading: (_hdg + 360) % 360, rate: _rate, legM: _legM,
+              maxMs: Math.min(EXTRAP_CAD_MULT * marker._cadMs, EXTRAP_MAX_MS) };
+    }
+  } catch (e) { _ex = null; }
   function _atFraction(t) {
     if (_total <= 0 || _seg.length === 1) {
       return [fromLng + (toLng - fromLng) * t, fromLat + (toLat - fromLat) * t];
@@ -5739,6 +5828,36 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     var t = Math.min(1, (t2 - start) / dur);
     var _at = _atFraction(t);
     var lng = _at[0], lat = _at[1];
+    var _more = t < 1;
+    // The glide has landed and nothing newer has arrived: carry on along the heading at the row's
+    // speed (dead reckoning, see EXTRAP_* above) until the next fix lands or a bound is hit. dt is
+    // the rAF clock's, capped -- a hidden tab runs no frames and the first visible one must not
+    // fling the dot the whole way it was away. Longitude is scaled by cos(lat), the mistake 970
+    // fixed in the leg timing. The next fix re-targets from _curLngLat, so no hand-off is needed.
+    if (!_more && _ex) {
+      try {
+        var _x = marker._extrap;
+        if (!_x) {
+          // This frame put the dot ON its target; the phase measures from here.
+          marker._extrap = { since: t2, last: t2, dist: 0, heading: _ex.heading, rate: _ex.rate, legM: _ex.legM, lng: toLng, lat: toLat };
+          _more = true;
+        } else {
+          var _dt = Math.min(EXTRAP_DT_CAP_MS, Math.max(0, t2 - _x.last));
+          _x.last = t2;
+          var _d = _x.rate * _dt / 1000;
+          var _cap = EXTRAP_MAX_FRAC * _x.legM;
+          _more = true;
+          if (_x.dist + _d >= _cap) { _d = Math.max(0, _cap - _x.dist); _more = false; }   // far enough past a fix nobody confirmed
+          if (t2 - _x.since >= _ex.maxMs) _more = false;                                   // ...or long enough
+          _x.dist += _d;
+          var _th = _x.heading * Math.PI / 180;
+          _x.lat += (_d * Math.cos(_th)) / 111320;
+          _x.lng += (_d * Math.sin(_th)) / (111320 * (Math.cos(_x.lat * Math.PI / 180) || 1));
+          lng = _x.lng; lat = _x.lat;
+          if (!_more) { marker._extrapEnded = _x; marker._extrap = null; }   // a bound: the dot stands here until the next fix
+        }
+      } catch (e) { marker._extrap = null; _more = false; }
+    }
     // Camera FIRST, then the marker into it. A marker computes its screen position from the
     // camera transform as it stands when setLngLat runs, so placing the marker and then moving
     // the camera leaves the icon one frame behind, every frame -- a dot twitching against a map
@@ -5772,9 +5891,11 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     // points and setData lands instantly, but the marker takes ~1.4s to glide there — so
     // without this the trail visibly arrives first and the pin chases it, which reads as the
     // breadcrumb bouncing out in front. Welding the tip to the animated position means the
-    // line can only ever trail behind.
+    // line can only ever trail behind. The tip follows the dead-reckoned dot too: it is the same
+    // dot, and a tail that stopped at the last fix while the pin ran on would read as the pin
+    // leaving its own trail. The recorded points are untouched -- only the welded tip moves.
     try { if (marker._uid && window._updateTrailTip) window._updateTrailTip(marker._uid, lng, lat); } catch (e) {}
-    if (t < 1) marker._anim = requestAnimationFrame(step); else marker._anim = null;
+    if (_more) marker._anim = requestAnimationFrame(step); else marker._anim = null;
   }
   marker._anim = requestAnimationFrame(step);
 }
@@ -6515,7 +6636,15 @@ function _updateMarkerGrouping(immediate) {
           if (!_pmk._mergeTrueLL) _pmk._mergeTrueLL = _pmk._ll ? _pmk._ll.slice() : null;
           // A glide owns the oval's position while it runs (see the merged branch of
           // _animateMarker); jumping it here would cancel the motion the glide is making.
-          if (!_pmk._ovalGlide && !_pmk._anim) _pmk.setLngLat([_sx / _n, _sy / _n]);
+          // And a dead-reckoning tail that ended on its bound (_extrapEnded, set in step()) left
+          // the oval standing PAST the centroid of the members' true fixes on purpose, with no
+          // frame in flight. This pass runs on every presence snapshot; re-centring here would
+          // snap the oval back up to 60% of a leg, and the next glide, which starts from
+          // _curLngLat (still at the tail's end), would jump it forward again. The next fix
+          // clears the flag, so this stands down only while the dot is deliberately ahead.
+          if (!_pmk._extrapEnded) {
+            if (!_pmk._ovalGlide && !_pmk._anim) _pmk.setLngLat([_sx / _n, _sy / _n]);
+          }
         }
       }
     } catch (_ce) {}
@@ -20369,19 +20498,30 @@ function listenUsers() {
           // so _rep changes but the target is where the dot already sits. _animateMarker is not
           // a no-op there: it cancels whatever is in flight and runs a frame loop to the same
           // spot, restamping its pacing clock. Nothing to show, so nobody animates. Only when
-          // the dot is actually there -- a hold that lands mid-glide lets that glide finish.
+          // the dot is actually there -- a hold that lands mid-glide lets that glide finish --
+          // or deliberately PAST there, on the dead-reckoning tail.
           var _glide = true;
           if (data._held) {
             try {
               var _curLL = userMarkers[uid]._curLngLat;
               if (!_curLL) { var _gl = userMarkers[uid].getLngLat(); _curLL = [_gl.lng, _gl.lat]; }
               if (metersApart(_curLL[1], _curLL[0], data.lat, data.lng) < 1) _glide = false;
+              // The tail (EXTRAP_*, by the glide) carries a moving dot on beyond its last fix, and
+              // a held row is that same last fix again. Gliding to it would drag the dot back up
+              // to 60% of a leg and the next real fix would run it out again -- the out-and-back
+              // bouncing this file has spent many builds removing. Leave the tail to its own
+              // bounds; the next believed fix re-targets from wherever the dot has got to.
+              if (userMarkers[uid]._extrap || userMarkers[uid]._extrapEnded) _glide = false;
             } catch (e) {}
           }
           if (_glide) {
             // Hand the glide the reporter's own clock. _ts still holds the PREVIOUS report's time
             // here (it is restamped further down), so the pair is this person's real interval.
-            _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true });
+            // The dead-reckoning tail (EXTRAP_*, by the glide) also wants the row's own mph and, if
+            // the row carried one, a heading. It does not: spdH is the hide-my-speed flag, and the
+            // course a phone computes never leaves it, so hdg is null and the glide's last leg
+            // supplies the direction.
+            _animateMarker(userMarkers[uid], data.lng, data.lat, data.path, { fixTs: data.fixTs || data.ts || 0, remote: true, spd: (typeof data.spd === 'number') ? data.spd : null, hdg: null });
             if (followUid === uid) _followRecenter(data.lng, data.lat);
           }
         } else if (!isMine && !isLive && Date.now() < (window._resumeSnapUntil || 0) && userMarkers[uid]._lastRep !== _rep) {
