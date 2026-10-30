@@ -1299,7 +1299,15 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
     const targets = {};
     Object.entries(subs).forEach(function(e) { targets[e[0]] = { rec: e[1], from: base }; });
     Object.entries(favs).forEach(function(e) { if (!targets[e[0]]) targets[e[0]] = { rec: e[1], from: groupBase + '/favSubs' }; });
-    if (!Object.keys(targets).length) return res.json({ ok: true, sent: 0 });
+    if (!Object.keys(targets).length) {
+      // Nobody in this crew can be notified at all. For a pin that is the answer to "did they
+      // get it?", so it is recorded like any other pin push.
+      if (String(b.type || '') === 'pin') {
+        console.log('/push pin group=' + String(group) + ' targets=0 sent=0 :: nobody in this crew has notifications set up');
+        try { await _dbSet('gl/_debug/pinPushes/' + (Date.now() % 10), { ts: Date.now(), group: String(group), title: String(b.title || '').slice(0, 80), targets: 0, sent: 0, decisions: 'nobody in this crew has notifications set up' }); } catch (e) {}
+      }
+      return res.json({ ok: true, sent: 0 });
+    }
     let sent = 0;
     // Why each recipient was kept or dropped. A user reported still being notified about his
     // OWN geofence transitions on the very phone that produced them, and every check below
