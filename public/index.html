@@ -3285,6 +3285,13 @@
               <div id="account-sessions"></div>
             </div>
 
+            <!-- 976: opt out of the public name search. -->
+            <label style="display:flex;align-items:flex-start;gap:12px;margin-top:14px;cursor:pointer">
+              <input type="checkbox" id="acct-hide-search" onchange="window._setHideSearch(this.checked)" style="width:22px;height:22px;margin-top:2px;flex-shrink:0;accent-color:var(--accent)">
+              <span><span style="display:block;font-size:14px;font-weight:700;color:var(--text)">Hide me from search</span>
+              <span style="display:block;font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4">People outside your crews won't find you by name. Your crews still see you, and invite links still work.</span></span>
+            </label>
+
             <!-- Profile photo — one per PERSON, shown on the map instead of initials. -->
             <div id="account-photo-row" style="display:none;margin-top:14px">
               <div class="field-label" style="margin-bottom:6px">Your photo</div>
@@ -5186,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 975;
+var APP_BUILD = 976;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6882,6 +6889,9 @@ window._assertPresence = function (roomOverride) {
     if (!uid) return;
     var nm = (typeof userName !== 'undefined' && userName) || (function () { try { return localStorage.getItem('gl_name') || ''; } catch (e) { return ''; } })();
     var room = (roomOverride !== undefined) ? roomOverride : ((typeof groupName !== 'undefined' && groupName) ? groupName : null);
+    // 976: gl/_presence is readable by anyone signed in, including a stranger on the website.
+    // Never publish which crew someone has open there.
+    try { if (room && (_isCircleMember(room) || window._roomIsCircle)) room = null; } catch (e) {}
     var presRef = fb.ref(fb.db, 'gl/_presence/' + uid);
     fb.onDisconnect(presRef).remove();
     fb.set(presRef, { room: room, name: nm, ts: fb.serverTimestamp() });
@@ -13595,6 +13605,17 @@ function _setCircles(m) {
   try { window._listenCircles && window._listenCircles(); } catch (e) {}
 }
 function _isCircleMember(key) { return !!_getCircles()[key]; }
+window._setHideSearch = function (on) {
+  try { localStorage.setItem('gl_hide_search', on ? '1' : '0'); } catch (e) {}
+  try { if (window._glSync) window._glSync(); } catch (e) {}
+  try { toast(on ? 'Hidden from search' : 'People can find you by name again', 2600); } catch (e) {}
+};
+try {
+  document.addEventListener('DOMContentLoaded', function () {
+    try { var c = document.getElementById('acct-hide-search'); if (c) c.checked = localStorage.getItem('gl_hide_search') === '1'; } catch (e) {}
+  });
+  setTimeout(function () { try { var c = document.getElementById('acct-hide-search'); if (c) c.checked = localStorage.getItem('gl_hide_search') === '1'; } catch (e) {} }, 0);
+} catch (e) {}
 // Prompt a non-member who just entered an EXISTING Crew room to become a permanent member.
 // Today the only other way in is the separate invite picker — without this, someone who opens
 // a shared Crew link (or an older room that later became a Crew) is stuck as an ephemeral
@@ -23979,6 +24000,10 @@ function _renderInvitePeople(q) {
   var listEl = document.getElementById('invite-pick-list');
   if (!listEl) return;
   q = String(q || '').trim().toLowerCase();
+  // 976: one or two letters matched half the directory, which made browsing strangers trivial.
+  // Under three letters the list stays your own people, with a hint.
+  var _qShort = q.length > 0 && q.length < 3;
+  if (_qShort) q = '';
   // Show "Invite all my people" only when it would actually do something: you have favourites,
   // some of them are not already in or invited, and you are not mid-search (while searching,
   // the list is about one specific person and a bulk button is noise). Count on the label, so
@@ -24115,13 +24140,17 @@ function _renderInvitePeople(q) {
     return pp.online ? 0 : pp.friend ? 1 : 2;
   }
   people.sort(function(a, b) { var r = rank(a) - rank(b); return r !== 0 ? r : (a.name || '').localeCompare(b.name || ''); });
+  if (_qShort) {
+    listEl.innerHTML = '<div style="font-size:13px;color:var(--muted);line-height:1.5;padding:4px 2px 8px">Type at least 3 letters to search everyone.</div>' + (people.length ? '' : '');
+    if (!people.length) return;
+  }
   if (!people.length) {
     listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">' +
       (q ? 'No one matching “' + _escHtml(q) + '”.'
          : 'No friends yet. Type a name above to find anyone who\'s ever signed in — even offline — or tap the &#9734; next to a person in the member list to save them, or share the link above.') + '</div>';
     return;
   }
-  listEl.innerHTML = people.slice(0, 40).map(function(pp) {
+  listEl.innerHTML = (_qShort ? '<div style="font-size:13px;color:var(--muted);line-height:1.5;padding:4px 2px 8px">Type at least 3 letters to search everyone.</div>' : '') + people.slice(0, 40).map(function(pp) {
     // hereNow = live in the target room right now but NOT yet a permanent Crew member — the
     // prime invite target (this is exactly how someone goes from "shows up because they have
     // the link" to actually being in the Crew). Already-members and, for a regular room,
@@ -31697,7 +31726,11 @@ try {
       // when offline. Signed-in accounts only; keyed by account uid; `dev` = this device (the
       // target for friend/invite, which are device-id based). No email/pins/tracks → minimal exposure.
       try {
-        if (LS.get('gl_account') === 'google') {
+        // 976: "Hide me from search" -- no public directory entry, and the old one is removed.
+        // Crew members still see you; strangers can no longer find you by name.
+        if (LS.get('gl_account') === 'google' && LS.get('gl_hide_search') === '1') {
+          try { f.remove && f.remove(f.ref(f.db, 'gl/_directory/' + u)); } catch (e) {}
+        } else if (LS.get('gl_account') === 'google') {
           var _dnm = name() || '';
           if (typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(_dnm)) _dnm = '';   // don't publish a device word as the account's public name
           var _ddev = LS.get('gl_uid') || '';
