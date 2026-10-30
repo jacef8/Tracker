@@ -212,7 +212,7 @@
           // it is the cryptographically verified account, not a client-written claim, and the
           // identity half of this rule has already established that this device belongs to it.
           "$uid": {
-            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid) && (!newData.exists() || root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child($uid).exists() || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
+            ".write": "auth != null && (auth.uid === $uid || root.child('gl').child('_devOwner').child($uid).child('acct').val() === auth.uid) && (!newData.exists() || !root.child('gl').child($room).child('config').child('owner').exists() || root.child('gl').child($room).child('acl').child($uid).exists() || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
           }
         },
         "members": {
@@ -354,11 +354,16 @@
         //
         // A CREW (config/circle === true) is now readable only by its acl and its owner. Quick
         // non-circle rooms are untouched, because walking into one is the point of them.
+        // 2026-10-30 (976): quick rooms too, at the owner's request -- anyone who knew a quick
+        // room's name could read everyone's live position in it. Every room is now readable by
+        // its acl and its owner only; an invite link still lets people in (acl self-add with the
+        // room's inviteKey). The one exception is a room with no owner yet, i.e. one being
+        // created this moment, so its creator can open it and claim it.
         // Account uids were added alongside device uids first, so a phone signed in with Google
         // matches; every active member was verified covered before this went live. Child rules
         // still grant on their own (joinReq/$uid stays readable by its requester), so asking to
         // join a room you cannot see continues to work.
-        ".read": "auth != null && (root.child('gl').child($room).child('config').child('circle').val() !== true || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
+        ".read": "auth != null && (!root.child('gl').child($room).child('config').child('owner').exists() || root.child('gl').child($room).child('acl').child(auth.uid).exists() || root.child('gl').child($room).child('config').child('owner').val() === auth.uid)"
       }
     },
     "$other": {
