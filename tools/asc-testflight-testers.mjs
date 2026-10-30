@@ -113,7 +113,16 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
-    // First App Store release since 1.0.11, so this carries the native changes of 1.0.12-1.0.15.
+    // First App Store release since 1.0.11, so this carries the native changes of 1.0.12-1.0.16.
+    '1.0.16': [
+      '- Invite links open straight into your crew in the app, with no waiting for approval',
+      '- GroundLink no longer keeps asking for "Always" location, which is what kept switching phones back to "While Using"',
+      '- If your phone does stop sharing in the background, GroundLink shows you the two taps that fix it',
+      '- Clearer wording when iPhone asks about location: tap "Always Allow" to stay on the family map',
+      '- Your phone checks in with the family map whenever iPhone allows, so a parked phone shows as parked instead of offline',
+      '- A location update that fails to send is kept and sent the next time the phone wakes',
+      '- The blue location marker no longer sits in your status bar, and a new app icon',
+    ],
     '1.0.15': [
       '- GroundLink no longer keeps asking for "Always" location, which is what kept switching phones back to "While Using"',
       '- If your phone does stop sharing in the background, GroundLink shows you the two taps that fix it',

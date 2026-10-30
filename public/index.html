@@ -5186,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 972;
+var APP_BUILD = 973;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -8231,7 +8231,7 @@ window._openCrewSetup = function (key, label, opts) {
     // The invite helpers take their target from this, so a link built here points at the NEW
     // Crew rather than whatever room happens to be open.
     window._inviteLinkRoom = key;
-    try { window._ensureInviteKey(key); } catch (e) {}
+    try { window._ensureInviteKey(key).then(function () { try { window._refreshInviteLinkBox(); } catch (e) {} }); } catch (e) {}
     try { _setPill('crew-setup-announce', _announceJoinOn()); } catch (e) {}
     try { _setPill('crew-setup-devices', window._secDevOn && window._secDevOn()); } catch (e) {}
     var m = document.getElementById('crew-setup-modal');
@@ -16155,10 +16155,15 @@ function _showNativeUpdateBar(msg, url, mine, need) {
       }
       var room = u.searchParams.get('room');
       var k = u.searchParams.get('k');
+      // 973: the room's invite key rides along. It used to be dropped right here, so anyone who
+      // tapped an invite link with the app installed landed on "waiting for approval" while the
+      // same link opened in Safari let them straight in.
+      var ik = u.searchParams.get('ik');
       // Short link form: /j/<room>  (?k=<passcode> optional)
       if (!room) { var m = u.pathname.match(/^\/j\/([^\/?#]+)/); if (m) room = decodeURIComponent(m[1]); }
       if (!room) return;                                   // not a room link
-      var target = '/?room=' + encodeURIComponent(room) + (k ? '&k=' + encodeURIComponent(k) : '');
+      var target = '/?room=' + encodeURIComponent(room) + (k ? '&k=' + encodeURIComponent(k) : '') +
+                   (ik ? '&ik=' + encodeURIComponent(ik) : '');
       if (target === window.location.pathname + window.location.search) return; // already here — avoid a loop
       window.location.replace(target);
     }
@@ -16171,7 +16176,72 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   } catch (e) {}
 })();
 
+// 973: GroundLink needs the app on a phone. A phone browser only reports while the page is on
+// screen, so someone who joins from Safari shows up for a few seconds and then freezes on the map.
+var GL_APPSTORE_URL = 'https://apps.apple.com/us/app/groundlink-family/id6790179901';
+var GL_PLAY_TEST_URL = 'https://play.google.com/apps/testing/com.groundlink.app';
+window._phoneBrowserKind = function () {
+  try {
+    if (_isNativeApp()) return '';
+    var ua = navigator.userAgent || '';
+    if (/iPhone|iPod/.test(ua)) return 'ios';
+    if (/Android/.test(ua) && /Mobile/.test(ua)) return 'android';
+  } catch (e) {}
+  return '';
+};
+window._showGetAppScreen = function (kind) {
+  try {
+    if (document.getElementById('get-app-gate')) return;
+    var q = new URLSearchParams(window.location.search);
+    var room = q.get('room') || '';
+    var ik = q.get('ik') || '';
+    var openUrl = room ? 'groundlink://join?room=' + encodeURIComponent(room) + (ik ? '&ik=' + encodeURIComponent(ik) : '') : 'groundlink://open';
+    var crew = room ? ((typeof _prettyGroup === 'function') ? _prettyGroup(room) : room) : '';
+    var g = document.createElement('div');
+    g.id = 'get-app-gate';
+    g.setAttribute('role', 'dialog'); g.setAttribute('aria-modal', 'true');
+    g.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0f1418;color:#f2f5f7;font-family:system-ui,sans-serif;display:flex;flex-direction:column;overflow:auto;' +
+      'padding:calc(env(safe-area-inset-top,0px) + 32px) 22px calc(env(safe-area-inset-bottom,0px) + 22px)';
+    var btn = 'display:block;width:100%;box-sizing:border-box;text-align:center;text-decoration:none;min-height:58px;line-height:58px;border-radius:14px;font-size:19px;font-weight:800;';
+    var step = function (n, t) { return '<div style="display:flex;gap:14px;align-items:flex-start;margin:0 0 16px"><div style="flex:0 0 38px;height:38px;border-radius:50%;background:#7bc96f;color:#0f1418;font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center">' + n + '</div><div style="font-size:18px;line-height:1.35;padding-top:7px">' + t + '</div></div>'; };
+    var html = '<div style="font-size:15px;font-weight:800;letter-spacing:.2em;color:#7bc96f;margin-bottom:14px">GROUNDLINK</div>' +
+      '<div style="font-weight:800;font-size:27px;line-height:1.2;margin-bottom:10px">' + (crew ? 'Get the app to join ' + escapeHtmlJs(crew) : 'Get the GroundLink app') + '</div>' +
+      '<div style="font-size:17px;line-height:1.45;color:#c9d3da;margin-bottom:24px">A web page stops sharing your location the moment you close it or lock your phone, so your crew would lose you right away. The app keeps you on the map.</div>';
+    if (kind === 'ios') {
+      html += step(1, 'Tap <b>Get it on the App Store</b> and install GroundLink Family. It’s free.') +
+        step(2, 'Come back to this page and tap <b>Open in the app</b>.') +
+        step(3, 'When iPhone asks about location, choose <b>Always</b>.') +
+        '<div style="flex:1;min-height:12px"></div>' +
+        '<a href="' + GL_APPSTORE_URL + '" style="' + btn + 'background:#7bc96f;color:#0f1418">Get it on the App Store</a>' +
+        '<a href="' + openUrl + '" style="' + btn + 'margin-top:12px;background:#1b252c;border:2px solid #7bc96f;color:#e9f6e6">Open in the app</a>' +
+        '<div style="font-size:14px;color:#9fb0bb;text-align:center;margin-top:12px;line-height:1.4">Already have it? Tap <b>Open in the app</b>.</div>';
+    } else {
+      html += step(1, 'Tap <b>Get the Android app</b> and join the testers with your Google account.') +
+        step(2, 'Install GroundLink from the Play Store page it opens.') +
+        step(3, 'Open the invite link again. It will open in the app.') +
+        '<div style="flex:1;min-height:12px"></div>' +
+        '<a href="' + GL_PLAY_TEST_URL + '" style="' + btn + 'background:#7bc96f;color:#0f1418">Get the Android app</a>' +
+        '<button type="button" id="get-app-continue" style="' + btn + 'margin-top:12px;background:#1b252c;border:2px solid #4a5a64;color:#e9f6e6;line-height:1.2">Use the website for now</button>' +
+        '<div style="font-size:14px;color:#9fb0bb;text-align:center;margin-top:12px;line-height:1.4">On the website you only show up while this page is open.</div>';
+    }
+    g.innerHTML = html;
+    document.body.appendChild(g);
+    var c = document.getElementById('get-app-continue');
+    if (c) c.onclick = function () { try { sessionStorage.setItem('gl_web_ok', '1'); } catch (e) {} g.remove(); };
+  } catch (e) {}
+};
+
 (function tryResume() {
+  // 973: iPhone browsers stop here -- the App Store app is the only way in. Android browsers get
+  // the same screen with a way through, until GroundLink is public on Google Play.
+  try {
+    var _pbk = window._phoneBrowserKind();
+    if (_pbk === 'ios') { window._showGetAppScreen('ios'); return; }
+    if (_pbk === 'android') {
+      var _ok = ''; try { _ok = sessionStorage.getItem('gl_web_ok') || ''; } catch (e) {}
+      if (!_ok) window._showGetAppScreen('android');
+    }
+  } catch (e) {}
   const s = getSavedSession();
 
   // Always pre-fill name if we have it
@@ -18928,7 +18998,10 @@ function startLocationSharing() {
       // therefore useless for "I still want to find my own tablet") and from the room-wide
       // mapHidden (owner-only, one room at a time). This travels with the device, so it applies
       // in EVERY room automatically. See _devicePrivate.
-      priv: _devicePrivate() ? 1 : 0
+      priv: _devicePrivate() ? 1 : 0,
+      // 973: where this fix came from. A browser stops reporting the moment the page closes or
+      // the phone locks, so the crew needs to know "website" rather than read "signal lost".
+      plat: _isNativeApp() ? 'app' : 'web'
     };
     // Battery, so drain per hour per person can be measured instead of guessed at.
     if (window._battPct != null) { _fixPayload.batt = window._battPct; _fixPayload.chg = window._battChg ? 1 : 0; }
@@ -19753,6 +19826,13 @@ window._presenceOf = function (uid, data) {
   if (!fix || !hasGps)
                     return { key: 'stale', label: 'OFFLINE', color: '#a9b4bf', calm: true, line: 'Not sharing right now', why: '' };
 
+  // 973: a phone using the website, not the app, cannot report once the page is closed. Say
+  // that, instead of SIGNAL LOST or PARKED, either of which claims to know something we don't.
+  if (data.plat === 'web' && data.dev === 'phone') {
+    return { key: 'lost', label: 'WEBSITE ONLY', color: '#E0A05A', calm: false,
+             line: 'Last seen ' + ageStr + ' ago on the website',
+             why: 'Using the website, not the app: it only shares while the page is open. They need to install GroundLink.' };
+  }
   var why = window._presenceHealth(data);
   // Stale while MOVING is the one that always mattered and is unchanged: a phone that went
   // quiet at 64 mph did not park, it stopped being heard from.
@@ -23778,7 +23858,7 @@ window._openInvitePicker = function() {
   window._invitePickerMode = 'room';
   window._circleInviteTarget = null;
   window._inviteLinkRoom = groupName;
-  try { window._ensureInviteKey(groupName); } catch (e) {}
+  try { window._ensureInviteKey(groupName).then(function () { try { window._refreshInviteLinkBox(); } catch (e) {} }); } catch (e) {}
   window._invitePickerBackTo = 'roomInfo';   // this is only ever opened FROM Room Info (closeRoomInfo() runs right before it)
   var back = document.getElementById('invite-picker-back'); if (back) back.style.display = '';
   var t = document.getElementById('invite-picker-title'); if (t) t.textContent = 'Invite to this room';
@@ -23819,7 +23899,7 @@ window._closeInvitePicker = function (goBack) {
 window._openCircleInvitePicker = function(circleKey, circleName) {
   window._invitePickerMode = 'circle';
   window._circleInviteTarget = { key: circleKey, name: circleName || circleKey };
-  try { window._ensureInviteKey(circleKey); } catch (e) {}
+  try { window._ensureInviteKey(circleKey).then(function () { try { window._refreshInviteLinkBox(); } catch (e) {} }); } catch (e) {}
   window._inviteLinkRoom = circleKey;   // NOT groupName — this can be opened from the home screen
   window._circleInviteMembers = {};
   window._invitePickerBackTo = null;   // opened from the home screen / Account page, not Room Info — nothing to go "back" to
@@ -24000,12 +24080,16 @@ function _renderInvitePeople(q) {
       : pp.friend ? '<span style="color:var(--muted)">friend · offline</span>'
       : '<span style="color:var(--muted)">offline</span>';
     var inviteFn = circleMode ? 'window._sendCircleInvite' : 'window._sendRoomInvite';
+    var _cim = (window._circleInviteMembers || {})[pp.uid];
+    var _sentAlready = (window._invitedNow || {})[(circleMode ? (circleTarget && circleTarget.key) : groupName) + '|' + pp.uid] || (circleMode && _cim && _cim.pending);
     return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px">' +
              '<div style="flex:1;min-width:0">' +
                '<div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
                '<div style="font-size:11px;margin-top:1px">' + status + '</div>' +
              '</div>' +
-             '<button onclick="' + inviteFn + '(\'' + _escHtml(pp.uid) + '\')" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>' +
+             (_sentAlready
+               ? '<button disabled style="flex-shrink:0;background:#1f6f3a;border:none;border-radius:8px;color:#e9ffef;font-size:12px;font-weight:800;padding:7px 14px">Invited \u2713</button>'
+               : '<button data-name="' + _escHtml(pp.name || '') + '" onclick="' + inviteFn + '(\'' + _escHtml(pp.uid) + '\', this)" style="flex-shrink:0;background:var(--accent);border:none;border-radius:8px;color:#000;font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer">Invite</button>') +
            '</div>';
   }).join('');
 }
@@ -24025,7 +24109,26 @@ function _pushInvite(uids, roomLabel, isCrew) {
     }).catch(function () {});
   } catch (e) {}
 }
-window._sendRoomInvite = function(uid) {
+// 973: the name to record and announce. The person was picked from a list that already shows
+// their name (often found through the directory search), but the send step only looked in
+// friends / presence / own sessions, so anyone found by search was saved as "them".
+function _inviteeName(uid, btn) {
+  try { var b = btn && btn.getAttribute && btn.getAttribute('data-name'); if (b) return b; } catch (e) {}
+  var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
+  var pres = window._presenceAll || {};
+  var ms = (window._mySessions || {})[uid];
+  return friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
+}
+function _markInvited(roomKey, uid, btn) {
+  try { (window._invitedNow = window._invitedNow || {})[roomKey + '|' + uid] = 1; } catch (e) {}
+  try {
+    if (btn) {
+      btn.disabled = true; btn.textContent = 'Invited \u2713';
+      btn.style.background = '#1f6f3a'; btn.style.color = '#e9ffef'; btn.style.cursor = 'default';
+    }
+  } catch (e) {}
+}
+window._sendRoomInvite = function(uid, btn) {
   // These early-outs used to be silent no-ops — the button would visibly do nothing with zero
   // explanation, which is exactly what "the invite button doesn't work sometimes" looks like
   // from the outside. Now every failure path actually says so.
@@ -24034,7 +24137,7 @@ window._sendRoomInvite = function(uid) {
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
   var ms = (window._mySessions || {})[uid];
-  var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
+  var nm = _inviteeName(uid, btn);
   var label = (document.getElementById('group-name-label') || {}).textContent || groupName;
   var pin = window._roomHasPin ? (window._roomPlainPin || _loadRoomPin(groupName) || null) : null;
   // `room` is the DISPLAY label (what the invite card shows). Carry the actual room key too:
@@ -24078,7 +24181,8 @@ window._sendRoomInvite = function(uid) {
                 || !!(pres && pres[uid])
                 || !!((window._mySessions || {})[uid]);
     } catch (e) { _reachable = true; }   // unsure → don't cry wolf
-    if (_reachable) toast('Invited ' + nm, 2200);
+    _markInvited(groupName, uid, btn);
+    if (_reachable) toast('\u2713 Invite sent to ' + nm + '. They\u2019re let in as soon as they open GroundLink.', 4000);
     else toast('Sent, but ' + nm + ' may not receive it — that’s an old device for them. Use “Share link / text” instead.', 6000);
   } catch (e) {
     toast('Couldn’t send the invite — check your connection and try again', 3000);
@@ -24156,14 +24260,14 @@ window._inviteAllFriends = function () {
       try { window._evt('invited all friends'); } catch (e) {}
     }, { yes: 'Send invites' });
 };
-window._sendCircleInvite = function(uid) {
+window._sendCircleInvite = function(uid, btn) {
   var t = window._circleInviteTarget; var fb = window._fb;
   if (!uid) return;
   if (!fb || !fb.db || !t || !t.key) { toast('Couldn’t send the invite — try again in a moment', 2800); return; }
   var friends = (typeof _getFriends === 'function') ? _getFriends() : {};
   var pres = window._presenceAll || {};
   var ms = (window._mySessions || {})[uid];
-  var nm = friends[uid] || (pres[uid] && pres[uid].name) || (ms && ms.name) || 'them';
+  var nm = _inviteeName(uid, btn);
   var rec = { circle: true, key: t.key, room: t.name, from: userId, fromName: userName, ts: Date.now() };
   if (window._inviteKeys[t.key]) rec.ik = window._inviteKeys[t.key];
   _grantInvitee(t.key, uid);
@@ -24178,6 +24282,7 @@ window._sendCircleInvite = function(uid) {
       _pushInvite([uid, _acct2], t.name, true);
     } catch (e) {}
     try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
+    _markInvited(t.key, uid, btn);
     try { var si = document.getElementById('invite-search'); _renderInvitePeople(si ? si.value : ''); } catch (e) {}
     // Same undeliverable-device check _sendRoomInvite has done for a while. Crew invites never
     // had it, so inviting a stale device id reported a confident "Invited ___" every time.
@@ -24187,7 +24292,7 @@ window._sendCircleInvite = function(uid) {
              || !!(pres && pres[uid])
              || !!((window._mySessions || {})[uid]);
     } catch (e) { _reach2 = true; }   // unsure → don't cry wolf
-    if (_reach2) toast('Invited ' + nm + ' to ' + t.name, 2200);
+    if (_reach2) toast('\u2713 Invite sent to ' + nm + ' for ' + t.name + '. They\u2019re let in as soon as they open GroundLink.', 4000);
     else toast('Sent, but ' + nm + ' may not receive it — that’s an old device for them. Use “Share link / text” instead.', 6000);
   } catch (e) {
     toast('Couldn’t send the invite — check your connection and try again', 3000);
@@ -31071,10 +31176,22 @@ window._nativeShare = async function(data, copyMsg) {
 // clipboard copy, so the app-user list ends up looking like the only way to invite anyone.
 // These also sidestep the in-app invite's real weakness: it targets a DEVICE id, and a stale
 // one delivers to an inbox nobody listens on. A link works regardless of who is on what device.
+// 973: a link built before the room's invite key has loaded goes out without it, and whoever
+// opens it lands on "waiting for approval". Fetch the key first (at most 3 s), then build.
+function _withInviteKey(target, fn) {
+  if (!target || (window._inviteKeys && window._inviteKeys[target])) return fn();
+  var done = false;
+  var go = function () { if (done) return; done = true; fn(); };
+  try { window._ensureInviteKey(target).then(go, go); } catch (e) { go(); }
+  setTimeout(go, 3000);
+}
 window._inviteVia = function (how) {
   // Whichever picker is open decides the target room. Falls back to the open room.
   var target = window._inviteLinkRoom || groupName;
   if (!target) { toast('Join a room first'); return; }
+  if (!window._ikWaited && !(window._inviteKeys && window._inviteKeys[target])) {
+    return _withInviteKey(target, function () { window._ikWaited = 1; try { window._inviteVia(how); } finally { window._ikWaited = 0; } });
+  }
   var url = '';
   try {
     // Only attach a passcode when the target IS the room we're actually in — that's the only
@@ -31143,6 +31260,9 @@ function shareRoomInvite() {
   // Text message, Email and Copy all worked while Share silently failed.
   var target = window._inviteLinkRoom || groupName;
   if (!target) { toast('Join a room first'); return; }
+  if (!window._ikWaited && !(window._inviteKeys && window._inviteKeys[target])) {
+    return _withInviteKey(target, function () { window._ikWaited = 1; try { shareRoomInvite(); } finally { window._ikWaited = 0; } });
+  }
   // A passcode is only knowable for the room we're actually in — see _inviteVia.
   var sameRoom = (target === groupName);
   if (!sameRoom || !window._roomHasPin) { _shareInvite(_inviteUrl(false, null, target), target); return; }
