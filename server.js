@@ -1323,7 +1323,7 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
         try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) { decisions.push(uid.slice(0, 10) + ':same-endpoint'); return; } } catch (e) {}
       }
       // Respect the recipient's per-type notification prefs (SOS always goes through).
-      if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) return;
+      if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) { decisions.push(uid.slice(0, 10) + ':turned-off'); return; }
       // Already told this person about this, via another Crew they share with the sender.
       // SOS is exempt: a repeat there is far cheaper than a miss.
       if (b.type !== 'sos' && _pushDuplicate(uid, b.type, b.body)) { decisions.push(uid.slice(0, 10) + ':DUP'); return; }
@@ -1335,6 +1335,7 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
           try {
             await webpush.sendNotification(subscription, payload, { TTL: 3600, urgency: b.type === 'sos' ? 'high' : 'normal' });
             sent++;
+            decisions.push(uid.slice(0, 10) + ':SENT-web');
           } catch (err) {
             if (err && (err.statusCode === 404 || err.statusCode === 410)) {
               try { await _dbDelete(from + '/' + uid); } catch (e2) {}
@@ -1356,6 +1357,7 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
           sent++;
         } catch (err) {
           const code = (err && err.errorInfo && err.errorInfo.code) || (err && err.code) || '';
+          decisions.push(uid.slice(0, 10) + ':FAILED-fcm ' + String(code).slice(0, 40));
           if (/not-registered|invalid-registration-token|invalid-argument/i.test(code)) {
             try { await _dbDelete(from + '/' + uid + '/fcm'); } catch (e2) {}
           }
@@ -1364,6 +1366,17 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
     }));
     // Place alerts only — that's the reported case, and this keeps the node tiny rather than
     // logging every chat and voice ping. Overwrites a single key, so it never accumulates.
+    // 975: pin drops too. "Did the crew get my pin?" had no answer: the server kept no record.
+    // Logged as one line per pin, and the last ten kept under gl/_debug/pinPushes.
+    if (String(b.type || '') === 'pin') {
+      console.log('/push pin group=' + String(group) + ' targets=' + Object.keys(targets).length + ' sent=' + sent + ' :: ' + decisions.join(' | '));
+      try {
+        await _dbSet('gl/_debug/pinPushes/' + (Date.now() % 10), {
+          ts: Date.now(), group: String(group), title: String(b.title || '').slice(0, 80),
+          targets: Object.keys(targets).length, sent: sent, decisions: decisions.join(' | ')
+        });
+      } catch (e) {}
+    }
     if (/^place_/.test(String(b.type || ''))) {
       try {
         await _dbSet('gl/_debug/lastPlacePush', {

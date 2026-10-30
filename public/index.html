@@ -5186,7 +5186,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 974;
+var APP_BUILD = 975;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22935,19 +22935,28 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   // A pin dropped on a Crew's map belongs to that Crew. The private tick is still honoured
   // below (_isPrivatePin / the Private row) for the deliberate "only me" case; this is just
   // the default, and the default for a mark you made on a shared map is that it is shared.
-  var _alsoShare = !!(groupName && !window._soloMode);
+  var _shareRoom = (groupName && !window._soloMode) ? groupName : '';
+  // 975: "Everyone on one map" is built on My Map, so it has no crew of its own and a pin
+  // dropped there used to stay private without a word -- nobody saw it, nobody was told. Ask
+  // which crew it is for. The answer comes back through this same handler.
+  if (!_shareRoom && window._allMode) {
+    if (!window._pinCrewChoice) { window._askPinCrew(); return; }
+    if (window._pinCrewChoice !== 'me') _shareRoom = window._pinCrewChoice;
+  }
+  window._pinCrewChoice = null;
+  var _alsoShare = !!_shareRoom;
   try {
     var _pchk = document.getElementById('pin-private-chk');
     if (_pchk && _pchk.checked) _alsoShare = false;
   } catch (_e) {}
   // A kept place goes to the library; it reaches the crew too only if asked.
   if (_kind === 'save') {
-    if (_alsoShare && groupName && db) {
+    if (_alsoShare && _shareRoom && db) {
       try {
-        window._queuePin(groupName, { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat,
+        window._queuePin(_shareRoom, { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat,
           label: label, name: userName, droppedBy: userId, ts: Date.now(), _noKeep: 1 });
         // Sharing a kept spot with the crew is telling them about it, so they hear about it too.
-        window._notifyPinDrop(groupName, pendingCoords, finalCat, label, 'save');
+        window._notifyPinDrop(_shareRoom, pendingCoords, finalCat, label, 'save');
       } catch (e) {}
     }
   }
@@ -22957,11 +22966,18 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       var _pid = 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
       _arr.push({ pid: _pid, lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, savedAt: Date.now() });
       setSavedPins(_arr);
-      lastPins[_pid] = { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, name: userName || 'Me', droppedBy: userId, ts: Date.now() };
+      // 975: a shared drop is already on the map as the crew's pin (pending until the server
+      // echoes it). Putting the personal copy into lastPins as well drew a second pin on the
+      // same spot, under a key the saved-copy de-duplication in updatePinSource never sees.
+      // Only a private drop draws its own copy here.
+      if (!_alsoShare) {
+        lastPins[_pid] = { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, name: userName || 'Me', droppedBy: userId, ts: Date.now() };
+      }
       updatePinSource(lastPins);
       try { localStorage.setItem('gl_stat_pins', String((parseInt(localStorage.getItem('gl_stat_pins') || '0', 10) || 0) + 1)); } catch (e) {}
       toast(window._soloMode ? 'Saved to your map'
-        : (_alsoShare ? 'Saved to My Pins and shared with the crew' : 'Saved to My Pins — only you see it'));
+        : (_alsoShare ? ('Shared with ' + ((typeof _prettyGroup === 'function') ? _prettyGroup(_shareRoom) : 'the crew') + ' and saved to My Pins')
+                      : 'Saved to My Pins — only you see it'));
     } catch (e) {}
     _closePinModal();
     return;
@@ -22971,6 +22987,42 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
   // unreachable is deliberate -- a dead path that writes a 12-hour expiry onto a Crew's pins
   // is precisely the thing that gets wired back up by accident later.
 });
+
+// 975: which crew a pin dropped on "Everyone on one map" is for.
+window._pinCrewChoice = null;
+window._askPinCrew = function () {
+  try {
+    var crews = {};
+    try { crews = (typeof _getCircles === 'function' ? _getCircles() : {}) || {}; } catch (e) {}
+    var keys = Object.keys(crews);
+    var old = document.getElementById('pin-crew-pick'); if (old) old.remove();
+    var w = document.createElement('div');
+    w.id = 'pin-crew-pick';
+    w.setAttribute('role', 'dialog'); w.setAttribute('aria-modal', 'true');
+    w.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center';
+    var btn = 'display:block;width:100%;box-sizing:border-box;min-height:52px;margin-top:10px;border-radius:12px;font-size:16px;font-weight:800;cursor:pointer;';
+    var html = '<div style="width:100%;max-width:520px;background:var(--surface,#151b20);border-radius:18px 18px 0 0;padding:20px 18px calc(env(safe-area-inset-bottom,0px) + 18px);color:var(--text,#f2f5f7)">' +
+      '<div style="font-size:19px;font-weight:800;margin-bottom:4px">Which crew is this pin for?</div>' +
+      '<div style="font-size:14px;color:var(--muted,#9fb0bb);margin-bottom:6px">They\u2019ll see it on their map and get a notification.</div>';
+    keys.forEach(function (k) {
+      var nm = (typeof _prettyGroup === 'function') ? _prettyGroup(k) : (crews[k] || k);
+      html += '<button type="button" data-crew="' + escapeHtmlJs(k) + '" style="' + btn + 'background:var(--accent,#7bc96f);border:none;color:#0d1117">' + escapeHtmlJs(nm) + '</button>';
+    });
+    html += '<button type="button" data-crew="me" style="' + btn + 'background:transparent;border:1px solid var(--border,#3a464f);color:var(--text,#f2f5f7)">Just me (private)</button>' +
+      '<button type="button" data-crew="" style="' + btn + 'background:transparent;border:none;color:var(--muted,#9fb0bb);font-weight:700">Cancel</button></div>';
+    w.innerHTML = html;
+    document.body.appendChild(w);
+    w.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('button[data-crew]') : null;
+      if (!b && ev.target !== w) return;
+      var choice = b ? b.getAttribute('data-crew') : '';
+      w.remove();
+      if (!choice) return;                       // cancelled: the sheet and the pending pin stay
+      window._pinCrewChoice = choice;
+      try { document.getElementById('pin-confirm').click(); } catch (e) {}
+    });
+  } catch (e) {}
+};
 
 document.getElementById('pin-label-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('pin-confirm').click();
