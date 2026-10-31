@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 984;
+var APP_BUILD = 985;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -20950,6 +20950,10 @@ function listenUsers() {
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._ts = data.fixTs || data.ts || 0;   // WHEN that position was taken — see the merge slack
         userMarkers[uid]._chip = (_pres && _pres.chip) || '';  // 979: the name strip's status line
+        // 985: every fix this viewer receives is a trail point too. History is re-read once a
+        // minute, so a shown trail lagged up to a minute (half a mile at 26 mph) behind the dot
+        // and the gap drew straight through the blocks. These keep it current between reads.
+        try { window._noteSeenFix(uid, data); } catch (e) {}
         userMarkers[uid]._acc = +data.accuracy || 0;        // HOW precisely — see the merge slack
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
@@ -22440,6 +22444,18 @@ function listenTrails() {
     _renderTrailLines();
   });
 }
+// 985: fixes this viewer has received, per person (session memory only).
+window._seenFixes = window._seenFixes || {};
+window._noteSeenFix = function (uid, data) {
+  if (!uid || !data || !isFinite(+data.lat) || !isFinite(+data.lng) || (+data.lat === 0 && +data.lng === 0)) return;
+  var ts = data.fixTs || data.ts || 0; if (!ts) return;
+  var arr = window._seenFixes[uid] || (window._seenFixes[uid] = []);
+  var last = arr[arr.length - 1];
+  if (last && (ts <= last.ts || metersApart(last.lat, last.lng, +data.lat, +data.lng) < 10)) return;
+  arr.push({ lat: +data.lat, lng: +data.lng, ts: ts });
+  if (arr.length > 600) arr.splice(0, arr.length - 600);
+  if (_trailShownFor(uid)) { try { _renderTrailLines(); } catch (e) {} }
+};
 // 983: today's History points for one person, fetched at most once a minute and redrawn on arrival.
 window._histTrailCache = window._histTrailCache || {};
 function _histTrailFor(uid) {
@@ -22490,7 +22506,7 @@ function _renderTrailLines() {
       // 983: merged with today's History points. A phone whose background service predates
       // 981 writes History but not the live store, so "Show trail" drew nothing behind a
       // driver whose route was being recorded all along (Elijah, 2026-10-31).
-      const _merged = Object.values(pts).concat(_histTrailFor(uid))
+      const _merged = Object.values(pts).concat(_histTrailFor(uid), window._seenFixes[uid] || [])
         .filter(p => p && isFinite(p.lat) && isFinite(p.lng) && now - p.ts < TRAIL_DRAW_MS)
         .sort((a, b) => a.ts - b.ts);
       const allPts = [];
