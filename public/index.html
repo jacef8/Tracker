@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 978;
+var APP_BUILD = 979;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -6289,7 +6289,7 @@ window._renderCrewStrip = function () {
       } catch (e) {}
       rows.push({ uid: uid, mine: mine, name: nm, live: !!mk._isLive,
                   color: mk._fillColor || 'var(--v2-acc)', initials: mk._initials || '',
-                  ts: mk._ts || 0, dist: dist });
+                  ts: mk._ts || 0, dist: dist, chip: mk._chip || '' });
     });
     // You first, then whoever is live, then by name -- a stable order so chips do not
     // reshuffle under the pointer every time a position arrives.
@@ -6299,13 +6299,13 @@ window._renderCrewStrip = function () {
       return String(a.name).localeCompare(String(b.name));
     });
     var now = Date.now();
-    var sig = rows.map(function (r) { return r.uid + r.live + r.dist; }).join('|');
+    var sig = rows.map(function (r) { return r.uid + r.live + r.dist + r.chip; }).join('|');
     if (sig === _csLastSig) return;          // nothing a person could see has changed
     _csLastSig = sig;
     host.innerHTML = rows.map(function (r) {
       var meta = r.mine ? 'You'
                : r.live ? (r.dist || 'Live')
-               : (r.ts ? ('last seen ' + _csAgo(now - r.ts)) : 'no fix');
+               : (r.chip || (r.ts ? ('last update ' + _csAgo(now - r.ts)) : 'no fix'));
       var cls = (r.mine || r.live) ? 'cs-live' : 'cs-stale';
       return '<div class="cs-chip" data-uid="' + escapeHtmlJs(r.uid) + '" title="' + escapeHtmlJs(r.name) + '">' +
                '<div class="cs-av" data-ava="' + escapeHtmlJs(r.uid) + '" style="background:' + r.color + '">' +
@@ -19852,19 +19852,19 @@ window._presenceOf = function (uid, data) {
              : age < 172800000 ? Math.round(age / 3600000) + 'h'
              : (age / 86400000).toFixed(1) + 'd';
 
-  if (data.hidden)  return { key: 'off',   label: 'OFF',    color: '#a9b4bf', calm: true,  line: 'Location sharing off', why: '' };
+  if (data.hidden)  return { key: 'off',   label: 'OFF',    color: '#a9b4bf', calm: true,  line: 'Location sharing off', chip: 'sharing off', why: '' };
   // A real coordinate outranks the flag — see the note on the stale noGps trap.
   if (data.noGps && !hasGps)
-                    return { key: 'nogps', label: 'NO GPS', color: '#a9b4bf', calm: true,  line: 'No GPS on this device', why: '' };
-  if (isLive)       return { key: 'live',  label: 'LIVE',   color: '#00e676', calm: true,  line: 'Live · ' + ageStr + ' ago', why: '' };
+                    return { key: 'nogps', label: 'NO GPS', color: '#a9b4bf', calm: true,  line: 'No GPS on this device', chip: 'no GPS', why: '' };
+  if (isLive)       return { key: 'live',  label: 'LIVE',   color: '#00e676', calm: true,  line: 'Live · ' + ageStr + ' ago', chip: 'live', why: '' };
   if (!fix || !hasGps)
-                    return { key: 'stale', label: 'OFFLINE', color: '#a9b4bf', calm: true, line: 'Not sharing right now', why: '' };
+                    return { key: 'stale', label: 'OFFLINE', color: '#a9b4bf', calm: true, line: 'Not sharing right now', chip: 'not sharing', why: '' };
 
   // 973: a phone using the website, not the app, cannot report once the page is closed. Say
   // that, instead of SIGNAL LOST or PARKED, either of which claims to know something we don't.
   if (data.plat === 'web' && data.dev === 'phone') {
     return { key: 'lost', label: 'WEBSITE ONLY', color: '#E0A05A', calm: false,
-             line: 'Last seen ' + ageStr + ' ago on the website',
+             line: 'Website only · ' + ageStr + ' ago', chip: 'website only · ' + ageStr,
              why: 'Using the website, not the app: it only shares while the page is open. They need to install GroundLink.' };
   }
   var why = window._presenceHealth(data);
@@ -19872,28 +19872,52 @@ window._presenceOf = function (uid, data) {
   // quiet at 64 mph did not park, it stopped being heard from.
   if ((data.spd || 0) >= 15) {
     return { key: 'lost', label: 'SIGNAL LOST', color: '#E0A05A', calm: false,
-             line: 'Signal lost ' + ageStr + ' · moving', why: why };
+             line: 'Signal lost ' + ageStr + ' · moving', chip: 'signal lost ' + ageStr, why: why };
   }
   if (why) {
     return { key: 'check', label: 'CHECK PHONE', color: '#E0A05A', calm: false,
-             line: 'Quiet for ' + ageStr, why: why };
+             line: 'Quiet for ' + ageStr, chip: 'check phone', why: why };
   }
   // iOS 1.0.13 writes hbTs on every wake-time heartbeat: the phone was HEARD FROM then, even
   // though its position (fixTs) is older. That is the difference between a parked phone that
   // is alive and one that is dead, and it lifts the 8-hour cap: a phone heard from in the last
   // half hour is parked, however long it has sat there.
+  // 979: "last seen" read as "missing" for a phone that was simply parked on a good
+  // connection. The phone's last CONTACT (a heartbeat, or Android's rest beat bumping ts) is
+  // kept apart from its last MOVE, and the sentence says both: "Parked 1h · checked in 3m ago".
+  // A phone that is able to check in (it has sent hbTs before) and has gone quiet for two
+  // hours reads "No signal for ...", which is the case that deserves attention.
   var hb = data.hbTs || 0;
-  var hbAge = hb ? now - hb : Infinity;
-  var heard = hbAge < 30 * 60 * 1000;
-  if (age < PARKED_MAX_MS || heard) {
-    // The honest sentence. It says where they are, that nothing is wrong, and exactly how old
-    // the reading is -- never that it is current.
-    var hbStr = !heard ? '' : hbAge < 90000 ? Math.max(1, Math.round(hbAge / 1000)) + 's' : Math.round(hbAge / 60000) + 'm';
+  var contact = Math.max(hb, data.ts || 0, fix);
+  var hbAge = now - contact;
+  // Two hours, not thirty minutes: a parked iPhone the server cannot wake checks in about
+  // hourly, and calling that "No signal" would be a false alarm. The age is in the sentence.
+  var heard = hbAge < 2 * 60 * 60 * 1000;
+  var _agoStr = function (ms) {
+    return ms < 90000 ? Math.max(1, Math.round(ms / 1000)) + 's'
+         : ms < 5400000 ? Math.round(ms / 60000) + 'm'
+         : ms < 172800000 ? Math.round(ms / 3600000) + 'h'
+         : (ms / 86400000).toFixed(1) + 'd';
+  };
+  var hbStr = _agoStr(hbAge);
+  if (heard) {
+    var _checked = (age - hbAge) > 60000;      // contact is meaningfully newer than the position
     return { key: 'parked', label: 'PARKED', color: '#2ec4b6', calm: true,
-             line: 'Parked ' + ageStr + (heard && hbAge > 60000 ? ' · heard ' + hbStr : ''), why: '' };
+             line: 'Parked ' + ageStr + (_checked ? ' · checked in ' + hbStr + ' ago' : ''),
+             chip: 'parked ' + ageStr + (_checked ? ' · checked in ' + hbStr : ''), why: '' };
+  }
+  if (hb) {
+    // This phone does check in, and it has stopped.
+    return { key: 'stale', label: 'NO SIGNAL', color: '#E0A05A', calm: true,
+             line: 'No signal for ' + hbStr, chip: 'no signal ' + hbStr, why: '' };
+  }
+  if (age < PARKED_MAX_MS) {
+    // A phone that never sends check-ins (older app): all we know is where it last moved.
+    return { key: 'parked', label: 'PARKED', color: '#2ec4b6', calm: true,
+             line: 'Parked ' + ageStr, chip: 'parked ' + ageStr, why: '' };
   }
   return { key: 'stale', label: 'LAST KNOWN', color: '#a9b4bf', calm: true,
-           line: 'Last known ' + ageStr, why: '' };
+           line: 'Last known ' + ageStr, chip: 'last known ' + ageStr, why: '' };
 };
 
 // Track known users to detect joins/leaves
@@ -20814,7 +20838,7 @@ function listenUsers() {
         var _meta = isLive
           ? ('±' + (data.accuracy||'?') + 'ft · ' +
              (_fixAt ? '<span class="ms-age" data-at="' + _fixAt + '">just now</span>' : timeLabel))
-          : ('Last seen: ' + timeLabel);
+          : (_pres.line || ('Last update: ' + timeLabel));
         // The reason, when their phone reported one — the difference between "Laura is gone"
         // and "Laura's phone is in Low Power Mode".
         var _why = !isLive ? (_pres.why || window._locReason(data.oss)) : '';
@@ -20919,6 +20943,7 @@ function listenUsers() {
         userMarkers[uid]._tone = _tone;
         userMarkers[uid]._spd = data.spd || 0; // mph — feeds the speed-aware merge threshold below
         userMarkers[uid]._ts = data.fixTs || data.ts || 0;   // WHEN that position was taken — see the merge slack
+        userMarkers[uid]._chip = (_pres && _pres.chip) || '';  // 979: the name strip's status line
         userMarkers[uid]._acc = +data.accuracy || 0;        // HOW precisely — see the merge slack
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
@@ -30623,7 +30648,7 @@ window._buildPersonSheetHTML = function (uid, data) {
   var ts = data.fixTs || data.ts || 0;
   var live = !!ts && (now - ts) < (4 * 60 * 1000);
   var lastStr = ts ? (function () { var mm = Math.floor((now - ts) / 60000); return mm < 1 ? 'just now' : mm < 60 ? (mm + 'm ago') : mm < 48 * 60 ? (Math.floor(mm / 60) + 'h ago') : ((mm / 1440).toFixed(1) + 'd ago'); })() : '';
-  var statusLine = live ? 'Live now' : (ts ? ('Last seen ' + lastStr) : 'Offline — not sharing right now');
+  var statusLine = live ? 'Live now' : (ts ? (function () { try { return window._presenceOf(uid, data).line; } catch (e) { return 'Last update ' + lastStr; } })() : 'Offline — not sharing right now');
   var S = 'padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px';
   var voiceOff = document.body.classList.contains('voice-off');
   var talk = (!isMine && !voiceOff) ? '<button onclick="window._openVoiceTo(\'' + uid + '\',\'' + safe + '\')" style="width:100%;margin-top:10px;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-mic"/></svg>Talk to ' + safe + '</button>' : '';

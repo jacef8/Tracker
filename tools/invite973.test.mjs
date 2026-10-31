@@ -112,7 +112,7 @@ const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
   const now = Date.now();
   const page = { lat: 30.5, lng: -84.8, fixTs: now - 14 * 60e3, spd: 68, plat: 'web', dev: 'phone' };
   const r = P('IbjZ', page);
-  ok(r.label === 'WEBSITE ONLY' && /website/.test(r.line), 'Page (website, driving, 14 min quiet) reads WEBSITE ONLY: ' + r.label);
+  ok(r.label === 'WEBSITE ONLY' && /website/i.test(r.line), 'Page (website, driving, 14 min quiet) reads WEBSITE ONLY: ' + r.label);
   ok(P('x', { ...page, spd: 0 }).label === 'WEBSITE ONLY', 'website + parked does not claim PARKED');
   ok(P('x', { ...page, fixTs: now - 5e3 }).key === 'live', 'website while open is still LIVE');
   ok(P('x', { ...page, plat: 'app' }).label === 'SIGNAL LOST', 'the app at speed is still SIGNAL LOST');
