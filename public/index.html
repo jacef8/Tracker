@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 979;
+var APP_BUILD = 980;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -27975,6 +27975,22 @@ window._openHistoryForMember = function (uid, name, circleKey) {
 // ReferenceError inside an onclick silently does nothing, which is exactly the failure mode
 // this whole area has been plagued by.
 window._setTrailRangeButtons = function () {};
+window._dropTrailSpikes = function (pts) {
+  if (!pts || pts.length < 3) return pts || [];
+  var mph = function (a, b) {
+    var dt = Math.abs((b.t || 0) - (a.t || 0)) / 3600000;
+    if (!(dt > 0)) dt = 1 / 3600;   // same second: treat as one second apart
+    return (metersApart(a.lat, a.lng, b.lat, b.lng) / 1609.344) / dt;
+  };
+  var out = [pts[0]];
+  for (var i = 1; i < pts.length - 1; i++) {
+    var prev = out[out.length - 1], cur = pts[i], next = pts[i + 1];
+    if (mph(prev, cur) > 120 && mph(cur, next) > 120) continue;
+    out.push(cur);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+};
 window._pickTrailRange = function () { window._loadTrailRange(); };
 // Adjustable trail window (0 = the whole selected day). Applies on TOP of the day view: for
 // today, "3h" means the trailing 3 hours ending now. Chips restyle here + visibility is decided
@@ -28068,6 +28084,10 @@ window._loadTrailRange = function () {
         pts = pts.filter(function (p) { return p.t >= _dayStart && p.t < _dayEnd; });
       }
     } catch (e) {}
+    // 980: drop a point nobody could have driven to AND away from -- a stale position written
+    // with a fresh time (the Android heartbeat replay, 2026-10-31) draws a long straight
+    // out-and-back line. Over 120 mph on both sides of it means it is wrong, not fast.
+    try { pts = window._dropTrailSpikes(pts); } catch (e) {}
     var now = Date.now();
     // Adjustable window: for TODAY, an hours chip narrows the view to the trailing N hours
     // ending now. Past dates are always the whole day (the chips are hidden there).

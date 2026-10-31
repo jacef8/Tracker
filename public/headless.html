@@ -122,6 +122,27 @@
     } catch (e) {}
     var keys = fanOutKeys();
     if (!keys.length) return;
+    // 980: the stationary heartbeat says "this phone is alive" and nothing else. It used to
+    // re-send the whole cached fix as a fresh row and a fresh history point. While the app is
+    // open the MAIN page does the reporting and this page gets no fixes, so its cache is
+    // minutes old: on 2026-10-31 a drive west from Bristol got the 8:12:59 position written
+    // back at 8:16:55 -- the row jumped the dot back to Bristol and the trail drew a 3-mile
+    // straight line across the river. Same bug iOS had (961). Now: ts + hbTs only, which also
+    // gives Android the "checked in 3m ago" line iPhones have.
+    if (pos._heartbeat) {
+      var _hbNow = Date.now();
+      var _hbPatch = { ts: _hbNow, hbTs: _hbNow };
+      try { if (window._batt) { _hbPatch.batt = window._batt.pct; _hbPatch.chg = window._batt.chg ? 1 : 0; } } catch (e) {}
+      keys.forEach(function (k) {
+        try { update(ref(db, 'gl/' + k + '/users/' + uid), _hbPatch).catch(function () {}); } catch (e) {}
+      });
+      try {
+        window._hlBeats = (window._hlBeats || 0) + 1;
+        update(ref(db, 'gl/' + keys[0] + '/diag/' + uid), { hl: { ts: _hbNow, beats: window._hlBeats, heartbeat: true } }).catch(function () {});
+      } catch (e) {}
+      _lastWriteTs = _hbNow;
+      return;
+    }
     var c = pos.coords;
     // Report rate — same rule as the main app: while moving, one write per 10 s, time only.
     // (A "300 ft" clause was here first; at driving speed that is 4 s — measured on a phone.)
