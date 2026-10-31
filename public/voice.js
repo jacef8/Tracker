@@ -330,6 +330,11 @@ let monWanted = {};       // last-known wanted set (id -> name) — a disconnect
 // instead of a live idle connection. Backing off + skipping the preemptive call once failures are
 // clearly not transient fixes it without touching the real, working reconnect-after-a-blip path.
 let monRetryCount = {};
+// 982: a monitor that sits alone in its room -- the device asleep or gone -- is billed by LiveKit
+// for every minute and hears nothing. After MON_IDLE_MS alone it hangs up, and that device is
+// not monitored again for MON_IDLE_REST_MS (startDeviceMonitor skips it).
+const MON_IDLE_MS = 10 * 60 * 1000, MON_IDLE_REST_MS = 30 * 60 * 1000;
+let monIdleDrop = {};   // deviceId -> when it was hung up for being idle
 
 async function connectOneMonitor(id, name) {
   const opts = monLastOpts; if (!opts) return;
@@ -411,6 +416,18 @@ async function connectOneMonitor(id, name) {
     // but only while a session is genuinely active (_syncCarAudio checks real state, so this
     // never ends up stuck running when nothing needs it, unlike an unconditional _carAudio(true)).
     if (monRooms[id]) { monRooms[id].room = r; _syncCarAudio(); } else { try { r.disconnect(); } catch (e) {} }   // dropped while connecting
+    // 982: idle hang-up. Company = anyone else in the room (the device, or someone talking to it).
+    const idleTimer = setInterval(() => {
+      const slot = monRooms[id];
+      if (!slot || slot.room !== r) { clearInterval(idleTimer); return; }
+      const alone = !r.remoteParticipants || r.remoteParticipants.size === 0;
+      if (!alone) { slot.lastCompany = Date.now(); return; }
+      if (Date.now() - (slot.lastCompany || slot.connectedAt || Date.now()) < MON_IDLE_MS) return;
+      clearInterval(idleTimer);
+      monIdleDrop[id] = Date.now();
+      delete monWanted[id];           // so the Disconnected handler does not reconnect it
+      try { r.disconnect(); } catch (e) {}
+    }, 30000);
   } catch (e) {
     console.error('[voice] device monitor failed for ' + id, e);
     delete monRooms[id];
@@ -441,6 +458,7 @@ export async function startDeviceMonitor(opts) {
   // Add monitors for newly-wanted devices.
   for (const id of Object.keys(wanted)) {
     if (monRooms[id]) { monRooms[id].name = wanted[id]; continue; }
+    if (monIdleDrop[id] && Date.now() - monIdleDrop[id] < MON_IDLE_REST_MS) continue;   // 982: resting after an idle hang-up
     await connectOneMonitor(id, wanted[id]);
   }
 }
