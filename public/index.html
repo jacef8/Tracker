@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 983;
+var APP_BUILD = 984;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -28019,7 +28019,9 @@ window._setTrailRangeButtons = function () {};
 // ask Mapbox Directions for the road route between its two ends and draw that instead. Only
 // used when the route is a believable fit for the time and distance; cached so each gap is
 // looked up once per device.
-var ROAD_GAP_MIN_S = 20, ROAD_GAP_MIN_M = 400, ROAD_GAP_MAX_M = 40000;
+// 984: 8 s / 200 m. iPhones report a bare point every 15-22 s with no route between (0.4 mi
+// at highway speed), so a 20 s floor left most of an iPhone drive as straight chords.
+var ROAD_GAP_MIN_S = 8, ROAD_GAP_MIN_M = 200, ROAD_GAP_MAX_M = 40000;
 window._roadCache = window._roadCache || (function () {
   try { return JSON.parse(localStorage.getItem('gl_road_cache') || '{}') || {}; } catch (e) { return {}; }
 })();
@@ -28062,7 +28064,7 @@ window._requestRoadGaps = function (pts, done) {
     var tok = window.MAPBOX_TOKEN || (window.mapboxgl && mapboxgl.accessToken);
     if (!tok || !pts || pts.length < 2) return;
     var jobs = [];
-    for (var i = 1; i < pts.length && jobs.length < 12; i++) {
+    for (var i = 1; i < pts.length && jobs.length < 25; i++) {
       var a = pts[i - 1], b = pts[i];
       if (!_roadGap(a, b)) continue;
       var key = _roadKey(a, b);
