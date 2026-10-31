@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 980;
+var APP_BUILD = 981;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -22486,7 +22486,10 @@ function _renderTrailLines() {
       const caseWidth   = lineWidth + 3;
       const caseOpacity = isLive || isMineUid ? 0.55 : 0.30;
 
-      const coords = allPts.map(p => [p.lng, p.lat]);
+      // 981: gaps where the phone recorded nothing follow the road, not a straight line.
+      let _roadPts = allPts;
+      try { _roadPts = window._roadFill(window._dropTrailSpikes(allPts)); window._requestRoadGaps(allPts, function () { try { _renderTrailLines(); } catch (e) {} }); } catch (e) {}
+      const coords = _roadPts.map(p => [p.lng, p.lat]);
       // Keep the recorded coords so _updateTrailTip can move the last vertex per animation
       // frame without rebuilding from the snapshot.
       trailBaseCoords[uid] = coords;
@@ -27975,10 +27978,93 @@ window._openHistoryForMember = function (uid, name, circleKey) {
 // ReferenceError inside an onclick silently does nothing, which is exactly the failure mode
 // this whole area has been plagued by.
 window._setTrailRangeButtons = function () {};
+// 981: a stretch where the phone recorded nothing (no GPS, or the phone held location back)
+// was drawn as one straight line across whatever lay between. When the gap looks like driving,
+// ask Mapbox Directions for the road route between its two ends and draw that instead. Only
+// used when the route is a believable fit for the time and distance; cached so each gap is
+// looked up once per device.
+var ROAD_GAP_MIN_S = 20, ROAD_GAP_MIN_M = 400, ROAD_GAP_MAX_M = 40000;
+window._roadCache = window._roadCache || (function () {
+  try { return JSON.parse(localStorage.getItem('gl_road_cache') || '{}') || {}; } catch (e) { return {}; }
+})();
+var _roadPending = {};
+function _ptT(p) { return p.t || p.ts || 0; }
+function _roadKey(a, b) { return a.lat.toFixed(4) + ',' + a.lng.toFixed(4) + '>' + b.lat.toFixed(4) + ',' + b.lng.toFixed(4); }
+function _roadGap(a, b) {
+  var dt = (_ptT(b) - _ptT(a)) / 1000;
+  if (!(dt >= ROAD_GAP_MIN_S)) return false;
+  var d = metersApart(a.lat, a.lng, b.lat, b.lng);
+  if (d < ROAD_GAP_MIN_M || d > ROAD_GAP_MAX_M) return false;
+  var mph = (d / dt) * 2.23694;
+  return mph >= 12 && mph <= 100;                 // looks like driving, not a parked jump
+}
+// Points with the road route spliced into every gap that has one cached. New points carry a
+// time interpolated by distance, so speeds and stats stay sensible.
+window._roadFill = function (pts) {
+  if (!pts || pts.length < 2) return pts || [];
+  var out = [pts[0]];
+  for (var i = 1; i < pts.length; i++) {
+    var a = pts[i - 1], b = pts[i];
+    var r = _roadGap(a, b) ? window._roadCache[_roadKey(a, b)] : null;
+    if (r && r.length > 2) {
+      var tot = 0, seg = [];
+      for (var j = 1; j < r.length; j++) { var dd = metersApart(r[j - 1][1], r[j - 1][0], r[j][1], r[j][0]); seg.push(dd); tot += dd; }
+      var acc = 0, t0 = _ptT(a), t1 = _ptT(b);
+      for (var k = 1; k < r.length - 1; k++) {
+        acc += seg[k - 1];
+        var tt = t0 + (tot > 0 ? (acc / tot) : 0) * (t1 - t0);
+        out.push({ lat: r[k][1], lng: r[k][0], t: tt, ts: tt, road: true });
+      }
+    }
+    out.push(b);
+  }
+  return out;
+};
+// Look up any gaps not yet cached (at most 12 per call), then call done() if anything new arrived.
+window._requestRoadGaps = function (pts, done) {
+  try {
+    var tok = window.MAPBOX_TOKEN || (window.mapboxgl && mapboxgl.accessToken);
+    if (!tok || !pts || pts.length < 2) return;
+    var jobs = [];
+    for (var i = 1; i < pts.length && jobs.length < 12; i++) {
+      var a = pts[i - 1], b = pts[i];
+      if (!_roadGap(a, b)) continue;
+      var key = _roadKey(a, b);
+      if (window._roadCache[key] || _roadPending[key]) continue;
+      _roadPending[key] = 1;
+      jobs.push({ a: a, b: b, key: key });
+    }
+    if (!jobs.length) return;
+    var gotNew = false;
+    Promise.all(jobs.map(function (jb) {
+      var url = 'https://api.mapbox.com/directions/v5/mapbox/driving/' +
+        jb.a.lng.toFixed(6) + ',' + jb.a.lat.toFixed(6) + ';' + jb.b.lng.toFixed(6) + ',' + jb.b.lat.toFixed(6) +
+        '?geometries=geojson&overview=full&access_token=' + encodeURIComponent(tok);
+      return fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+        var rt = j && j.routes && j.routes[0];
+        var straight = metersApart(jb.a.lat, jb.a.lng, jb.b.lat, jb.b.lng);
+        var dt = (_ptT(jb.b) - _ptT(jb.a)) / 1000;
+        // Believable: not a long detour, and drivable in roughly the time that passed.
+        var ok = rt && rt.geometry && rt.geometry.coordinates && rt.geometry.coordinates.length > 2 &&
+                 rt.distance <= straight * 1.6 + 300 && rt.duration <= dt * 2.5 + 60 && rt.duration >= dt * 0.25;
+        window._roadCache[jb.key] = ok ? rt.geometry.coordinates.map(function (c) { return [+c[0].toFixed(6), +c[1].toFixed(6)]; }) : [];
+        if (ok) gotNew = true;
+      }).catch(function () { window._roadCache[jb.key] = []; })
+        .then(function () { delete _roadPending[jb.key]; });
+    })).then(function () {
+      try {
+        var keys = Object.keys(window._roadCache);
+        if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(function (k) { delete window._roadCache[k]; });
+        localStorage.setItem('gl_road_cache', JSON.stringify(window._roadCache));
+      } catch (e) {}
+      try { if (gotNew && done) done(); } catch (e) {}
+    });
+  } catch (e) {}
+};
 window._dropTrailSpikes = function (pts) {
   if (!pts || pts.length < 3) return pts || [];
   var mph = function (a, b) {
-    var dt = Math.abs((b.t || 0) - (a.t || 0)) / 3600000;
+    var dt = Math.abs(_ptT(b) - _ptT(a)) / 3600000;
     if (!(dt > 0)) dt = 1 / 3600;   // same second: treat as one second apart
     return (metersApart(a.lat, a.lng, b.lat, b.lng) / 1609.344) / dt;
   };
@@ -28104,10 +28190,19 @@ window._loadTrailRange = function () {
       // names the day — "794 min" alongside it was the same number twice, in a clumsy unit.
       label = isToday ? ((_hrs > 0 ? ('Last ' + _hrs + 'h') : 'Today') + ' · last point ' + ago) : dateStr;
     }
-    _renderTrailResult(pts, label,
-      isToday
+    var _emptyMsg = isToday
         ? 'Nothing recorded for ' + _escHtml(ctx.name) + ' today yet — this builds up as they move.'
-        : 'No trail for ' + dateStr + ' — either nothing was recorded, or their Trail wasn\'t on yet.');
+        : 'No trail for ' + dateStr + ' — either nothing was recorded, or their Trail wasn\'t on yet.';
+    var _basePts = pts;
+    _renderTrailResult(window._roadFill(_basePts), label, _emptyMsg);
+    // 981: fill driving gaps along the road once the lookups come back.
+    try {
+      var _myCtx = window._trailCtx;
+      window._requestRoadGaps(_basePts, function () {
+        if (window._trailCtx !== _myCtx) return;   // the sheet moved on to someone else
+        _renderTrailResult(window._roadFill(_basePts), label, _emptyMsg);
+      });
+    } catch (e) {}
   }).catch(function () {
     bodyEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Could not load — try again.</div>';
   });

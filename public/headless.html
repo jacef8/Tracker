@@ -269,8 +269,47 @@
         }
       }
     } catch (e) {}
-    writeHistoryIfOn(uid, c);
+    // 981: the route, not just the endpoint. writeHistoryIfOn kept one point per 10 s report
+    // and nothing reached gl/<k>/trails at all, so any stretch driven with the screen locked
+    // was a chain of ~900 ft straight segments in History and a blank in the live trail. The
+    // buffered route already rides in payload.path; write it to both, in one update each.
+    try { writeRouteRuns(uid, payload, c); } catch (e) { writeHistoryIfOn(uid, c); }
     checkPlaceGeofences(uid, c);
+  }
+
+  function writeRouteRuns(uid, payload, c) {
+    var circleKeys = Object.keys(getCircles());
+    if (!circleKeys.length) return;
+    var accM = c.accuracy || 0;
+    if (!(accM > 0 && accM <= HIST_MAX_ACC_M)) return;           // bad fix: skip, as before
+    var now = payload.fixTs || Date.now();
+    var end = { lat: c.latitude, lng: c.longitude, ts: now, acc: Math.round(accM), src: 'bg' };
+    var route = (payload.path || []).filter(function (q) {
+      return q && q.length >= 3 && isFinite(q[0]) && isFinite(q[1]) && q[2] < now &&
+             metersApart(q[0], q[1], end.lat, end.lng) >= 3;      // the endpoint is written below
+    });
+    var distM = lastHistoryPos ? metersApart(lastHistoryPos.lat, lastHistoryPos.lng, end.lat, end.lng) : Infinity;
+    if (lastHistoryPos && lastHistoryTs) {
+      var dtSec = Math.max(1, (now - lastHistoryTs) / 1000);
+      if ((distM / dtSec) * 2.23694 > HIST_MAX_MPH) return;       // implausible jump
+    }
+    if (!route.length && !(distM > HIST_MIN_DIST_M)) return;    // parked: nothing new
+    lastHistoryPos = { lat: end.lat, lng: end.lng };
+    lastHistoryTs = now;
+    var dateStr = new Date(now).toLocaleDateString('en-CA');
+    var histOn = getHistoryOn();
+    circleKeys.forEach(function (k) {
+      var bases = ['gl/' + k + '/trails/' + uid];
+      if (histOn) bases.push('glh/' + k + '/' + uid + '/' + dateStr);
+      bases.forEach(function (base) {
+        try {
+          var upd = {};
+          route.forEach(function (q) { upd[push(ref(db, base)).key] = { lat: q[0], lng: q[1], ts: q[2], acc: end.acc, src: 'bg' }; });
+          upd[push(ref(db, base)).key] = end;
+          update(ref(db, base), upd).catch(function () {});
+        } catch (e) {}
+      });
+    });
   }
 
   // Place Alerts — mirrors index.html's _checkPlaceGeofences (onGpsFix). Circle-scoped only.
