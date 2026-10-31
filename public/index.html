@@ -5193,7 +5193,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 976;
+var APP_BUILD = 977;
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -18029,6 +18029,17 @@ function toggleLocationShare(share) {
 // geolocation runs a foreground service that keeps GPS alive when the app
 // is backgrounded or the screen is off. Native fixes are fed into the same
 // _onGpsFix pipeline, so Firebase writes + breadcrumbs work identically.
+// 977: "iPhone app 1.0.16", "Android app 1.4.7", or "Website". Read by the person card.
+function _appVersionLabel() {
+  try {
+    if (!_isNativeApp()) return 'Website';
+    var ni = window._nativeAppInfo || {};
+    var plat = '';
+    try { plat = (window.Capacitor && window.Capacitor.getPlatform) ? window.Capacitor.getPlatform() : ''; } catch (e) {}
+    var kind = plat === 'ios' ? 'iPhone app' : plat === 'android' ? 'Android app' : 'App';
+    return ni.version ? (kind + ' ' + ni.version) : kind;
+  } catch (e) { return ''; }
+}
 function _isNativeApp() {
   try {
     // The native app appends this token to its user agent (capacitor.config.json
@@ -19022,7 +19033,9 @@ function startLocationSharing() {
       priv: _devicePrivate() ? 1 : 0,
       // 973: where this fix came from. A browser stops reporting the moment the page closes or
       // the phone locks, so the crew needs to know "website" rather than read "signal lost".
-      plat: _isNativeApp() ? 'app' : 'web'
+      plat: _isNativeApp() ? 'app' : 'web',
+      // 977: which app version this is, shown on the person's card ("iPhone app 1.0.16").
+      appv: _appVersionLabel()
     };
     // Battery, so drain per hour per person can be measured instead of guessed at.
     if (window._battPct != null) { _fixPayload.batt = window._battPct; _fixPayload.chg = window._battChg ? 1 : 0; }
@@ -20928,6 +20941,7 @@ function listenUsers() {
             '<div style="font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
             (_why ? '<div style="font-size:12px;color:#ffb020;font-weight:700;margin-top:4px;line-height:1.35">\u26a0 ' + escapeHtmlJs(_why) + '</div>' : '') +
             (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
+            (data.appv ? '<div style="font-size:11px;color:#8d97a1;margin-top:3px">' + escapeHtmlJs(String(data.appv)) + '</div>' : '') +
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
           '</div>' +
           _msTalk +
