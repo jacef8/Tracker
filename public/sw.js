@@ -10,6 +10,11 @@ const SW_V = (function(){ try { return new URL(self.location).searchParams.get('
 const CACHE = 'groundlink-' + SW_V;
 const NAV_TIMEOUT_MS = 3500; // fall back to the cached page if the network is slower than this
 const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+// 986: the app page, kept across builds. It is not tied to one build's cache, because the page
+// is what tells the phone a newer build exists -- dropping it on every update would make the
+// first open after each deploy a slow one again.
+const PAGE_CACHE = 'gl-page';
+function _buildOf(html) { var m = /var APP_BUILD = (\d+);/.exec(html || ''); return m ? +m[1] : 0; }
 
 const CACHE_FOREVER = [
   'https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css',
@@ -36,7 +41,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(function(k){ return k !== CACHE && k.indexOf('gltiles_') !== 0 && k !== 'gl-offline-tiles'; }).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(function(k){ return k !== CACHE && k.indexOf('gltiles_') !== 0 && k !== 'gl-offline-tiles' && k !== PAGE_CACHE && k !== 'gl-meta'; }).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -98,6 +103,44 @@ self.addEventListener('fetch', e => {
   // Firebase, map tiles, API — always network, no caching
   if (ALWAYS_NETWORK.some(h => url.hostname.includes(h))) {
     e.respondWith(fetch(e.request));
+    return;
+  }
+
+  // 986: THE APP PAGE ('/' with any query) opens from the copy on the phone at once, every
+  // time, and the newest page is fetched behind it. Before this, every open waited on a
+  // 630 KB download (2.1 MB unpacked) because the server marks the page no-store -- on one bar
+  // in the woods that was most of the wait. When the fetch brings a different build, the open
+  // pages are told, and one that was opened in the last few seconds switches to it.
+  if (e.request.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    var fresh = fetch(e.request, { cache: 'no-store' }).then(async function (resp) {
+      try {
+        if (!resp || !resp.ok) return resp;
+        var text = await resp.clone().text();
+        var b = _buildOf(text);
+        if (!b) return resp;                      // not the app page (an error page) -- never keep it
+        var c = await caches.open(PAGE_CACHE);
+        var old = await c.match('/');
+        var oldB = old ? _buildOf(await old.text()) : 0;
+        await c.put('/', new Response(text, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
+        if (oldB && b !== oldB) {
+          var list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+          list.forEach(function (cl) { try { cl.postMessage({ type: 'gl-new-build', build: b }); } catch (e3) {} });
+        }
+      } catch (e2) {}
+      return resp;
+    });
+    e.waitUntil(fresh.catch(function () {}));
+    e.respondWith((async function () {
+      var have = null;
+      try { have = await (await caches.open(PAGE_CACHE)).match('/'); } catch (e2) {}
+      if (have) return have;
+      // Nothing saved yet (first open on this phone): the network, as before, with the old
+      // per-build copy as the fallback when there is no signal.
+      try { return await fresh; } catch (err) {
+        var home = await caches.match('/');
+        return home || new Response('Offline — open GroundLink again once you have signal.', { status: 503 });
+      }
+    })());
     return;
   }
 

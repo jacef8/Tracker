@@ -2318,6 +2318,15 @@
     display: flex; align-items: center; gap: 6px;
   }
   .cat-btn.active { border-color: var(--accent) !important; background: color-mix(in srgb, var(--tint) 10%, transparent); color: var(--accent); }
+  /* 986: top-5 favourites, big enough to hit with a thumb in a moving truck. */
+  .pin-favs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pin-favs .cat-btn { flex-direction: column; justify-content: center; gap: 5px; min-height: 68px; padding: 8px 4px;
+    border-radius: 14px; font-size: 12.5px; font-weight: 700; text-align: center; line-height: 1.15; }
+  .pin-favs .pin-more-btn { color: var(--muted); border-style: dashed; }
+  .pin-favs .pin-more-btn .pm-ic { font-size: 22px; line-height: 1; }
+  .pin-more-hint { font-size: 12px; color: var(--muted); margin: 2px 2px 0; }
+  .cat-star { margin-left: 2px; padding: 4px 2px 4px 6px; font-size: 15px; line-height: 1; color: var(--muted); }
+  .cat-star.on { color: #f0a500; }
   .pin-preview {
     width: 22px; height: 22px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
@@ -5071,7 +5080,14 @@
         <span>Show it to the crew as well</span>
       </label>
     </div>
-    <div class="pin-cats" id="pin-cats" style="display:block;max-height:30vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+    <!-- 986: the drop sheet used to open on all 53 types in six groups. It now opens on the
+         person's top five plus "More types"; the full library is behind that button and is
+         where the stars are set. Edit opens with the library showing. -->
+    <div id="pin-favs" class="pin-favs"></div>
+    <div id="pin-more-wrap" style="display:none">
+      <div class="pin-more-hint">Tap a star to put that type in your top 5.</div>
+      <div class="pin-cats" id="pin-cats" style="display:block;max-height:34vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+    </div>
     <input class="pin-input" id="pin-label-input" placeholder="Name (optional)" maxlength="140" />
     <div id="custom-cat-row" style="display:none;margin-top:6px">
       <input class="pin-input" id="pin-custom-cat-input" placeholder="Custom category name (e.g. Duck Blind)" maxlength="30" />
@@ -5193,7 +5209,21 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 985;
+var APP_BUILD = 986;
+// 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
+// arrived), fb (signed in and connected), map (map drawn), people (first member positions).
+// Sent with _writeDiag so a real phone's numbers can be read from outside.
+window._openTimes = window._openTimes || {};
+window._markOpen = function (k) {
+  try {
+    if (window._openTimes[k] != null) return;
+    window._openTimes[k] = Math.round(performance.now());
+    if (k === 'map' || window._openTimes.page == null) {
+      var n = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (n) window._openTimes.page = Math.round(n.responseEnd);
+    }
+  } catch (e) {}
+};
 
 // ══ SERVICE WORKER ════════════════════════════════════════════════
 if ('serviceWorker' in navigator) {
@@ -5221,6 +5251,30 @@ if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready.then(function (r) { try { if (r && r.active) r.active.postMessage(msg); } catch (e) {} }).catch(function () {});
     } catch (e) {}
   };
+  navigator.serviceWorker.addEventListener('message', function (ev) {
+    try {
+      var d = ev && ev.data;
+      if (!d || d.type !== 'gl-new-build' || !d.build || +d.build === APP_BUILD) return;
+      var busy = function () {
+        var pm = document.getElementById('pin-modal');
+        return (pm && pm.classList.contains('show')) || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName));
+      };
+      // Just opened: swap now, before anyone has started doing anything.
+      // Never more than one switch every two minutes, so two servers briefly serving different
+      // builds during a deploy cannot bounce the page back and forth.
+      try { var _last = +sessionStorage.getItem('gl_nb_reload') || 0; if (Date.now() - _last < 120000) return; sessionStorage.setItem('gl_nb_reload', String(Date.now())); } catch (e) {}
+      if (performance.now() < 15000 && !busy()) { location.reload(); return; }
+      // Otherwise the next time the app comes back to the front after being away a while.
+      window._newBuildWaiting = true;
+    } catch (e) {}
+  });
+  (function () {
+    var hiddenAt = 0;
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (window._newBuildWaiting && hiddenAt && Date.now() - hiddenAt > 60000) { window._newBuildWaiting = false; location.reload(); }
+    });
+  })();
   navigator.serviceWorker.register('/sw.js?v=' + APP_BUILD).then(function(reg) {
     try { reg.update(); } catch (e) {}
     try { window._tellSwMyUid(); } catch (e) {}
@@ -12343,9 +12397,9 @@ function _verifyFbRead() {
   return _fbReadPromise;
 }
 function waitForFirebase(cb) {
-  if (window._fb && _fbAuthReady()) { _verifyFbRead().then(function () { cb(window._fb); }); return; }
+  if (window._fb && _fbAuthReady()) { _verifyFbRead().then(function () { try { window._markOpen('fb'); } catch (e) {} cb(window._fb); }); return; }
   const t = setInterval(() => {
-    if (window._fb && _fbAuthReady()) { clearInterval(t); _verifyFbRead().then(function () { cb(window._fb); }); }
+    if (window._fb && _fbAuthReady()) { clearInterval(t); _verifyFbRead().then(function () { try { window._markOpen('fb'); } catch (e) {} cb(window._fb); }); }
   }, 80);
 }
 
@@ -15288,6 +15342,15 @@ function enterMap(name, group, uid) {
     }
   } catch (_) {}
 
+  // 986: start the map now. It used to wait for sign-in, a read check and a member-row read
+  // (well over a second on a phone) before drawing anything; the map needs none of them. The
+  // initMap() further down then finds it already started and only does its resizes.
+  try {
+    if (!window._mapStarted && typeof initMap === 'function') {
+      initMap();
+      setTimeout(function () { try { if (map) map.resize(); } catch (e) {} }, 300);
+    }
+  } catch (e) {}
   waitForFirebase(async fb => {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
     fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
@@ -16658,6 +16721,65 @@ const PIN_ICONS = {
   'Custom':        { d: 'M12 3.5l2.4 5 5.6.7-4.1 3.8 1.1 5.5-5-2.8-5 2.8 1.1-5.5L4 9.2l5.6-.7z' },
 };
 
+// 986: the top-5 pin types shown first on the drop sheet. Chosen with the stars in the full
+// list (gl_pin_favs); until someone picks, it is the five types they drop most (gl_pin_use),
+// topped up from a sensible default set.
+var PIN_FAV_DEFAULTS = ['Waypoint', 'Deer Stand', 'Hazard', 'Vehicle', 'Meeting Point'];
+window._pinFavs = function () {
+  try {
+    var set = JSON.parse(localStorage.getItem('gl_pin_favs') || 'null');
+    if (Array.isArray(set)) return set.filter(function (c) { return c in PIN_DEFS; }).slice(0, 5);
+  } catch (e) {}
+  var out = [];
+  try {
+    var use = JSON.parse(localStorage.getItem('gl_pin_use') || '{}') || {};
+    Object.keys(use).filter(function (c) { return c in PIN_DEFS; })
+      .sort(function (a, b) { return use[b] - use[a]; })
+      .forEach(function (c) { if (out.length < 5) out.push(c); });
+  } catch (e) {}
+  PIN_FAV_DEFAULTS.forEach(function (c) { if (out.length < 5 && out.indexOf(c) === -1) out.push(c); });
+  return out;
+};
+window._togglePinFav = function (cat) {
+  var f = window._pinFavs(), i = f.indexOf(cat);
+  if (i !== -1) f.splice(i, 1);
+  else if (f.length >= 5) { try { toast('Your top 5 is full. Tap a gold star to take one off first.', 3200); } catch (e) {} return; }
+  else f.push(cat);
+  try { localStorage.setItem('gl_pin_favs', JSON.stringify(f)); } catch (e) {}
+  buildPinCats(); window._renderPinFavs();
+};
+window._notePinUse = function (cat) {
+  try {
+    if (!(cat in PIN_DEFS)) return;
+    var use = JSON.parse(localStorage.getItem('gl_pin_use') || '{}') || {};
+    use[cat] = (use[cat] || 0) + 1;
+    localStorage.setItem('gl_pin_use', JSON.stringify(use));
+  } catch (e) {}
+};
+window._renderPinFavs = function () {
+  var host = document.getElementById('pin-favs'); if (!host) return;
+  var open = window._pinMoreOpen;
+  var html = window._pinFavs().map(function (name) {
+    var d = PIN_DEFS[name];
+    return '<button type="button" class="cat-btn' + (name === selectedCat ? ' active' : '') + '" data-cat="' + name + '" style="border-color:' + d.color + '55">' +
+           '<span class="pin-preview" style="background:transparent;line-height:0;width:30px;height:30px">' + window._pinIconHTML(name, 30) + '</span>' + name + '</button>';
+  }).join('');
+  html += '<button type="button" class="cat-btn pin-more-btn" id="pin-more-btn"><span class="pm-ic">' + (open ? '\u25B4' : '\u22EF') + '</span>' + (open ? 'Fewer' : 'More types') + '</button>';
+  host.innerHTML = html;
+};
+window._setPinMore = function (open) {
+  window._pinMoreOpen = !!open;
+  var w = document.getElementById('pin-more-wrap'); if (w) w.style.display = open ? 'block' : 'none';
+  window._renderPinFavs();
+};
+// One place that paints "this type is chosen", on both the favourites and the full list.
+window._markPinCat = function (cat) {
+  selectedCat = cat;
+  document.querySelectorAll('#pin-modal .cat-btn[data-cat]').forEach(function (b) { b.classList.toggle('active', b.dataset.cat === cat); });
+  var cr = document.getElementById('custom-cat-row');
+  if (cr) cr.style.display = (cat === 'Custom') ? 'block' : 'none';
+};
+
 // Build the pin-drop category picker grouped into themed sections from PIN_DEFS.
 function buildPinCats() {
   var host = document.getElementById('pin-cats'); if (!host) return;
@@ -16673,8 +16795,10 @@ function buildPinCats() {
     html += '<div style="display:flex;gap:7px;flex-wrap:wrap">';
     names.forEach(function(name) {
       var d = PIN_DEFS[name];
+      var _fav = window._pinFavs().indexOf(name) !== -1;
       html += '<button type="button" class="cat-btn' + (name === selectedCat ? ' active' : '') + '" data-cat="' + name + '" style="border-color:' + d.color + '40">' +
-              '<span class="pin-preview" style="background:transparent;line-height:0">' + window._pinIconHTML(name, 24) + '</span>' + name + '</button>';
+              '<span class="pin-preview" style="background:transparent;line-height:0">' + window._pinIconHTML(name, 24) + '</span>' + name +
+              '<span class="cat-star' + (_fav ? ' on' : '') + '" data-star="' + name + '" role="button" aria-label="' + (_fav ? 'Take out of top 5' : 'Add to top 5') + '">' + (_fav ? '\u2605' : '\u2606') + '</span></button>';
     });
     html += '</div>';
   });
@@ -16822,6 +16946,18 @@ function initMap() {
     attributionControl: false
   });
   window._mapStarted = true; // set only after the map object actually exists
+  // 986: open where you last looked rather than on the whole county; the crew camera takes
+  // over once people arrive. Saved on every move, so this is the view you left.
+  try {
+    var _cam = JSON.parse(localStorage.getItem('gl_cam') || 'null');
+    if (_cam && isFinite(_cam.lat) && isFinite(_cam.lng) && isFinite(_cam.z) && Date.now() - (_cam.ts || 0) < 14 * 86400000) {
+      map.jumpTo({ center: [_cam.lng, _cam.lat], zoom: _cam.z });
+    }
+  } catch (e) {}
+  map.on('moveend', function () {
+    try { var c = map.getCenter(); localStorage.setItem('gl_cam', JSON.stringify({ lat: +c.lat.toFixed(5), lng: +c.lng.toFixed(5), z: +map.getZoom().toFixed(2), ts: Date.now() })); } catch (e) {}
+  });
+  map.once('load', function () { try { window._markOpen('map'); } catch (e) {} });
   // NavigationControl replaced by custom buttons below
 
   // Catch map errors
@@ -19503,6 +19639,7 @@ function startLocationSharing() {
         vis: document.visibilityState,
         hidden: !!locationHidden,
         build: APP_BUILD,
+        open: window._openTimes || null,
         frameGap: window._maxFrameGap || 0,     // worst ms between frames — >50 means the page froze
         snapMs: window._snapMs || 0,            // last presence-snapshot handler duration
         snapMax: window._snapMax || 0,
@@ -20119,6 +20256,7 @@ function listenUsers() {
   var _USERS_RENDER_DEBOUNCE_MS = 400;
   function _processUsersSnap(snap) {
     var _t0 = performance.now();
+    try { if (snap && snap.val && snap.val()) window._markOpen('people'); } catch (e) {}
     try { _processUsersSnapInner(snap); } finally {
       var _d = Math.round(performance.now() - _t0);
       window._snapMs = _d;
@@ -22000,6 +22138,7 @@ window.editPin = function(pid) {
   _editingPid = pid;
   var known = pin.cat in PIN_DEFS;
   selectedCat = known ? pin.cat : 'Custom';
+  try { window._setPinMore(true); } catch (e) {}
   document.querySelectorAll('.cat-btn').forEach(function(b) { b.classList.toggle('active', b.dataset.cat === selectedCat); });
   var customRow = document.getElementById('custom-cat-row');
   var customInput = document.getElementById('pin-custom-cat-input');
@@ -22060,6 +22199,7 @@ function _closePinModal() {
   document.getElementById('pin-label-input').value = '';
   var cc = document.getElementById('pin-custom-cat-input'); if (cc) cc.value = '';
   var cr = document.getElementById('custom-cat-row'); if (cr) cr.style.display = 'none';
+  try { window._setPinMore(false); } catch (e) {}
   pendingCoords = null;
   _editingPid = null;
   var title = document.querySelector('#pin-modal .pin-sheet-title'); if (title) title.textContent = 'Drop a Pin';
@@ -22801,6 +22941,11 @@ window._openPinAt = function (lng, lat, note) {
     if (lbl) lbl.textContent = (+lat).toFixed(5) + ', ' + (+lng).toFixed(5) + (note ? ('  ·  ' + note) : '');
     try { window._releaseCamera(); } catch (e) {}
     _showPendingMarker(pendingCoords);
+    try {
+      var _favs = window._pinFavs();
+      window._setPinMore(false);
+      window._markPinCat(_favs.indexOf(selectedCat) !== -1 ? selectedCat : (_favs[0] || 'Waypoint'));
+    } catch (e) {}
     var m = document.getElementById('pin-modal');
     m.classList.add('show'); m.classList.add('placing');
     try { _syncPinPrivateRow(); } catch (e) {}
@@ -22929,14 +23074,19 @@ try {
 } catch (e) {}
 
 buildPinCats(); // populate the themed category library
+window._renderPinFavs();
 document.getElementById('pin-cats').addEventListener('click', e => {
+  var star = e.target.closest && e.target.closest('.cat-star');
+  if (star) { e.preventDefault(); window._togglePinFav(star.dataset.star); return; }
   var btn = e.target.closest && e.target.closest('.cat-btn');
   if (!btn) return;
-  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  selectedCat = btn.dataset.cat;
-  var cr = document.getElementById('custom-cat-row');
-  if (cr) cr.style.display = (selectedCat === 'Custom') ? 'block' : 'none';
+  window._markPinCat(btn.dataset.cat);
+});
+document.getElementById('pin-favs').addEventListener('click', e => {
+  var btn = e.target.closest && e.target.closest('.cat-btn');
+  if (!btn) return;
+  if (btn.id === 'pin-more-btn') { window._setPinMore(!window._pinMoreOpen); return; }
+  window._markPinCat(btn.dataset.cat);
 });
 
 document.getElementById('pin-cancel').addEventListener('click', _closePinModal);
@@ -22990,6 +23140,7 @@ window._setPinKind = function (k) {
   if (shareRow) shareRow.style.display = (k === 'save') ? 'flex' : 'none';
 };
 document.getElementById('pin-confirm').addEventListener('click', () => {
+  try { if (!_editingPid) window._notePinUse(selectedCat); } catch (e) {}
   const label = document.getElementById('pin-label-input').value.trim();
   const customCatEl = document.getElementById('pin-custom-cat-input');
   const finalCat = (selectedCat === 'Custom' && customCatEl && customCatEl.value.trim())
@@ -29639,9 +29790,22 @@ window._flushOutbox = function () {
   if (!db || !fbPush || !fbSet) return;
   _flushing = true;
   var done = 0;
+  // 986: name each pin ONCE and save the name with it before any upload. Every retry then
+  // writes the same gl/<room>/pins/<key>, so a pin sent twice is one pin, not two.
+  var _named = false;
+  q.forEach(function (item) {
+    if (!item.key) { try { item.key = fbPush(fbRef(db, 'gl/' + item.room + '/pins')).key; _named = true; } catch (e) {} }
+  });
+  if (_named) {
+    try {
+      var _cur = _outbox();
+      _cur.forEach(function (x) { q.forEach(function (y) { if (x.id === y.id && y.key) x.key = y.key; }); });
+      _setOutbox(_cur);
+    } catch (e) {}
+  }
   q.forEach(function (item) {
     try {
-      var ref = fbPush(fbRef(db, 'gl/' + item.room + '/pins'));
+      var ref = item.key ? fbRef(db, 'gl/' + item.room + '/pins/' + item.key) : fbPush(fbRef(db, 'gl/' + item.room + '/pins'));
       // Only drop it from the outbox once the server has ACKNOWLEDGED the write. fbSet's promise
       // settles on the server round-trip, not on the local echo, which is the whole point.
       Promise.resolve(fbSet(ref, item.pin)).then(function () {
@@ -31823,7 +31987,7 @@ window._openSetPasscode = function() {
 // == CUSTOM CATEGORY ==============================================
 // Show/hide custom name field when Custom category selected
 document.addEventListener('click', function(e) {
-  if (e.target.closest && e.target.closest('.cat-btn')) {
+  if (e.target.closest && e.target.closest('.cat-btn') && !e.target.closest('.cat-star') && !e.target.closest('#pin-more-btn')) {
     var btn = e.target.closest('.cat-btn');
     var cat = btn.dataset.cat;
     var customRow = document.getElementById('custom-cat-row');
