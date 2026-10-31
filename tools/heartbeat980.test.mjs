@@ -29,7 +29,7 @@ function cut(src, head) {
 
 // 1. The spike filter, on the real points from that morning.
 const metersApart = (a, b, c, d) => { const R = 6371000, r = Math.PI / 180; const x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
-const fn = new Function('metersApart', 'var window = {};\n' + cut(idx, 'window._dropTrailSpikes = function (pts) {') + '\nreturn window._dropTrailSpikes;')(metersApart);
+const fn = new Function('metersApart', 'var window = {};\nfunction _ptT(p) { return p.t || p.ts || 0; }\n' + cut(idx, 'window._dropTrailSpikes = function (pts) {') + '\nreturn window._dropTrailSpikes;')(metersApart);
 const T = (hms) => Date.parse('2026-10-31T' + hms + '-04:00');
 const pts = [
   ['08:16:28', 30.44097, -85.00370], ['08:16:38', 30.44245, -85.00626], ['08:16:48', 30.44312, -85.00957],
