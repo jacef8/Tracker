@@ -1247,7 +1247,7 @@ app.post('/voip', rateLimit(60, 60000), requireUser, async function (req, res) {
 const PUSH_DEDUPE_MS = 90 * 1000;
 const _pushSeen = new Map();
 function _pushDuplicate(uid, type, body) {
-  const key = uid + '|' + (type || '') + '|' + String(body || '').slice(0, 120);
+  const key = uid + '|' + (type || '') + '|' + String(body || '').slice(0, 400);
   const now = Date.now();
   const prev = _pushSeen.get(key);
   if (prev && (now - prev) < PUSH_DEDUPE_MS) return true;
@@ -1334,7 +1334,11 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
       if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) { decisions.push(uid.slice(0, 10) + ':turned-off'); return; }
       // Already told this person about this, via another Crew they share with the sender.
       // SOS is exempt: a repeat there is far cheaper than a miss.
-      if (b.type !== 'sos' && _pushDuplicate(uid, b.type, b.body)) { decisions.push(uid.slice(0, 10) + ':DUP'); return; }
+      // A pin's body is the same for every pin in a crew ("Our Crew -- tap to see where") and two
+      // pins of one type share a title, so the pin's own link (which carries its coordinates)
+      // has to be part of what counts as "the same message". Reported 2026-10-30: a second pin
+      // dropped 45 s after the first reached nobody, every recipient marked DUP.
+      if (b.type !== 'sos' && _pushDuplicate(uid, b.type, (b.title || '') + '|' + (b.body || '') + (b.type === 'pin' ? '|' + (b.url || '') : ''))) { decisions.push(uid.slice(0, 10) + ':DUP'); return; }
       // Web Push — installed PWA (browser-backed)
       if (pushReady && rec.sub) {
         let subscription = null;
