@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 990;
+var APP_BUILD = 991;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6283,7 +6283,7 @@ var MK_TAIL = 12;   // px of pointer between bubble and ground
 var MK_LIFT = 22 + MK_TAIL;
 // 989: a merged oval is too wide for the little tail to show, and the spread pass kept setting
 // it back down on the ground, so nothing marked where the group actually is. It now always
-// floats this far up, with a line and a dot to the true spot (_groupLeaderFeats).
+// floats this far up, with a stem and a dot to the true spot (.mk-stem, see _setCallout).
 var MK_MERGE_LIFT = 70;
 // Lift a marker into callout form, or drop it back onto its position. No-ops when nothing
 // changes, so it costs nothing on the common uncluttered path.
@@ -6313,6 +6313,27 @@ window._setCallout = function (mk, on) {
     var t = mk._el.querySelector('.mk-tail');
     // The oval's line replaces the tail; the tail only belongs to a single dot.
     if (t) t.style.display = (on && !mk._mergedOval) ? 'block' : 'none';
+    // 991: the oval's stem and dot are children of the oval itself. 989 drew them on the map
+    // layer, refreshed about once a second, so at 50 mph the gliding oval ran ahead and left
+    // the dot behind (Jace, 2026-11-01). As children they ride the same transform, every frame.
+    var stem = mk._el.querySelector('.mk-stem');
+    if (mk._mergedOval && on) {
+      if (!stem) {
+        stem = document.createElement('div');
+        stem.className = 'mk-stem';
+        // From the oval's lower edge (19px under its centre, inside the 3px ring) down to the
+        // true spot, MK_MERGE_LIFT under the centre. The dot is centred on that spot.
+        var len = MK_MERGE_LIFT - 19;
+        stem.style.cssText = 'position:absolute;top:100%;left:50%;width:0;height:' + len + 'px;pointer-events:none;';
+        stem.innerHTML =
+          '<div style="position:absolute;left:-1.25px;top:0;width:2.5px;height:100%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>' +
+          '<div style="position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:#0d1117;border:2.5px solid #fff;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,.6)"></div>';
+        mk._el.appendChild(stem);
+      }
+      stem.style.display = 'block';
+    } else if (stem) {
+      stem.style.display = 'none';
+    }
   } catch (e) {}
 };
 
@@ -6425,7 +6446,7 @@ function _drawMarkerLeaders(vis) {
       var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
       if (!v.ll) return;
       var key = v.mk || v.el;
-      // 989: an oval gets its own line, to the group's centre (_groupLeaderFeats).
+      // 989: an oval carries its own stem to the group's centre (.mk-stem), not a leader.
       if (v.mk && v.mk._mergedOval) return;
       if (m < LEADER_MIN_PX) { try { if (_leaderSince && key) _leaderSince.delete(key); } catch (e) {} return; }
       // Displaced far enough -- but only draw once it has stayed that way.
@@ -6446,15 +6467,12 @@ function _drawMarkerLeaders(vis) {
     // Pins nudged clear of a marker get the same line back to their true spot, so there is one
     // visual language for "this was moved aside, here is where it really is".
     try { if (window._pinLeaderFeats && window._pinLeaderFeats.length) feats = feats.concat(window._pinLeaderFeats); } catch (e) {}
-    window._lastLeaderVis = vis || [];
-    try { feats = feats.concat(_groupLeaderFeats()); } catch (e) {}
     var data = { type: 'FeatureCollection', features: feats };
     // Only touch the source when the lines actually changed. setData re-uploads the layer to the
     // GPU on every call, and this runs about once a second -- usually to re-send the same empty
     // collection, which showed up as a periodic stutter on the map.
     var sig = feats.map(function (f) {
       var c = f.geometry.coordinates;
-      if (f.geometry.type === 'Point') return c[0].toFixed(6) + ',' + c[1].toFixed(6);
       return c[0][0].toFixed(6) + ',' + c[0][1].toFixed(6) + '>' + c[1][0].toFixed(6) + ',' + c[1][1].toFixed(6);
     }).join('|');
     if (sig === window._leaderSig && map.getSource('marker-leaders')) return;
@@ -6467,9 +6485,8 @@ function _drawMarkerLeaders(vis) {
         source: 'marker-leaders',
         paint: {
           'line-color': '#ffffff',
-          // 989: a group's line is the only thing tying the oval to the ground; make it read.
-          'line-width': ['case', ['==', ['get', 'kind'], 'grp'], 2.4, 1.6],
-          'line-opacity': ['case', ['==', ['get', 'kind'], 'grp'], 0.9, 0.55]
+          'line-width': 1.6,
+          'line-opacity': 0.55
         }
       });
       // A small dot at the TRUE position, so the line points at something rather than
@@ -6478,25 +6495,10 @@ function _drawMarkerLeaders(vis) {
         id: 'marker-leader-anchors',
         type: 'circle',
         source: 'marker-leaders',
-        filter: ['!=', ['get', 'kind'], 'grpdot'],
         paint: {
           'circle-radius': 2.6,
           'circle-color': '#ffffff',
           'circle-opacity': 0.75
-        }
-      });
-      // 989: the group's true spot. Bigger than a leader's end, dark-filled with a white ring
-      // so it shows on satellite, grass and snow alike.
-      map.addLayer({
-        id: 'marker-group-spot',
-        type: 'circle',
-        source: 'marker-leaders',
-        filter: ['==', ['get', 'kind'], 'grpdot'],
-        paint: {
-          'circle-radius': 5.5,
-          'circle-color': '#0d1117',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2.2
         }
       });
       return;
@@ -6504,45 +6506,7 @@ function _drawMarkerLeaders(vis) {
     map.getSource('marker-leaders').setData(data);
   } catch (e) {}
 }
-// 989: one line and one dot per merged oval, from the group's true spot (the oval's own LngLat,
-// which the grouping pass sets to the centre of its members) up to where the oval is drawn.
-// Computed in screen space every time, so it follows the oval through pans and zooms.
-function _groupLeaderFeats() {
-  var out = [];
-  var groups = window._markerGroupMembers || {};
-  Object.keys(groups).forEach(function (primary) {
-    if (!groups[primary] || groups[primary].length < 2) return;
-    var mk = userMarkers[primary], el = mk && mk._el;
-    if (!el || el.style.display === 'none' || !mk._mergedOval || !mk.getLngLat) return;
-    var t; try { t = mk.getLngLat(); } catch (e) { return; }
-    var p; try { p = map.project([t.lng, t.lat]); } catch (e) { return; }
-    var ml = parseFloat(el.style.marginLeft) || 0, mt = parseFloat(el.style.marginTop) || 0;
-    // End at the oval's lower edge (22px under its centre); the oval is drawn over the rest.
-    var end; try { end = map.unproject([p.x + ml, p.y + mt - (mk._calloutSt || MK_MERGE_LIFT) + 20]); } catch (e) { return; }
-    out.push({ type: 'Feature', properties: { kind: 'grp' },
-      geometry: { type: 'LineString', coordinates: [[t.lng, t.lat], [end.lng, end.lat]] } });
-    out.push({ type: 'Feature', properties: { kind: 'grpdot' },
-      geometry: { type: 'Point', coordinates: [t.lng, t.lat] } });
-  });
-  return out;
-}
-// Keep the group lines attached while the map moves; the spread pass only runs once things
-// settle. One redraw per frame at most.
-window._grpLeaderMoveBound = false;
-function _bindGroupLeaderMove() {
-  if (window._grpLeaderMoveBound || typeof map === 'undefined' || !map || !map.on) return;
-  window._grpLeaderMoveBound = true;
-  var pending = false;
-  map.on('move', function () {
-    if (pending) return;
-    var g = window._markerGroupMembers || {};
-    if (!Object.keys(g).some(function (k) { return g[k] && g[k].length > 1; })) return;
-    pending = true;
-    requestAnimationFrame(function () { pending = false; try { _drawMarkerLeaders(window._lastLeaderVis || []); } catch (e) {} });
-  });
-}
 function _spreadOverlappingMarkers() {
-  try { _bindGroupLeaderMove(); } catch (e) {}
   try {
     if (typeof map === 'undefined' || !map || window._spider) return;
     var vis = [];
@@ -6594,6 +6558,9 @@ function _spreadOverlappingMarkers() {
       // margin, not transform: Mapbox owns the element's transform for positioning.
       var ml = Math.abs(v.dx) < 0.5 ? '' : (Math.round(v.dx) + 'px');
       var mt = Math.abs(v.dy) < 0.5 ? '' : (Math.round(v.dy) + 'px');
+      // 991: an oval already floats clear on its stem; nudging it sideways bent the stem away
+      // from the spot it marks. Other dots still move out of its way.
+      if (v.mk && v.mk._mergedOval) { ml = ''; mt = ''; }
       if (v.el.style.marginLeft !== ml) v.el.style.marginLeft = ml;
       if (v.el.style.marginTop !== mt) v.el.style.marginTop = mt;
       // Nudged = something was on top of it = worth lifting clear of whatever it covers.
@@ -6728,7 +6695,25 @@ function _updateMarkerGrouping(immediate) {
   var cand = window._groupCandidate;
   if (!cand || cand.sig !== allSig) { cand = { sig: allSig, since: now }; window._groupCandidate = cand; }
   var finalGroups = {};
-  if (immediate || allSig === window._lastStableGroupSig || (now - cand.since) >= GROUP_DEBOUNCE_MS || !window._lastAppliedGroups) {
+  // 991: `immediate` used to skip the debounce outright, and it is passed on EVERY fix from an
+  // oval's member (the glide path) and on every camera zoom while group-follow drives -- so one
+  // jittery fix split the oval and the next merged it again ("snapping in and out", Jace,
+  // 2026-11-01). Now a skip may JOIN at once, but breaking a group up always waits out the
+  // debounce. The one exception is a zoom the person made themselves ('zoom'): pinching in to
+  // see who is who should separate them straight away.
+  var _splits = false;
+  try {
+    if (window._lastAppliedGroups) {
+      _splits = Object.keys(window._lastAppliedGroups).some(function (sig) {
+        var ms = window._lastAppliedGroups[sig].filter(function (u) { return uids.indexOf(u) !== -1; });
+        if (ms.length < 2) return false;
+        var r0 = find(ms[0]);
+        return ms.some(function (u) { return find(u) !== r0; });
+      });
+    }
+  } catch (e) {}
+  var _skip = immediate === 'zoom' || (immediate && !_splits);
+  if (_skip || allSig === window._lastStableGroupSig || (now - cand.since) >= GROUP_DEBOUNCE_MS || !window._lastAppliedGroups) {
     window._lastStableGroupSig = allSig;
     Object.keys(rawGroups).forEach(function (r) { finalGroups[rawGroups[r].slice().sort().join(',')] = rawGroups[r]; });
     window._lastAppliedGroups = finalGroups;
@@ -30162,7 +30147,7 @@ function _renderSavedOnMap() {
           }, 260);
           return;
         }
-        try { _updateMarkerGrouping(true); } catch (e) {}
+        try { _updateMarkerGrouping(window._gfCamDriving ? true : 'zoom'); } catch (e) {}
       });
       // A fanned-out cluster is a transient state: any zoom, or a tap on empty map, ends it.
       // Our own camera is not the user zooming, and tearing the fan-out down every frame would

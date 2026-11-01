@@ -21,10 +21,13 @@ ok(/var MK_MERGE_LIFT = 70;/.test(idx), 'the oval floats 70px up');
 ok(/if \(mk\._mergedOval\) on = true;/.test(idx), 'the spread pass can no longer set the oval back on the ground');
 ok(/mk\._mergedOval = true;\s*try \{ window\._setCallout\(mk, true\); \} catch \(e\) \{\}\s*_setGroupBadge/.test(idx), 'merging marks the oval');
 ok(/function _applyMarkerSolo\(mk\) \{\s*if \(mk && mk\._mergedOval\) \{ mk\._mergedOval = false;/.test(idx), 'splitting drops it back to a plain dot');
-ok(/feats = feats\.concat\(_groupLeaderFeats\(\)\)/.test(idx) && /kind: 'grpdot'/.test(idx), 'line + dot drawn for each oval');
-ok(/id: 'marker-group-spot'/.test(idx) && /filter: \['!=', \['get', 'kind'\], 'grpdot'\]/.test(idx), 'the group spot has its own layer; the small anchor skips it');
+// 991: the stem is part of the oval (it moved off the map layer, which lagged a moving oval).
+ok(/stem\.className = 'mk-stem'/.test(idx) && /var len = MK_MERGE_LIFT - 19;/.test(idx), 'stem + dot are children of the oval');
+ok(!/_groupLeaderFeats\(\)/.test(idx) && !/grpdot/.test(idx), 'the lagging map-layer line is gone');
+ok(/if \(v\.mk && v\.mk\._mergedOval\) \{ ml = ''; mt = ''; \}/.test(idx), 'the spread pass no longer bends the stem sideways');
 ok(/if \(v\.mk && v\.mk\._mergedOval\) return;/.test(idx), 'an oval does not also get a spread leader to one member');
-ok(/map\.on\('move', function \(\) \{\s*if \(pending\) return;/.test(idx), 'the line follows the oval while the map moves');
+ok(/var _skip = immediate === 'zoom' \|\| \(immediate && !_splits\);/.test(idx), 'a group only splits after the debounce...');
+ok(/_updateMarkerGrouping\(window\._gfCamDriving \? true : 'zoom'\)/.test(idx), '...unless the person zoomed themselves');
 
 console.log(fails ? `${fails} of ${n} checks FAILED` : `all ${n} checks pass`);
 process.exit(fails ? 1 : 0);
