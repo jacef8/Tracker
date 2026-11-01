@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 988;
+var APP_BUILD = 989;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6127,6 +6127,7 @@ window._mkTone = function (m) {
 };
 window._mkIsGrey = function (m) { return window._mkTone(m) === 'gone'; };
 function _applyMarkerSolo(mk) {
+  if (mk && mk._mergedOval) { mk._mergedOval = false; try { window._setCallout(mk, false); } catch (e) {} }
   var el = mk && mk._el; if (!el) return;
   // Coming out of a merge: the oval was drawn at the group's centroid, so put this marker back
   // on its owner's real coordinates before it is shown on its own.
@@ -6267,6 +6268,7 @@ function _applyMarkerMerged(primary, members) {
   var db = el.querySelector('.mk-dev-badge');
   if (db) db.style.display = 'none';
   // Several people in one shape is the definition of crowded — always a callout.
+  mk._mergedOval = true;
   try { window._setCallout(mk, true); } catch (e) {}
   _setGroupBadge(el, ordered.length - shown.length);
 }
@@ -6279,17 +6281,38 @@ var _CHIP_SLOTS = [48, 70, 92, 114];   // px below marker centre
 // rather than merely near it. Change one and the other has to follow.
 var MK_TAIL = 12;   // px of pointer between bubble and ground
 var MK_LIFT = 22 + MK_TAIL;
+// 989: a merged oval is too wide for the little tail to show, and the spread pass kept setting
+// it back down on the ground, so nothing marked where the group actually is. It now always
+// floats this far up, with a line and a dot to the true spot (_groupLeaderFeats).
+var MK_MERGE_LIFT = 70;
 // Lift a marker into callout form, or drop it back onto its position. No-ops when nothing
 // changes, so it costs nothing on the common uncluttered path.
+// 989: a device with no account behind it. _myAcct() is the account this device signed in to;
+// empty means it joined as a guest.
+window._isGuestDevice = function () {
+  try { return !((typeof _myAcct === 'function') && _myAcct()); } catch (e) { return false; }
+};
+window._guestBadge = function (data) {
+  try {
+    if (!data || data.guest !== 1) return '';
+    return ' <span title="Joined as a guest, not signed in. If they delete the app or change phones they will need to be let in again." ' +
+      'style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#ffb454;background:rgba(255,180,84,.16);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">GUEST</span>';
+  } catch (e) { return ''; }
+};
 window._setCallout = function (mk, on) {
   try {
     if (!mk || !mk._el) return;
+    // A merged oval is always a callout, at its own height; nothing else decides that for it.
+    if (mk._mergedOval) on = true;
     on = !!on;
-    if (!!mk._calloutOn === on) return;
+    var st = on ? (mk._mergedOval ? MK_MERGE_LIFT : MK_LIFT) : 0;
+    if ((mk._calloutSt || 0) === st && !!mk._calloutOn === on) return;
     mk._calloutOn = on;
-    if (mk.setOffset) mk.setOffset(on ? [0, -MK_LIFT] : [0, 0]);
+    mk._calloutSt = st;
+    if (mk.setOffset) mk.setOffset([0, -st]);
     var t = mk._el.querySelector('.mk-tail');
-    if (t) t.style.display = on ? 'block' : 'none';
+    // The oval's line replaces the tail; the tail only belongs to a single dot.
+    if (t) t.style.display = (on && !mk._mergedOval) ? 'block' : 'none';
   } catch (e) {}
 };
 
@@ -6402,6 +6425,8 @@ function _drawMarkerLeaders(vis) {
       var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
       if (!v.ll) return;
       var key = v.mk || v.el;
+      // 989: an oval gets its own line, to the group's centre (_groupLeaderFeats).
+      if (v.mk && v.mk._mergedOval) return;
       if (m < LEADER_MIN_PX) { try { if (_leaderSince && key) _leaderSince.delete(key); } catch (e) {} return; }
       // Displaced far enough -- but only draw once it has stayed that way.
       try {
@@ -6421,13 +6446,16 @@ function _drawMarkerLeaders(vis) {
     // Pins nudged clear of a marker get the same line back to their true spot, so there is one
     // visual language for "this was moved aside, here is where it really is".
     try { if (window._pinLeaderFeats && window._pinLeaderFeats.length) feats = feats.concat(window._pinLeaderFeats); } catch (e) {}
+    window._lastLeaderVis = vis || [];
+    try { feats = feats.concat(_groupLeaderFeats()); } catch (e) {}
     var data = { type: 'FeatureCollection', features: feats };
     // Only touch the source when the lines actually changed. setData re-uploads the layer to the
     // GPU on every call, and this runs about once a second -- usually to re-send the same empty
     // collection, which showed up as a periodic stutter on the map.
     var sig = feats.map(function (f) {
       var c = f.geometry.coordinates;
-      return c[0][0].toFixed(5) + ',' + c[0][1].toFixed(5) + '>' + c[1][0].toFixed(5) + ',' + c[1][1].toFixed(5);
+      if (f.geometry.type === 'Point') return c[0].toFixed(6) + ',' + c[1].toFixed(6);
+      return c[0][0].toFixed(6) + ',' + c[0][1].toFixed(6) + '>' + c[1][0].toFixed(6) + ',' + c[1][1].toFixed(6);
     }).join('|');
     if (sig === window._leaderSig && map.getSource('marker-leaders')) return;
     window._leaderSig = sig;
@@ -6439,8 +6467,9 @@ function _drawMarkerLeaders(vis) {
         source: 'marker-leaders',
         paint: {
           'line-color': '#ffffff',
-          'line-width': 1.6,
-          'line-opacity': 0.55
+          // 989: a group's line is the only thing tying the oval to the ground; make it read.
+          'line-width': ['case', ['==', ['get', 'kind'], 'grp'], 2.4, 1.6],
+          'line-opacity': ['case', ['==', ['get', 'kind'], 'grp'], 0.9, 0.55]
         }
       });
       // A small dot at the TRUE position, so the line points at something rather than
@@ -6449,10 +6478,25 @@ function _drawMarkerLeaders(vis) {
         id: 'marker-leader-anchors',
         type: 'circle',
         source: 'marker-leaders',
+        filter: ['!=', ['get', 'kind'], 'grpdot'],
         paint: {
           'circle-radius': 2.6,
           'circle-color': '#ffffff',
           'circle-opacity': 0.75
+        }
+      });
+      // 989: the group's true spot. Bigger than a leader's end, dark-filled with a white ring
+      // so it shows on satellite, grass and snow alike.
+      map.addLayer({
+        id: 'marker-group-spot',
+        type: 'circle',
+        source: 'marker-leaders',
+        filter: ['==', ['get', 'kind'], 'grpdot'],
+        paint: {
+          'circle-radius': 5.5,
+          'circle-color': '#0d1117',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2.2
         }
       });
       return;
@@ -6460,7 +6504,45 @@ function _drawMarkerLeaders(vis) {
     map.getSource('marker-leaders').setData(data);
   } catch (e) {}
 }
+// 989: one line and one dot per merged oval, from the group's true spot (the oval's own LngLat,
+// which the grouping pass sets to the centre of its members) up to where the oval is drawn.
+// Computed in screen space every time, so it follows the oval through pans and zooms.
+function _groupLeaderFeats() {
+  var out = [];
+  var groups = window._markerGroupMembers || {};
+  Object.keys(groups).forEach(function (primary) {
+    if (!groups[primary] || groups[primary].length < 2) return;
+    var mk = userMarkers[primary], el = mk && mk._el;
+    if (!el || el.style.display === 'none' || !mk._mergedOval || !mk.getLngLat) return;
+    var t; try { t = mk.getLngLat(); } catch (e) { return; }
+    var p; try { p = map.project([t.lng, t.lat]); } catch (e) { return; }
+    var ml = parseFloat(el.style.marginLeft) || 0, mt = parseFloat(el.style.marginTop) || 0;
+    // End at the oval's lower edge (22px under its centre); the oval is drawn over the rest.
+    var end; try { end = map.unproject([p.x + ml, p.y + mt - (mk._calloutSt || MK_MERGE_LIFT) + 20]); } catch (e) { return; }
+    out.push({ type: 'Feature', properties: { kind: 'grp' },
+      geometry: { type: 'LineString', coordinates: [[t.lng, t.lat], [end.lng, end.lat]] } });
+    out.push({ type: 'Feature', properties: { kind: 'grpdot' },
+      geometry: { type: 'Point', coordinates: [t.lng, t.lat] } });
+  });
+  return out;
+}
+// Keep the group lines attached while the map moves; the spread pass only runs once things
+// settle. One redraw per frame at most.
+window._grpLeaderMoveBound = false;
+function _bindGroupLeaderMove() {
+  if (window._grpLeaderMoveBound || typeof map === 'undefined' || !map || !map.on) return;
+  window._grpLeaderMoveBound = true;
+  var pending = false;
+  map.on('move', function () {
+    if (pending) return;
+    var g = window._markerGroupMembers || {};
+    if (!Object.keys(g).some(function (k) { return g[k] && g[k].length > 1; })) return;
+    pending = true;
+    requestAnimationFrame(function () { pending = false; try { _drawMarkerLeaders(window._lastLeaderVis || []); } catch (e) {} });
+  });
+}
 function _spreadOverlappingMarkers() {
+  try { _bindGroupLeaderMove(); } catch (e) {}
   try {
     if (typeof map === 'undefined' || !map || window._spider) return;
     var vis = [];
@@ -6540,7 +6622,7 @@ function _layoutMarkerChips() {
       // Measure where the dot is actually DRAWN, not where it belongs geographically: the spread
       // pass offsets colliding markers by these margins and the chip rides along with its marker.
       var mx = parseFloat(el.style.marginLeft) || 0;
-      var my = (parseFloat(el.style.marginTop) || 0) - (mk._calloutOn ? MK_LIFT : 0);
+      var my = (parseFloat(el.style.marginTop) || 0) - (mk._calloutSt || 0);
       var w = chip.offsetWidth || 60;
       // Find the first vertical slot whose box doesn't overlap one already taken.
       for (var s = 0; s < _CHIP_SLOTS.length; s++) {
@@ -18151,7 +18233,7 @@ function toggleLocationShare(share) {
   if (locationHidden) {
     // Hide now: broadcast a no-GPS/hidden record so the dot drops for everyone, and clear my own marker
     try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-      { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch (_) {}
+      { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true, guest: (window._isGuestDevice && window._isGuestDevice()) ? 1 : 0 }); } catch (_) {}
     if (typeof followUid !== 'undefined' && followUid === userId && typeof stopFollowing === 'function') stopFollowing();
     if (userMarkers[userId]) { userMarkers[userId].remove(); delete userMarkers[userId]; }
     toast('Location hidden — you can still chat & view the map', 2600);
@@ -19081,7 +19163,7 @@ function startLocationSharing() {
     if (locationHidden) {
       if (groupName) {
         fbSet(fbRef(db, `gl/${groupName}/users/${userId}`), {
-          lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true
+          lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: now, noGps: true, hidden: true, guest: (window._isGuestDevice && window._isGuestDevice()) ? 1 : 0
         });
       }
       return;
@@ -19181,6 +19263,9 @@ function startLocationSharing() {
       // 973: where this fix came from. A browser stops reporting the moment the page closes or
       // the phone locks, so the crew needs to know "website" rather than read "signal lost".
       plat: _isNativeApp() ? 'app' : 'web',
+      // 989: signed in to an account, or a guest. A guest who deletes the app or changes phone
+      // comes back as a stranger, so the crew owner wants to see who to nudge.
+      guest: (window._isGuestDevice && window._isGuestDevice()) ? 1 : 0,
       // 977: which app version this is, shown on the person's card ("iPhone app 1.0.16").
       appv: _appVersionLabel()
     };
@@ -19752,7 +19837,7 @@ function startLocationSharing() {
     if (!_roomWritable(groupName)) return;
     if (locationHidden) {
       try { fbSet(fbRef(db, 'gl/' + groupName + '/users/' + userId),
-                  { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true }); } catch(_) {}
+                  { lat: 0, lng: 0, name: userName, dev: _deviceLabel(), accuracy: 0, ts: Date.now(), noGps: true, hidden: true, guest: (window._isGuestDevice && window._isGuestDevice()) ? 1 : 0 }); } catch(_) {}
     } else if (!window._lastGPS) {
       // Same rule as markNoGps: flag only, never a zeroed row over a stored position. Before
       // 951 this fired 30 s into every cold start without a fix and wiped the last-known.
@@ -21111,6 +21196,7 @@ function listenUsers() {
           '<div style="min-width:0;margin-top:2px">' +
             '<div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtmlJs(_withDev(data)) +
               (!isMine && window._rosterHas(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:var(--accent);background:color-mix(in srgb, var(--tint) 15%, transparent);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+              (window._guestBadge ? window._guestBadge(data) : '') +
               (window._isAdminUid && window._isAdminUid(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:#f0a500;background:color-mix(in srgb, var(--tint) 15%, transparent);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">ADMIN</span>' : '') +
             '</div>' +
             (window._crewBadges ? window._crewBadges(data) : '') +
@@ -21179,6 +21265,7 @@ function listenUsers() {
             // regular rooms, where there's no membership concept to display.
             (!isMine && _frMap[uid] ? ' <span title="One of your favorites" style="font-size:11px;color:var(--accent);vertical-align:1px">★</span>' : '') +
             (!isMine && window._rosterHas(uid) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:var(--accent);background:color-mix(in srgb, var(--tint) 15%, transparent);padding:1px 5px;border-radius:8px;white-space:nowrap">MEMBER</span>' : '') +
+            (window._guestBadge ? window._guestBadge(data) : '') +
           '</div>' +
           '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;flex-shrink:0;background:' + bd.bg + ';color:' + bd.c + '">' + bd.t + '</span>' +
         '</div>' +
@@ -31055,6 +31142,7 @@ window._buildPersonSheetHTML = function (uid, data) {
     '</div>' +
     '<div style="min-width:0;margin-top:2px"><div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + nm +
       ((window._rosterHas && window._rosterHas(uid)) ? ' <span style="font-size:9px;font-weight:800;letter-spacing:.03em;color:var(--accent);background:color-mix(in srgb, var(--tint) 15%, transparent);padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:1px">MEMBER</span>' : '') +
+      (window._guestBadge ? window._guestBadge(data) : '') +
       '</div>' +
       '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + statusLine + '</div></div>' +
     talk +

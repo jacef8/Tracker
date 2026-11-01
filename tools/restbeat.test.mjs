@@ -101,7 +101,7 @@ const idle = { _batterySaver: true, _bsIdle: true, _lastGPS: { lat: 30.44, lng: 
 {
   const r = beat({ ...idle }, { hidden: true });
   const s = r.sets.find((x) => x.path === ROW);
-  const want = { lat: 0, lng: 0, name: 'Jace', dev: 'Phone', accuracy: 0, noGps: true, hidden: true };
+  const want = { lat: 0, lng: 0, name: 'Jace', dev: 'Phone', accuracy: 0, noGps: true, hidden: true, guest: 0 };   // 989 adds guest
   const same = !!s && Object.keys(want).every((k) => s.val[k] === want[k]) && typeof s.val.ts === 'number'
                && Object.keys(s.val).length === Object.keys(want).length + 1;
   check('hidden: full {lat:0,lng:0,...,hidden:true} row untouched by the patch',
