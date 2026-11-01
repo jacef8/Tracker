@@ -818,6 +818,7 @@ function injectStylesOnce() {
   document.head.appendChild(s);
 }
 
+let _pttNative = false, _pttHeld = false, _pttFallbackT = null;
 function renderBar() {
   injectStylesOnce();
   removeBar();
@@ -854,13 +855,28 @@ function renderBar() {
     try { if (e.pointerId != null && ptt.setPointerCapture) ptt.setPointerCapture(e.pointerId); } catch (_) {}
     // iOS 16+ Push to Talk framework owns the transmit (system audio session + UI); it calls back
     // to pttKey() to publish the mic. Elsewhere we key the mic directly.
-    try { if (typeof window !== 'undefined' && window.GLPushToTalk && window.GLPushToTalk.available) { window.GLPushToTalk.beginTransmit(); return; } } catch (_) {}
+    // 990: only hand off to Apple when this phone has actually JOINED its walkie-talkie channel
+    // (the framework has given us a token). Jax's iPhone had the framework but no channel, so
+    // beginTransmit did nothing, nothing called back, and the button never went red. And even
+    // with a channel, if Apple has not keyed us within 700 ms, key the mic ourselves.
+    try {
+      if (typeof window !== 'undefined' && window.GLPushToTalk && window.GLPushToTalk.available && window._pttToken) {
+        _pttNative = true;
+        window.GLPushToTalk.beginTransmit();
+        clearTimeout(_pttFallbackT);
+        _pttFallbackT = setTimeout(() => { if (_pttHeld && !micOn) { _pttNative = false; setPtt(true); } }, 700);
+        _pttHeld = true;
+        return;
+      }
+    } catch (_) {}
+    _pttNative = false; _pttHeld = true;
     setPtt(true);
   };
   const _pttUp = (e) => {
     e.preventDefault(); e.stopPropagation();
-    try { if (typeof window !== 'undefined' && window.GLPushToTalk && window.GLPushToTalk.available) { window.GLPushToTalk.endTransmit(); return; } } catch (_) {}
-    setPtt(false);
+    _pttHeld = false; clearTimeout(_pttFallbackT);
+    if (_pttNative) { try { window.GLPushToTalk.endTransmit(); } catch (_) {} }
+    setPtt(false);   // harmless if Apple already released it
   };
   // TOUCH events first — on iOS these fire immediately and reliably, whereas pointer events can lag
   // or drop entirely (reported: sluggish keying + presses that don't register). setPtt is

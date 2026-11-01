@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 989;
+var APP_BUILD = 990;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -30880,7 +30880,13 @@ window._chooseNorthUp = function(e) {
   if (e) e.stopPropagation();
   _toggleNorthMenu(false);
   headingUpOn = false;
-  try { map.easeTo({ bearing: 0, pitch: 0, duration: 500 }); } catch (e2) {}
+  // 990: while the map follows someone it re-centres every frame, and each re-centre cancels an
+  // easeTo -- so the half-second turn to north barely started (Jax, 2026-11-01). Snap instead.
+  var _following = !!(window._camLockUid || (typeof followUid !== 'undefined' && followUid) || window._gfCamDriving);
+  try {
+    if (_following) map.jumpTo({ bearing: 0, pitch: 0 });
+    else map.easeTo({ bearing: 0, pitch: 0, duration: 500 });
+  } catch (e2) {}
   toast('North up', 1200);
 };
 window._chooseHeadingUp = function(e) {
