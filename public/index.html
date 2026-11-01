@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 991;
+var APP_BUILD = 992;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6284,7 +6284,9 @@ var MK_LIFT = 22 + MK_TAIL;
 // 989: a merged oval is too wide for the little tail to show, and the spread pass kept setting
 // it back down on the ground, so nothing marked where the group actually is. It now always
 // floats this far up, with a stem and a dot to the true spot (.mk-stem, see _setCallout).
-var MK_MERGE_LIFT = 70;
+// 992: 46, was 70. The long white stem read as "too long and boring" (Jace, 2026-11-01);
+// the oval now tapers into a short map-pin point instead.
+var MK_MERGE_LIFT = 46;
 // Lift a marker into callout form, or drop it back onto its position. No-ops when nothing
 // changes, so it costs nothing on the common uncluttered path.
 // 989: a device with no account behind it. _myAcct() is the account this device signed in to;
@@ -6324,10 +6326,14 @@ window._setCallout = function (mk, on) {
         // From the oval's lower edge (19px under its centre, inside the 3px ring) down to the
         // true spot, MK_MERGE_LIFT under the centre. The dot is centred on that spot.
         var len = MK_MERGE_LIFT - 19;
-        stem.style.cssText = 'position:absolute;top:100%;left:50%;width:0;height:' + len + 'px;pointer-events:none;';
+        // 992: a map-pin point in the ring's own colour, curving in from the oval to a tip on
+        // the true spot, with a small ground shadow under the tip (Jace picked "B, map pin").
+        // It starts 2px up so it covers the ring's lower edge and reads as one shape.
+        stem.style.cssText = 'position:absolute;top:calc(100% - 2px);left:50%;width:0;height:' + (len + 2) + 'px;pointer-events:none;';
         stem.innerHTML =
-          '<div style="position:absolute;left:-1.25px;top:0;width:2.5px;height:100%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>' +
-          '<div style="position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:#0d1117;border:2.5px solid #fff;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,.6)"></div>';
+          '<div style="position:absolute;left:-10px;bottom:-4px;width:20px;height:7px;border-radius:50%;background:rgba(0,0,0,.45)"></div>' +
+          '<svg width="44" height="' + (len + 2) + '" viewBox="0 0 44 ' + (len + 2) + '" style="position:absolute;left:-22px;top:0;overflow:visible;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.5))">' +
+            '<path d="M0 0 C16 2 21 6 22 ' + (len + 2) + ' C23 6 28 2 44 0 Z" fill="#c9d1d9"/></svg>';
         mk._el.appendChild(stem);
       }
       stem.style.display = 'block';
@@ -15874,6 +15880,8 @@ function enterMap(name, group, uid) {
       var savedCrumbs = localStorage.getItem('gl_breadcrumbs');
       if (savedCrumbs === '1') {
         breadcrumbsOn = true;
+        // 992: no saved start (set before 992) = start now, not two hours back.
+        window._myTrailSince = +localStorage.getItem('gl_breadcrumbs_since') || Date.now();
         // Apply visual state after a short delay so DOM is ready
         setTimeout(applyBreadcrumbState, 200);
       }
@@ -17777,6 +17785,9 @@ function updatePinSource(pins) {
     window._queuedPins = pins; // will be applied once map is ready
     return;
   }
+  // 992: once this pass has put the room's pins in the layer, re-run the saved-copy markers
+  // against it (they dedupe against the layer). Deferred so it reads the layer just set.
+  try { clearTimeout(window._savedReT); window._savedReT = setTimeout(function () { try { if (window._showSavedOnMap) _renderSavedOnMap(); } catch (e) {} }, 0); } catch (e) {}
   // Your own saved pins, drawn on top of whatever Crew you are in, for your eyes only. They
   // live in this device's storage and are never written to the Crew, so joining a friend's
   // room to help find something no longer means re-dropping your own marks into their map --
@@ -19916,9 +19927,15 @@ function _trailShownFor(uid) {
   return !!_getTrailShow()[uid];              // others: off until explicitly turned on
 }
 window._isMemberTrailOn = function (uid) { return _trailShownFor(uid); };
+function _trailSinceFor(uid) {
+  var v = uid === userId ? window._myTrailSince : _getTrailShow()[uid];
+  return (typeof v === 'number' && v > 1) ? v : 0;
+}
 window._toggleMemberTrail = function (uid, name) {
   var m = _getTrailShow();
-  if (m[uid]) delete m[uid]; else m[uid] = 1;
+  // 992: the value is WHEN it was turned on. The live line starts there; anything earlier
+  // belongs to History ("show from that point on", Jace, 2026-11-01).
+  if (m[uid]) delete m[uid]; else m[uid] = Date.now();
   _setTrailShow(m);
   try { _renderTrailLines(); } catch (e) {}
   try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
@@ -19944,6 +19961,9 @@ function toggleBreadcrumbs() {
   breadcrumbsOn = !breadcrumbsOn;
   // Persist setting so it survives app close/reopen
   try { localStorage.setItem('gl_breadcrumbs', breadcrumbsOn ? '1' : '0'); } catch(e) {}
+  // 992: my line also starts when I turn it on, and keeps that start across a reopen.
+  window._myTrailSince = breadcrumbsOn ? Date.now() : 0;
+  try { localStorage.setItem('gl_breadcrumbs_since', String(window._myTrailSince)); } catch(e) {}
   applyBreadcrumbState();
   try { _renderTrailLines(); } catch (e) {}
   toast(breadcrumbsOn ? 'Your trail ON — turn on others from their member card' : 'Your trail OFF — still recorded, just not drawn here', 2800);
@@ -22724,8 +22744,10 @@ function _renderTrailLines() {
       // 983: merged with today's History points. A phone whose background service predates
       // 981 writes History but not the live store, so "Show trail" drew nothing behind a
       // driver whose route was being recorded all along (Elijah, 2026-10-31).
+      // 992: only from the moment the trail was turned on. Past travel is History's job.
+      const _since = _trailSinceFor(uid);
       const _merged = Object.values(pts).concat(_histTrailFor(uid), window._seenFixes[uid] || [])
-        .filter(p => p && isFinite(p.lat) && isFinite(p.lng) && now - p.ts < TRAIL_DRAW_MS)
+        .filter(p => p && isFinite(p.lat) && isFinite(p.lng) && now - p.ts < TRAIL_DRAW_MS && p.ts >= _since)
         .sort((a, b) => a.ts - b.ts);
       const allPts = [];
       for (const p of _merged) { const last = allPts[allPts.length - 1]; if (!last || p.ts - last.ts > 2000) allPts.push(p); }
@@ -23309,7 +23331,10 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
     try {
       var _arr = getSavedPins();
       var _pid = 'saved_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-      _arr.push({ pid: _pid, lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, savedAt: Date.now() });
+      // 992: a copy of a crew drop remembers its crew, so that crew's map never draws it twice.
+      var _sp = { pid: _pid, lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat, label: label, savedAt: Date.now() };
+      if (_alsoShare && _shareRoom) _sp.room = _shareRoom;
+      _arr.push(_sp);
       setSavedPins(_arr);
       // 975: a shared drop is already on the map as the crew's pin (pending until the server
       // echoes it). Putting the personal copy into lastPins as well drew a second pin on the
@@ -30090,8 +30115,20 @@ function _renderSavedOnMap() {
   try { Object.keys(lastPins || {}).forEach(function (pid) { var rp = lastPins[pid]; if (rp && typeof rp.lat === 'number') _onMap[rp.lat.toFixed(5) + ',' + rp.lng.toFixed(5)] = 1; }); } catch (e) {}
   // 987: and a crew pin still on its way up -- it is drawn already, just not echoed back yet.
   try { Object.keys(window._pendingPins || {}).forEach(function (k) { var pp = window._pendingPins[k]; if (pp && pp.lat != null) _onMap[(+pp.lat).toFixed(5) + ',' + (+pp.lng).toFixed(5)] = 1; }); } catch (e) {}
+  // 992: the two string checks above still let a second, square "Waypoint" through on Jace's
+  // Android (2026-11-01: two pins, two different delete windows; the census 4 s after the drop
+  // saw one, so the copy arrived with the My Pins sync a few seconds later). Two checks that
+  // cannot miss: a copy of a drop made on THIS crew is never drawn here (the crew's pin is the
+  // one shown), and anything within ~30 ft of a pin already in the map's pin layer is the same
+  // spot, whatever its decimals say.
+  var _drawn = [];
+  try { (map.getSource('pins')._data.features || []).forEach(function (f) { var c = f.geometry && f.geometry.coordinates; if (c && !(f.properties && f.properties.cluster)) _drawn.push(c); }); } catch (e) {}
+  Object.keys(lastPins || {}).forEach(function (k) { var rp = lastPins[k]; if (rp && rp.lat != null) _drawn.push([+rp.lng, +rp.lat]); });
+  var _near = function (p) { for (var i = 0; i < _drawn.length; i++) { if (Math.abs(_drawn[i][1] - p.lat) < 0.0001 && Math.abs(_drawn[i][0] - p.lng) < 0.0001) return true; } return false; };
   getSavedPins().filter(_savedMatch).forEach(function(pin) {
     if (_onMap[(+pin.lat).toFixed(5) + ',' + (+pin.lng).toFixed(5)]) return;
+    if (pin.room && typeof groupName !== 'undefined' && pin.room === groupName && !window._soloMode) return;
+    if (_near({ lat: +pin.lat, lng: +pin.lng })) return;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
     // Matches the redesigned map pins (build 403) — bare oversized icon, no teardrop/inset-
     // disc container, colored glow (category color) + dark shadow for contrast. This DOM-
