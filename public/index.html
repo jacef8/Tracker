@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 986;
+var APP_BUILD = 987;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -19640,6 +19640,7 @@ function startLocationSharing() {
         hidden: !!locationHidden,
         build: APP_BUILD,
         open: window._openTimes || null,
+        pinDrop: window._pinDropCensus || null,   // 987: what was drawn near the last pin dropped here
         frameGap: window._maxFrameGap || 0,     // worst ms between frames — >50 means the page froze
         snapMs: window._snapMs || 0,            // last presence-snapshot handler duration
         snapMax: window._snapMax || 0,
@@ -23221,6 +23222,7 @@ document.getElementById('pin-confirm').addEventListener('click', () => {
       try {
         window._queuePin(_shareRoom, { lat: pendingCoords.lat, lng: pendingCoords.lng, cat: finalCat,
           label: label, name: userName, droppedBy: userId, ts: Date.now(), _noKeep: 1 });
+        window._censusPinDrop(pendingCoords.lat, pendingCoords.lng);
         // Sharing a kept spot with the crew is telling them about it, so they hear about it too.
         window._notifyPinDrop(_shareRoom, pendingCoords, finalCat, label, 'save');
       } catch (e) {}
@@ -29768,6 +29770,32 @@ window._keepOwnPin = function (pin) {
     try { renderSavedPins(); } catch (e) {}
   } catch (e) {}
 };
+// 987: "I drop one pin and see two" on Jace's Android, never reproduced on a computer. Four
+// seconds after a drop, list everything drawn within ~30 ft of it -- pin features by id, the
+// library's own markers, the placing marker, any other map marker -- and send it with the diag.
+window._pinDropCensus = null;
+window._censusPinDrop = function (lat, lng) {
+  setTimeout(function () {
+    try {
+      var near = function (a, b) { return Math.abs(a - lat) < 0.0001 && Math.abs(b - lng) < 0.0001; };
+      var c = { at: Date.now(), z: Math.round(map.getZoom() * 10) / 10, feats: [], saved: 0, placing: !!window._pendingMarker, markers: 0,
+                pend: Object.keys(window._pendingPins || {}).length, outbox: _outbox().length };
+      try {
+        (map.getSource('pins')._data.features || []).forEach(function (f) {
+          var g = f.geometry && f.geometry.coordinates;
+          if (g && near(g[1], g[0])) c.feats.push(String(f.properties.pid).slice(0, 14));
+        });
+      } catch (e) {}
+      (window._savedMapMarkers || []).forEach(function (m) { try { var l = m.getLngLat(); if (near(l.lat, l.lng)) c.saved++; } catch (e) {} });
+      var p0 = map.project([lng, lat]);
+      document.querySelectorAll('.mapboxgl-marker').forEach(function (el) {
+        var r = el.getBoundingClientRect(), mr = map.getContainer().getBoundingClientRect();
+        if (Math.hypot(r.left + r.width / 2 - mr.left - p0.x, r.top + r.height / 2 - mr.top - p0.y) < 24) c.markers++;
+      });
+      window._pinDropCensus = c;
+    } catch (e) {}
+  }, 4000);
+};
 window._queuePin = function (room, pin) {
   // A pin you put on a room map is also YOURS. Keep a copy in the personal library so it shows
   // on My Map and travels with you rather than living only in the room you were standing in.
@@ -29960,6 +29988,8 @@ function _renderSavedOnMap() {
   // library copy on top doubled the marker, and a tap opened BOTH popups stacked.
   var _onMap = {};
   try { Object.keys(lastPins || {}).forEach(function (pid) { var rp = lastPins[pid]; if (rp && typeof rp.lat === 'number') _onMap[rp.lat.toFixed(5) + ',' + rp.lng.toFixed(5)] = 1; }); } catch (e) {}
+  // 987: and a crew pin still on its way up -- it is drawn already, just not echoed back yet.
+  try { Object.keys(window._pendingPins || {}).forEach(function (k) { var pp = window._pendingPins[k]; if (pp && pp.lat != null) _onMap[(+pp.lat).toFixed(5) + ',' + (+pp.lng).toFixed(5)] = 1; }); } catch (e) {}
   getSavedPins().filter(_savedMatch).forEach(function(pin) {
     if (_onMap[(+pin.lat).toFixed(5) + ',' + (+pin.lng).toFixed(5)]) return;
     var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[pin.cat]) ? PIN_DEFS[pin.cat] : { color:'#f0a500', label:'WP' };
