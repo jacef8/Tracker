@@ -1141,6 +1141,76 @@ app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, r
 // Their dot stays live from the native background service either way, so a closed app looked
 // identical to an ignored call: the caller sat on "waiting for others…" forever with no way to
 // reach them. Reported 2026-08-05.
+// Ask to join a crew you are not in yet (988). The app used to write the request itself and then
+// push the owner through /pushTo -- but someone outside a crew cannot read who owns it, and
+// /pushTo refuses anyone who does not share a room with the target, so the owner was never told.
+// Reported 2026-11-01: Jax asked to join our_crew and nothing arrived. Here the server records
+// the request (it is the caller's own uid, so it proves nothing beyond "this person asked") and
+// notifies every device belonging to the owner and the admins.
+app.post('/joinAsk', rateLimit(10, 60000), requireUser, async function (req, res) {
+  try {
+    const b = req.body || {};
+    const room = String(b.room || '').toLowerCase();
+    if (!/^[a-z0-9_-]{1,64}$/.test(room)) return res.status(400).json({ ok: false, reason: 'bad-room' });
+    const cfg = await _dbGet('gl/' + room + '/config');
+    if (!cfg || !cfg.owner) return res.status(404).json({ ok: false, reason: 'no-room' });
+    const acl = await _dbGet('gl/' + room + '/acl/' + req.authUid);
+    if (acl) return res.json({ ok: true, already: true });
+    const prev = await _dbGet('gl/' + room + '/joinReq/' + req.authUid);
+    const name = String(b.name || 'Someone').slice(0, 40);
+    await _dbSet('gl/' + room + '/joinReq/' + req.authUid, { name: name, ts: Date.now() });
+    // One notification per person per two minutes, however many times they tap.
+    if (prev && prev.ts && Date.now() - prev.ts < 120000) return res.json({ ok: true, notified: 0 });
+    // Everyone who can approve, and every device they own.
+    const managers = [cfg.owner].concat(Object.keys(cfg.admins || {}));
+    const targets = new Set(managers);
+    try {
+      const own = await _cachedGet('gl/_devOwner', 60000) || {};
+      for (const dev of Object.keys(own)) if (own[dev] && managers.indexOf(own[dev].acct) !== -1) targets.add(dev);
+    } catch (e) {}
+    const crew = String(cfg.name || room).replace(/_/g, ' ');
+    const title = name + ' wants to join ' + crew;
+    const body = 'Tap to let them in.';
+    const url = '/?room=' + encodeURIComponent(room) + '&joinreq=1';
+    let rooms = [];
+    try { rooms = await _roomNames(); } catch (e) {}
+    const seen = new Set();
+    let sent = 0;
+    for (const uid of targets) {
+      for (const r of rooms) {
+        for (const branch of ['pushSubs', 'favSubs']) {
+          let rec = null;
+          try { rec = await _dbGet('gl/' + r + '/' + branch + '/' + uid); } catch (e) {}
+          if (!rec || !(rec.fcm || rec.sub)) continue;
+          const k = rec.fcm || rec.sub;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          if (fcmAdmin && rec.fcm) {
+            try {
+              await fcmAdmin.messaging().send({
+                token: rec.fcm,
+                notification: { title: title, body: body },
+                data: { type: 'join', url: url },
+                android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+                apns: { payload: { aps: { sound: 'default' } } }
+              });
+              sent++; continue;
+            } catch (e) {}
+          }
+          if (pushReady && rec.sub) {
+            try { await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify({ title: title, body: body, url: url }), { TTL: 86400, urgency: 'high' }); sent++; } catch (e) {}
+          }
+        }
+      }
+    }
+    console.log('[joinAsk]', room, req.authUid.slice(0, 8), 'notified', sent);
+    res.json({ ok: true, notified: sent });
+  } catch (e) {
+    console.warn('[joinAsk]', (e && e.message) || e);
+    res.status(500).json({ ok: false, reason: 'failed' });
+  }
+});
+
 app.post('/pushTo', rateLimit(30, 60000), requireUser, async function(req, res) {
   const b = req.body || {};
   let uids = Array.isArray(b.uids) ? b.uids.slice(0, 8).map(u => String(u || '')).filter(Boolean) : [];
