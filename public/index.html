@@ -5212,7 +5212,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1000;
+var APP_BUILD = 1001;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6415,11 +6415,23 @@ window._renderCrewStrip = function () {
     var me = null;
     try { me = window._lastGoodFix || window._lastGPS || null; } catch (e) {}
     var rows = [];
+    // 1001: someone drawn inside a group bubble has their own pin hidden (the bubble is the
+    // primary's pin), but they are still on the map -- Jax dropped off the strip whenever he
+    // was with Lexi. Everyone in a bubble keeps their chip.
+    var _inBubble = {};
+    try {
+      var _gm = window._markerGroupMembers || {};
+      Object.keys(_gm).forEach(function (p) { (_gm[p] || []).forEach(function (u) { _inBubble[u] = 1; }); });
+    } catch (e) {}
+    // 1001: no chip for yourself -- this device, or any of your other devices (they report
+    // under your name). Jace: "i dont need it to show myself".
+    var _myName = String(userName || '').trim().toLowerCase();
     Object.keys(userMarkers || {}).forEach(function (uid) {
       var mk = userMarkers[uid]; if (!mk) return;
       var el = mk._el || (mk.getElement && mk.getElement());
-      if (el && el.style.display === 'none') return;
+      if (el && el.style.display === 'none' && !_inBubble[uid]) return;
       var mine = (uid === userId);
+      if (mine || (_myName && String(mk._name || '').trim().toLowerCase() === _myName)) return;
       var nm = mk._name || (mine ? (userName || 'You') : 'Member');
       var dist = '';
       try {
