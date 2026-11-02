@@ -5212,7 +5212,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 999;
+var APP_BUILD = 1000;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -5943,6 +5943,7 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
       if (marker._uid && marker._uid === _camUid
           && Date.now() >= (window._followPausedUntil || 0)
           && !window._gfPointerDown && !window._zoomingFollow
+          && Date.now() >= (window._followEaseUntil || 0)
           && document.visibilityState === 'visible') {
         // Heading Up needs the map rotated as well as centred. Setting both in ONE jumpTo, in
         // this frame, is a single camera update — the thing that could not be done while the
@@ -5959,6 +5960,11 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
         // the dot itself stays exact. A jump of more than ~300 ft is a real move and is taken
         // at once rather than smeared.
         var _cc = window._camSmooth, _cn = performance.now(), _cl = lng, _ca = lat;
+        // 1000: starting fresh (follow just began, or a pinch or an ease just ended), ease in from
+        // where the camera IS rather than jumping to the dot on the first frame.
+        if (!_cc || _cc.uid !== marker._uid || _cn - _cc.t >= 500) {
+          try { var _mc = map.getCenter(); _cc = { uid: marker._uid, t: _cn - 16, lng: _mc.lng, lat: _mc.lat }; } catch (e3) { _cc = null; }
+        }
         if (_cc && _cc.uid === marker._uid && _cn - _cc.t < 500) {
           var _k = 1 - Math.exp(-(_cn - _cc.t) / 350);
           var _jump = Math.abs(lat - _cc.lat) * 111320 + Math.abs(lng - _cc.lng) * 96000;
@@ -7051,8 +7057,10 @@ window._showGroupedMemberSheet = function (uids, quiet) {
     // 995: the bubble where it is DRAWN (it glides to the group's centre), at the zoom you are
     // at. This flew to one member's newest report at street level -- ahead of the bubble, which
     // then crawled in behind it.
-    try { map.setPadding(_sheetPad()); } catch (e) {}
-    try { map.flyTo({ center: primaryMk._curLngLat || primaryMk._ll, duration: 700 }); } catch (e) {}
+    if (!primaryMk._isLive) {               // 1000: a live group's follow makes the one move
+      try { map.setPadding(_sheetPad()); } catch (e) {}
+      try { map.flyTo({ center: primaryMk._curLngLat || primaryMk._ll, duration: 700 }); } catch (e) {}
+    }
     // ...and FOLLOW the bubble, the way tapping one person follows them. There was no way to
     // follow a group like Lexi and Jax and then zoom out: the bubble is the primary member's
     // own marker, so locking the camera to that marker carries the whole bubble, and a pinch
@@ -7069,8 +7077,10 @@ window._showGroupedMemberSheet = function (uids, quiet) {
 function _isOffCenter(lngLat, marginPx) {
   try {
     var p = map.project(lngLat);
-    var el = map.getContainer();
-    var dx = p.x - el.clientWidth / 2, dy = p.y - el.clientHeight / 2;
+    // 1000: the PADDED centre. With a card open the camera centres above it, so measuring from
+    // the middle of the screen called every followed dot off-centre and re-eased every 3 s.
+    var c = map.project(map.getCenter());
+    var dx = p.x - c.x, dy = p.y - c.y;
     return Math.sqrt(dx * dx + dy * dy) > (marginPx || 70);
   } catch (e) { return false; }
 }
@@ -17257,7 +17267,7 @@ function initMap() {
     try {
       var _m = followUid === userId && window._lastGPS ? [window._lastGPS.lng, window._lastGPS.lat]
              : (userMarkers[followUid] && userMarkers[followUid]._curLngLat) || (userMarkers[followUid] && userMarkers[followUid]._ll);
-      if (_m) map.easeTo({ center: _m, duration: 400 });
+      if (_m) { window._followEaseUntil = Date.now() + 420; map.easeTo({ center: _m, duration: 400 }); }   // 1000: not cut off by the frame loop
     } catch (_e) {}
   });
 
@@ -21031,7 +21041,9 @@ function listenUsers() {
             // Fan the cluster out so each person is separately visible and tappable, and
             // ALSO open the list — the fan answers "which dot is who", the sheet answers
             // "what are they doing". Falls back to the sheet alone if fanning can't run.
-            try { window._spiderfy(uid, _grpMembers); } catch (e) {}
+            // 1000: no fan-out. The grouping pass collapses any fan on its next run (see the top of
+            // _updateMarkerGrouping), so it burst open and snapped shut within a second of every
+            // tap -- part of the "glitchy" start to a follow. The card lists everyone in it.
             window._showGroupedMemberSheet(_grpMembers);
             return;
           }
@@ -30758,8 +30770,22 @@ window._followUser = function(uid, name) {
     // has deliberately zoomed further in keeps their view.
     // 993: keep the zoom you are at. Jumping to street level on every follow meant zooming
     // back out each time to see where they were going.
-    if (initial) map.easeTo({ center: target, duration: 800 });
-    else if (_isOffCenter(target)) map.easeTo({ center: target, duration: 800 });
+    // 1000: the frame loop (step() in _animateMarker) moves the camera every frame for a moving
+    // dot, and every setCenter cancels an easeTo -- so this ease was cut off on its first frame
+    // and the camera SNAPPED to the dot. It now runs to the end (_followEaseUntil) and the frame
+    // loop picks up from wherever it lands. The card's padding rides in the same move.
+    var _fo = { center: target, duration: initial ? 650 : 800, easing: function (t) { return 1 - Math.pow(1 - t, 3); } };
+    var _fp = null; try { _fp = _camPad(); } catch (e) {}
+    if (_fp) _fo.padding = _fp;
+    if (initial) {
+      window._camSmooth = null;
+      window._followEaseUntil = Date.now() + _fo.duration + 20;
+      map.easeTo(_fo);
+    } else {
+      // A gliding dot already carries the camera every frame; a second ease would only fight it.
+      var _gm = !isSelf && userMarkers[uid];
+      if (!(_gm && _gm._anim) && _isOffCenter(target)) { window._followEaseUntil = Date.now() + 820; map.easeTo(_fo); }
+    }
   }
   doFollow(true);
   followInterval = setInterval(function(){ doFollow(false); }, 3000);
@@ -31243,7 +31269,11 @@ window._showMemberSheet = function(uid, quiet) {
   if (sheet) sheet.style.display = 'block';
   document.body.classList.add('member-open');   // hides the bottom toolbar while open
   if (quiet) return;                              // 998: swapped in after a split -- leave the camera be
-  if (mk._ll) {
+  // 1000: a live person is followed, and the follow makes the one camera move (padding for the
+  // card included). This used to setPadding (a jump), flyTo, then have the follow easeTo on top
+  // and the frame loop setCenter on top of that -- three moves cancelling each other in the
+  // first second, which is the glitchy start Jace kept seeing.
+  if (mk._ll && !mk._isLive) {
     // setPadding, not a per-call padding option: the camera is now moved frame-by-frame by
     // setCenter (see _animateMarker), which respects the map's standing padding and knows
     // nothing about options passed to a one-off flyTo.
