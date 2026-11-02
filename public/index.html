@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 995;
+var APP_BUILD = 996;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -20003,6 +20003,20 @@ function _trailShownFor(uid) {
   return !!_getTrailShow()[uid];              // others: off until explicitly turned on
 }
 window._isMemberTrailOn = function (uid) { return _trailShownFor(uid); };
+// 996: where each person was drawn when their trail was turned on. Since 992 the line only
+// counts fixes AFTER that moment, so it needed two new ones (20 s or more at a 10 s cadence,
+// never for someone parked) before anything appeared -- "the trail button isn't doing
+// anything" (Jace, 2026-11-01). The line now starts at this spot and runs to the dot at once.
+window._trailAnchor = window._trailAnchor || {};
+function _setTrailAnchor(uid, since) {
+  try {
+    var p = null, mk = userMarkers[uid];
+    if (mk) p = mk._curLngLat || (mk._ll) || null;
+    if (!p && uid === userId && window._lastGPS) p = [window._lastGPS.lng, window._lastGPS.lat];
+    if (p && isFinite(p[0]) && isFinite(p[1])) window._trailAnchor[uid] = { lng: +p[0], lat: +p[1], ts: since };
+    else delete window._trailAnchor[uid];
+  } catch (e) {}
+}
 function _trailSinceFor(uid) {
   var v = uid === userId ? window._myTrailSince : _getTrailShow()[uid];
   return (typeof v === 'number' && v > 1) ? v : 0;
@@ -20011,12 +20025,12 @@ window._toggleMemberTrail = function (uid, name) {
   var m = _getTrailShow();
   // 992: the value is WHEN it was turned on. The live line starts there; anything earlier
   // belongs to History ("show from that point on", Jace, 2026-11-01).
-  if (m[uid]) delete m[uid]; else m[uid] = Date.now();
+  if (m[uid]) delete m[uid]; else { m[uid] = Date.now(); _setTrailAnchor(uid, m[uid]); }
   _setTrailShow(m);
   try { _renderTrailLines(); } catch (e) {}
   try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
   var on = !!_getTrailShow()[uid];
-  toast(on ? ((name || 'Their') + ' trail shown on the map') : ((name || 'Their') + ' trail hidden'), 2200);
+  toast(on ? ((name || 'Their') + ' trail is on — it draws from here as they move') : ((name || 'Their') + ' trail hidden'), 2600);
   // Repaint the button in place. The sheet's HTML is only rebuilt when markers re-render, so
   // without this the label stays stale until you close and reopen the card.
   try {
@@ -20039,6 +20053,7 @@ function toggleBreadcrumbs() {
   try { localStorage.setItem('gl_breadcrumbs', breadcrumbsOn ? '1' : '0'); } catch(e) {}
   // 992: my line also starts when I turn it on, and keeps that start across a reopen.
   window._myTrailSince = breadcrumbsOn ? Date.now() : 0;
+  if (breadcrumbsOn) _setTrailAnchor(userId, window._myTrailSince);
   try { localStorage.setItem('gl_breadcrumbs_since', String(window._myTrailSince)); } catch(e) {}
   applyBreadcrumbState();
   try { _renderTrailLines(); } catch (e) {}
@@ -22736,11 +22751,12 @@ function _weldToTip(coords, tip) {
 }
 window._updateTrailTip = function (uid, lng, lat) {
   const base = trailBaseCoords[uid];
-  if (!base || base.length < 2) return;
+  if (!base || !base.length) return;
   const lid = `trail-${uid}`;
   if (!map.getSource(lid)) return;
-  // Same truncate-at-the-pin rule as the full render — see _weldToTip.
-  const coords = _weldToTip(base, [lng, lat]);
+  // Same truncate-at-the-pin rule as the full render — see _weldToTip. A single recorded point
+  // (996: the turn-on spot) runs straight to the dot.
+  const coords = base.length < 2 ? base.concat([[lng, lat]]) : _weldToTip(base, [lng, lat]);
   map.getSource(lid).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } });
 };
 
@@ -22822,13 +22838,14 @@ function _renderTrailLines() {
       // driver whose route was being recorded all along (Elijah, 2026-10-31).
       // 992: only from the moment the trail was turned on. Past travel is History's job.
       const _since = _trailSinceFor(uid);
-      const _merged = Object.values(pts).concat(_histTrailFor(uid), window._seenFixes[uid] || [])
+      const _anc = _since && window._trailAnchor[uid] && window._trailAnchor[uid].ts === _since ? [window._trailAnchor[uid]] : [];
+      const _merged = Object.values(pts).concat(_histTrailFor(uid), window._seenFixes[uid] || [], _anc)
         .filter(p => p && isFinite(p.lat) && isFinite(p.lng) && now - p.ts < TRAIL_DRAW_MS && p.ts >= _since)
         .sort((a, b) => a.ts - b.ts);
       const allPts = [];
       for (const p of _merged) { const last = allPts[allPts.length - 1]; if (!last || p.ts - last.ts > 2000) allPts.push(p); }
 
-      if (allPts.length < 2) { clearTrailLayer(uid); return; }
+      if (allPts.length < 1) { clearTrailLayer(uid); return; }
 
       // Find most recent point to determine if trail is live or stale
       const latestTs   = allPts[allPts.length - 1].ts;
@@ -22873,7 +22890,11 @@ function _renderTrailLines() {
       if (!_tip && _mk && typeof _mk.getLngLat === 'function') {
         try { const _ll = _mk.getLngLat(); if (_ll) _tip = [_ll.lng, _ll.lat]; } catch (e) {}
       }
-      const drawCoords = _weldToTip(coords, _tip);
+      // 996: one recorded point (the turn-on spot) plus the dot is already a line.
+      if (coords.length < 2 && !(_tip && coords.length && (Math.abs(_tip[0] - coords[0][0]) + Math.abs(_tip[1] - coords[0][1])) > 2e-5)) {
+        clearTrailLayer(uid); return;
+      }
+      const drawCoords = coords.length < 2 ? coords.concat([_tip]) : _weldToTip(coords, _tip);
       const geojson = { type: 'Feature', geometry: { type: 'LineString', coordinates: drawCoords } };
 
       // Stops are computed from the RECORDED points, not drawCoords — the animated tip vertex

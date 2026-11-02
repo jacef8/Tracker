@@ -14,7 +14,7 @@ ok(idx.includes('if (pin.room && typeof groupName !== \'undefined\' && pin.room 
 ok(idx.includes('if (_near({ lat: +pin.lat, lng: +pin.lng })) return;'), 'a copy within ~30 ft of a drawn pin is skipped');
 ok(idx.includes("window._savedReT = setTimeout(function () { try { if (window._showSavedOnMap) _renderSavedOnMap();"), 'the copies re-check every time the pin layer is rebuilt');
 
-ok(idx.includes('if (m[uid]) delete m[uid]; else m[uid] = Date.now();'), 'Show trail stores when it was turned on');
+ok(idx.includes('if (m[uid]) delete m[uid]; else { m[uid] = Date.now();'), 'Show trail stores when it was turned on');
 ok(idx.includes("window._myTrailSince = breadcrumbsOn ? Date.now() : 0;"), 'my trail button stores it too');
 ok(idx.includes('now - p.ts < TRAIL_DRAW_MS && p.ts >= _since'), 'the line drops points from before that moment');
 const sf = new Function('var userId="me", window={_myTrailSince:500}, _ts={a:900,b:1};function _getTrailShow(){return _ts;}\n' +
