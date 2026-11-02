@@ -5209,7 +5209,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 994;
+var APP_BUILD = 995;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7016,7 +7016,20 @@ window._showGroupedMemberSheet = function (uids) {
   document.body.classList.add('member-open');
   var primaryMk = userMarkers[uids[0]];
   if (primaryMk && primaryMk._ll) {
-    try { map.flyTo({ center: primaryMk._ll, zoom: Math.max(map.getZoom(), 16), duration: 700, padding: _sheetPad() }); } catch (e) {}
+    // 995: the bubble where it is DRAWN (it glides to the group's centre), at the zoom you are
+    // at. This flew to one member's newest report at street level -- ahead of the bubble, which
+    // then crawled in behind it.
+    try { map.setPadding(_sheetPad()); } catch (e) {}
+    try { map.flyTo({ center: primaryMk._curLngLat || primaryMk._ll, duration: 700 }); } catch (e) {}
+    // ...and FOLLOW the bubble, the way tapping one person follows them. There was no way to
+    // follow a group like Lexi and Jax and then zoom out: the bubble is the primary member's
+    // own marker, so locking the camera to that marker carries the whole bubble, and a pinch
+    // keeps the follow (993).
+    if (primaryMk._isLive) {
+      var _gNames = uids.map(function (u) { return u === userId ? 'you' : String(knownUsers[u] || 'Member').split(' ')[0]; });
+      var _gLabel = _gNames.length > 2 ? _gNames.slice(0, -1).join(', ') + ' & ' + _gNames[_gNames.length - 1] : _gNames.join(' & ');
+      try { window._followUser(uids[0], _gLabel); } catch (e) {}
+    }
   }
 };
 // True if a point is more than `marginPx` from the screen center — used so the periodic
@@ -17309,7 +17322,14 @@ function initMap() {
     // A manual pinch/zoom during group-follow is a deliberate "let me see them tighter"
     // choice — remember it so _groupFollowTick stops snapping back out to its padded ideal
     // zoom every tick. Reset whenever a fresh follow session starts (see _fitAllTapped/_stopFitAll).
-    if (typeof fitAllInterval !== 'undefined' && fitAllInterval) window._groupFollowUserZoomed = true;
+    if (typeof fitAllInterval !== 'undefined' && fitAllInterval) { window._groupFollowUserZoomed = true; window._gfUserZooming = true; }
+  });
+  // 995: when that pinch ends, the zoom it reached IS the zoom to hold. The target still carried
+  // the zoom from before the pinch, so "hold the zoom" quietly meant "go back to the old one".
+  map.on('zoomend', function () {
+    if (!window._gfUserZooming) return;
+    window._gfUserZooming = false;
+    try { if (window._gfTarget) window._gfTarget.zoom = map.getZoom(); } catch (e) {}
   });
   map.on('rotatestart', function(e) { if (e && e.originalEvent && window._pauseFollow) window._pauseFollow(); });
   // Live north indicator: rotate the compass needle to point at TRUE north (opposite the map's
@@ -31166,7 +31186,10 @@ window._showMemberSheet = function(uid) {
     // setCenter (see _animateMarker), which respects the map's standing padding and knows
     // nothing about options passed to a one-off flyTo.
     try { map.setPadding(_sheetPad()); } catch (e) {}
-    try { map.flyTo({ center: mk._ll, duration: 700 }); } catch (e) {}   // 993: your zoom, not 16
+    // 995: the dot as DRAWN, not its newest report. A moving dot glides toward its latest fix
+    // over the whole reporting gap, so _ll is up to a quarter mile ahead of it at highway speed
+    // and the camera landed on empty road with the dot catching up ("tracking a ghost", Jace).
+    try { map.flyTo({ center: mk._curLngLat || mk._ll, duration: 700 }); } catch (e) {}   // 993: your zoom, not 16
   }
   if (mk._isLive) { try { window._followUser(uid, ''); } catch (e) {} }
   else {
@@ -31526,7 +31549,11 @@ function _groupFollowTick(force) {
       // stale-fallback tier.
       var _actv = (Date.now() - (u.ts || u.fixTs || 0)) < GROUP_FIT_REST_MS;
       if (_dbgR) _dbgR.push(_nm + (isFinite(u.lng) && (u.lng || u.lat) ? (_actv ? ':IN' : ':stale') : ':no-pos'));
-      _add(uid, u.lng, u.lat, _actv);
+      // 995: where the dot is DRAWN when it has one -- a report is ahead of its gliding dot, and
+      // framing reports put the camera in front of the people it was following.
+      var _dl = userMarkers[uid] && userMarkers[uid]._curLngLat;
+      if (_dl && isFinite(_dl[0]) && isFinite(_dl[1])) _add(uid, _dl[0], _dl[1], _actv);
+      else _add(uid, u.lng, u.lat, _actv);
     });
   } catch (e) {}
   // NOTE: since the gl-root enumeration lockdown this markers path is the PRIMARY source in
@@ -31694,6 +31721,14 @@ function _groupFollowTick(force) {
   // If the user manually zoomed in past it, respect that choice for as long as everyone is
   // ACTUALLY still on screen — only give up the manual zoom, after a few seconds' grace, once
   // someone genuinely falls out of view.
+  // 995: you zoomed OUT past the framing. Everyone is on screen by definition, so keep your
+  // zoom and keep re-centring on the group; this used to creep back in after 2.5 s, which is
+  // why you could not zoom out and keep following. Zooming IN is handled just below.
+  if (!force && window._groupFollowUserZoomed && targetZoom >= curZoom - 0.05) {
+    window._groupFollowOutOfViewSince = null;
+    _gfPublish(center, _gfHoldZoom(curZoom), force);
+    return true;
+  }
   if (!force && window._groupFollowUserZoomed && targetZoom < curZoom - 0.05) {
     var stillVisible = _allPointsVisible(pts, _pad);
     if (stillVisible) {
