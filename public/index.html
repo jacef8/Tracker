@@ -5212,7 +5212,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 998;
+var APP_BUILD = 999;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -5935,8 +5935,14 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
       // and sat on empty road with the dot trailing it. Invisible when reports were a second
       // apart; at 10-second reports and 79 mph it is a quarter mile of nothing.
       var _camUid = window._camLockUid || (typeof followUid !== 'undefined' ? followUid : null);
+      // 999: and NOT while a finger is on the map or a zoom is running. setCenter/jumpTo call
+      // map.stop(), which cancels a pinch before Mapbox has even recognised it as a zoom -- so
+      // following someone who was moving made the map refuse to zoom at all ("still can't zoom
+      // in and out as I'm following someone", Jace, 2026-11-01). The same reason _gfLoop yields
+      // to _gfPointerDown. When the fingers lift, the zoomend handler re-centres on the dot.
       if (marker._uid && marker._uid === _camUid
           && Date.now() >= (window._followPausedUntil || 0)
+          && !window._gfPointerDown && !window._zoomingFollow
           && document.visibilityState === 'visible') {
         // Heading Up needs the map rotated as well as centred. Setting both in ONE jumpTo, in
         // this frame, is a single camera update — the thing that could not be done while the
@@ -17277,14 +17283,20 @@ function initMap() {
     var _ptrUp = function (ev) { delete _ptrs[ev.pointerId]; };
     cv.addEventListener('pointerup', _ptrUp, { passive: true, capture: true });
     cv.addEventListener('pointercancel', _ptrUp, { passive: true, capture: true });
+    cv.addEventListener('pointerleave', _ptrUp, { passive: true, capture: true });   // 999: never leave a finger stuck down
+    var downAt = 0;
     cv.addEventListener('pointerdown', function (ev) {
       window._gfPointerDown = true;
-      sx = ev.clientX; sy = ev.clientY; armed = true; released = false;
+      // 999: only the FIRST finger arms the pan test. The second finger of a pinch used to reset
+      // the start point, and the first finger's own lead-in could already count as a pan.
+      if (Object.keys(_ptrs).length > 1) return;
+      sx = ev.clientX; sy = ev.clientY; armed = true; released = false; downAt = Date.now();
     }, { passive: true });
     cv.addEventListener('pointermove', function (ev) {
       if (!armed || released) return;
       if (Object.keys(_ptrs).length > 1) { window._pinchSeen = Date.now(); return; }   // a pinch, not a pan
       if (window._pinchSeen && Date.now() - window._pinchSeen < 400) return;          // last finger lifting off a pinch
+      if (Date.now() - downAt < 150) return;   // 999: the second finger of a pinch is usually down within this
       if (Math.abs(ev.clientX - sx) < SLOP_PX && Math.abs(ev.clientY - sy) < SLOP_PX) return;
       released = true;
       try { if (window._pauseFollow) window._pauseFollow(); } catch (e) {}
@@ -17295,7 +17307,7 @@ function initMap() {
         if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing();
       } catch (e) {}
     }, { passive: true });
-    var up = function () { window._gfPointerDown = false; armed = false; };
+    var up = function () { if (Object.keys(_ptrs).length) return; window._gfPointerDown = false; armed = false; };   // 999: last finger only
     cv.addEventListener('pointerup', up, { passive: true });
     cv.addEventListener('pointercancel', up, { passive: true });
     cv.addEventListener('pointerleave', up, { passive: true });
@@ -30723,6 +30735,7 @@ window._followUser = function(uid, name) {
   if (!isSelf) toast('Following ' + name + ' — tap to stop', 2500);
   function doFollow(initial) {
     if (!initial && Date.now() < (window._followPausedUntil || 0)) return; // user is interacting
+    if (!initial && (window._gfPointerDown || window._zoomingFollow)) return; // 999: mid-pinch -- an easeTo here cancels it
     var target = null;
     if (isSelf) {
       if (window._lastGPS) target = [window._lastGPS.lng, window._lastGPS.lat];
