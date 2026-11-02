@@ -2322,7 +2322,9 @@
   /* 1002: a group bubble is the primary member's marker, so it carried THAT person's parked
      time or speed ("61h 29m" under two faces). It describes one of them, not the group --
      the card you get by tapping the bubble lists each person's own. */
-  .mk-merged .mk-age, .mk-merged .mk-speed { display: none !important; }
+  .mk-merged .mk-age, .mk-merged:not(.mk-same-speed) .mk-speed { display: none !important; }
+  /* 1003: ...except speed, when everyone in the bubble is live and moving at about the same
+     speed -- the same car. Then the number is true of all of them. */
   .pin-favs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .pin-favs .cat-btn { flex-direction: column; justify-content: center; gap: 5px; min-height: 68px; padding: 8px 4px;
     border-radius: 14px; font-size: 12.5px; font-weight: 700; text-align: center; line-height: 1.15; }
@@ -5216,7 +5218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1002;
+var APP_BUILD = 1003;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6169,7 +6171,7 @@ window._mkIsGrey = function (m) { return window._mkTone(m) === 'gone'; };
 function _applyMarkerSolo(mk) {
   if (mk && mk._mergedOval) { mk._mergedOval = false; try { window._setCallout(mk, false); } catch (e) {} }
   var el = mk && mk._el; if (!el) return;
-  el.classList.remove('mk-merged');   // 1002: its own chips come back
+  el.classList.remove('mk-merged'); el.classList.remove('mk-same-speed');   // 1002: its own chips come back
   // Coming out of a merge: the oval was drawn at the group's centroid, so put this marker back
   // on its owner's real coordinates before it is shown on its own.
   try {
@@ -6311,6 +6313,11 @@ function _applyMarkerMerged(primary, members) {
   // Several people in one shape is the definition of crowded — always a callout.
   mk._mergedOval = true;
   el.classList.add('mk-merged');   // 1002: hides the one-member chips (CSS above)
+  // 1003: a speed that fits everyone (all live, within 10 mph of each other) stays on.
+  var _spds = members.map(function (u) { var m = userMarkers[u]; return (m && m._isLive) ? (+m._spd || 0) : null; });
+  var _same = _spds.every(function (v) { return v !== null; }) &&
+              (Math.max.apply(null, _spds) - Math.min.apply(null, _spds)) <= 10;
+  el.classList.toggle('mk-same-speed', _same);
   try { window._setCallout(mk, true); } catch (e) {}
   _setGroupBadge(el, ordered.length - shown.length);
 }
@@ -6642,8 +6649,9 @@ function _layoutMarkerChips() {
     Object.keys(userMarkers).forEach(function (u) {
       var mk = userMarkers[u], el = mk && mk._el;
       if (!el || el.style.display === 'none' || !mk._ll) return;
-      if (mk._mergedOval) return;   // 1002: a bubble shows no chip, so it takes no slot
+      if (mk._mergedOval && !el.classList.contains('mk-same-speed')) return;   // 1002: a bubble shows no chip, so it takes no slot
       var chip = el.querySelector('.mk-speed');
+      if (mk._mergedOval && (!chip || chip.style.display === 'none')) return;   // 1003: only its shared speed
       if (!chip || chip.style.display === 'none') chip = el.querySelector('.mk-age');
       if (!chip || chip.style.display === 'none') return;
       var p; try { p = map.project(mk._ll); } catch (e) { return; }
