@@ -2492,10 +2492,13 @@
     font-size: 16px; cursor: pointer; flex-shrink: 0; line-height: 1;
   }
 
+  /* 997: messages show at the TOP of the map, just under the toolbar. At the bottom they sat on
+     top of the person card and its buttons ("covers up what I need to see and tap", Jace). The
+     exact top is set from the map's own edge in toast(); this is the fallback. */
   #toast {
     position: fixed;
-    bottom: calc(var(--safe-bot) + 90px);
-    left: 50%; transform: translateX(-50%) translateY(60px);
+    top: 200px; bottom: auto;
+    left: 50%; transform: translateX(-50%) translateY(-16px);
     background: rgba(30,36,44,.97); border: 1px solid var(--border);
     border-radius: 20px; padding: 8px 18px;
     /* Wrap, don't ellipsize: nowrap + ellipsis silently chopped every message longer than the
@@ -5209,7 +5212,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 996;
+var APP_BUILD = 997;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -5400,6 +5403,8 @@ window.addEventListener('appinstalled', () => {
 // ══ UTILS ════════════════════════════════════════════════════════
 function toast(msg, ms = 1800) {
   const el = document.getElementById('toast');
+  // 997: just under the toolbar, wherever the map starts on this screen.
+  try { const _mt = document.getElementById('map').getBoundingClientRect().top; if (_mt > 0) el.style.top = Math.round(_mt + 12) + 'px'; } catch (e) {}
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), ms);
