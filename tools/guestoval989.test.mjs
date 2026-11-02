@@ -19,7 +19,7 @@ ok(/GUEST/.test(gb({ guest: 1 })) && gb({ guest: 0 }) === '' && gb({}) === '', '
 // 2. Merged oval callout.
 ok(/var MK_MERGE_LIFT = 46;/.test(idx), 'the oval floats 46px up on a map-pin point (992)');
 ok(/if \(mk\._mergedOval\) on = true;/.test(idx), 'the spread pass can no longer set the oval back on the ground');
-ok(/mk\._mergedOval = true;\s*try \{ window\._setCallout\(mk, true\); \} catch \(e\) \{\}\s*_setGroupBadge/.test(idx), 'merging marks the oval');
+ok(/mk\._mergedOval = true;\s*(?:el\.classList\.add\('mk-merged'\);[^\n]*\s*)?try \{ window\._setCallout\(mk, true\); \} catch \(e\) \{\}\s*_setGroupBadge/.test(idx), 'merging marks the oval');
 ok(/function _applyMarkerSolo\(mk\) \{\s*if \(mk && mk\._mergedOval\) \{ mk\._mergedOval = false;/.test(idx), 'splitting drops it back to a plain dot');
 // 991: the stem is part of the oval (it moved off the map layer, which lagged a moving oval).
 ok(/stem\.className = 'mk-stem'/.test(idx) && /var len = MK_MERGE_LIFT - 19;/.test(idx), 'stem + dot are children of the oval');
