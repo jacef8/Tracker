@@ -5212,7 +5212,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 997;
+var APP_BUILD = 998;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6835,6 +6835,7 @@ function _updateMarkerGrouping(immediate) {
       }
     });
   } catch (e) {}
+  try { window._refreshOpenGroupSheet(); } catch (e) {}
   // Separate the dots that would otherwise hide each other, THEN place the chips (which key
   // off where the markers actually ended up).
   _spreadOverlappingMarkers();
@@ -6842,6 +6843,24 @@ function _updateMarkerGrouping(immediate) {
   // members), so this runs last.
   _layoutMarkerChips();
 }
+// 998: a "3 PEOPLE TOGETHER" card stayed up listing Vanesa after she had split off into her
+// own dot (Jace, 2026-11-01). When the group under an open card changes, redraw the card for
+// the group the person you are following (or its first member) is in now -- or that one
+// person's own card once they are on their own. Quietly: the camera and follow are untouched.
+window._refreshOpenGroupSheet = function () {
+  var open = window._openGroupUids;
+  if (!open || !open.length) return;
+  var sheet = document.getElementById('member-sheet');
+  if (!sheet || sheet.style.display !== 'block') { window._openGroupUids = null; return; }
+  var anchor = (typeof followUid !== 'undefined' && followUid && open.indexOf(followUid) !== -1) ? followUid : open[0];
+  var cur = null, gm = window._markerGroupMembers || {};
+  Object.keys(gm).forEach(function (p) { if (gm[p] && gm[p].indexOf(anchor) !== -1) cur = gm[p]; });
+  if (!cur) cur = [anchor];
+  if (cur.slice().sort().join(',') === open.slice().sort().join(',')) return;
+  if (cur.length > 1) window._showGroupedMemberSheet(cur, true);
+  else if (userMarkers[anchor]) window._showMemberSheet(anchor, true);
+  else window._closeMemberSheet();
+};
 // ── SPIDERFY: fan a merged cluster out so every member is individually visible/tappable ──
 // The merged oval answers "who's together" but hides "which one is which" — you can't tap
 // an individual, and at low zoom a cluster can hide half the group. Tapping a cluster now
@@ -6965,8 +6984,9 @@ window._labelFor = function (uid, name) {
     return name + ' \u00b7 ' + dev;
   } catch (e) { return name; }
 };
-window._showGroupedMemberSheet = function (uids) {
+window._showGroupedMemberSheet = function (uids, quiet) {
   window._openMemberUid = null;
+  window._openGroupUids = uids.slice();   // 998: so the card can follow a split
   var sheet = document.getElementById('member-sheet');
   var body = document.getElementById('member-sheet-body');
   if (body) {
@@ -7019,6 +7039,7 @@ window._showGroupedMemberSheet = function (uids) {
   }
   if (sheet) sheet.style.display = 'block';
   document.body.classList.add('member-open');
+  if (quiet) return;                      // 998: a redraw after a split -- camera and follow stay as they are
   var primaryMk = userMarkers[uids[0]];
   if (primaryMk && primaryMk._ll) {
     // 995: the bubble where it is DRAWN (it glides to the group's centre), at the zoom you are
@@ -31196,10 +31217,11 @@ window._fillAppVersion = function (uid) {
     }).catch(function () {});
   } catch (e) {}
 };
-window._showMemberSheet = function(uid) {
+window._showMemberSheet = function(uid, quiet) {
   var mk = userMarkers[uid]; if (!mk) return;
   window._sheetMakeRoom();
   window._openMemberUid = uid;
+  window._openGroupUids = null;
   var sheet = document.getElementById('member-sheet');
   var body = document.getElementById('member-sheet-body');
   if (body) body.innerHTML = mk._sheetHTML || '';
@@ -31207,6 +31229,7 @@ window._showMemberSheet = function(uid) {
   try { window._fillAppVersion(uid); } catch (e) {}
   if (sheet) sheet.style.display = 'block';
   document.body.classList.add('member-open');   // hides the bottom toolbar while open
+  if (quiet) return;                              // 998: swapped in after a split -- leave the camera be
   if (mk._ll) {
     // setPadding, not a per-call padding option: the camera is now moved frame-by-frame by
     // setCenter (see _animateMarker), which respects the map's standing padding and knows
@@ -31229,6 +31252,7 @@ window._showMemberSheet = function(uid) {
 };
 window._closeMemberSheet = function() {
   window._openMemberUid = null;
+  window._openGroupUids = null;
   try { window._msAgeStop(); } catch (e) {}
   var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
   document.body.classList.remove('member-open');
