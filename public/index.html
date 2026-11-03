@@ -5218,7 +5218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1003;
+var APP_BUILD = 1004;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17917,6 +17917,67 @@ window._offsetCollidingPins = function () {
     if (changed) { try { src.setData(data); } catch (e) {} }
   } catch (e) {}
 };
+// 1004: "I dropped a pin on my laptop, my phone got the notification and listed the pin, but the
+// map never drew it." The list reads the raw data; the map needs a source, three layers and the
+// icons, all of which a style rebuild throws away, and anything added later without a 'before'
+// lands ON TOP of the pins. Every pin update now checks all of it, rebuilds what is missing, and
+// lifts the pin layers back to the top. Cheap when nothing is wrong: a few lookups.
+function _ensurePinLayers() {
+  var fixed = [];
+  try {
+    for (var cat in PIN_DEFS) {
+      var def = PIN_DEFS[cat] || {};
+      try { if (!map.hasImage('pin-mine-' + cat)) { map.addImage('pin-mine-' + cat, makePinImage(def.color, '#f0a500', def.emoji || def.label, cat), { pixelRatio: 2 }); fixed.push('img'); } } catch (e) {}
+      try { if (!map.hasImage('pin-other-' + cat)) { map.addImage('pin-other-' + cat, makePinImage(def.color, '#ffffff', def.emoji || def.label, cat), { pixelRatio: 2 }); fixed.push('img'); } } catch (e) {}
+    }
+  } catch (e) {}
+  try {
+    if (!map.getSource('pins')) {
+      map.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, cluster: true, clusterMaxZoom: 14, clusterRadius: 55 });
+      fixed.push('src');
+    }
+  } catch (e) {}
+  try {
+    if (!map.getLayer('pin-clusters')) {
+      map.addLayer({ id: 'pin-clusters', type: 'circle', source: 'pins', filter: ['has', 'point_count'],
+        paint: { 'circle-color': '#f0a500', 'circle-opacity': 0.92,
+                 'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
+                 'circle-stroke-width': 2, 'circle-stroke-color': 'rgba(13,17,23,0.85)' } });
+      fixed.push('clu');
+    }
+  } catch (e) {}
+  try {
+    if (!map.getLayer('pin-cluster-count')) {
+      map.addLayer({ id: 'pin-cluster-count', type: 'symbol', source: 'pins', filter: ['has', 'point_count'],
+        layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+                  'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15], 'text-allow-overlap': true, 'text-ignore-placement': true },
+        paint: { 'text-color': '#1a1206' } });
+      fixed.push('cnt');
+    }
+  } catch (e) {}
+  try {
+    if (!map.getLayer('pins-layer')) {
+      map.addLayer({ id: 'pins-layer', type: 'symbol', source: 'pins', filter: ['!', ['has', 'point_count']],
+        layout: { 'icon-image': ['get', 'imageId'],
+                  'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
+                  'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+                  'text-field': ['get', 'shortLabel'], 'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+                  'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 1.2], 'text-optional': true },
+        paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 } });
+      fixed.push('lyr');
+    }
+  } catch (e) {}
+  // Anything sitting above the pins covers them. Lift the three back to the top, in order.
+  try {
+    var ids = map.getStyle().layers.map(function (l) { return l.id; });
+    var top = ids.slice(-3).join(',');
+    if (top !== 'pin-clusters,pin-cluster-count,pins-layer') {
+      ['pin-clusters', 'pin-cluster-count', 'pins-layer'].forEach(function (id) { if (map.getLayer(id)) map.moveLayer(id); });
+      fixed.push('top(' + (ids[ids.length - 1] || '') + ')');
+    }
+  } catch (e) {}
+  if (fixed.length) { try { window._pinFixes = (window._pinFixes || 0) + 1; window._pinFixLast = fixed.join(' '); } catch (e) {} }
+}
 function updatePinSource(pins) {
   // Drops made here that the server has not echoed back yet are drawn too, so a pin shows up
   // the moment it is dropped instead of when the network gets round to it.
@@ -17932,10 +17993,14 @@ function updatePinSource(pins) {
     });
     pins = _live;
   } catch (e) {}
-  if (!window._mapReady || !map.getSource('pins')) {
+  if (!window._mapReady) {
     window._queuedPins = pins; // will be applied once map is ready
     return;
   }
+  // 1004: a ready map with no pin source used to park the pins here for ever -- nothing was
+  // left to flush the queue. Rebuild instead, and only queue if even that failed.
+  try { _ensurePinLayers(); } catch (e) {}
+  if (!map.getSource('pins')) { window._queuedPins = pins; return; }
   // 992: once this pass has put the room's pins in the layer, re-run the saved-copy markers
   // against it (they dedupe against the layer). Deferred so it reads the layer just set.
   try { clearTimeout(window._savedReT); window._savedReT = setTimeout(function () { try { if (window._showSavedOnMap) _renderSavedOnMap(); } catch (e) {} }, 0); } catch (e) {}
@@ -18022,6 +18087,13 @@ function updatePinSource(pins) {
     } catch (e) { console.warn('pin image fallback failed', id, e); }
   });
   map.getSource('pins').setData({ type: 'FeatureCollection', features });
+  // 1004: what the phone is actually drawing, for the diag report.
+  try {
+    window._pinDraw = 'n=' + features.length + ' lyr=' + (map.getLayer('pins-layer') ? 1 : 0) +
+      ' vis=' + (map.getLayoutProperty('pins-layer', 'visibility') || 'visible') +
+      ' top=' + (map.getStyle().layers.slice(-1)[0] || {}).id +
+      ' fixes=' + (window._pinFixes || 0) + (window._pinFixLast ? ' (' + window._pinFixLast + ')' : '');
+  } catch (e) {}
 }
 
 // After a popup opens, nudge the map so the whole popup is on-screen (fixes popups that
@@ -19960,6 +20032,7 @@ function startLocationSharing() {
         meAnimErr: window._meAnimErr || 0,    // times it threw
         meAnimWhy: window._meAnimWhy || '',   // why it was skipped, when it was
         pinChk: window._pinCheck || '',
+        pinDraw: window._pinDraw || '',   // 1004
         ts: now
       });
     } catch (e) {}
