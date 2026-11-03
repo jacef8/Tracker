@@ -21,6 +21,6 @@ ok(idx.includes("if (Object.keys(_ptrs).length > 1) { window._pinchSeen = Date.n
 ok(idx.includes("if (typeof followUid !== 'undefined' && followUid) window._zoomingFollow = true;"), 'a zoom while following is remembered');
 ok(idx.includes('window._followPausedUntil = 0;\n    window._camSmooth = null;'), 'and following resumes the moment the zoom ends');
 ok(!/zoom: Math\.max\(map\.getZoom\(\), 16\), duration: 800/.test(idx), 'starting a follow keeps your zoom');
-ok(idx.includes("try { map.flyTo({ center: mk._curLngLat || mk._ll, duration: 700 }); } catch (e) {}   // 993"), 'opening a card keeps your zoom');
+ok(idx.includes("var _flo = { center: mk._curLngLat || mk._ll, duration: 700 };") && !/var _flo = \{[^}]*zoom/.test(idx), 'opening a card keeps your zoom (1006: unless from the people list)');
 console.log(fails ? `${fails} of ${n} checks FAILED` : `all ${n} checks pass`);
 process.exit(fails ? 1 : 0);

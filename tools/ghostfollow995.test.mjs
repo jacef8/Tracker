@@ -9,7 +9,7 @@ const idx = readFileSync(dir + '/index.html', 'utf8');
 let fails = 0, n = 0;
 const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
 
-ok(/map\.flyTo\(\{ center: mk\._curLngLat \|\| mk\._ll, duration: 700 \}\)/.test(idx), 'person tap aims at the drawn dot');
+ok(/(map\.flyTo\(\{ center: mk\._curLngLat \|\| mk\._ll, duration: 700 \}\)|var _flo = \{ center: mk\._curLngLat \|\| mk\._ll, duration: 700 \})/.test(idx), 'person tap aims at the drawn dot');
 ok(!/center: primaryMk\._ll, zoom: Math\.max\(map\.getZoom\(\), 16\)/.test(idx), 'group tap no longer forces street zoom on one member\'s report');
 ok(/map\.flyTo\(\{ center: primaryMk\._curLngLat \|\| primaryMk\._ll, duration: 700 \}\)/.test(idx), 'group tap aims at the drawn bubble');
 ok(/window\._followUser\(uids\[0\], _gLabel\)/.test(idx), 'group tap follows the bubble');

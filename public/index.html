@@ -5218,7 +5218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1005;
+var APP_BUILD = 1006;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -21575,6 +21575,10 @@ function listenUsers() {
       var _tb = row.querySelector('.utalk-btn');
       if (_tb) _tb.addEventListener('click', function(e) { e.stopPropagation(); window._openVoiceTo(uid, data.name); });
       row.addEventListener('click', function() {
+        // 1006: picking someone from the list is "show me where they are" -- from a state-wide
+        // view that needs a zoom in. To 68% on the zoom readout (z 14.9), never out. Taps on
+        // the map keep 993's rule and leave the zoom alone.
+        window._listZoomIn = Date.now();
         document.getElementById('user-drawer').classList.remove('open');
         setLocateMeVisible(true);
         if (_hiddenFromMap) {
@@ -30899,6 +30903,7 @@ window._followUser = function(uid, name) {
     // and the camera SNAPPED to the dot. It now runs to the end (_followEaseUntil) and the frame
     // loop picks up from wherever it lands. The card's padding rides in the same move.
     var _fo = { center: target, duration: initial ? 650 : 800, easing: function (t) { return 1 - Math.pow(1 - t, 3); } };
+    if (initial) { try { var _lz = window._takeListZoom(); if (_lz) { _fo.zoom = _lz; _fo.duration = 1100; } } catch (e) {} }   // 1006
     var _fp = null; try { _fp = _camPad(); } catch (e) {}
     if (_fp) _fo.padding = _fp;
     if (initial) {
@@ -31405,7 +31410,7 @@ window._showMemberSheet = function(uid, quiet) {
     // 995: the dot as DRAWN, not its newest report. A moving dot glides toward its latest fix
     // over the whole reporting gap, so _ll is up to a quarter mile ahead of it at highway speed
     // and the camera landed on empty road with the dot catching up ("tracking a ghost", Jace).
-    try { map.flyTo({ center: mk._curLngLat || mk._ll, duration: 700 }); } catch (e) {}   // 993: your zoom, not 16
+    try { var _flo = { center: mk._curLngLat || mk._ll, duration: 700 }; var _lz2 = window._takeListZoom(); if (_lz2) { _flo.zoom = _lz2; _flo.duration = 1100; } map.flyTo(_flo); } catch (e) {}   // 993: your zoom, not 16 (1006: except from the people list)
   }
   if (mk._isLive) { try { window._followUser(uid, ''); } catch (e) {} }
   else {
@@ -31473,6 +31478,14 @@ window._buildPersonSheetHTML = function (uid, data) {
       '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + statusLine + '</div></div>' +
     talk +
     (grid ? ('<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + grid + '</div>') : '');
+};
+// 1006: the people list asks for one zoom-in on the next camera move to a person. Used once,
+// and only within a second of the tap, so a later follow from somewhere else never inherits it.
+var LIST_ZOOM = 14.9;   // 68% on the zoom readout: 4 + 0.68 x 16
+window._takeListZoom = function () {
+  var t = window._listZoomIn; window._listZoomIn = 0;
+  if (!t || Date.now() - t > 1000) return 0;
+  try { return map.getZoom() < LIST_ZOOM - 0.05 ? LIST_ZOOM : 0; } catch (e) { return 0; }
 };
 window._openPersonSheet = function (uid, data) {
   if (!uid) return;
