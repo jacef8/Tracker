@@ -5218,11 +5218,26 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1007;
+var APP_BUILD = 1008;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
 window._openTimes = window._openTimes || {};
+// 1008: after the 1007 freeze Jace's phone opened to a blank screen with no top bar. Android
+// stops an app from drawing 3D after its graphics hang, so new mapboxgl.Map() threw, and that
+// throw also stopped the rest of the room screen from being built. Now the failure is caught,
+// the screen around the map still works, a message says how to fix it, and diag carries it.
+window._mapErr = '';
+window._mapFail = function (e, lost) {
+  try {
+    window._mapErr = (lost ? 'lost: ' : '') + String((e && (e.message || e.type)) || e || 'unknown').slice(0, 160);
+    console.error('Map cannot draw:', e);
+    if (!window._mapFailShown) window._mapFailShown = setTimeout(function () {
+      try { toast("The map can't draw on this phone right now. Force stop GroundLink in Settings → Apps, then open it again.", 15000); } catch (e2) {}
+    }, 1500);
+    try { if (typeof window._writeDiag === 'function') window._writeDiag(); } catch (e3) {}
+  } catch (e4) {}
+};
 window._markOpen = function (k) {
   try {
     if (window._openTimes[k] != null) return;
@@ -17117,6 +17132,7 @@ var LIBERTY_COUNTY_BOUNDS = [[-85.15295, 29.97146], [-84.54269, 30.60585]];  // 
 function initMap() {
   if (window._mapStarted) return; // already initialized
   mapboxgl.accessToken = window.MAPBOX_TOKEN;
+  try {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -17135,6 +17151,12 @@ function initMap() {
     fitBoundsOptions: { padding: 24 },
     attributionControl: false
   });
+  } catch (e) { window._mapFail(e); return; }
+  // 1008: the graphics can also be taken away after the map is up (the same hang, mid-use).
+  try {
+    map.on('webglcontextlost', function () { window._mapFail('graphics context lost', true); });
+    map.on('webglcontextrestored', function () { window._mapErr = ''; try { map.triggerRepaint(); } catch (e) {} });
+  } catch (e) {}
   // 1005: "trails are turned on but no trails are showing." Mapbox's isStyleLoaded() is true
   // only when every tile of every source has finished, and on the live map one background
   // source ('other:composite') never does -- so it stayed false for good, and every
@@ -19948,6 +19970,7 @@ function startLocationSharing() {
         name: userName || '',
         native: _isNativeApp(),
         uaTok: /GroundLinkNative/i.test(navigator.userAgent || ''),
+        mapErr: window._mapErr || '',
         cap: !!window.Capacitor,
         bgStarted: !!window._bgGeoStarted,
         bgErr: window._bgGeoError || '',
