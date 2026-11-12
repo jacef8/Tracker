@@ -5218,7 +5218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1006;
+var APP_BUILD = 1007;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -22924,11 +22924,21 @@ function _weldToTip(coords, tip) {
   if (Math.abs(lastPt[0] - tip[0]) + Math.abs(lastPt[1] - tip[1]) < 1e-7) return head;
   return head.concat([[tip[0], tip[1]]]);
 }
+// 1007: "my phone, everything is frozen." Until 1005 no trail source ever got made, so this
+// returned at the getSource check below. Once trails drew, it ran on EVERY animation frame
+// for every gliding dot, each time re-welding and re-uploading the whole line (Jace's own was
+// 313 points, more after road-filling) -- a full GeoJSON re-tile ~60 times a second, which
+// starved the phone. Four times a second keeps the line on the dot to within a few feet.
+var TRAIL_TIP_MS = 250;
+window._trailTipAt = {};
 window._updateTrailTip = function (uid, lng, lat) {
   const base = trailBaseCoords[uid];
   if (!base || !base.length) return;
   const lid = `trail-${uid}`;
   if (!map.getSource(lid)) return;
+  const _tn = Date.now();
+  if (_tn - (window._trailTipAt[uid] || 0) < TRAIL_TIP_MS) return;
+  window._trailTipAt[uid] = _tn;
   // 1005: a group bubble is drawn at the middle of the group, not where this person is. The
   // line ends at the person, or welding it to the bubble cuts most of it off.
   try { var _gmk = userMarkers[uid]; if (_gmk && _gmk._mergedOval && _gmk._ll) { lng = _gmk._ll[0]; lat = _gmk._ll[1]; } } catch (e) {}
@@ -22962,7 +22972,11 @@ window._noteSeenFix = function (uid, data) {
   if (last && (ts <= last.ts || metersApart(last.lat, last.lng, +data.lat, +data.lng) < 10)) return;
   arr.push({ lat: +data.lat, lng: +data.lng, ts: ts });
   if (arr.length > 600) arr.splice(0, arr.length - 600);
-  if (_trailShownFor(uid)) { try { _renderTrailLines(); } catch (e) {} }
+  // 1007: coalesced. Every fix used to rebuild every shown trail on the spot (road-fill and all);
+  // several people reporting meant several full rebuilds a second. One per second is plenty.
+  if (_trailShownFor(uid) && !window._trailRenderT) {
+    window._trailRenderT = setTimeout(function () { window._trailRenderT = null; try { _renderTrailLines(); } catch (e) {} }, 1000);
+  }
 };
 // 983: today's History points for one person, fetched at most once a minute and redrawn on arrival.
 window._histTrailCache = window._histTrailCache || {};
