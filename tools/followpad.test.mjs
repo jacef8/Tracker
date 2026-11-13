@@ -22,8 +22,8 @@ const check = (name, got, ok, detail) => {
   const r = win._clampVertPad(top, bottom, chromeTop, chromeBottom, ch);
   check('phone: top padding never goes under the topbar', r,
         r.top >= chromeTop, `top=${r.top.toFixed(0)} (bar ${chromeTop}) bottom=${r.bottom.toFixed(0)}`);
-  check('phone: stays inside the 45% budget', r,
-        r.top + r.bottom <= ch * 0.45 + 0.5, `sum=${(r.top + r.bottom).toFixed(0)} budget=${(ch * 0.45).toFixed(0)}`);
+  check('phone: stays inside the budget (1009: ch-300 floor)', r,
+        r.top + r.bottom <= Math.max(ch * 0.45, ch - 300) + 0.5, `sum=${(r.top + r.bottom).toFixed(0)} budget=${Math.max(ch * 0.45, ch - 300).toFixed(0)}`);
   check('phone: bottom padding never goes under the toolbar', r,
         r.bottom >= chromeBottom, `bottom=${r.bottom.toFixed(0)} (bar ${chromeBottom})`);
 }
@@ -40,7 +40,7 @@ const check = (name, got, ok, detail) => {
   const ch = 500, chromeTop = 200, chromeBottom = 180;
   const r = win._clampVertPad(chromeTop + 30, chromeBottom + 125, chromeTop, chromeBottom, ch);
   check('tiny screen: still inside the budget rather than throwing', r,
-        r.top + r.bottom <= ch * 0.45 + 0.5, `sum=${(r.top + r.bottom).toFixed(0)} budget=${(ch * 0.45).toFixed(0)}`);
+        r.top + r.bottom <= Math.max(ch * 0.45, ch - 300) + 0.5, `sum=${(r.top + r.bottom).toFixed(0)} budget=${Math.max(ch * 0.45, ch - 300).toFixed(0)}`);
 }
 // The old behaviour, asserted as a regression guard: proportional scaling DID go under the bar.
 {

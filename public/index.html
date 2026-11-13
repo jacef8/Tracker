@@ -5218,7 +5218,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1008;
+var APP_BUILD = 1009;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -5227,6 +5227,37 @@ window._openTimes = window._openTimes || {};
 // stops an app from drawing 3D after its graphics hang, so new mapboxgl.Map() threw, and that
 // throw also stopped the rest of the room screen from being built. Now the failure is caught,
 // the screen around the map still works, a message says how to fix it, and diag carries it.
+// 1009: 1005 answered "can the style take layers" by REPLACING map.isStyleLoaded on the map
+// itself, so Mapbox's own internals got the new answer too. Phones froze (no touch reached the
+// page) from 1005 on. The app's gates now ask this instead and Mapbox keeps its own method.
+function _styleReady() {
+  try {
+    if (typeof map === 'undefined' || !map) return false;
+    if (map.style && map.style._loaded) return true;
+    return map.isStyleLoaded();
+  } catch (e) { return false; }
+}
+// 1009: does a touch reach the page at all, and what is on top of the screen? Read via diag.
+window._tapN = 0; window._tapAt = 0; window._tapTgt = '';
+window._descEl = function (el) {
+  try {
+    if (!el) return 'none';
+    var d = (el.tagName || '?').toLowerCase();
+    if (el.id) d += '#' + el.id;
+    var c = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/)[0];
+    if (c) d += '.' + c;
+    return d.slice(0, 60);
+  } catch (e) { return 'err'; }
+};
+document.addEventListener('pointerdown', function (ev) {
+  try {
+    window._tapN++; window._tapAt = Date.now(); window._tapTgt = window._descEl(ev.target);
+    if (!window._tapDiagT) window._tapDiagT = setTimeout(function () {
+      window._tapDiagT = null;
+      try { if (typeof window._writeDiag === 'function') window._writeDiag(); } catch (e) {}
+    }, 3000);
+  } catch (e) {}
+}, true);
 window._mapErr = '';
 window._mapFail = function (e, lost) {
   try {
@@ -6522,7 +6553,7 @@ try {
 
 function _drawMarkerLeaders(vis) {
   try {
-    if (typeof map === 'undefined' || !map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    if (typeof map === 'undefined' || !map || !map.isStyleLoaded || !_styleReady()) return;
     var feats = [];
     (vis || []).forEach(function (v) {
       var m = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
@@ -10315,7 +10346,7 @@ window._d3Choice = function () { try { return localStorage.getItem('gl_3d'); } c
 // Satellite -> Topo would silently drop the terrain and leave the map tilted and flat.
 window._applyTerrain = function () {
   try {
-    if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    if (!map || !map.isStyleLoaded || !_styleReady()) return;
     var on = window._d3On();
     if (on) {
       _ensureDem();
@@ -10383,7 +10414,7 @@ window._applyTerrainOverlays = function () {
     // never retry, so toggling Hillshade while the style was busy -- which is most likely right
     // after opening the map, or straight after a basemap change -- turned the pill ON and added
     // nothing at all. Same failure the pins had in 876: a one-shot check with no second chance.
-    if (!map.isStyleLoaded || !map.isStyleLoaded()) {
+    if (!map.isStyleLoaded || !_styleReady()) {
       if (typeof _whenStyleReady === 'function') _whenStyleReady(function () { window._applyTerrainOverlays(); });
       return;
     }
@@ -10585,7 +10616,7 @@ window._renderAllTracks = function () {
     } catch (e) {}
     // Style not ready? Come back when it is. map.once('load') would be wrong here for the same
     // reason it was wrong for the pins (build 876): it fires once per map, never again.
-    if (!map.isStyleLoaded || !map.isStyleLoaded()) {
+    if (!map.isStyleLoaded || !_styleReady()) {
       if (typeof _whenStyleReady === 'function') _whenStyleReady(function () { window._renderAllTracks(); });
       return;
     }
@@ -17157,19 +17188,6 @@ function initMap() {
     map.on('webglcontextlost', function () { window._mapFail('graphics context lost', true); });
     map.on('webglcontextrestored', function () { window._mapErr = ''; try { map.triggerRepaint(); } catch (e) {} });
   } catch (e) {}
-  // 1005: "trails are turned on but no trails are showing." Mapbox's isStyleLoaded() is true
-  // only when every tile of every source has finished, and on the live map one background
-  // source ('other:composite') never does -- so it stayed false for good, and every
-  // "if (!map.isStyleLoaded()) return" gate in this file quietly did nothing: trail lines,
-  // radar, parcels. Each of those only needs the STYLE to accept sources and layers, which is
-  // what this answers. Measured: 10 of 10 samples false over 10 s with the style long loaded.
-  try {
-    var _rawStyleLoaded = map.isStyleLoaded.bind(map);
-    map.isStyleLoaded = function () {
-      try { if (map.style && map.style._loaded) return true; } catch (e) {}
-      return _rawStyleLoaded();
-    };
-  } catch (e) {}
   window._mapStarted = true; // set only after the map object actually exists
   // 986: open where you last looked rather than on the whole county; the crew camera takes
   // over once people arrive. Saved on every move, so this is the view you left.
@@ -20069,12 +20087,20 @@ function startLocationSharing() {
         meAnimWhy: window._meAnimWhy || '',   // why it was skipped, when it was
         pinChk: window._pinCheck || '',
         pinDraw: window._pinDraw || '',   // 1004
+        // 1009: touches seen, seconds since the last one, what it landed on, and what sits on
+        // top at mid-screen and at the top-bar row right now; mapLoaded = Mapbox 'loaded()'.
+        tapN: window._tapN || 0,
+        tapAgo: window._tapAt ? Math.round((Date.now() - window._tapAt) / 1000) : -1,
+        tapTgt: window._tapTgt || '',
+        topMid: window._descEl(document.elementFromPoint(innerWidth / 2, innerHeight / 2)),
+        topBar: window._descEl(document.elementFromPoint(innerWidth / 2, 80)),
+        mapLoaded: (function () { try { return !!(map && map.loaded()); } catch (e) { return false; } })(),
         // 1005: each shown trail as uid:points/drawn -- "abcd:12/1" means 12 points and a line on the map.
         trailDraw: (function () {
           try {
             return Object.keys(trailBaseCoords || {}).map(function (u) {
               return u.slice(0, 4) + ':' + ((trailBaseCoords[u] || []).length) + '/' + (map.getLayer('trail-' + u) ? 1 : 0);
-            }).join(' ') + ' gate=' + (map.isStyleLoaded() ? 1 : 0);
+            }).join(' ') + ' gate=' + (_styleReady() ? 1 : 0);
           } catch (e) { return 'err'; }
         })(),
         ts: now
@@ -22267,12 +22293,12 @@ function maybeShowIosInstallNudge() {
 // on the second and every later style build -- a resume, a basemap switch, a 3D toggle.
 function _whenStyleReady(fn) {
   try {
-    if (map && map.isStyleLoaded && map.isStyleLoaded()) { fn(); return; }
+    if (map && map.isStyleLoaded && _styleReady()) { fn(); return; }
     var tries = 0;
     var go = function () {
       try {
         if (!map) return;
-        if (map.isStyleLoaded && map.isStyleLoaded()) { map.off('styledata', go); fn(); return; }
+        if (map.isStyleLoaded && _styleReady()) { map.off('styledata', go); fn(); return; }
         if (++tries > 60) { map.off('styledata', go); fn(); }   // give up waiting, try anyway
       } catch (e) {}
     };
@@ -23125,7 +23151,7 @@ function _renderTrailLines() {
         })
       };
 
-      if (!map.isStyleLoaded()) return;
+      if (!_styleReady()) return;
       _ensureStopIcon();
 
       if (map.getSource(lid)) {
@@ -25665,7 +25691,7 @@ function _areaFeature(a) {
     geometry: { type: 'Polygon', coordinates: [[[k.W, k.S], [k.E, k.S], [k.E, k.N], [k.W, k.N], [k.W, k.S]]] } };
 }
 function _ensureFootprintLayer() {
-  if (!window.map || !map.isStyleLoaded || !map.isStyleLoaded()) return false;
+  if (!window.map || !map.isStyleLoaded || !_styleReady()) return false;
   if (!map.getSource('offline-fp')) map.addSource('offline-fp', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   if (!map.getLayer('offline-fp-fill')) map.addLayer({ id: 'offline-fp-fill', type: 'fill', source: 'offline-fp', paint: { 'fill-color': '#3fb950', 'fill-opacity': 0.08 } });
   if (!map.getLayer('offline-fp-line')) map.addLayer({ id: 'offline-fp-line', type: 'line', source: 'offline-fp', paint: { 'line-color': '#3fb950', 'line-width': 2, 'line-dasharray': [2, 1] } });
@@ -25910,7 +25936,7 @@ function _loadRadarFrames(announce) {
 
 // Build one preloaded raster layer per frame (opacity 0 = hidden but cached)
 function _buildRadarFrames() {
-  if (!map || !map.isStyleLoaded()) { setTimeout(_buildRadarFrames, 250); return; }
+  if (!map || !_styleReady()) { setTimeout(_buildRadarFrames, 250); return; }
   if (!_radarFrames.length) return;
   _clearRadarFrames();
   var beforeId = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
@@ -26019,7 +26045,7 @@ function updateToggleUI(trackId, thumbId, on) {
 // Florida DOR 2025 Cadastral FeatureServer — public, no token required
 
 function addParcelLayer() {
-  if (!map.isStyleLoaded()) { setTimeout(addParcelLayer, 200); return; }
+  if (!_styleReady()) { setTimeout(addParcelLayer, 200); return; }
   if (map.getLayer('parcels-fill')) return;
 
 
@@ -26288,7 +26314,7 @@ function toggleFLParcels(on) {
 }
 
 function addFLParcelLayer() {
-  if (!map.isStyleLoaded()) { setTimeout(addFLParcelLayer, 200); return; }
+  if (!_styleReady()) { setTimeout(addFLParcelLayer, 200); return; }
   if (map.getLayer('fl-parcels-fill')) return;
   if (!map.getSource('fl-parcels')) {
     map.addSource('fl-parcels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true });
@@ -26552,7 +26578,7 @@ function _updateGovLandFilter() {
   });
 }
 function addGovLandLayer() {
-  if (!map.isStyleLoaded()) { setTimeout(addGovLandLayer, 200); return; }
+  if (!_styleReady()) { setTimeout(addGovLandLayer, 200); return; }
   if (map.getLayer('liberty-govland-fill')) return;
   var beforeLayer = map.getLayer('pins-layer') ? 'pins-layer' : undefined;
   var colorExpr = _govColorExpr();
@@ -28351,7 +28377,7 @@ window._trackRecOnFix = function(pos, now){
 };
 function _drawRecLine(pts){
   try {
-    if (!map || !map.isStyleLoaded || !map.isStyleLoaded()) return;
+    if (!map || !map.isStyleLoaded || !_styleReady()) return;
     var gj={type:'Feature',geometry:{type:'LineString',coordinates:pts.map(function(p){return [p.lng,p.lat];})}};
     if (map.getSource('rec-track')) map.getSource('rec-track').setData(gj);
     else { map.addSource('rec-track',{type:'geojson',data:gj}); map.addLayer({id:'rec-track',type:'line',source:'rec-track',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#ff3b30','line-width':4,'line-opacity':0.9}}); }
@@ -28433,7 +28459,7 @@ function _syncRecHubBtn(){
 window._shownTrackId=null;
 function _drawSavedTrack(t, fit){
   try {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !_styleReady()) return;
     // Showing a track is an explicit request to look at ONE thing, so it has to own the camera.
     // Group-follow re-fits every second, so it yanked the view straight back off the track —
     // which looked exactly like "I clicked Show on map and nothing happened", especially for a
@@ -28890,7 +28916,7 @@ function _circlePolygon(lat, lng, rMeters) {
 }
 window._showPlaceMarkers = function () {
   try {
-    if (typeof map === 'undefined' || !map || !map.isStyleLoaded()) return;
+    if (typeof map === 'undefined' || !map || !_styleReady()) return;
     window._hidePlaceMarkers(true);
     var feats = [];
     Object.keys(_placesListCache || {}).forEach(function (pid) {
@@ -31612,8 +31638,47 @@ try {
 
 // Pure, so it can be tested on its own: see tools/followpad.test.mjs. Takes the padding we
 // want, the part of it that is opaque chrome, and the canvas height; returns what is legal.
+// 1009: how far the drawn markers really reach from the spot they stand for, measured from
+// the page instead of assumed. A group bubble is lifted on its stem (MK_MERGE_LIFT) and ran
+// ~100px above its people, against a 30px allowance -- "follow group but it's cutting off the
+// pins" (2026-11-12): the bubble sat under the topbar. Children are included because the speed
+// and parked chips hang outside their marker's own box. Cached for half a second.
+window._markerReach = function () {
+  var now = Date.now(), c = window._reachCache;
+  if (c && now - c.t < 500) return c;
+  var r = { up: 30, down: 30, side: 26, t: now };
+  try {
+    var cr = map.getCanvas().getBoundingClientRect();
+    var list = [];
+    Object.keys(userMarkers || {}).forEach(function (k) { list.push(userMarkers[k]); });
+    var dm = window._deviceMarkers || {};
+    Object.keys(dm).forEach(function (k) { list.push(dm[k]); });
+    list.forEach(function (mk) {
+      try {
+        var el = mk && ((mk.getElement && mk.getElement()) || mk._el);
+        if (!el || !el.isConnected) return;
+        var p = map.project(mk.getLngLat());
+        var px = cr.left + p.x, py = cr.top + p.y;
+        var els = [el].concat(Array.prototype.slice.call(el.querySelectorAll('*')));
+        els.forEach(function (e) {
+          var b = e.getBoundingClientRect();
+          if (!(b.width > 0 && b.height > 0)) return;     // display:none or empty
+          r.up = Math.max(r.up, py - b.top);
+          r.down = Math.max(r.down, b.bottom - py);
+          r.side = Math.max(r.side, px - b.left, b.right - px);
+        });
+      } catch (e) {}
+    });
+  } catch (e) {}
+  r.up = Math.min(200, r.up); r.down = Math.min(200, r.down); r.side = Math.min(120, r.side);
+  window._reachCache = r;
+  return r;
+};
 window._clampVertPad = function (top, bottom, chromeTop, chromeBottom, ch) {
-  var budget = ch * 0.45;
+  // 1009: a phone's bars already cover ~40% of its height, so a 45% cap left ~20px for the
+  // markers themselves and the top one went under the bar. Now the cap only bites when less
+  // than 300px of map would be left between the paddings.
+  var budget = Math.max(ch * 0.45, ch - 300);
   if (!(ch > 0) || top + bottom <= budget) return { top: top, bottom: bottom };
   var room = budget - (chromeTop + chromeBottom);
   if (room >= 0) {
@@ -31674,9 +31739,13 @@ function _followPadding() {
   // phone does not hand half its width to margin -- that over-reservation is what produced
   // "zooms to the whole group, but way too far" in 2026-07-28, and it is a real trade: every
   // padded pixel is a pixel the group cannot use, paid for in zoom.
-  var MARKER_RADIUS_PAD = 30, MARKER_BOTTOM_EXTRA = 95;   // top: half a dot; bottom: the chip stack
+  // 1009: measured, not assumed -- see _markerReach. +4 keeps a sliver of map past the edge.
+  var _reach = window._markerReach();
+  var MARKER_RADIUS_PAD = _reach.up + 4, MARKER_BOTTOM_EXTRA = 0;
+  var MARKER_BOTTOM_PAD = _reach.down + 4;
   var MARKER_SIDE_PAD = 30;
   try { MARKER_SIDE_PAD = Math.min(60, Math.max(30, map.getCanvas().clientWidth * 0.05)); } catch (e) {}
+  MARKER_SIDE_PAD = Math.max(MARKER_SIDE_PAD, _reach.side + 4 - Math.min(72, (map && map.getCanvas ? map.getCanvas().clientWidth * 0.06 : 72)));
   // The SIDE padding is proportional, not a flat 72. Nothing overlaps the middle of the left
   // and right edges the way the topbar and toolbar overlap the top and bottom — 72+30 a side
   // was pure margin, and on a ~390px phone it reserved 204px, over half the width. Fitting a
@@ -31685,7 +31754,7 @@ function _followPadding() {
   // still has to be reserved so an edge member isn't half off-screen.
   var side = MARKER_SIDE_PAD;
   try { side += Math.min(72, map.getCanvas().clientWidth * 0.06); } catch (e) { side += 72; }
-  var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_RADIUS_PAD + MARKER_BOTTOM_EXTRA, left: side, right: side };
+  var pad = { top: top + MARKER_RADIUS_PAD, bottom: bottom + MARKER_BOTTOM_PAD + MARKER_BOTTOM_EXTRA, left: side, right: side };
   // `top` and `bottom` above are the OCCLUDED heights -- what the bars actually cover. Keep
   // them, because the clamp below has to know which part of the padding is furniture and
   // which part is courtesy.
