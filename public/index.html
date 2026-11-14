@@ -5313,7 +5313,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1020;
+var APP_BUILD = 1021;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -12427,11 +12427,39 @@ window._notifyPinDrop = function (room, coords, cat, label, kind) {
     var body = crew + ' \u2014 tap to see where';
     // The link opens the room AND flies to the pin, rather than dropping you on the map to hunt.
     var url = '/?room=' + encodeURIComponent(room) +
-              '&pin=' + (+coords.lat).toFixed(6) + ',' + (+coords.lng).toFixed(6);
+              '&pin=' + (+coords.lat).toFixed(6) + ',' + (+coords.lng).toFixed(6) +
+              // 1021: what the pin IS, so the phone that gets this can draw it at once instead of
+              // waiting for its database connection to wake up and fetch it (Jace, 2026-11-14:
+              // "the notification shows up a few seconds before the pin, sometimes longer").
+              '&pc=' + encodeURIComponent(cat || '') + '&pl=' + encodeURIComponent(label || '') +
+              '&pb=' + encodeURIComponent(who);   // no timestamp: the server's duplicate check keys on this link
     pushNotify('pin', title, body, { toFavs: true, url: url }, room);
   } catch (e) {}
 };
 // Fly to a pin that a notification pointed at, once the map can take it.
+// 1021: a pin described by a pin notification's link, or null.
+window._pinFromNotifUrl = function (url) {
+  try {
+    var q = new URLSearchParams(String(url || '').replace(/^[^?]*\?/, ''));
+    var ll = _parsePinParam(q.get('pin'));
+    if (!ll || !q.has('pc')) return null;              // older notifications carry only the spot
+    return { lat: ll.lat, lng: ll.lng, cat: q.get('pc') || '', label: q.get('pl') || '',
+             name: q.get('pb') || '', ts: Date.now() };
+  } catch (e) { return null; }
+};
+// Draw a notified pin now. It joins the same not-yet-confirmed list the dropper's own phone uses,
+// so the real pin retires it by content the moment it streams in -- never drawn twice. If the
+// real one never comes (deleted before we connected), it goes after two minutes.
+window._showNotifPin = function (pin) {
+  try {
+    if (!pin) return;
+    var ck = window._pinContentKey(pin);
+    for (var k in (lastPins || {})) { if (window._pinContentKey(lastPins[k]) === ck) return; }   // already here
+    for (var k2 in window._pendingPins) { if (window._pinContentKey(window._pendingPins[k2]) === ck) return; }
+    var id = window._addPendingPin(pin);
+    if (id) setTimeout(function () { try { delete window._pendingPins[id]; updatePinSource(lastPins); } catch (e) {} }, 120000);
+  } catch (e) {}
+};
 window._flyToNotifPin = function (lat, lng) {
   try {
     var go = function () {
@@ -12546,11 +12574,14 @@ window._handleNotifOpen = function (data) {
     var _pin = null;
     try { var _m = String(data.url || '').match(/[?&]pin=([^&]+)/); if (_m) _pin = _parsePinParam(decodeURIComponent(_m[1])); } catch (e) {}
     if (typeof groupName !== 'undefined' && groupName === grp) {   // already in that room
+      try { window._showNotifPin(window._pinFromNotifUrl(data.url)); } catch (e) {}   // 1021
       if (_pin) { window._flyToNotifPin(_pin.lat, _pin.lng); }
       if (type === 'voice') { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }
       try { window.focus && window.focus(); } catch (e) {}
       return;
     }
+    // 1021: a pin link already names the room and carries the pin; use it whole.
+    if (_pin && /^\/\?room=/.test(String(data.url || ''))) { location.href = data.url; return; }
     location.href = '/?room=' + encodeURIComponent(grp) + (type === 'voice' ? '&notif=voice' : '') +
       (_pin ? '&pin=' + _pin.lat + ',' + _pin.lng : '');
   } catch (e) {}
@@ -12561,6 +12592,9 @@ function _onForegroundNotif(n) {
   try {
     n = n || {}; var data = n.data || {}; var type = data.type || '';
     if (type && !_notifPref(type)) return;
+    if (type === 'pin' && data.group && typeof groupName !== 'undefined' && data.group === groupName) {
+      try { window._showNotifPin(window._pinFromNotifUrl(data.url)); } catch (e) {}   // 1021
+    }
     if (data.group && typeof groupName !== 'undefined' && data.group === groupName) return;
     var msg = (n.title || 'GroundLink') + (n.body ? ' — ' + n.body : '');
     if (typeof toast === 'function') toast(msg, 4200);
@@ -16272,6 +16306,7 @@ function enterMap(name, group, uid) {
     // Opened from a "someone's talking" notification → pop the transmission log once it loads.
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
     // Opened from a pin notification -> land on the pin, not just the room.
+    if (window._pendingPinShow) { try { window._showNotifPin(window._pendingPinShow); } catch (e) {} window._pendingPinShow = null; }   // 1021
     if (window._pendingPinFly) { var _ppf = window._pendingPinFly; window._pendingPinFly = null; setTimeout(function () { window._flyToNotifPin(_ppf.lat, _ppf.lng); }, 1600); }
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
@@ -16804,6 +16839,7 @@ window._showGetAppScreen = function (kind) {
     window._inviteRoom = _invRoom;
     if (_q.get('notif') === 'voice') window._pendingNotif = 'voice';   // opened from a voice ping
     try { var _pp = _parsePinParam(_q.get('pin')); if (_pp) window._pendingPinFly = _pp; } catch (e) {}   // opened from a pin
+    try { window._pendingPinShow = window._pinFromNotifUrl(location.search); } catch (e) {}   // 1021
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
     var _ik = _q.get('ik');
