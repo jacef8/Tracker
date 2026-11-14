@@ -361,8 +361,39 @@ async function findSubsForUid(uid) {
       } catch (e) {}
     }
   }
+  // 1012: a phone that is in no room yet has no room subscription at all, so an invite to a
+  // brand-new user never rang (Tyler, 2026-11-14: invited to Family Men, nothing on his phone).
+  // The app now files its push address here whenever it opens (/push/register).
+  try {
+    const rec = await _dbGet('gl/_pushTokens/' + uid);
+    if (rec && rec.fcm) return rec;
+  } catch (e) {}
   return null;
 }
+
+// 1012: the app files its FCM address here on every open, room or no room. Signed-in callers
+// only; an address on file can only be replaced by the account that filed it or by the
+// device's owner account. Used only as the LAST resort by findSubsForUid, after the room
+// subscriptions (which carry per-room notification preferences).
+app.post('/push/register', rateLimit(20, 60000), requireUser, async function (req, res) {
+  if (!adminDb) return res.json({ ok: false, reason: 'no-db' });
+  const b = req.body || {};
+  const uid = String(b.uid || '');
+  const fcm = String(b.fcm || '');
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return res.status(400).json({ ok: false, reason: 'bad-uid' });
+  if (!/^[A-Za-z0-9_:\-]{20,4096}$/.test(fcm)) return res.status(400).json({ ok: false, reason: 'bad-token' });
+  try {
+    const cur = await _dbGet('gl/_pushTokens/' + uid);
+    if (cur && cur.authUid && cur.authUid !== req.authUid) {
+      const own = await _dbGet('gl/_devOwner/' + uid + '/acct');
+      if (own !== req.authUid) return res.status(403).json({ ok: false, reason: 'not-your-device' });
+    }
+    await adminDb.ref('gl/_pushTokens/' + uid).update({
+      fcm: fcm, authUid: req.authUid, name: String(b.name || '').slice(0, 60), ts: Date.now()
+    });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
 
 // Silent wake ("bump"): a content-available push that relaunches the target's app just long
 // enough to report one fresh fix — the Life360 "member updates right when you look at them"

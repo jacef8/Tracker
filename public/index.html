@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1011;
+var APP_BUILD = 1012;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -10908,6 +10908,7 @@ async function _registerFcm(silent) {
     if (!token) return false;
     window._fcmToken = token;
     try { localStorage.setItem('gl_fcm', token); } catch (e) {}
+    try { window._fileCentralPush(); } catch (e) {}   // 1012: reachable before joining any room
     if (db && groupName && userId) {
       fbSet(fbRef(db, `gl/${groupName}/pushSubs/${userId}`),
             { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), prefs: _notifPrefs(), ts: Date.now() });
@@ -10939,6 +10940,47 @@ async function _registerFcm(silent) {
     return true;
   } catch (e) { console.warn('registerFcm', e); return false; }
 }
+// 1012: file this phone's push address with the server, room or no room. Invites, Nudge and
+// Notify are aimed at a PERSON, and the server could only find a person's phone through the
+// rooms they had joined -- so a brand-new user, the one an invite matters most to, could never
+// be reached (Tyler, 2026-11-14). Once per page per address and device id; needs a sign-in.
+window._fileCentralPush = function () {
+  try {
+    var t = window._fcmToken || localStorage.getItem('gl_fcm') || '';
+    var uid = (typeof userId !== 'undefined' && userId) || localStorage.getItem('gl_uid') || '';
+    if (!t || !uid) return;
+    var key = t + '|' + uid;
+    if (window._centralPushFiled === key) return;
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    if (!u) { setTimeout(window._fileCentralPush, 20000); return; }   // sign-in not ready yet
+    window._centralPushFiled = key;
+    var nm = (typeof userName !== 'undefined' && userName) || localStorage.getItem('gl_name') || '';
+    window._glFetch('/push/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: uid, fcm: t, name: nm })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) window._centralPushFiled = '';
+    }).catch(function () { window._centralPushFiled = ''; });
+  } catch (e) {}
+};
+// 1012: in the phone app, set up push as soon as the app opens instead of waiting for the first
+// room. Asks for notification permission ONCE, on the home screen, if it was never asked;
+// otherwise refreshes the address silently. Web pages are untouched (they ask per room).
+setTimeout(function () {
+  try {
+    var cap = window.Capacitor;
+    var FM = cap && cap.isNativePlatform && cap.isNativePlatform() && cap.Plugins && cap.Plugins.FirebaseMessaging;
+    if (!FM) return;
+    FM.checkPermissions().then(function (perm) {
+      var st = perm && perm.receive;
+      if (st === 'granted') { _registerFcm(true); return; }
+      var asked = false; try { asked = localStorage.getItem('gl_push_asked') === '1'; } catch (e) {}
+      if (st === 'denied' || asked) return;
+      try { localStorage.setItem('gl_push_asked', '1'); } catch (e) {}
+      _registerFcm(false);
+    }).catch(function () {});
+  } catch (e) {}
+}, 5000);
 async function enableAlerts(silent) {
   // Native app → FCM (the WebView has no Web Push).
   try {
