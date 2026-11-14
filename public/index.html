@@ -17,6 +17,90 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=4" />
 <link rel="icon" type="image/png" href="/icons/icon-192.png?v=2" />
 
+<script>
+// 1010: STALL PROBE. Jace's phone froze for 49 s at a time (frameGap 48883 on 2026-11-14) with
+// taps arriving but nothing answering, and nothing said WHICH code was running. Every callback
+// the page hands the browser -- animation frames, timers, event listeners, Firebase messages --
+// is timed here, and the six slowest since the page opened go out in diag as `slow`. The label
+// is only built for a slow one, so the 60-a-second cost is two performance.now() calls.
+(function () {
+  try {
+    var P = window._stall = { worst: [] };
+    var label = function (fn, kind) {
+      var n = fn && fn.name;
+      if (!n) { try { n = String(fn).replace(/\s+/g, ' ').slice(0, 90); } catch (e) { n = '?'; } }
+      return kind + ':' + n;
+    };
+    var note = function (fn, kind, ms) {
+      var w = P.worst;
+      if (w.length >= 6 && ms <= w[w.length - 1].ms) return;
+      w.push({ l: label(fn, kind), ms: Math.round(ms), at: Date.now() });
+      w.sort(function (a, b) { return b.ms - a.ms; });
+      if (w.length > 6) w.length = 6;
+    };
+    var cache = new WeakMap();
+    var wrap = function (fn, kind) {
+      if (typeof fn !== 'function') return fn;
+      var w = cache.get(fn);
+      if (w) return w;
+      w = function () {
+        var t = performance.now();
+        try { return fn.apply(this, arguments); }
+        finally { var d = performance.now() - t; if (d >= 100) note(fn, kind, d); }
+      };
+      cache.set(fn, w);
+      return w;
+    };
+    window._stallWrap = wrap;
+    var raf = window.requestAnimationFrame;
+    window.requestAnimationFrame = function (cb) { return raf.call(window, wrap(cb, 'frame')); };
+    var st = window.setTimeout, si = window.setInterval;
+    window.setTimeout = function (cb, ms) {
+      var a = Array.prototype.slice.call(arguments); a[0] = wrap(cb, 'timer'); return st.apply(window, a);
+    };
+    window.setInterval = function (cb, ms) {
+      var a = Array.prototype.slice.call(arguments); a[0] = wrap(cb, 'every'); return si.apply(window, a);
+    };
+    var add = EventTarget.prototype.addEventListener, rem = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (type, fn, opt) {
+      return add.call(this, type, typeof fn === 'function' ? wrap(fn, 'on-' + type) : fn, opt);
+    };
+    EventTarget.prototype.removeEventListener = function (type, fn, opt) {
+      return rem.call(this, type, (typeof fn === 'function' && cache.get(fn)) || fn, opt);
+    };
+    // Firebase delivers every database change through its socket's onmessage property.
+    var d = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+    if (d && d.set) Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      configurable: true, enumerable: true,
+      get: function () { return d.get.call(this); },
+      set: function (f) { d.set.call(this, wrap(f, 'socket')); }
+    });
+  } catch (e) {}
+})();
+// Wrap a Firebase onValue so a slow handler is reported by its database path, not as "socket".
+window._timedOnValue = function (orig) {
+  if (typeof orig !== 'function' || !window._stallWrap) return orig;
+  return function (ref, cb) {
+    var a = Array.prototype.slice.call(arguments);
+    if (typeof cb === 'function') {
+      var path = '?'; try { path = String(ref && (ref._path || ref.toString())).replace(/^https?:\/\/[^/]+/, '').slice(0, 60); } catch (e) {}
+      var w = function () {
+        var t = performance.now();
+        try { return cb.apply(this, arguments); }
+        finally {
+          var dd = performance.now() - t;
+          if (dd >= 100) try {
+            var W = window._stall.worst; W.push({ l: 'db:' + path, ms: Math.round(dd), at: Date.now() });
+            W.sort(function (x, y) { return y.ms - x.ms; }); if (W.length > 6) W.length = 6;
+          } catch (e) {}
+        }
+      };
+      a[1] = w;
+    }
+    return orig.apply(this, a);
+  };
+};
+</script>
 <!-- Mapbox -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
@@ -5218,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1009;
+var APP_BUILD = 1010;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -15470,8 +15554,12 @@ function writeDebugLog(grp, msg) {
 window._maxFrameGap = 0; window._snapMs = 0; window._snapMax = 0;
 (function () {
   var last = performance.now();
+  // 1010: a page in the background gets no frames at all, so the first frame back measured the
+  // whole time away -- a 49 s "freeze" could just have been the phone in a pocket. Restart the
+  // clock whenever the page comes back.
+  document.addEventListener('visibilitychange', function () { last = performance.now(); });
   function tick(t) {
-    var gap = t - last; last = t;
+    var gap = document.hidden ? 0 : t - last; last = t;
     if (gap > window._maxFrameGap) window._maxFrameGap = Math.round(gap);
     requestAnimationFrame(tick);
   }
@@ -15582,7 +15670,7 @@ function enterMap(name, group, uid) {
   } catch (e) {}
   waitForFirebase(async fb => {
     db = fb.db; fbRef = fb.ref; fbSet = fb.set;
-    fbPush = fb.push; fbOnValue = fb.onValue; fbRemove = fb.remove;
+    fbPush = fb.push; fbOnValue = window._timedOnValue ? window._timedOnValue(fb.onValue) : fb.onValue; fbRemove = fb.remove;
 
     // Belt-and-suspenders on top of EXIT/showJoinScreen's own cleanup: whatever room we were
     // just in gets its presence removed here too, so switching rooms can never leave a ghost
@@ -19194,7 +19282,7 @@ function startLocationSharing() {
     // window._fb is bootstrapped independently of ever entering a room, so fall back to it.
     if (!db && window._fb && window._fb.db) {
       db = window._fb.db; fbRef = window._fb.ref; fbSet = window._fb.set;
-      fbPush = window._fb.push; fbOnValue = window._fb.onValue; fbRemove = window._fb.remove;
+      fbPush = window._fb.push; fbOnValue = window._timedOnValue ? window._timedOnValue(window._fb.onValue) : window._fb.onValue; fbRemove = window._fb.remove;
     }
     const { latitude: rawLat, longitude: rawLng, accuracy } = pos.coords;
     const now = Date.now();
@@ -20004,7 +20092,15 @@ function startLocationSharing() {
         build: APP_BUILD,
         open: window._openTimes || null,
         pinDrop: window._pinDropCensus || null,   // 987: what was drawn near the last pin dropped here
-        frameGap: window._maxFrameGap || 0,     // worst ms between frames — >50 means the page froze
+        frameGap: window._maxFrameGap || 0,
+        // 1010: the slowest pieces of code since the page opened, "kind:name=ms@time".
+        slow: (function () {
+          try {
+            return (window._stall && window._stall.worst || []).map(function (w) {
+              return w.l.slice(0, 90) + '=' + w.ms + 'ms@' + new Date(w.at).toTimeString().slice(0, 8);
+            }).join(' | ');
+          } catch (e) { return 'err'; }
+        })(),     // worst ms between frames — >50 means the page froze
         snapMs: window._snapMs || 0,            // last presence-snapshot handler duration
         snapMax: window._snapMax || 0,
         // Member rows the render loop had to skip (the per-row catch in _processUsersSnapInner):
