@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1014;
+var APP_BUILD = 1015;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -22046,7 +22046,19 @@ function listenUsers() {
           var cbtn = irow.querySelector('.uinv-cancel');
           if (cbtn) cbtn.addEventListener('click', function (e) {
             e.stopPropagation();
+            // 1015: "it says canceled but the invite still shows" (Jace, 2026-11-14). The record was
+            // removed but nothing redrew the list, and the invite itself stayed in their inbox, so
+            // they could still accept it. Pull the inbox entries this invite wrote (recorded since
+            // 1015; an older invite's inbox entry cannot be found from here) and drop the row.
+            try { (rec.inbox || []).forEach(function (pth) { fbRemove(fbRef(db, 'gl/_invites/' + pth)); }); } catch (e2) {}
             try { fbRemove(fbRef(db, 'gl/' + groupName + '/config/invited/' + iu)); } catch (e2) {}
+            try { delete window._roomInvited[iu]; } catch (e2) {}
+            try {
+              var box = irow.parentNode; irow.remove();
+              var left = box ? box.querySelectorAll('.user-item').length : 0;
+              if (box && !left) box.remove();
+              else if (box && box.firstChild) box.firstChild.textContent = 'INVITED — HASN\'T JOINED YET (' + left + ')';
+            } catch (e2) {}
             try { toast('Invite to ' + (rec.name || 'them') + ' cancelled', 2200); } catch (e2) {}
           });
           _invBox.appendChild(irow);
@@ -25140,7 +25152,10 @@ window._sendRoomInvite = function(uid, btn) {
     // account reverse index (written by pushProfile), already cached client-side.
     try {
       var _acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
-      if (_acct && _acct !== uid) { var r2 = fbPush(fbRef(db, 'gl/_invites/' + _acct)); fbSet(r2, rec); }
+      var _inbox = [uid + '/' + r.key];
+      if (_acct && _acct !== uid) { var r2 = fbPush(fbRef(db, 'gl/_invites/' + _acct)); fbSet(r2, rec); _inbox.push(_acct + '/' + r2.key); }
+      // 1015: which inbox entries this invite wrote, so Cancel can take them back out.
+      try { fbSet(fbRef(db, 'gl/' + groupName + '/config/invited/' + uid + '/inbox'), _inbox); } catch (e) {}
       _pushInvite([uid, _acct], label, _isCrew, groupName);
     } catch (e) {}
     // An in-app invite is addressed to a DEVICE id. If that id is stale — the person reinstalled,
@@ -25254,7 +25269,9 @@ window._sendCircleInvite = function(uid, btn) {
     // Same account-wide fan-out as _sendRoomInvite — see its comment.
     try {
       var _acct2 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
-      if (_acct2 && _acct2 !== uid) { var r3 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct2)); fb.set(r3, rec); }
+      var _inbox2 = [uid + '/' + r.key];
+      if (_acct2 && _acct2 !== uid) { var r3 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct2)); fb.set(r3, rec); _inbox2.push(_acct2 + '/' + r3.key); }
+      try { fb.set(fb.ref(fb.db, 'gl/' + t.key + '/config/invited/' + uid + '/inbox'), _inbox2); } catch (e) {}   // 1015
       _pushInvite([uid, _acct2], t.name, true, t.key);
     } catch (e) {}
     try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
