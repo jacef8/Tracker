@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1013;
+var APP_BUILD = 1014;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -12484,21 +12484,31 @@ window._toggleNotifType = function (type) {
 window._handleNotifOpen = function (data) {
   try {
     data = data || {};
-    // 1013: an invite notification opens that invite's Accept prompt. The invite list streams in
-    // from Firebase, so wait up to 15 s for it to arrive on a cold start.
+    // 1014: tapping an invite notification IS the yes. 1013 showed an Accept prompt instead,
+    // but the home screen wipes that prompt on its next render (it has its own invite card), so
+    // Tyler tapped, saw nothing, and was never added (2026-11-14). A crew invite is accepted and
+    // the crew opened; a room invite goes straight to joining the room. The invite list streams
+    // in from Firebase, so wait up to 15 s for it on a cold start. Newest invite wins.
     if (data.type === 'invite') {
       var _want = data.invKey || '', _tries = 0;
-      var _show = function () {
+      var _go = function () {
         var list = (window._pendingInvites || []).filter(function (i) { return !_want || i.key === _want; });
         if (list.length) {
-          try { window._inviteBannerSnoozed[list[0]._key] = 0; } catch (e) {}
-          var cur = document.getElementById('inv-banner'); if (cur) cur.remove();
-          _syncInviteBanner(list);
+          var inv = list.slice().sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); })[0];
+          var crew = inv.circle || data.crew === '1';
+          if (crew && inv.key) {
+            if (!inv.circle) inv.circle = true;
+            window._acceptCircleInvite(inv._key);
+            try { if (window._renderCrewsSection) window._renderCrewsSection(); } catch (e) {}
+            setTimeout(function () { try { window._openCrew(inv.key); } catch (e) {} }, 900);
+          } else {
+            window._acceptInvite(inv._key);
+          }
           return;
         }
-        if (++_tries < 15) setTimeout(_show, 1000);
+        if (++_tries < 15) setTimeout(_go, 1000);
       };
-      _show();
+      _go();
       return;
     }
     var grp = data.group || ''; var type = data.type || '';
@@ -13817,6 +13827,26 @@ window._retryCrewSync = function (btn) {
   };
   if (window._pullAccountNow) window._pullAccountNow(done); else done(false);
 };
+// 1014: waiting crew invites, shown at the top of the Crews tab so a missed notification is not a
+// missed invite ("can crew requests be seen somewhere in case you miss it?", Jace 2026-11-14).
+// Before this they only showed on the Quick join tab, and Tyler was looking at Crews. One card
+// per crew (newest invite), with Accept and Dismiss.
+function _crewInviteCards() {
+  try {
+    var seen = {}, out = [];
+    (window._pendingInvites || []).slice().sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }).forEach(function (inv) {
+      if (!inv.circle || !inv.key || seen[inv.key]) return;
+      seen[inv.key] = 1;
+      out.push('<div style="background:color-mix(in srgb, var(--tint) 10%, transparent);border:1px solid var(--accent);border-radius:12px;padding:11px 13px;margin-bottom:9px">' +
+        '<div style="font-size:13.5px;color:var(--text);line-height:1.4"><strong>' + _escHtml(inv.fromName || 'Someone') + '</strong> invited you to the Crew <strong style="color:var(--accent)">' + _escHtml(inv.room || inv.key) + '</strong></div>' +
+        '<div style="display:flex;gap:8px;margin-top:9px">' +
+          '<button type="button" onclick="window._acceptCircleInvite(\'' + _escHtml(inv._key) + '\');setTimeout(function(){window._renderCrewsSection()},300)" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:9px;color:#0d1117;font-size:13.5px;font-weight:800;cursor:pointer">Accept</button>' +
+          '<button type="button" onclick="window._dismissInvite(\'' + _escHtml(inv._key) + '\')" style="padding:10px 14px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13.5px;cursor:pointer">Dismiss</button>' +
+        '</div></div>');
+    });
+    return out.join('');
+  } catch (e) { return ''; }
+}
 window._renderCrewsSection = function () {
   try { window._renderHomeAnchor(); } catch (e) {}
   try { window._renderHubCounts(); } catch (e) {}
@@ -13829,6 +13859,7 @@ window._renderCrewsSection = function () {
     // the worst version of this. Offer the retry.
     list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>'
       + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>';
+    list.innerHTML = _crewInviteCards() + list.innerHTML;   // 1014
     // 1013: the sign-in/sync diagnostics that used to print here in a console font showed every
     // new user their account id and a raw sync log ("all kinds of log data", Jace 2026-11-14).
     // They are still in window._syncLog for debugging; they no longer go on the screen.
@@ -13855,6 +13886,7 @@ window._renderCrewsSection = function () {
       '<span class="room-join-arrow" aria-hidden="true" style="color:var(--muted);font-size:24px;line-height:1;flex-shrink:0">&#8250;</span>' +
     '</div>';
   }).join('');
+  list.innerHTML = _crewInviteCards() + list.innerHTML;   // 1014
 };
 window._openCrew = function (key, showLog) {
   try {
@@ -25292,6 +25324,7 @@ function _mergeInvites() {
     })
     .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
   _renderInviteInbox();
+  try { window._renderCrewsSection(); } catch (e) {}   // 1014: invites show on the Crews tab
   _selfHealCircleInvites();
 }
 // The synchronous _isCircleMember check above only catches the common case — it reads THIS
