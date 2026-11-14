@@ -522,6 +522,34 @@ app.post('/crew/remove', rateLimit(20, 60000), requireUser, async function (req,
   } catch (e) { res.json({ ok: false, reason: e.message }); }
 });
 
+// 1020: hand a phone from the ANONYMOUS guest session it started with to the account its owner
+// then signed in with. The app opens as an anonymous guest, the phone is registered to that
+// guest (gl/_devOwner), and the rule on _devOwner refuses any later change -- so a person who
+// signs in with Google minutes after installing can never again write their own location, roster
+// entry or anything else keyed to the phone (Tyler, 2026-11-14: installed 10:46, Google 10:48,
+// invisible all day). The rule is right to stop one REAL account taking a phone from another;
+// it was never meant to lock a phone to a throwaway guest. So: allowed only when the current
+// owner is an anonymous account (no sign-in providers). Anything else is refused.
+app.post('/device/claim', rateLimit(10, 60000), requireUser, async function (req, res) {
+  if (!adminDb || !fcmAdmin) return res.json({ ok: false, reason: 'no-admin' });
+  const uid = String((req.body || {}).uid || '');
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return res.status(400).json({ ok: false, reason: 'bad-uid' });
+  const me = req.authUid;
+  try {
+    const me0 = await fcmAdmin.auth().getUser(me);
+    if (!me0.providerData || !me0.providerData.length) return res.status(403).json({ ok: false, reason: 'caller-anonymous' });
+    const cur = (await adminDb.ref('gl/_devOwner/' + uid).get()).val();
+    const was = cur && cur.acct;
+    if (was && was !== me) {
+      let prev = null;
+      try { prev = await fcmAdmin.auth().getUser(was); } catch (e) { prev = null; }   // deleted account: free to claim
+      if (prev && prev.providerData && prev.providerData.length) return res.status(403).json({ ok: false, reason: 'owned-by-real-account' });
+    }
+    await adminDb.ref('gl/_devOwner/' + uid).set({ acct: me, ts: Date.now(), from: was || null });
+    res.json({ ok: true, from: was || null });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
+
 app.post('/room/delete', rateLimit(10, 60000), requireUser, async function (req, res) {
   const room = String(((req.body || {}).room) || '').trim();
   if (!room || !/^[a-z0-9_-]{1,64}$/i.test(room) || room.charAt(0) === '_') {

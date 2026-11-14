@@ -263,7 +263,18 @@ window._timedOnValue = function (orig) {
         if (current === u.uid) return;                    // already the account id
         var fb = window._fb; if (!fb || !fb.db) return;
         // 1) The mapping. Everything else in the app resolves device -> person through this.
-        try { fb.set(fb.ref(fb.db, 'gl/_devOwner/' + current), { acct: u.uid, ts: Date.now() }); } catch (e) {}
+        // 1020: refused when the phone is still registered to the anonymous guest it started as
+        // (the rule never lets a mapping change hands). The server checks the old owner really
+        // was a guest and moves it; a phone owned by a real account is left alone.
+        try {
+          fb.set(fb.ref(fb.db, 'gl/_devOwner/' + current), { acct: u.uid, ts: Date.now() }).catch(function () {
+            try {
+              u.getIdToken().then(function (tk) {
+                return fetch('/device/claim', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tk }, body: JSON.stringify({ uid: current }) });
+              }).catch(function () {});
+            } catch (e3) {}
+          });
+        } catch (e) {}
         // 2) Roster membership belongs to the PERSON, so move it off the device id. Only when
         //    the account row doesn't already exist — never clobber a real one.
         try {
@@ -5302,7 +5313,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1019;
+var APP_BUILD = 1020;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
