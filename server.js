@@ -1243,6 +1243,26 @@ app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, r
     ? fromName + ' invited you to ' + (crew ? 'the Crew "' + room + '"' : '"' + room + '"') + ' — open GroundLink to join.'
     : fromName + ' invited you to GroundLink — open the app to join.';
 
+  // 1018: also deliver the invite to the account actually SIGNED IN on that phone. The sender
+  // addresses the phone's device id and the device's registered owner account, but a phone can
+  // be signed in to a different account (Tyler: device registered to one account, signed in as
+  // another), and the inbox rule only lets you read inboxes of the account you are signed in as
+  // -- so every invite was invisible to him: no card, and a notification tap found nothing.
+  // The phone's own push sign-up (/push/register, /locpush/register) records that account.
+  if (adminDb && invKey) {
+    const rec = { key: invKey, room: room, fromName: fromName, ts: Date.now() };
+    if (crew) rec.circle = true;
+    if (b.from) rec.from = String(b.from).slice(0, 64);
+    try { const ik = (await adminDb.ref('gl/' + invKey + '/config/inviteKey').get()).val(); if (typeof ik === 'string') rec.ik = ik; } catch (e) {}
+    const extra = new Set();
+    for (const uid of uids) {
+      for (const node of ['_pushTokens', '_locSubs']) {
+        try { const a = (await adminDb.ref('gl/' + node + '/' + uid + '/authUid').get()).val(); if (a && uids.indexOf(a) < 0) extra.add(a); } catch (e) {}
+      }
+    }
+    for (const a of extra) { try { await adminDb.ref('gl/_invites/' + a).push(rec); } catch (e) {} }
+  }
+
   let sent = false;
   const seen = new Set();
   for (const uid of uids) {
