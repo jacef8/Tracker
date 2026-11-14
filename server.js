@@ -485,6 +485,43 @@ app.post('/locpush/register', rateLimit(20, 60000), requireUser, async function 
 //
 // Ownership is checked against config, not asserted by the caller: window._isRoomOwner is a
 // client-side flag and means nothing on this side of the wire.
+// 1016: take someone off a Crew's roster. The database rule on gl/<room>/members/<uid> lets only
+// that person (or their account) write their own entry, so the owner's "Remove from Crew" was
+// refused by Firebase every time -- the app said "removed" and the roster never changed (Jace,
+// 2026-11-14). The owner/admin check happens here instead, as /room/delete does, and the admin
+// SDK makes the change. Also clears their row, diag and access-list entry, and leaves the
+// config/removed marker that stops their own app from re-adding them.
+app.post('/crew/remove', rateLimit(20, 60000), requireUser, async function (req, res) {
+  if (!adminDb) return res.json({ ok: false, reason: 'no-db' });
+  const b = req.body || {};
+  const room = String(b.room || '').trim();
+  if (!room || !/^[a-z0-9_-]{1,64}$/i.test(room) || room.charAt(0) === '_') return res.status(400).json({ ok: false, reason: 'bad-room' });
+  const ids = (Array.isArray(b.uids) ? b.uids : []).map(function (u) { return String(u || ''); })
+    .filter(function (u) { return /^[A-Za-z0-9_-]{6,64}$/.test(u); }).slice(0, 4);
+  if (!ids.length) return res.status(400).json({ ok: false, reason: 'no-uid' });
+  let cfg = null;
+  try { cfg = (await adminDb.ref('gl/' + room + '/config').get()).val(); } catch (e) {}
+  const me = req.authUid;
+  let allowed = !!(cfg && (cfg.owner === me || (cfg.admins && cfg.admins[me])));
+  // An owner recorded by DEVICE id (older rooms) is matched through that device's account.
+  if (!allowed && cfg && cfg.owner) {
+    try { const acct = (await adminDb.ref('gl/_devOwner/' + cfg.owner + '/acct').get()).val(); if (acct === me) allowed = true; } catch (e) {}
+  }
+  if (!allowed) return res.status(403).json({ ok: false, reason: 'not-owner' });
+  try {
+    const upd = {};
+    for (const u of ids) {
+      upd['members/' + u] = null;
+      upd['users/' + u] = null;
+      upd['diag/' + u] = null;
+      upd['acl/' + u] = null;
+      upd['config/removed/' + u] = Date.now();
+    }
+    await adminDb.ref('gl/' + room).update(upd);
+    res.json({ ok: true, removed: ids.length });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
+
 app.post('/room/delete', rateLimit(10, 60000), requireUser, async function (req, res) {
   const room = String(((req.body || {}).room) || '').trim();
   if (!room || !/^[a-z0-9_-]{1,64}$/i.test(room) || room.charAt(0) === '_') {

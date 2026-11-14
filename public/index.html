@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1015;
+var APP_BUILD = 1016;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -24328,23 +24328,27 @@ window._rfConfirm = function () {
   try {
     if (kind === 'block') fbSet(fbRef(db, 'gl/' + groupName + '/config/banned/' + uid), { ts: Date.now(), by: userId });
     if (kind === 'crew') {
-      // Clear BOTH id forms. Membership may be recorded under their account (new) or a
-      // device id (pre-migration), and removing only the one the list happened to show
-      // would leave them a member under the other.
-      fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + uid));
-      try {
-        var _pidX = window._personId(uid);
-        if (_pidX && _pidX !== uid) {
-          fbRemove(fbRef(db, 'gl/' + groupName + '/members/' + _pidX));
-          fbSet(fbRef(db, 'gl/' + groupName + '/config/removed/' + _pidX), Date.now());
+      // 1016: done by the server. The database only lets a person delete their OWN roster entry,
+      // so these writes from the owner's phone were refused and the roster never changed, while
+      // the toast below said it had. Both id forms go: membership may be under their account
+      // (new) or a device id (pre-migration). The server also leaves config/removed, which stops
+      // their own app re-adding them, and takes them off the access list.
+      var _ids = [uid];
+      try { var _pidX = window._personId(uid); if (_pidX && _pidX !== uid) _ids.push(_pidX); } catch (e) {}
+      var _room = groupName;
+      window._glFetch('/crew/remove', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: _room, uids: _ids })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j && j.ok) {
+          try { _ids.forEach(function (x) { if (window._roomMembersRoster) delete window._roomMembersRoster[x]; }); } catch (e) {}
+          toast(nm + ' removed from this Crew', 2500);
+        } else {
+          toast('Couldn’t remove ' + nm + (j && j.reason === 'not-owner' ? ' — only the Crew’s owner or an admin can' : ' — try again'), 3500);
         }
-      } catch (e) {}
-      // Make the removal stick. Joining is automatic on entering the room, and the "only once"
-      // guard that protects Leave lives in the OTHER person's localStorage — which this device
-      // cannot write. Without a server-side marker their app would simply re-add them on its
-      // next snapshot, seconds after being removed. Kept under config, which is already
-      // writable under the current rules; a new sibling path would be denied.
-      fbSet(fbRef(db, 'gl/' + groupName + '/config/removed/' + uid), Date.now());
+      }).catch(function () { toast('Couldn’t remove ' + nm + ' — check your connection', 3500); });
+      try { window._evt('removed ' + nm + ' from the Crew'); } catch (e) {}
+      return;
     }
     fbRemove(fbRef(db, 'gl/' + groupName + '/users/' + uid));
     fbRemove(fbRef(db, 'gl/' + groupName + '/diag/' + uid));
