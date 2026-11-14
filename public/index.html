@@ -4024,7 +4024,7 @@ window._timedOnValue = function (orig) {
       </div>
     </div>
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Find people</div>
-    <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Type a name — finds anyone, even offline…" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
+    <input id="invite-search" type="search" inputmode="search" autocomplete="off" placeholder="Type a name — finds anyone, even offline…" onfocus="window._invitePickerCompact(true)" oninput="window._inviteSearch(this.value)" style="width:100%;padding:9px 11px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none" />
     <!-- Inviting a family one at a time is the common case and it was six taps per person.
          These invites are addressed to an ACCOUNT, not carried in a link, so there is no
          wrong-person risk in sending them in bulk -- each one can only be accepted by the
@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1016;
+var APP_BUILD = 1017;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -10891,6 +10891,24 @@ function _syncAlertsUI() {
 // alerts; we add push on top only where it's available.
 // Native app push via FCM (the WebView can't do Web Push). Needs the
 // @capacitor-firebase/messaging plugin — a no-op until the APK is rebuilt with it.
+// 1017: listen for notification TAPS from the moment the page runs. The listener used to be added
+// inside _registerFcm, which runs 5 s after launch (or on room entry) and only after the push
+// token came back -- so a tap that LAUNCHED the app arrived with nobody listening and was lost.
+// Tyler tapped crew invites over and over and nothing happened (2026-11-14).
+window._wireFcmTaps = function () {
+  try {
+    if (window._fcmTapWired) return;
+    var cap = window.Capacitor;
+    var FM = cap && cap.Plugins && cap.Plugins.FirebaseMessaging;
+    if (!FM || !FM.addListener) return;
+    window._fcmTapWired = true;
+    FM.addListener('notificationActionPerformed', function (e) {
+      try { window._handleNotifOpen((e && e.notification && e.notification.data) || {}); } catch (x) {}
+    });
+  } catch (e) {}
+};
+try { window._wireFcmTaps(); } catch (e) {}
+document.addEventListener('DOMContentLoaded', function () { try { window._wireFcmTaps(); } catch (e) {} });
 async function _registerFcm(silent) {
   try {
     var Cap = window.Capacitor;
@@ -10914,9 +10932,9 @@ async function _registerFcm(silent) {
             { fcm: token, name: userName, dev: (typeof _deviceLabel === 'function' ? _deviceLabel() : ''), prefs: _notifPrefs(), ts: Date.now() });
     }
     // Tap a system notification → route into the room; foreground arrival → in-app toast.
+    window._wireFcmTaps();
     if (!window._fcmListenersAdded) {
       window._fcmListenersAdded = true;
-      try { FM.addListener('notificationActionPerformed', function (e) { try { window._handleNotifOpen((e && e.notification && e.notification.data) || {}); } catch (x) {} }); } catch (e) {}
       try { FM.addListener('notificationReceived', function (e) { try { _onForegroundNotif((e && e.notification) || {}); } catch (x) {} }); } catch (e) {}
       // Bump: a silent data push from /bump asking THIS device for one fresh fix right now.
       // On iOS the native AppDelegate handles it even when the UI never loaded; this JS path
@@ -24834,7 +24852,41 @@ window._addPeopleHere = function () {
     if (sub) sub.textContent = 'Search anyone by name \u2014 including people from your other crews \u2014 or send a link.';
   } catch (e) {}
 };
+// 1017: typing a name in Add people. The card sat in the middle of the screen and the phone
+// keyboard covered the matching names below the search box (Jace, 2026-11-14). While searching,
+// the link/text/email row folds away, the card moves to the top, and its height follows the
+// space the keyboard leaves (visualViewport), so the names are always above the keyboard.
+window._invitePickerCompact = function (on) {
+  try {
+    var m = document.getElementById('invite-picker-modal'); if (!m) return;
+    var card = m.firstElementChild;
+    var sr = document.getElementById('invite-picker-share-row');
+    var fit = function () {
+      try {
+        var vv = window.visualViewport;
+        var h = vv ? vv.height : window.innerHeight;
+        if (card) card.style.maxHeight = Math.max(220, h - 24) + 'px';
+        m.style.height = (vv ? vv.height : window.innerHeight) + 'px';
+      } catch (e) {}
+    };
+    if (on) {
+      m.style.alignItems = 'flex-start';
+      m.style.paddingTop = '12px';
+      if (sr) sr.style.display = 'none';
+      fit();
+      if (window.visualViewport && !window._invFitOn) { window._invFitOn = fit; window.visualViewport.addEventListener('resize', fit); }
+    } else {
+      m.style.alignItems = 'center';
+      m.style.paddingTop = '';
+      m.style.height = '';
+      if (card) card.style.maxHeight = '84vh';
+      if (window._invFitOn && window.visualViewport) { window.visualViewport.removeEventListener('resize', window._invFitOn); }
+      window._invFitOn = null;
+    }
+  } catch (e) {}
+};
 window._openInvitePicker = function() {
+  try { window._invitePickerCompact(false); } catch (e) {}
   window._invitePickerMode = 'room';
   window._circleInviteTarget = null;
   window._inviteLinkRoom = groupName;
@@ -24854,6 +24906,7 @@ window._openInvitePicker = function() {
 // already showing underneath — never reopens Room Info even if that's where we came from, since
 // Close is a deliberate "I'm done" action, not "take me back".
 window._closeInvitePicker = function (goBack) {
+  try { window._invitePickerCompact(false); } catch (e) {}
   // Opened from the People sheet: going back means back to that list, not to Room Info.
   try {
     if (goBack && window._invitePickerBackTo === 'people') {
@@ -24877,6 +24930,7 @@ window._closeInvitePicker = function (goBack) {
 // It's also no longer true: a link recipient joins the room, gets the Crew disclosure, and
 // becomes a member when they accept it. The link is a legitimate way in, so it's shown.
 window._openCircleInvitePicker = function(circleKey, circleName) {
+  try { window._invitePickerCompact(false); } catch (e) {}   // 1017
   window._invitePickerMode = 'circle';
   window._circleInviteTarget = { key: circleKey, name: circleName || circleKey };
   try { window._ensureInviteKey(circleKey).then(function () { try { window._refreshInviteLinkBox(); } catch (e) {} }); } catch (e) {}
@@ -25542,7 +25596,14 @@ window._acceptCircleInvite = function(key) {
   var src = inv._src || uid;
   try { f.remove(f.ref(f.db, 'gl/_invites/' + src + '/' + key)); } catch (e) {}
   try { if (inv.ik) window._grantSelfWithKey(inv.key, inv.ik); } catch (e) {}
-  try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid), { name: nm, addedAt: Date.now(), addedBy: inv.from || null }); } catch (e) {}
+  // 1017: membership goes under the SIGNED-IN account. The rule on members/<id> allows only that
+  // account or a device it owns, and this phone's device id can belong to a different account
+  // than the one signed in (Tyler: device owned by one account, signed in as another), so the
+  // device-id write was refused and Accept silently did nothing. The device id is still tried.
+  var _au = ''; try { _au = _authUid(); } catch (e) {}
+  var _mrec = { name: nm, addedAt: Date.now(), addedBy: inv.from || null };
+  if (_au) { try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + _au), _mrec).catch(function () {}); } catch (e) {} }
+  if (_au !== uid) { try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid), _mrec).catch(function () {}); } catch (e) {} }
   var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
   try { _registerFavSub(inv.key, inv.room || inv.key, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
   // Circles work with no GPS watch running yet if this is accepted from a cold home screen —
