@@ -1194,6 +1194,8 @@ app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, r
   const fromName = String(b.fromName || 'Someone').slice(0, 60);
   const room = String(b.room || '').slice(0, 60);
   const crew = !!b.crew;
+  // 1013: the room key rides along so tapping the notification opens THIS invite's Accept prompt.
+  const invKey = String(b.key || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
   // Both the device uid and the account uid — the caller fans out to both inboxes, and we
   // don't know which of the two (if either) actually carries a push subscription.
   const uids = Array.isArray(b.uids) ? b.uids.slice(0, 4).map(u => String(u || '')).filter(Boolean) : [];
@@ -1217,6 +1219,7 @@ app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, r
         await fcmAdmin.messaging().send({
           token: rec.fcm,
           notification: { title: title, body: body },
+          data: { type: 'invite', invKey: invKey, crew: crew ? '1' : '0' },
           android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
           apns: { payload: { aps: { sound: 'default' } } }
         });

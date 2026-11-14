@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1012;
+var APP_BUILD = 1013;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -12484,6 +12484,23 @@ window._toggleNotifType = function (type) {
 window._handleNotifOpen = function (data) {
   try {
     data = data || {};
+    // 1013: an invite notification opens that invite's Accept prompt. The invite list streams in
+    // from Firebase, so wait up to 15 s for it to arrive on a cold start.
+    if (data.type === 'invite') {
+      var _want = data.invKey || '', _tries = 0;
+      var _show = function () {
+        var list = (window._pendingInvites || []).filter(function (i) { return !_want || i.key === _want; });
+        if (list.length) {
+          try { window._inviteBannerSnoozed[list[0]._key] = 0; } catch (e) {}
+          var cur = document.getElementById('inv-banner'); if (cur) cur.remove();
+          _syncInviteBanner(list);
+          return;
+        }
+        if (++_tries < 15) setTimeout(_show, 1000);
+      };
+      _show();
+      return;
+    }
     var grp = data.group || ''; var type = data.type || '';
     if (!grp) return;
     // A pin notification carries the spot in its link.
@@ -13811,21 +13828,10 @@ window._renderCrewsSection = function () {
     // and telling someone with four crews that they have none -- with no way to argue -- is
     // the worst version of this. Offer the retry.
     list.innerHTML = '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;padding:2px">You&rsquo;re not in any Crews yet. A Crew keeps everyone visible to each other all the time, not just while a room is open &mdash; start one under Rooms.</div>'
-      + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>'
-      + '<div style="margin-top:9px;font-size:11.5px;line-height:1.6;color:var(--muted);font-family:ui-monospace,monospace;white-space:pre-wrap">'
-        + (function () {
-            var L = [];
-            try {
-              var cu = window._fb && window._fb.auth && window._fb.auth.currentUser;
-              L.push('signed in : ' + (cu ? (cu.isAnonymous ? 'anonymous' : (cu.email || cu.uid.slice(0, 8))) : 'no'));
-              L.push('account id: ' + (cu && cu.uid ? cu.uid.slice(0, 10) : '(none)'));
-              L.push('pull fn   : ' + (window._pullAccountNow ? 'ready' : 'MISSING'));
-              var lg = window._syncLog || [];
-              L.push(lg.length ? lg.join('\n') : 'no sync attempt recorded yet');
-            } catch (e) { L.push('diag error: ' + (e && e.message)); }
-            return _escHtml(L.join('\n'));
-          })()
-      + '</div>';
+      + '<button type="button" onclick="window._retryCrewSync && window._retryCrewSync(this)" style="margin-top:9px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">Had crews before? Re-sync this device</button>';
+    // 1013: the sign-in/sync diagnostics that used to print here in a console font showed every
+    // new user their account id and a raw sync log ("all kinds of log data", Jace 2026-11-14).
+    // They are still in window._syncLog for debugging; they no longer go on the screen.
     return;
   }
   var detail = window._talkDetail || {};
@@ -25032,14 +25038,14 @@ function _renderInvitePeople(q) {
 // send an actual notification so an invite reaches someone who doesn't have the app open.
 // Fire-and-forget: the invite is already committed by the time this runs, so a failure here
 // costs a notification, never the invite itself.
-function _pushInvite(uids, roomLabel, isCrew) {
+function _pushInvite(uids, roomLabel, isCrew, roomKey) {
   try {
     var list = (uids || []).filter(Boolean);
     if (!list.length) return;
     window._glFetch('/invitePush', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids: list, fromName: userName || 'Someone', room: roomLabel || '', crew: !!isCrew })
+      body: JSON.stringify({ uids: list, fromName: userName || 'Someone', room: roomLabel || '', crew: !!isCrew, key: roomKey || '' })
     }).catch(function () {});
   } catch (e) {}
 }
@@ -25079,6 +25085,10 @@ window._sendRoomInvite = function(uid, btn) {
   // survived joining and sat on the home screen forever. Circle invites always had `key`;
   // room invites did not.
   var rec = { room: label, key: groupName, from: userId, fromName: userName, ts: Date.now() };
+  // 1013: inviting from inside a CREW is a crew invite. Without the marker the card said Join,
+  // which only opened the room -- Tyler accepted nothing and was never added (2026-11-14).
+  var _isCrew = false; try { _isCrew = _riIsCircle(); } catch (e) {}
+  if (_isCrew) rec.circle = true;
   if (pin) rec.pin = pin;
   if (window._inviteKeys[groupName]) rec.ik = window._inviteKeys[groupName];
   _grantInvitee(groupName, uid);
@@ -25099,7 +25109,7 @@ window._sendRoomInvite = function(uid, btn) {
     try {
       var _acct = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (_acct && _acct !== uid) { var r2 = fbPush(fbRef(db, 'gl/_invites/' + _acct)); fbSet(r2, rec); }
-      _pushInvite([uid, _acct], label, false);
+      _pushInvite([uid, _acct], label, _isCrew, groupName);
     } catch (e) {}
     // An in-app invite is addressed to a DEVICE id. If that id is stale — the person reinstalled,
     // switched phones, or it came from an old presence record — the invite lands in an inbox
@@ -25213,7 +25223,7 @@ window._sendCircleInvite = function(uid, btn) {
     try {
       var _acct2 = window._devOwnerAll && window._devOwnerAll[uid] && window._devOwnerAll[uid].acct;
       if (_acct2 && _acct2 !== uid) { var r3 = fb.push(fb.ref(fb.db, 'gl/_invites/' + _acct2)); fb.set(r3, rec); }
-      _pushInvite([uid, _acct2], t.name, true);
+      _pushInvite([uid, _acct2], t.name, true, t.key);
     } catch (e) {}
     try { window._circleInviteMembers[uid] = { pending: true }; } catch (e) {}   // optimistic "already invited" state
     _markInvited(t.key, uid, btn);
