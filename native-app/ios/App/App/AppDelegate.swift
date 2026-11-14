@@ -223,6 +223,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         startActivityUpdates()
         syncMonitoredRegions()   // from the UserDefaults cache — works on UI-less relaunches too
         restoreHereRegion()      // and the anchor on the last known position, before any fix lands
+        // 1.0.17: an install updated from 1.0.16 already has a write config; mirror it now so
+        // the LocationPush extension can answer before the app is next opened.
+        if GLShared.loadConfigJSON() == nil, let cfg = UserDefaults.standard.string(forKey: "gl_native_write_cfg") {
+            GLShared.saveConfig(cfg)
+        }
+        startLocationPushes()    // 1.0.17: token for the server's location push (see below)
         setupVoip()              // PushKit VoIP registration + CallKit provider (locked-phone PTT)
         setupPushToTalk()        // iOS 16+ Push to Talk framework (ringless walkie-talkie)
         registerBgRefresh()      // BGTaskScheduler.register MUST happen before this method returns
@@ -435,6 +441,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             if !vt.isEmpty {
                 wv.evaluateJavaScript("window._onVoipToken && window._onVoipToken('\(vt)')", completionHandler: nil)
             }
+            if let lt = UserDefaults.standard.string(forKey: "gl_locpush_token"), !lt.isEmpty {
+                wv.evaluateJavaScript("window._onLocPushToken && window._onLocPushToken('\(lt)')", completionHandler: nil)
+            }
             wv.evaluateJavaScript("window.__nativeSync ? window.__nativeSync() : ''") { result, _ in
                 guard let json = result as? String, !json.isEmpty else { return }
                 UserDefaults.standard.set(json, forKey: "gl_native_places")
@@ -457,6 +466,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                     let rt = (o["rt"] as? String) ?? ""
                     if rt.isEmpty, let old = self.nativeWriteConfig(), !(((old["rt"] as? String) ?? "").isEmpty) { return }
                     UserDefaults.standard.set(json, forKey: "gl_native_write_cfg")
+                    GLShared.saveConfig(json)   // 1.0.17: for the LocationPush extension
                 }
             }
             takeWriteConfig()
@@ -1597,6 +1607,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     // MARK: - PushKit (VoIP) + CallKit
+
+    /// 1.0.17: Apple's location push (Location Push Service Extension entitlement, granted
+    /// Nov 2026). The token goes to the page, which files it with the server; the server's
+    /// quiet-phone sweep then wakes the LocationPush extension, which reports one fix even when
+    /// this app has been closed. Without the entitlement on the App ID the call just fails.
+    private func startLocationPushes() {
+        guard #available(iOS 15.0, *), let mgr = bgLocationManager else { return }
+        mgr.startMonitoringLocationPushes { [weak self] data, error in
+            guard let data = data, error == nil else { return }
+            let hex = data.map { String(format: "%02x", $0) }.joined()
+            UserDefaults.standard.set(hex, forKey: "gl_locpush_token")
+            DispatchQueue.main.async {
+                self?.mainWebView()?.evaluateJavaScript("window._onLocPushToken && window._onLocPushToken('\(hex)')", completionHandler: nil)
+            }
+        }
+    }
 
     private func setupVoip() {
         // CallKit provider — the native call UI that lets audio ring through a locked phone.

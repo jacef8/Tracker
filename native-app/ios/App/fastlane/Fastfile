@@ -1,6 +1,10 @@
 default_platform(:ios)
 
+require_relative 'locpush_target'
+
 APP_IDENTIFIER = "com.groundlink.ios".freeze
+# 1.0.17: the Location Push Service Extension. Its own App ID, its own profile.
+LOCPUSH_IDENTIFIER = "com.groundlink.ios.locpush".freeze
 
 platform :ios do
   desc "Build and upload a build to TestFlight"
@@ -15,10 +19,15 @@ platform :ios do
 
     # Keeps TestFlight build numbers monotonically increasing without hand-editing the
     # Xcode project every release — mirrors the Android side's APP_BUILD discipline.
+    build_number = ENV["BUILD_NUMBER"] || Time.now.strftime("%Y%m%d%H")
     increment_build_number(
       xcodeproj: "App.xcodeproj",
-      build_number: ENV["BUILD_NUMBER"] || Time.now.strftime("%Y%m%d%H")
+      build_number: build_number
     )
+
+    # 1.0.17: add (or refresh) the LocationPush extension target. See locpush_target.rb for why
+    # this happens at build time rather than in a committed project file.
+    LocPushTarget.ensure!(File.expand_path("../App.xcodeproj", __dir__), build_number)
 
     # Fetch the App Store profile — creating or regenerating it as needed — instead of
     # decoding one that was captured into a secret months ago.
@@ -38,6 +47,14 @@ platform :ios do
       app_identifier: APP_IDENTIFIER,
       force: true
     )
+    app_profile = lane_context[SharedValues::SIGH_NAME]
+    # The extension's profile. Its App ID is registered by the workflow step before this lane.
+    sigh(
+      api_key: api_key,
+      app_identifier: LOCPUSH_IDENTIFIER,
+      force: true
+    )
+    locpush_profile = lane_context[SharedValues::SIGH_NAME]
 
     # Point the Xcode project at the profile sigh just made.
     #
@@ -58,7 +75,17 @@ platform :ios do
       build_configurations: ["Release"],
       bundle_identifier: APP_IDENTIFIER,
       code_sign_identity: "Apple Distribution",
-      profile_name: lane_context[SharedValues::SIGH_NAME]
+      profile_name: app_profile
+    )
+    update_code_signing_settings(
+      path: "App.xcodeproj",
+      use_automatic_signing: false,
+      team_id: "XM3MLRA366",
+      targets: [LocPushTarget::NAME],
+      build_configurations: ["Release"],
+      bundle_identifier: LOCPUSH_IDENTIFIER,
+      code_sign_identity: "Apple Distribution",
+      profile_name: locpush_profile
     )
 
     build_app(
@@ -69,7 +96,8 @@ platform :ios do
         provisioningProfiles: {
           # Whatever sigh just installed, by name — no PROVISIONING_PROFILE_NAME secret that
           # can drift out of sync with the profile actually in use.
-          APP_IDENTIFIER => lane_context[SharedValues::SIGH_NAME]
+          APP_IDENTIFIER => app_profile,
+          LOCPUSH_IDENTIFIER => locpush_profile
         }
       }
     )

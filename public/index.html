@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1010;
+var APP_BUILD = 1011;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -12141,6 +12141,8 @@ window.__nativeWriteConfig = function () {
       priv: (typeof _devicePrivate === 'function' && _devicePrivate()) ? 1 : 0,
       spdH: (typeof _shareSpeed === 'function' && !_shareSpeed()) ? 1 : 0,
       rooms: _iosWriterIsFixed() ? Object.keys(rooms) : [],
+      // 1011: sharing paused -- the iPhone's LocationPush extension (1.0.17) stays silent.
+      off: (typeof locationHidden !== 'undefined' && locationHidden) ? 1 : 0,
       // For the native iOS background reporter's trail writes (glh/<crew>/<uid>/<date>): which
       // rooms are Crews (history is crew-only) and whether this person keeps their trail on.
       circles: (function () { try { return Object.keys(_getCircles() || {}); } catch (e) { return []; } })(),
@@ -16152,6 +16154,7 @@ function enterMap(name, group, uid) {
     try { if (window._maybeRejoinChannel) window._maybeRejoinChannel(); } catch (e) {}
     try { if (window._reportCoverageGap) window._reportCoverageGap(); } catch (e) {}  // how long was this app dead?
     try { if (window._registerVoipToken) window._registerVoipToken(); } catch (e) {}   // (re)file iOS VoIP token now that db+uid are ready
+    try { if (window._registerLocPush) window._registerLocPush(); } catch (e) {}       // 1011: and the location-push token
     try { if (window._registerPttToken) window._registerPttToken(); } catch (e) {}     // (re)file iOS 16 Push-to-Talk ephemeral token
     try { if (window._listenDevices) _listenDevices(); } catch (e) {}   // private devices (kid's watch) on the map
     try { if (window._listenCircles) _listenCircles(); } catch (e) {}   // Family Circles — show regardless of which room this is
@@ -20077,6 +20080,8 @@ function startLocationSharing() {
         native: _isNativeApp(),
         uaTok: /GroundLinkNative/i.test(navigator.userAgent || ''),
         mapErr: window._mapErr || '',
+        // 1011: the iPhone's location-push token: 'filed', the reason it was not, or '' (none).
+        locPush: window._locPushToken ? (window._locPushFiled ? 'filed' : (window._locPushErr || 'pending')) : '',
         cap: !!window.Capacitor,
         bgStarted: !!window._bgGeoStarted,
         bgErr: window._bgGeoError || '',
@@ -34109,6 +34114,37 @@ window._registerVoipToken = function () {
     var t = window._voipToken || localStorage.getItem('gl_voip_token') || '';
     if (!t || !db || !userId) return;
     fbSet(fbRef(db, 'gl/_voipSubs/' + userId), { token: t, name: (userName || ''), ts: Date.now() });
+  } catch (e) {}
+};
+// 1011: iPhone location push (iOS app 1.0.17+). The app hands over the token Apple gives it
+// for location pushes; it is filed with the server, which uses it to wake this phone's
+// LocationPushService extension when the phone goes quiet -- even with the app closed. Filed
+// once per page per token and device id; re-filed on room entry in case sign-in came later.
+window._registerLocPush = function () {
+  try {
+    var t = window._locPushToken || localStorage.getItem('gl_locpush_token') || '';
+    var uid = (typeof userId !== 'undefined' && userId) || localStorage.getItem('gl_uid') || '';
+    if (!t || !uid) return;
+    var key = t + '|' + uid;
+    if (window._locPushFiled === key) return;
+    var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+    if (!u) return;                                   // needs a sign-in; room entry retries
+    window._locPushFiled = key;
+    window._glFetch('/locpush/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: uid, token: t })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) { window._locPushFiled = ''; window._locPushErr = (j && j.reason) || 'failed'; }
+      else window._locPushErr = '';
+    }).catch(function () { window._locPushFiled = ''; window._locPushErr = 'network'; });
+  } catch (e) {}
+};
+window._onLocPushToken = function (token) {
+  try {
+    if (!token) return;
+    window._locPushToken = token;
+    try { localStorage.setItem('gl_locpush_token', token); } catch (e) {}
+    window._registerLocPush();
   } catch (e) {}
 };
 window._onVoipToken = function (token) {

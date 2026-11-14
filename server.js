@@ -154,6 +154,17 @@ function sendVoipPush(deviceToken, data) { return _sendApns(deviceToken, data, '
 // Push to Talk push (iOS 16+, ringless). Topic <bundle>.voip-ptt, push-type pushtotalk.
 function sendPttPush(deviceToken, data) { return _sendApns(deviceToken, data, 'pushtotalk', APNS_BUNDLE + '.voip-ptt'); }
 
+// ─── Location push (iOS 15+, Apple's Location Push Service Extension) ───────────────────────
+// Apple granted the entitlement in Nov 2026 (case 22674307). A push of type `location` to the
+// topic <bundle>.location-query runs the app's LocationPushService extension even when the app
+// itself is closed or has been killed in the background: it takes one fix and writes the row.
+// The ordinary silent bump below only reaches an iPhone whose app iOS still keeps in memory,
+// which is why Jax, Lexi and Vanesa went dark for hours on 2026-11-13 while sitting still.
+// Tokens are filed by the app at gl/_locSubs/<uid> through /locpush/register.
+// LOCPUSH_OFF=1 on the host turns the location push off without a redeploy.
+const LOCPUSH_ENABLED = process.env.LOCPUSH_OFF !== '1';
+function sendLocationPush(deviceToken) { return _sendApns(deviceToken, {}, 'location', APNS_BUNDLE + '.location-query'); }
+
 // ─── Push-to-wake: silently wake a sleeping watch (or any device) on demand ─────────
 // The phone calls this when the owner taps Talk or Locate. We send a HIGH-PRIORITY DATA
 // FCM (no notification UI) to the device's token, which the watch's WakeMessagingService
@@ -358,10 +369,14 @@ async function findSubsForUid(uid) {
 // mechanic. Invisible on the target's phone; wakes from suspension and from system
 // termination, but nothing can wake a user force-quit (that's what /nudge is for).
 async function sendBump(uid) {
-  if (!fcmAdmin) return { ok: false, reason: 'fcm-not-configured' };
   if (!uid) return { ok: false, reason: 'no-uid' };
+  // An iPhone that filed a location-push token gets that FIRST: it is the one push that still
+  // gets a position out of a phone whose app iOS has closed. The ordinary bump still goes too --
+  // it costs nothing and wakes an app that is merely suspended.
+  const lp = await _sendLocPushFor(uid);
+  if (!fcmAdmin) return lp.sent ? { ok: true, reason: 'lp' } : { ok: false, reason: 'fcm-not-configured' + lp.note };
   const rec = await findSubsForUid(uid);
-  if (!rec || !rec.fcm) return { ok: false, reason: 'no-token' };
+  if (!rec || !rec.fcm) return lp.sent ? { ok: true, reason: 'lp' } : { ok: false, reason: 'no-token' + lp.note };
   try {
     await fcmAdmin.messaging().send({
       token: rec.fcm,
@@ -372,9 +387,56 @@ async function sendBump(uid) {
         payload: { aps: { 'content-available': 1 } }
       }
     });
-    return { ok: true };
-  } catch (e) { return { ok: false, reason: e.message }; }
+    return { ok: true, reason: lp.sent ? 'sent+lp' : 'sent' };
+  } catch (e) { return lp.sent ? { ok: true, reason: 'lp' } : { ok: false, reason: e.message + lp.note }; }
 }
+
+// The location push half of a bump. note is appended to a failure reason so gl/_wake shows why.
+async function _sendLocPushFor(uid) {
+  if (!LOCPUSH_ENABLED || !apnsVoipReady || !adminDb) return { sent: false, note: '' };
+  let sub = null;
+  try { sub = await _dbGet('gl/_locSubs/' + uid); } catch (e) {}
+  if (!sub || !sub.t) return { sent: false, note: '' };
+  try {
+    await sendLocationPush(sub.t);
+    try { await adminDb.ref('gl/_locSubs/' + uid).update({ lastPush: Date.now(), lastResult: 'sent' }); } catch (e) {}
+    return { sent: true, note: '' };
+  } catch (e) {
+    const msg = String(e.message || e);
+    // Apple's answer for a token that will never work again: the app was deleted, or the token
+    // belongs to another build. Drop it; the app files a fresh one the next time it opens.
+    if (/ 410 |BadDeviceToken|Unregistered|DeviceTokenNotForTopic/.test(msg)) {
+      try { await _dbDelete('gl/_locSubs/' + uid); } catch (e2) {}
+    } else {
+      try { await adminDb.ref('gl/_locSubs/' + uid).update({ lastPush: Date.now(), lastResult: msg.slice(0, 120) }); } catch (e2) {}
+    }
+    return { sent: false, note: ' (lp: ' + msg.slice(0, 60) + ')' };
+  }
+}
+
+// The app files its location-push token here. Signed-in callers only. A token on file for a
+// device can only be replaced by the account that filed it, or by that device's owner account.
+// Nothing reported through a location push is taken from this record: the extension on the
+// phone writes as the person signed in there, so a token filed under the wrong id could only
+// ever wake a phone, never put a position on somebody else's row.
+app.post('/locpush/register', rateLimit(20, 60000), requireUser, async function (req, res) {
+  if (!adminDb) return res.json({ ok: false, reason: 'no-db' });
+  const b = req.body || {};
+  const uid = String(b.uid || '');
+  const token = String(b.token || '').toLowerCase();
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return res.status(400).json({ ok: false, reason: 'bad-uid' });
+  if (!/^[0-9a-f]{32,256}$/.test(token)) return res.status(400).json({ ok: false, reason: 'bad-token' });
+  try {
+    const cur = await _dbGet('gl/_locSubs/' + uid);
+    if (cur && cur.authUid && cur.authUid !== req.authUid) {
+      const own = await _dbGet('gl/_devOwner/' + uid + '/acct');
+      if (own !== req.authUid) return res.status(403).json({ ok: false, reason: 'not-your-device' });
+    }
+    await adminDb.ref('gl/_locSubs/' + uid).update({ t: token, authUid: req.authUid, ts: Date.now() });
+    locSubIds.add(uid);
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
 
 // ─── DELETE A ROOM, FOR GOOD ─────────────────────────────────────────────────
 // Deleting a room from the app never stuck. The client removed gl/<room> itself, but any
@@ -458,9 +520,16 @@ const WAKE_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;   // a week of silence is unins
 // one that mattered. Every 10 minutes was 6 an hour. iPhones (they report oss.iosVer) are poked
 // at most every 20 minutes; Android has no such budget for high-priority data messages.
 const WAKE_IOS_COOLDOWN_MS = 20 * 60 * 1000;
+// An iPhone that can take a location push is woken by that instead, which Apple meters on its
+// own and does not count against the background-push budget above. Jace chose 15 minutes of
+// silence and at most one location push per 15 minutes (2026-11-14). locSubIds is refreshed
+// at the start of each sweep, so the cooldown follows a token being filed or dropped.
+const WAKE_IOS_LP_COOLDOWN_MS = 15 * 60 * 1000;
+let locSubIds = new Set();
 function _isIos(u) { return !!(u && u.oss && u.oss.iosVer); }
-function _wakeCooldown(u, age) {
+function _wakeCooldown(u, age, uid) {
   if (age > WAKE_SLOW_AFTER_MS) return WAKE_SLOW_COOLDOWN_MS;
+  if (_isIos(u) && uid && LOCPUSH_ENABLED && locSubIds.has(uid)) return WAKE_IOS_LP_COOLDOWN_MS;
   return _isIos(u) ? WAKE_IOS_COOLDOWN_MS : WAKE_COOLDOWN_ANDROID_MS;
 }
 function _wakeStale(u) { return _isIos(u) ? WAKE_STALE_MS : WAKE_STALE_ANDROID_MS; }
@@ -516,7 +585,7 @@ function _wakeLaneOf(uid, age) {
 // an hour whatever its age -- those pushes were going nowhere, and on iOS they count against
 // the budget of the phones that DO answer. One answer puts it back on the normal cadence.
 function _wakeCooldownFor(uid, u, age) {
-  return _wakeLaneOf(uid, age) === 'ignored' ? WAKE_SLOW_COOLDOWN_MS : _wakeCooldown(u, age);
+  return _wakeLaneOf(uid, age) === 'ignored' ? WAKE_SLOW_COOLDOWN_MS : _wakeCooldown(u, age, uid);
 }
 // One update() per event: the record fields, the new log entry and the prune of anything past
 // WAKE_LOG_KEEP, all in the same write. The existing log keys are read once per device per
@@ -558,7 +627,7 @@ async function _wakeJudge(uid, a, now, age) {
     // latencySec is the phone's clock minus ours; a negative value is a phone running behind.
     entry = { result: result, latencySec: Math.round((a.heard - p.at) / 1000), ageSec: Math.round(p.age / 1000),
               fix: a.fixTs > p.fixTs };   // false: woke and heartbeat, no new position
-  } else if (now - p.at >= _wakeCooldown(a.u, p.age)) {
+  } else if (now - p.at >= _wakeCooldown(a.u, p.age, uid)) {
     result = 'ignored';
     wakeStreaks.set(uid, (wakeStreaks.get(uid) || 0) + 1);
     entry = { result: result, ageSec: Math.round(p.age / 1000) };
@@ -727,6 +796,8 @@ async function keepAliveSweep() {
   let rooms;
   try { rooms = await _roomNames(); } catch (e) { console.error('keep-alive: no room list —', e.message); return; }
   const now = Date.now();
+  // Which iPhones can take a location push (their cooldown is 15 minutes, not 20).
+  try { locSubIds = new Set(Object.keys((await _dbGet('gl/_locSubs')) || {})); } catch (e) {}
   // A phone is one thing however many crews it is in, so the walk only collects and the wake
   // decisions come after it, once per device. alive: the phone's newest clocks across EVERY row
   // it has, fresh or stale -- what the judge compares (WAKE OUTCOMES, point 3). targets: the
