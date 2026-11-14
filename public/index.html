@@ -5302,7 +5302,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1018;
+var APP_BUILD = 1019;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -25604,6 +25604,10 @@ window._acceptCircleInvite = function(key) {
   var _mrec = { name: nm, addedAt: Date.now(), addedBy: inv.from || null };
   if (_au) { try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + _au), _mrec).catch(function () {}); } catch (e) {} }
   if (_au !== uid) { try { f.set(f.ref(f.db, 'gl/' + inv.key + '/members/' + uid), _mrec).catch(function () {}); } catch (e) {} }
+  // 1019: clear the crew's "invited, hasn't joined" entry from this side. It is keyed by the id
+  // the SENDER picked (often the device id), and the owner's list only cleared it when that same
+  // id joined -- Tyler joined under his account id, so he stayed "hasn't accepted" (2026-11-14).
+  [uid, _au, inv._src].forEach(function (x) { if (x) { try { f.remove(f.ref(f.db, 'gl/' + inv.key + '/config/invited/' + x)).catch(function () {}); } catch (e) {} } });
   var circles = _getCircles(); circles[inv.key] = inv.room || inv.key; _setCircles(circles);
   try { _registerFavSub(inv.key, inv.room || inv.key, true); } catch (e) {}   // Crew membership alone should notify — no separate favorite step
   // Circles work with no GPS watch running yet if this is accepted from a cold home screen —
