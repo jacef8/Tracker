@@ -183,6 +183,11 @@ if (mode === 'submitversion') {
       '- The app no longer keeps your screen awake unless you ask it to, in Settings',
       '- Many fixes and improvements',
     ],
+    '1.0.17': [
+      '- Your spot on the map keeps updating even when GroundLink is closed and your phone is sitting still',
+      '- Keep location set to Always so your Crew can always find you',
+      '- Many fixes and improvements',
+    ],
   };
   const notes = (NOTES[verStr] || ['- Fixes and improvements']).join('\n');
   try {
