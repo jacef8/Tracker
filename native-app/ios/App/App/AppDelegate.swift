@@ -1618,9 +1618,49 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             guard let data = data, error == nil else { return }
             let hex = data.map { String(format: "%02x", $0) }.joined()
             UserDefaults.standard.set(hex, forKey: "gl_locpush_token")
+            self?.fileLocPushNatively()
             DispatchQueue.main.async {
                 self?.mainWebView()?.evaluateJavaScript("window._onLocPushToken && window._onLocPushToken('\(hex)')", completionHandler: nil)
             }
+        }
+        fileLocPushNatively()   // a token from an earlier launch that never reached the server
+    }
+
+    /// 1.0.18: file the location-push token with the server straight from here. In 1.0.17 only
+    /// the web page filed it, and the page only got it if the app was opened on screen -- phones
+    /// that updated overnight and only ever ran in the background (Laura, Lexi, 2026-11-16) never
+    /// signed up. Uses the same saved sign-in the background location writes use. Remembered per
+    /// token and device id, so it is sent once, and retried on every launch until it succeeds.
+    private var locPushFiling = false
+    private func fileLocPushNatively() {
+        guard let hex = UserDefaults.standard.string(forKey: "gl_locpush_token"), !hex.isEmpty,
+              let cfg = nativeWriteConfig(),
+              let apiKey = cfg["apiKey"] as? String,
+              let uid = cfg["uid"] as? String, !uid.isEmpty,
+              let rt = cfg["rt"] as? String, !rt.isEmpty else { return }
+        let key = hex + "|" + uid
+        if UserDefaults.standard.string(forKey: "gl_locpush_filed") == key || locPushFiling { return }
+        locPushFiling = true
+        withAuthToken(apiKey: apiKey, rt: rt) { [weak self] tok in
+            guard let tok = tok,
+                  let url = URL(string: "https://tracker-production-3b03.up.railway.app/locpush/register"),
+                  let body = try? JSONSerialization.data(withJSONObject: ["uid": uid, "token": hex]) else {
+                self?.locPushFiling = false; return
+            }
+            var r = URLRequest(url: url)
+            r.httpMethod = "POST"
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue("Bearer " + tok, forHTTPHeaderField: "Authorization")
+            r.httpBody = body
+            r.timeoutInterval = 20
+            URLSession.shared.dataTask(with: r) { data, _, _ in
+                if let data = data,
+                   let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   (o["ok"] as? Bool) == true {
+                    UserDefaults.standard.set(key, forKey: "gl_locpush_filed")
+                }
+                self?.locPushFiling = false
+            }.resume()
         }
     }
 
