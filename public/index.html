@@ -5313,7 +5313,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1021;
+var APP_BUILD = 1022;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -32417,7 +32417,11 @@ function _groupFollowTick(force) {
     var _prevZ = window._gfTarget && window._gfTarget.zoom;
     if (_prevZ != null) {
       var _dzT = targetZoom - _prevZ;
-      if (Math.abs(_dzT) < GF_ZOOM_DEADZONE) {
+      // 1022: the dead-band may hold a small change, but never a zoom-OUT that someone needs to
+      // stay on screen. Holding 12.84 against a needed 12.68 left a group bubble under the top bar
+      // and another member under the toolbar at the same time (Jace's PC, 2026-11-15).
+      var _mustWiden = _dzT < 0 && !_allPointsVisible(pts, _pad);
+      if (Math.abs(_dzT) < GF_ZOOM_DEADZONE && !_mustWiden) {
         targetZoom = _prevZ;                 // close enough to where we are — hold still
         window._gfZoomInSince = null;
       } else if (_dzT > 0) {                 // the group has closed up; we COULD tighten
