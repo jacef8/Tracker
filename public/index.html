@@ -5313,7 +5313,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1024;
+var APP_BUILD = 1025;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -21995,39 +21995,10 @@ function listenUsers() {
       });
     }
 
-    // ── COLLAPSE BY PERSON ────────────────────────────────────────────────────────────
-    // One human, one row. Keeps the freshest device's row and annotates it with how many
-    // other devices that person has, instead of listing "Jace · phone", "Jace · tablet" and
-    // "Jace · PC" as three unrelated people. Rows with no resolvable account collapse to
-    // themselves, so anyone who isn't signed in is completely unaffected.
-    var _collapse = function (rows) {
-      var byPerson = {}, order = [];
-      rows.forEach(function (r) {
-        var pid = (r.dataset && r.dataset.person) || Math.random().toString(36);
-        if (!byPerson[pid]) { byPerson[pid] = [r]; order.push(pid); }
-        else byPerson[pid].push(r);
-      });
-      return order.map(function (pid) {
-        var group = byPerson[pid];
-        if (group.length === 1) return group[0];
-        // Freshest device wins the visible row — that's the one whose position is current.
-        group.sort(function (a, b) { return (+b.dataset.fresh || 0) - (+a.dataset.fresh || 0); });
-        var keep = group[0];
-        var others = group.slice(1).map(function (r) { return r.dataset.dev || 'device'; }).filter(Boolean);
-        try {
-          var nameEl = keep.querySelector('.uname');
-          if (nameEl && others.length) {
-            var chip = document.createElement('span');
-            chip.style.cssText = 'margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.03em;color:var(--muted);background:var(--border);padding:1px 6px;border-radius:8px;white-space:nowrap;vertical-align:1px';
-            chip.textContent = '+' + others.length + ' ' + (others.length === 1 ? 'device' : 'devices');
-            chip.title = 'Also on: ' + others.join(', ');
-            nameEl.appendChild(chip);
-          }
-        } catch (e) {}
-        return keep;
-      });
-    };
-    try { _rowsCrew = _collapse(_rowsCrew); _rowsVis = _collapse(_rowsVis); _rowsPlain = _collapse(_rowsPlain); } catch (e) {}
+    // 1025: ONE ROW PER DEVICE, same as the map. Rows used to fold one person's devices into
+    // the freshest one with a small "+1 device" tag, so Jax saw Jace's phone AND tablet on the
+    // map but only the phone in this list (Jace, 2026-11-17). Each row already names its
+    // device ("Jace Ford · tablet"), so nothing is lost by listing them all.
     // Plain (non-Crew) rooms have no sections — emit the collapsed rows straight away.
     if (!_crewRoom) _rowsPlain.forEach(function (r) { listEl.appendChild(r); });
 
