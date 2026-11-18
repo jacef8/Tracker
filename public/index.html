@@ -5473,7 +5473,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1033;
+var APP_BUILD = 1034;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -33262,6 +33262,16 @@ try {
       // 1032: this phone still carries another account's crews and name; uploading would copy
       // them into the account now signed in (what happened to Max's new account).
       try { if (_foreignOwner()) { _checkForeignPhone(); return; } } catch (e) {}
+      // 1034: and not before we KNOW who owns this phone. On Max's phone the first push ran in the
+      // seconds before the owner lookup landed and put Jace's crews straight back into his account.
+      try {
+        var _dv = uid(), _ac = accountId();
+        if (_reallySignedIn() && _dv && _ac && _dv !== _ac && !window._ownerChecked) {
+          window._pushAfterCheck = true;
+          if (window._recheckForeignPhone) window._recheckForeignPhone();
+          return;
+        }
+      } catch (e) {}
       var prof = localProfile();
       // A device-label word ("Tablet"/"phone"/"PC") is never a real name. The old label-as-name
       // bug let one leak into the synced profile, and because this push MERGES, the offending
@@ -34218,6 +34228,9 @@ try {
     (function () {
       var f = window._fb;
       var go = function () {
+        if (window._ownerCheckBusy) return;
+        window._ownerCheckBusy = true;
+        setTimeout(function () { window._ownerCheckBusy = false; }, 8000);
         try {
           var ff = window._fb; if (!ff || !ff.db || !ff.get) return;
           // 1033: read this phone's owner directly. 1032 relied on _devOwnerAll, which only loads
@@ -34229,8 +34242,13 @@ try {
               var v = s && s.val && s.val();
               window._devOwnerAll = window._devOwnerAll || {};
               if (v) window._devOwnerAll[dev] = v;
+              window._ownerChecked = true;
             }).catch(function () {}) : null
-          ]).then(function () { _checkForeignPhone(); });
+          ]).then(function () {
+            window._ownerCheckBusy = false;
+            _checkForeignPhone();
+            if (window._ownerChecked && window._pushAfterCheck && !_foreignOwner()) { window._pushAfterCheck = false; pushProfile(); }
+          });
         } catch (e) {}
       };
       setTimeout(go, 4000); setTimeout(go, 15000); setTimeout(go, 45000);
