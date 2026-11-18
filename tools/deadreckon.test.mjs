@@ -103,6 +103,7 @@ function harness(o) {
   const win = { _markerGroupMembers: null, _camLockUid: null, _followPausedUntil: 0, _resumeSnapUntil: 0 };
   const tips = [];
   win._updateTrailTip = (uid, lng, lat) => { tips.push([uid, lng, lat]); };
+  win._liveLeadOff = true;   // 1027's live lead is covered by livelead1027.test.mjs; these pin the tail itself
   const cam = { setCenter: 0, jumpTo: 0 };
   const map = { setCenter() { cam.setCenter++; }, jumpTo() { cam.jumpTo++; } };
   const doc = { visibilityState: o.visible ? 'visible' : 'hidden', body: { classList: { contains: () => false } } };
@@ -868,7 +869,7 @@ check('source: the overshoot reference is the tail\'s heading, else the in-fligh
 check('source: _hdgPrev is kept from an unflagged glide only, in one place', (fnOnly.match(/marker\._hdgPrev = /g) || []).length === 1 && /if \(!marker\._noExtrapOnce && isFinite\(_hdg\)\) marker\._hdgPrev = \(_hdg \+ 360\) % 360;/.test(fnOnly));
 check('source: the tail needs a known cadence (_cadMs > 0)', /marker\._cadMs > 0 && isFinite\(_hdg\) && _legM > 0/.test(fnOnly));
 check('source: the heading walk-back scales longitude by cos(lat)', /var _dE = \(_wb\[0\] - _wp\[_hi\]\[0\]\) \* _cosLat, _dN = _wb\[1\] - _wp\[_hi\]\[1\];/.test(fnOnly));
-check('source: the overshoot guard is a fixed EXTRAP_BACK_FT along the heading', /_along < -EXTRAP_BACK_FT \/ 3\.28084\) marker\._noExtrapOnce = true/.test(fnOnly) && !/0\.25 \* _wasEx\.legM/.test(fnOnly));
+check('source: the overshoot guard is EXTRAP_BACK_FT along the heading (plus the 1027 live lag only when the lead is on)', /_along < -\(EXTRAP_BACK_FT \/ 3\.28084 \+ _liveLag\)\) marker\._noExtrapOnce = true/.test(fnOnly) && /if \(window\._liveLeadOff !== true && opts && opts\.remote/.test(fnOnly) && !/0\.25 \* _wasEx\.legM/.test(fnOnly));
 check('source: the camera block still honours _followPausedUntil and visibility', /Date\.now\(\) >= \(window\._followPausedUntil \|\| 0\)/.test(fnOnly) && /document\.visibilityState === 'visible'/.test(fnOnly));
 check('source: the trail tip is welded to the animated position every frame', /window\._updateTrailTip\(marker\._uid, lng, lat\)/.test(fnOnly));
 check('source: the grouping pass stands down on _extrapEnded, around the unchanged no-jump line', !!centroidText && /if \(!_pmk\._extrapEnded\) \{\s*if \(!_pmk\._ovalGlide && !_pmk\._anim\) _pmk\.setLngLat\(\[_sx \/ _n, _sy \/ _n\]\);/.test(centroidText));

@@ -5313,7 +5313,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1026;
+var APP_BUILD = 1027;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -5800,6 +5800,16 @@ var EXTRAP_MAX_MS = 30000;     // ...nor past 30 s whatever the cadence -- the g
 var EXTRAP_DT_CAP_MS = 250;    // a hidden tab runs no frames; the first visible one must not jump the whole gap
 var EXTRAP_HDG_BASE_FT = 50;   // the heading is the bearing of the dot's last 50+ ft, never of two points inches apart
 var EXTRAP_BACK_FT = 30;       // a fix this far BEHIND the dot along its heading means we overshot: no tail until the next fix
+// 1027: SHOW WHERE THEY ARE NOW. A moving dot used to glide from its last spot to the new fix over
+// the WHOLE gap between reports (~10 s), so it was always one report behind -- plus the fix's own
+// age on arrival -- about 15 s in all (Jace, 2026-11-18: "everyone is about 15 seconds behind").
+// For a moving remote row with a heading, the glide now takes LIVE_GLIDE_MS and aims at the fix
+// carried forward by the row's speed for (fix age + glide), and dead reckoning carries on from
+// there until the next fix. Turns and stops are corrected by the next fix (the overshoot rule
+// above still applies). Slow, parked, local or headingless rows keep the old full-gap glide.
+var LIVE_GLIDE_MS = 1200;
+var LIVE_LEAD_MAX_MS = 20000;  // a fix older than this is not carried forward any further
+var LIVE_REACH_FRAC = 1.25;    // lead + tail together never run past this share of the last leg
 
 // opts (remote members only -- see the feed call in _processUsersSnapInner): { fixTs, remote, spd, hdg }.
 // fixTs is the reporter's own clock on this row. spd is the row's mph and hdg a heading in degrees
@@ -6009,18 +6019,48 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
     if (isFinite(_refHdg)) {
       var _thW = _refHdg * Math.PI / 180;
       var _along = (toLat - fromLat) * 111320 * Math.cos(_thW) + (toLng - fromLng) * 111320 * _cosLat * Math.sin(_thW);
-      if (_along < -EXTRAP_BACK_FT / 3.28084) marker._noExtrapOnce = true;   // ft -> m
+      // 1027: with the live lead the dot is drawn where the car is NOW, so a fresh fix (taken
+      // `age` ago) normally lands behind it by about speed x age. That is not an overshoot.
+      var _liveLag = 0;
+      try {
+        if (window._liveLeadOff !== true && opts && opts.remote && opts.fixTs > 0 && typeof opts.spd === 'number' && opts.spd >= EXTRAP_MIN_MPH) {
+          _liveLag = 1.2 * (opts.spd / 2.23694) * Math.min(LIVE_LEAD_MAX_MS, Math.max(0, Date.now() - opts.fixTs)) / 1000;
+        }
+      } catch (e2) { _liveLag = 0; }
+      if (_along < -(EXTRAP_BACK_FT / 3.28084 + _liveLag)) marker._noExtrapOnce = true;   // ft -> m
     }
     if (!marker._noExtrapOnce && isFinite(_hdg)) marker._hdgPrev = (_hdg + 360) % 360;   // the way the car is going; a correction is not
     if (!marker._noExtrapOnce && opts && opts.remote && typeof opts.spd === 'number' && opts.spd >= EXTRAP_MIN_MPH
         && marker._cadMs > 0 && isFinite(_hdg) && _legM > 0) {
       // At the row's speed, but never much faster than the glide itself just moved: a stale or
       // spiky spd must not launch a dot that has been crawling.
-      var _rate = Math.min(opts.spd / 2.23694, 1.5 * _legM / (dur / 1000));   // metres per second
+      var _rate = Math.min(opts.spd / 2.23694, 1.5 * _legM / (Math.max(dur, marker._cadMs) / 1000));   // metres per second
       _ex = { heading: (_hdg + 360) % 360, rate: _rate, legM: _legM,
               maxMs: Math.min(EXTRAP_CAD_MULT * marker._cadMs, EXTRAP_MAX_MS) };
     }
   } catch (e) { _ex = null; }
+  // 1027: live lead -- see LIVE_GLIDE_MS above.
+  if (_ex && window._liveLeadOff !== true) {   // tools/deadreckon.test.mjs pins the pre-1027 timing with this
+    try {
+      var _age = (opts && opts.fixTs > 0) ? (Date.now() - opts.fixTs) : 0;
+      if (!(_age > 0)) _age = 0;
+      if (_age > LIVE_LEAD_MAX_MS) _age = LIVE_LEAD_MAX_MS;
+      var _glide = Math.min(dur, LIVE_GLIDE_MS);
+      var _reachM = LIVE_REACH_FRAC * _ex.legM;
+      var _leadM = Math.min(_ex.rate * (_age + _glide) / 1000, _reachM);
+      var _thL = _ex.heading * Math.PI / 180;
+      var _fixLng = toLng, _fixLat = toLat;
+      toLat = _fixLat + (_leadM * Math.cos(_thL)) / 111320;
+      toLng = _fixLng + (_leadM * Math.sin(_thL)) / (111320 * (Math.cos(_fixLat * Math.PI / 180) || 1));
+      _wp[_wp.length - 1] = [toLng, toLat];
+      var _la = _wp[_wp.length - 2], _ldx = (toLng - _la[0]) * _cosLat, _ldy = toLat - _la[1];
+      _total -= _seg[_seg.length - 1];
+      _seg[_seg.length - 1] = Math.sqrt(_ldx * _ldx + _ldy * _ldy);
+      _total += _seg[_seg.length - 1];
+      dur = _glide;
+      _ex.capM = Math.max(0, _reachM - _leadM);   // what the tail may still add past the led spot
+    } catch (e) {}
+  }
   function _atFraction(t) {
     if (_total <= 0 || _seg.length === 1) {
       return [fromLng + (toLng - fromLng) * t, fromLat + (toLat - fromLat) * t];
@@ -6052,13 +6092,13 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
         var _x = marker._extrap;
         if (!_x) {
           // This frame put the dot ON its target; the phase measures from here.
-          marker._extrap = { since: t2, last: t2, dist: 0, heading: _ex.heading, rate: _ex.rate, legM: _ex.legM, lng: toLng, lat: toLat };
+          marker._extrap = { since: t2, last: t2, dist: 0, heading: _ex.heading, rate: _ex.rate, legM: _ex.legM, capM: _ex.capM, lng: toLng, lat: toLat };
           _more = true;
         } else {
           var _dt = Math.min(EXTRAP_DT_CAP_MS, Math.max(0, t2 - _x.last));
           _x.last = t2;
           var _d = _x.rate * _dt / 1000;
-          var _cap = EXTRAP_MAX_FRAC * _x.legM;
+          var _cap = (typeof _x.capM === 'number') ? _x.capM : EXTRAP_MAX_FRAC * _x.legM;
           _more = true;
           if (_x.dist + _d >= _cap) { _d = Math.max(0, _cap - _x.dist); _more = false; }   // far enough past a fix nobody confirmed
           if (t2 - _x.since >= _ex.maxMs) _more = false;                                   // ...or long enough
