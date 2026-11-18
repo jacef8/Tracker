@@ -3060,14 +3060,16 @@ window._timedOnValue = function (orig) {
 
     <!-- Swipe pager: Quick join ⇄ Account -->
     <div id="join-tabs" style="display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:4px;margin-top:2px">
-      <button type="button" class="jtab active" data-panel="0" onclick="window._goPanel(0)">Quick join</button>
-      <button type="button" class="jtab" data-panel="1" onclick="window._goPanel(1)">Account&nbsp;<span id="pager-acct-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#3fb950;box-shadow:0 0 6px #3fb950"></span></button>
+      <!-- 1031: one Settings, reached from here and from the map's gear. The Account tab's contents
+           moved into Settings → You / People, so these tabs are hidden (kept for the pager JS). -->
+      <button type="button" class="jtab active" data-panel="0" onclick="window._goPanel(0)" style="display:none">Quick join</button>
+      <button type="button" class="jtab" data-panel="1" onclick="window._goPanel(0)" style="display:none">Account&nbsp;<span id="pager-acct-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#3fb950;box-shadow:0 0 6px #3fb950"></span></button>
       <!-- Settings is a global overlay (position:fixed;inset:0), not scoped to being inside a
            room/map — this button reaches it directly from Home instead of requiring a room to
            be open first, which every row inside it already tolerates (room-specific toggles like
            "Share my location"/"Announce when I join" just persist a preference with no active
            room, verified via toggleLocationShare's own no-room early-return). -->
-      <button type="button" title="Settings" aria-label="Settings" onclick="openSettings()" style="background:none;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;padding:8px;margin-left:2px;flex-shrink:0"><svg class="licon licon-sm"><use href="#ic-gear"/></svg></button>
+      <button type="button" id="home-settings-btn" title="Settings" aria-label="Settings and account" onclick="openSettings()" style="flex:1;min-height:44px;background:none;border:none;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px;font-size:14px;font-weight:800"><svg class="licon licon-sm" style="color:var(--accent)"><use href="#ic-gear"/></svg>Settings &amp; account</button>
     </div>
 
     <div id="join-pager">
@@ -5007,11 +5009,15 @@ window._timedOnValue = function (orig) {
      #join-screen is already hidden — Settings is the first one made reachable from Home itself. -->
 <div id="settings-sheet" style="display:none;position:fixed;inset:0;z-index:950">
   <div style="position:absolute;inset:0;background:rgba(0,0,0,.28)" onclick="closeSettings()"></div>
-  <div style="position:absolute;left:0;right:0;bottom:0;max-height:85vh;overflow-y:auto;background:rgba(22,27,34,0.62);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top-left-radius:18px;border-top-right-radius:18px;border-top:2px solid color-mix(in srgb, var(--tint) 55%, transparent);box-shadow:0 -8px 40px rgba(0,0,0,0.6);padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 20px)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px;font-size:17px;font-weight:800;color:var(--accent)"><svg class="licon"><use href="#ic-gear"/></svg>Settings</div>
+  <div id="set-panel" style="position:absolute;left:0;right:0;bottom:0;max-height:85vh;overflow-y:auto;background:rgba(22,27,34,0.62);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top-left-radius:18px;border-top-right-radius:18px;border-top:2px solid color-mix(in srgb, var(--tint) 55%, transparent);box-shadow:0 -8px 40px rgba(0,0,0,0.6);padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 20px)">
+    <div id="set-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:17px;font-weight:800;color:var(--accent);min-width:0">
+        <button type="button" id="set-back" onclick="window._setPage(null)" aria-label="Back to all settings" style="display:none"><svg class="licon licon-sm"><use href="#ic-chevron-down"/></svg></button>
+        <svg class="licon" id="set-head-ic"><use href="#ic-gear"/></svg><span id="set-title">Settings</span></div>
       <button onclick="closeSettings()" style="background:none;border:none;color:var(--muted);cursor:pointer;line-height:1;display:flex"><svg class="licon licon-sm"><use href="#ic-x"/></svg></button>
     </div>
+    <div id="set-menu"></div>
+    <div id="set-pages"></div>
     <div id="set-uiv2-row" onclick="window._setToggleUiV2 && window._setToggleUiV2()" style="align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent;display:flex">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-map"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Current look</div><div style="font-size:11px;color:var(--muted);margin-top:2px">The standard GroundLink styling. Turn it off to go back to the older look on this device only — nobody else in your crews sees any change.</div></div></div>
       <span id="set-uiv2-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
@@ -5158,6 +5164,148 @@ window._timedOnValue = function (orig) {
     </div>
   </div>
 </div>
+
+<style>
+  /* 1031: Settings is a short menu of sections; each opens its own page. */
+  #set-menu { display: flex; flex-direction: column; gap: 8px; }
+  #set-pages > .set-page { display: none; }
+  #set-pages > .set-page.on { display: block; }
+  #settings-sheet.has-page #set-menu { display: none; }
+  .set-mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 12px 14px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 12px; color: var(--text);
+    cursor: pointer; text-align: left; -webkit-tap-highlight-color: transparent; font: inherit; }
+  .set-mi .licon { color: var(--accent); flex-shrink: 0; width: 22px; height: 22px; }
+  .set-mi-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .set-mi-t b { font-size: 15px; font-weight: 800; color: var(--text); }
+  .set-mi-t small { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .set-mi-chev { color: var(--muted); font-size: 20px; flex-shrink: 0; }
+  .set-mi.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .set-mi:focus-visible, #set-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .set-mi-crew { margin-top: 6px; }
+  /* Sign out sits on your account card at the top of You -- the card the old Account tab used,
+     which is shown from the real sign-in state (the old Settings copy could stay hidden). */
+  #set-page-you #btn-signout { font-size: 14px !important; font-weight: 800; padding: 10px 14px !important; min-height: 44px;
+    color: var(--danger) !important; border-color: var(--danger) !important; }
+  .set-intro { font-size: 13px; color: var(--muted); margin: -4px 2px 12px; line-height: 1.45; }
+  .set-page .section-title { margin: 14px 0 7px; }
+  #set-back { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+    width: 40px; height: 40px; display: none; align-items: center; justify-content: center; cursor: pointer;
+    flex-shrink: 0; margin-right: 2px; }
+  #set-back .licon { transform: rotate(90deg); }
+  #settings-sheet.has-page #set-back { display: flex !important; }
+  #settings-sheet.has-page #set-head-ic { display: none; }
+  /* Wide screens: menu on the left, the chosen page fills the right. Opens on "You". */
+  @media (min-width: 900px) {
+    #set-panel { left: 50% !important; right: auto !important; top: 50% !important; bottom: auto !important;
+      transform: translate(-50%, -50%); width: min(1180px, 94vw); height: min(860px, 90vh); max-height: none !important;
+      border-radius: 18px !important; border: 1px solid var(--border); overflow: hidden !important;
+      display: grid !important; grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+      column-gap: 20px; padding: 18px 20px !important; }
+    #set-head { grid-column: 1 / -1; }
+    #set-menu, #settings-sheet.has-page #set-menu { display: flex; overflow-y: auto; min-height: 0; padding-right: 2px; }
+    #set-pages { overflow-y: auto; min-height: 0; padding-right: 4px; }
+    #settings-sheet.has-page #set-back { display: none !important; }
+    #settings-sheet.has-page #set-head-ic { display: inline-block; }
+  }
+</style>
+<script>
+(function () {
+  var PAGES = [
+    { k: 'you',      t: 'You',                s: 'Sign in &amp; out, name, photo, color, this device', i: 'ic-user',
+      intro: 'Who you are on the map, and the account that keeps it on every device.' },
+    { k: 'people',   t: 'People',             s: 'Your people, muted, hidden pins', i: 'ic-users',
+      intro: 'Find your people before you join a group, and manage who you have muted.' },
+    { k: 'notif',    t: 'Notifications',      s: 'What buzzes your phone', i: 'ic-bell',
+      intro: 'Pick what reaches your phone. SOS alerts always come through.' },
+    { k: 'location', t: 'Location & battery', s: 'Sharing, trail, hunt mode, background', i: 'ic-pin',
+      intro: 'How your spot is shared and how hard the GPS works.' },
+    { k: 'voice',    t: 'Voice & watches',    s: 'Talk, car radio, watches & trackers', i: 'ic-mic',
+      intro: 'Walkie-talkie voice with your crew, and any watch or tracker you own.' },
+    { k: 'look',     t: 'Look',               s: 'Daylight or night screen', i: 'ic-sun',
+      intro: 'Changes this device only. Nobody else sees a difference.' },
+    { k: 'help',     t: 'Help & fixes',       s: 'Restart, install, share GroundLink', i: 'ic-history',
+      intro: 'When something is stuck, start here.' }
+  ];
+  function q(sel) { try { return document.querySelector(sel); } catch (e) { return null; } }
+  function row(fn) { return '#settings-sheet [onclick*="' + fn + '"]'; }
+  function up(sel, tag) { var el = q(sel); return el && el.closest ? el.closest(tag) : null; }
+  var MAP = {
+    you: ['#account-box', '#acct-extras', '#account-photo-row', row('_editDeviceName'), row('_toggleDevicePrivate'),
+          function () { return up('#acct-hide-search', 'label'); },
+          function () { var el = q('#account-sessions'); return el && el.parentElement; }],
+    people: [function () { var el = q('#account-friends'); return el && el.parentElement; },
+             '#account-muted-section', '#account-pin-muted-section'],
+    notif: [row('_setToggleAlerts'), '#notif-types'],
+    location: [row('_setToggleLocation'), row('_setToggleSpeed'), row('_setToggleAnnounceJoin'), row('_setToggleBatterySaver'),
+               row('_setToggleHistory'), row('_setToggleScreen'), row('_setToggleHunt'), '#set-bglocation-row', '#set-bgtrack-row'],
+    voice: [row('_setToggleVoice'), '#set-autochannel-row', '#set-caraudio-row', '#account-devices-section',
+            '#set-devlisten-row', '#set-hearothers-row', '#set-secdevall-row', '#set-secdevsolo-row'],
+    look: ['#set-uiv2-row', '#set-day-row'],
+    help: ['#set-restart-row', '#set-statusicons-row', '#share-app-btn', '#install-tip', '#ios-hint',
+           '#admin-design-section', '#admin-activity-section',
+           function () { var a = q('#set-panel a[href="/privacy.html"]'); return a && a.parentElement && a.parentElement.parentElement; }]
+  };
+  var built = false, cur = null;
+  function wide() { try { return window.matchMedia('(min-width: 900px)').matches; } catch (e) { return false; } }
+  function build() {
+    if (built) return true;
+    var menu = q('#set-menu'), pages = q('#set-pages');
+    if (!menu || !pages || !q('#account-box')) return false;
+    PAGES.forEach(function (p) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'set-mi'; b.setAttribute('data-k', p.k);
+      b.innerHTML = '<svg class="licon"><use href="#' + p.i + '"/></svg><span class="set-mi-t"><b>' + p.t +
+        '</b><small>' + p.s + '</small></span><span class="set-mi-chev">›</span>';
+      b.onclick = function () { window._setPage(p.k); };
+      menu.appendChild(b);
+      var pg = document.createElement('div');
+      pg.className = 'set-page'; pg.id = 'set-page-' + p.k;
+      var intro = document.createElement('div'); intro.className = 'set-intro'; intro.textContent = p.intro;
+      pg.appendChild(intro);
+      (MAP[p.k] || []).forEach(function (sel) {
+        var el = typeof sel === 'function' ? sel() : q(sel);
+        if (el && el !== pg && !el.contains(pg)) pg.appendChild(el);
+      });
+      pages.appendChild(pg);
+    });
+    // This crew's own options (Room Info) — only while a crew map is open.
+    var crew = document.createElement('button');
+    crew.type = 'button'; crew.className = 'set-mi set-mi-crew'; crew.id = 'set-mi-crew';
+    crew.innerHTML = '<svg class="licon"><use href="#ic-gear"/></svg><span class="set-mi-t"><b>This crew’s settings</b>' +
+      '<small id="set-mi-crew-sub">Members, alerts, invites for the crew you have open</small></span><span class="set-mi-chev">›</span>';
+    crew.onclick = function () { try { closeSettings(); } catch (e) {} try { openRoomInfo(); } catch (e) {} };
+    menu.appendChild(crew);
+    // What is left behind: the old headings and the two "Advanced" folds (now empty), the Account
+    // tab's intro line, the Settings button that pointed back here, and the small duplicate Sign out.
+    try { document.querySelectorAll('#set-panel > .section-title').forEach(function (el) { el.style.display = 'none'; }); } catch (e) {}
+    // Removed, not hidden: _syncSettings re-shows the Advanced fold whenever a row inside it is visible.
+    ['#set-advanced-banner', '#set-advanced-body', '#acct-advanced-banner', '#set-account-group'].forEach(function (sel) { var el = q(sel); if (el && el.remove) el.remove(); });
+    try { var ab = q('#acct-advanced-body'); if (ab && ab.parentElement) ab.parentElement.style.display = 'none'; } catch (e) {}
+    try { var back = q('#acct-extras > button[onclick="openSettings()"]'); if (back) back.style.display = 'none'; } catch (e) {}
+    try { var pa = q('#panel-account'); if (pa && pa.firstElementChild && !pa.firstElementChild.id) pa.firstElementChild.style.display = 'none'; } catch (e) {}
+    built = true;
+    return true;
+  }
+  window._setPage = function (k) {
+    if (!build()) return;
+    if (!k && wide()) k = cur || 'you';      // wide screens always show a page beside the menu
+    cur = k || null;
+    var sheet = q('#settings-sheet');
+    if (sheet) sheet.classList.toggle('has-page', !!k);
+    document.querySelectorAll('#set-pages > .set-page').forEach(function (pg) { pg.classList.toggle('on', pg.id === 'set-page-' + k); });
+    document.querySelectorAll('#set-menu .set-mi').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-k') === k); });
+    var p = PAGES.filter(function (x) { return x.k === k; })[0];
+    var t = q('#set-title'); if (t) t.textContent = p ? p.t : 'Settings';
+    var inCrew = false;
+    try { inCrew = !!(typeof groupName !== 'undefined' && groupName && q('#map-screen') && getComputedStyle(q('#map-screen')).display !== 'none'); } catch (e) {}
+    var cb = q('#set-mi-crew'); if (cb) cb.style.display = inCrew ? 'flex' : 'none';
+    if (k === 'you' || k === 'people' || k === 'voice') { try { _renderAccountPage(); } catch (e) {} }
+    var panel = q('#set-panel'); if (panel) panel.scrollTop = 0;
+    var pages = q('#set-pages'); if (pages) pages.scrollTop = 0;
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build); else build();
+})();
+</script>
 
 <!-- ══ PIN MODAL ═════════════════════════════════════════════════════ -->
 <div id="pin-modal">
@@ -5319,7 +5467,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1030;
+var APP_BUILD = 1031;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -8302,7 +8450,7 @@ window._refreshPeopleBadge = function () {
 };
 window._claimDevice = function (id) {
   var me = _myAcct();
-  if (!me) { toast('Sign in with Google on the Account tab first — claiming ties the device privately to your account.'); return; }
+  if (!me) { toast('Sign in first (Settings → You) — claiming ties the device privately to your account.'); return; }
   var fb = window._fb; if (!fb || !fb.db) return;
   var nm = ((window._devicesAll[id] || {}).live || {}).name || 'device';
   var onm = (typeof userName !== 'undefined' && userName) || '';
@@ -10432,6 +10580,7 @@ try { document.addEventListener('visibilitychange', function () { if (document.h
 try { document.addEventListener('visibilitychange', function () { if (!document.hidden) window._checkLocNudge(); }); } catch (e) {}
 
 window._statGo = function (which) {
+  try { closeSettings(); } catch (e) {}
   try {
     if (which === 'groups') { if (window._homeGo) window._homeGo('crews'); return; }
     // Pins and saved spots both live on the map — open My Map first if we're not in a room.
@@ -11189,7 +11338,11 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
-function openSettings() { document.getElementById('settings-sheet').style.display = 'block'; _syncSettings(); try { window._syncSettingsAccountRow(); } catch (e) {} }
+function openSettings(page) {
+  document.getElementById('settings-sheet').style.display = 'block'; _syncSettings();
+  try { window._syncSettingsAccountRow(); } catch (e) {}
+  try { window._setPage(typeof page === 'string' ? page : null); } catch (e) {}
+}
 function closeSettings() { document.getElementById('settings-sheet').style.display = 'none'; }
 
 // ── Voice (push-to-talk) on/off — a per-device user setting ───────
@@ -13262,10 +13415,8 @@ window._homeGo = function (area, auto) {
   show('home-or',           area === 'rooms');
   show('new-group-section', area === 'rooms');
 
-  // account-box is the ACCOUNT block (crews, muted lists, sign-in) — not "People". Pointing
-  // the People button at it is why tapping People showed Crews. It stays hidden here and is
-  // reached from Settings, where it belongs.
-  show('account-box',       false);
+  // 1031: account-box (sign in / sign out) now lives in Settings → You and must NOT be hidden
+  // here -- this line hid it on every home move, which emptied the Account section entirely.
   try {
     Array.prototype.forEach.call(document.querySelectorAll('#home-hub .hub-btn'), function (b) {
       var on = (b.getAttribute('onclick') || '').indexOf("'" + window._homeArea + "'") !== -1;
