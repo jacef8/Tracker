@@ -371,6 +371,43 @@ async function findSubsForUid(uid) {
   return null;
 }
 
+// 1029: EVERY push address on file for a person, one per distinct phone/browser. A Talk call
+// used the first record findSubsForUid met, so a stale token or a muted pref filed under one old
+// room silenced the call even when the same person's current phone was registered elsewhere.
+async function findAllSubsForUid(uid) {
+  let rooms = [];
+  try { rooms = await _roomNames(); } catch (e) { rooms = []; }
+  const paths = [];
+  rooms.forEach(function (room) { paths.push('gl/' + room + '/pushSubs/' + uid, 'gl/' + room + '/favSubs/' + uid); });
+  paths.push('gl/_pushTokens/' + uid);
+  const got = await Promise.all(paths.map(function (pth) { return _dbGet(pth).then(function (r) { return { path: pth, rec: r }; }).catch(function () { return null; }); }));
+  const out = [], seen = new Set();
+  got.forEach(function (g) {
+    if (!g || !g.rec || !(g.rec.fcm || g.rec.sub)) return;
+    const key = g.rec.fcm ? 'f:' + g.rec.fcm : 's:' + String(g.rec.sub).slice(0, 300);
+    if (seen.has(key)) {
+      // Same phone filed twice: a mute in ANY copy wins, so a muted type stays muted.
+      const prev = out.find(function (o) { return o.key === key; });
+      if (prev && g.rec.prefs) prev.prefsList.push(g.rec.prefs);
+      return;
+    }
+    seen.add(key);
+    out.push({ key: key, path: g.path, rec: g.rec, prefsList: g.rec.prefs ? [g.rec.prefs] : [] });
+  });
+  return out;
+}
+function _voiceExtra(b) {
+  // Talk notifications carry what the receiving app needs to answer straight from the tap.
+  const x = {};
+  const vr = String(b.voiceRoom || '');
+  if (/^gv_[A-Za-z0-9_~\-]{1,200}$/.test(vr)) x.voiceRoom = vr;
+  const kind = String(b.kind || '');
+  if (/^(call|missed|vm|channel)$/.test(kind)) x.kind = kind;
+  const fn = String(b.fromName || '').slice(0, 40);
+  if (fn) x.fromName = fn;
+  return x;
+}
+
 // 1012: the app files its FCM address here on every open, room or no room. Signed-in callers
 // only; an address on file can only be replaced by the account that filed it or by the
 // device's owner account. Used only as the LAST resort by findSubsForUid, after the room
@@ -1413,37 +1450,58 @@ app.post('/pushTo', rateLimit(30, 60000), requireUser, async function(req, res) 
   const body = String(b.body || '').slice(0, 200);
   const type = String(b.type || 'info');
   if (!uids.length) return res.json({ ok: false, reason: 'no-uid' });
+  // 1029: the crew the call was placed in, so a tap can route. Only a crew the caller is in.
+  let group = String(b.group || '');
+  if (group && !(await roomAccess(group, req.authUid))) group = '';
+  const extra = _voiceExtra(b);
+  const ts = String(Date.now());
 
   let sent = false;
   const seen = new Set();
+  const decisions = [];
   for (const uid of uids) {
     if (seen.has(uid)) continue;
     seen.add(uid);
-    let rec = null;
-    try { rec = await findSubsForUid(uid); } catch (e) {}
-    if (!rec) continue;
-    // Same per-type preference check /push applies, so muting "Someone talking (voice)"
-    // silences a direct call too. SOS always goes through.
-    if (type !== 'sos' && rec.prefs && (rec.prefs[type] === 0 || rec.prefs[type] === false)) continue;
-    if (fcmAdmin && rec.fcm) {
-      try {
-        await fcmAdmin.messaging().send({
-          token: rec.fcm,
-          notification: { title: title, body: body },
-          data: { type: type, url: '/' },
-          android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
-          apns: { payload: { aps: { sound: 'default' } } }
-        });
-        sent = true;
-        continue;
-      } catch (e) {}
+    let recs = [];
+    try { recs = await findAllSubsForUid(uid); } catch (e) {}
+    if (!recs.length) { decisions.push(uid.slice(0, 10) + ':no-address'); continue; }
+    for (const r of recs) {
+      const rec = r.rec;
+      // Same per-type preference check /push applies, so muting "Someone talking (voice)"
+      // silences a direct call too. SOS always goes through.
+      if (type !== 'sos' && r.prefsList.some(function (pf) { return pf && (pf[type] === 0 || pf[type] === false); })) { decisions.push(uid.slice(0, 10) + ':turned-off'); continue; }
+      if (fcmAdmin && rec.fcm) {
+        try {
+          const data = Object.assign({ type: type, url: '/', group: group, ts: ts, fromUid: String(req.authUid || '') }, extra);
+          await fcmAdmin.messaging().send({
+            token: rec.fcm,
+            notification: { title: title, body: body },
+            data: data,
+            android: { priority: 'high', ttl: 120000, notification: { sound: 'default', channelId: 'groundlink', tag: type + '-' + (extra.kind || 'x') + '-' + String(req.authUid || '').slice(0, 12) } },
+            apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } }
+          });
+          sent = true;
+          decisions.push(uid.slice(0, 10) + ':SENT-fcm');
+          continue;
+        } catch (err) {
+          const code = (err && err.errorInfo && err.errorInfo.code) || (err && err.code) || '';
+          decisions.push(uid.slice(0, 10) + ':FAILED-fcm ' + String(code).slice(0, 40));
+        }
+      }
+      if (pushReady && rec.sub) {
+        try {
+          await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify(Object.assign({ title: title, body: body, url: '/', type: type, group: group, ts: ts }, extra)), { TTL: 3600, urgency: 'high' });
+          sent = true;
+          decisions.push(uid.slice(0, 10) + ':SENT-web');
+        } catch (err) {
+          decisions.push(uid.slice(0, 10) + ':FAILED-web ' + String((err && err.statusCode) || ''));
+        }
+      }
     }
-    if (pushReady && rec.sub) {
-      try {
-        await webpush.sendNotification(JSON.parse(rec.sub), JSON.stringify({ title: title, body: body, url: '/' }), { TTL: 3600, urgency: 'high' });
-        sent = true;
-      } catch (e) {}
-    }
+  }
+  // Talk only: one rolling record per call so "did my call reach them?" has an answer.
+  if (type === 'voice') {
+    try { await _dbSet('gl/_debug/voicePushes/' + (Date.now() % 10), { ts: Date.now(), kind: extra.kind || '', group: group, title: title.slice(0, 60), decisions: decisions.join(' ') }); } catch (e) {}
   }
   res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
 });
@@ -1536,14 +1594,16 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
   // populated — neither is guaranteed after a device-id change or when the native FCM token
   // hasn't reached the web layer. A stamp on the payload can't miss: the device knows its own
   // uid for certain.
-  const payload = JSON.stringify({
+  const _vx = _voiceExtra(b);
+  const _skip = new Set(Array.isArray(b.skipUids) ? b.skipUids.slice(0, 50).map(function (u) { return String(u || ''); }) : []);
+  const payload = JSON.stringify(Object.assign({
     title: b.title || 'GroundLink',
     body:  b.body  || '',
     type:  b.type  || 'info',
     group: group,
     url:   b.url   || '/',
     fromUid: senderId || ''
-  });
+  }, _vx, { ts: Date.now() }));
   const groupBase = ns + '/' + group;
   const base = groupBase + '/pushSubs';
   try {
@@ -1584,6 +1644,7 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
     await Promise.all(Object.entries(targets).map(async function(entry) {
       const uid = entry[0], rec = entry[1].rec, from = entry[1].from;
       if (uid === senderId || !rec) { decisions.push(uid.slice(0, 10) + ':self-or-empty'); return; }
+      if (_skip.has(uid)) { decisions.push(uid.slice(0, 10) + ':already-listening'); return; }
       // Also skip THIS physical device even under a different/old uid: a stale subscription
       // carrying the sender's own FCM token or push endpoint must never notify the sender.
       if (senderFcm && rec.fcm && rec.fcm === senderFcm) { decisions.push(uid.slice(0, 10) + ':same-fcm'); return; }
@@ -1622,7 +1683,7 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
           await fcmAdmin.messaging().send({
             token: rec.fcm,
             notification: { title: b.title || 'GroundLink', body: b.body || '' },
-            data: { type: String(b.type || 'info'), group: String(group), url: String(b.url || '/'), fromUid: String(senderId || '') },
+            data: Object.assign({ type: String(b.type || 'info'), group: String(group), url: String(b.url || '/'), fromUid: String(senderId || ''), ts: String(Date.now()) }, _vx),
             android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink', tag: (b.type || 'gl') + '-' + group } },
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } }
           });

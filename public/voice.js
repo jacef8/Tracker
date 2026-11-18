@@ -232,6 +232,26 @@ export function onVoiceEvent(cb) {
 export function pttKey(on) { try { setPtt(!!on); } catch (e) {} }
 
 export function currentRoom() { return session ? session.room : null; }
+// 1029: who is actually connected in the current voice room (not the background listeners), so
+// the page can tell an answered call from an unanswered one.
+export function remoteIds() {
+  try {
+    if (!room || !room.remoteParticipants) return [];
+    return Array.from(room.remoteParticipants.values())
+      .map((p) => String((p && p.identity) || ''))
+      .filter((id) => id && !id.endsWith('__mon'));
+  } catch (e) { return []; }
+}
+// 1029: the page's "no answer" line. Only shown while nobody else is in the room and nobody is
+// talking, so it never covers a live conversation.
+export function setStatus(text, color) {
+  try {
+    if (!session || micOn || remoteTalking) return;
+    if (remoteIds().length) return;
+    if (_waitTimer) { clearTimeout(_waitTimer); _waitTimer = null; }
+    setTalker(text, color || '#f0a500');
+  } catch (e) {}
+}
 
 // iOS won't play WebRTC audio until a user gesture unlocks the audio system. Call this
 // SYNCHRONOUSLY from a tap (before any await) to unlock it, and resume any live room audio.

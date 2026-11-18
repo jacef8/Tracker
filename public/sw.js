@@ -235,9 +235,11 @@ self.addEventListener('push', function(e) {
       badge: '/icons/icon-192.png',
       tag: (data.type || 'groundlink') + (data.group ? '-' + data.group : ''),
       renotify: true,
-      requireInteraction: isSOS,
-      vibrate: isSOS ? [200, 100, 200, 100, 200] : [100, 50, 100],
-      data: { url: data.url || '/', group: data.group || '' }
+      // 1029: a Talk call stays on screen until it's answered or dismissed, and buzzes harder.
+      requireInteraction: isSOS || data.kind === 'call',
+      vibrate: isSOS ? [200, 100, 200, 100, 200] : (data.kind === 'call' ? [300, 150, 300, 150, 300] : [100, 50, 100]),
+      data: { url: data.url || '/', group: data.group || '', type: data.type || '', kind: data.kind || '',
+              voiceRoom: data.voiceRoom || '', fromName: data.fromName || '', ts: data.ts || 0 }
     };
     return self.registration.showNotification(title, opts);
   })());
@@ -278,6 +280,11 @@ self.addEventListener('notificationclick', function(e) {
   // A pin notification's own link already names the room and the spot, so use it as-is.
   var url = (data.url && data.url.indexOf('pin=') !== -1) ? data.url
     : grp ? ('/?room=' + encodeURIComponent(grp) + (data.type === 'voice' ? '&notif=voice' : '')) : (data.url || '/');
+  // 1029: a Talk notification opens the answer prompt (or the voice messages), wherever you are.
+  if (data.type === 'voice' && (data.kind || data.voiceRoom)) {
+    url = '/?vtalk=' + encodeURIComponent(data.kind || 'call') + '&vroom=' + encodeURIComponent(data.voiceRoom || '') +
+      '&vfrom=' + encodeURIComponent(data.fromName || '') + '&vts=' + encodeURIComponent(data.ts || '') + '&vgrp=' + encodeURIComponent(grp);
+  }
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
       for (var i = 0; i < list.length; i++) {
