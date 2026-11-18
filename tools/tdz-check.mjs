@@ -5,7 +5,7 @@
 // markers and the People list stayed empty -- on a live family-safety app, reported from a
 // phone. This catches that class before it ships.
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 
 // The render-critical functions. A throw inside any of these empties the map.
 const FNS = ['_processUsersSnapInner', '_processUsersSnap', '_applyMarkerSolo', '_applyMarkerMerged', '_buildPersonSheetHTML'];

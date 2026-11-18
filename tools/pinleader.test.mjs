@@ -13,7 +13,7 @@
 // collision layout, so the marker moves and the pin does not.
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 const start = src.indexOf('window._offsetCollidingPins = function () {');
 if (start < 0) throw new Error('function not found');
 let i = src.indexOf('{', start), depth = 0, end = -1;

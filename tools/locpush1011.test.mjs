@@ -5,7 +5,7 @@
 // Usage:  node tools/locpush1011.test.mjs [path/to/public]
 import { readFileSync } from 'node:fs';
 const dir = (process.argv[2] || 'public').replace(/\/$/, '');
-const idx = readFileSync(dir + '/index.html', 'utf8');
+const idx = readFileSync(dir + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 const srv = readFileSync('server.js', 'utf8');
 const app = readFileSync('native-app/ios/App/App/AppDelegate.swift', 'utf8');
 const ent = readFileSync('native-app/ios/App/App/App.entitlements', 'utf8');

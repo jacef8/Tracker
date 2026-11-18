@@ -1,7 +1,7 @@
 // Build 1020: a phone still registered to the anonymous guest it started as is handed to the
 // account its owner signed in with; a phone owned by a real account is never taken.
 import { readFileSync } from 'node:fs';
-const idx = readFileSync(((process.argv[2] || 'public').replace(/\/$/, '')) + '/index.html', 'utf8');
+const idx = readFileSync(((process.argv[2] || 'public').replace(/\/$/, '')) + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 const srv = readFileSync('server.js', 'utf8');
 let fails = 0, n = 0;
 const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };

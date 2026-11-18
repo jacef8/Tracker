@@ -12,7 +12,7 @@
 //
 // Usage:  node tools/cornerspeed.test.mjs        (exit 0 = even speed through corners)
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 
 let fail = 0;
 const check = (name, ok, detail) => {

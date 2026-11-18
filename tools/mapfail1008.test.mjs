@@ -4,7 +4,7 @@
 // Usage:  node tools/mapfail1008.test.mjs [path/to/public]
 import { readFileSync } from 'node:fs';
 const dir = (process.argv[2] || 'public').replace(/\/$/, '');
-const idx = readFileSync(dir + '/index.html', 'utf8');
+const idx = readFileSync(dir + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 let fails = 0, n = 0;
 const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
 ok(/try \{\s*map = new mapboxgl\.Map\(\{/.test(idx), 'map creation wrapped');

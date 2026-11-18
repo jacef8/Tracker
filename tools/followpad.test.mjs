@@ -2,7 +2,7 @@
 // Build 950 fixed a case where the clamp scaled the top padding BELOW the height of the
 // topbar, which put a member behind the bar and cut the top off their pin.
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 const a = src.indexOf('window._clampVertPad = function');
 const b = src.indexOf('function _followPadding()', a);
 if (a < 0 || b < 0) { console.error('could not extract _clampVertPad'); process.exit(1); }

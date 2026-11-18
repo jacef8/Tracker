@@ -3,7 +3,7 @@
 // Usage:  node tools/pinchfollow999.test.mjs [path/to/public]
 import { readFileSync } from 'node:fs';
 const dir = (process.argv[2] || 'public').replace(/\/$/, '');
-const idx = readFileSync(dir + '/index.html', 'utf8');
+const idx = readFileSync(dir + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 let fails = 0, n = 0;
 const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
 ok(/&& Date\.now\(\) >= \(window\._followPausedUntil \|\| 0\)\s*&& !window\._gfPointerDown && !window\._zoomingFollow[\s\S]{0,80}?&& document\.visibilityState === 'visible'\) \{/.test(idx), 'per-frame follow camera yields to fingers and zooms');

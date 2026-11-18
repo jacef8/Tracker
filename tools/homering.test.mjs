@@ -10,7 +10,7 @@
 // screen has (no map, no userMarkers, no roster): any other free identifier it reaches for is
 // recorded and fails the run, which is the check that _presenceOf is safe to call off-map.
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 
 // Brace walk from a marker to its matching close (tdz-check style). The slice has to end on
 // the function's own `}` followed by `;` or a newline -- anything else means the walk was

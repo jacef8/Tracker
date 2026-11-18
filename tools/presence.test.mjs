@@ -1,7 +1,7 @@
 // Pulls the REAL _presenceOf/_presenceHealth out of index.html and runs the state table
 // against it, so the thing under test is the shipped source and not a copy of it.
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 const grab = (startMarker, endMarker) => {
   const a = src.indexOf(startMarker);
   const b = src.indexOf(endMarker, a);

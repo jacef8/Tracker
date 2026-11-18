@@ -1,6 +1,6 @@
 // Build 1021: a pin notification carries the pin, and the receiving phone draws it at once.
 import { readFileSync } from 'node:fs';
-const idx = readFileSync(((process.argv[2] || 'public').replace(/\/$/, '')) + '/index.html', 'utf8');
+const idx = readFileSync(((process.argv[2] || 'public').replace(/\/$/, '')) + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 let fails = 0, n = 0;
 const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
 ok(idx.includes("'&pc=' + encodeURIComponent(cat || '') + '&pl=' + encodeURIComponent(label || '') +"), 'link carries the pin');

@@ -4,7 +4,7 @@
 // Usage:  node tools/joinask988.test.mjs [path/to/public]
 import { readFileSync } from 'node:fs';
 const dir = (process.argv[2] || 'public').replace(/\/$/, '');
-const idx = readFileSync(dir + '/index.html', 'utf8');
+const idx = readFileSync(dir + '/index.html', 'utf8').replace(/\r\n/g, '\n');
 const srv = readFileSync(dir + '/../server.js', 'utf8');
 
 let fails = 0, n = 0;

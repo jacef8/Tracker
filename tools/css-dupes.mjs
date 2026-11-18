@@ -3,7 +3,7 @@
 // room-item:hover, .uname, the selected states, and the oval icon buttons. Each time the fix
 // was "delete the duplicate", and each time it was found by accident.
 import { readFileSync } from 'node:fs';
-const src = readFileSync('public/index.html', 'utf8');
+const src = readFileSync('public/index.html', 'utf8').replace(/\r\n/g, '\n');
 const styles = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
 const decl = new Map();           // selector -> [{props, important, line}]
 for (const css of styles) {
