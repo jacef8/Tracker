@@ -1609,10 +1609,16 @@ window._timedOnValue = function (orig) {
      use the window rather than leaving two empty gutters.
      ════════════════════════════════════════════════════════════════════════════════════ */
   @media (min-width: 1100px) {
-    body.ui-v2 #join-screen .join-card,
-    body.ui-v2 #join-screen #panel-join {
+    body.ui-v2 #join-screen .join-card {
       max-width: min(1180px, 94vw) !important;
       width: min(1180px, 94vw) !important;
+    }
+    /* 1028: the panel sits INSIDE the card's padding, so it fills the card rather than copying
+       the card's width -- copying it pushed the right edge ~14px past the card (Jace's PC,
+       2026-11-18: "the right edge of the window is being cut off"). */
+    body.ui-v2 #join-screen #panel-join {
+      max-width: 100% !important;
+      width: 100% !important;
     }
     body.ui-v2 #panel-join {
       display: grid !important;
@@ -5313,7 +5319,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1027;
+var APP_BUILD = 1028;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17810,6 +17816,8 @@ function initMap() {
 
   // ONE unified map click handler — measure > pin > parcels, no conflicts
   map.on('click', function(e) {
+    // 1028: tapping off a peeked hidden dot puts it away again (and closes its card).
+    if (window._peekUid) { try { window._closeMemberSheet(); } catch (_) {} try { window._endPeek(); } catch (_) {} }
     // While placing a new pin, a map tap just repositions the pending pin (no button needed).
     var _pm = document.getElementById('pin-modal');
     if (_pm && _pm.classList.contains('placing')) {
@@ -21262,9 +21270,13 @@ function listenUsers() {
       // Hidden by THIS viewer, or hidden room-wide by the owner/an admin. A device still
       // sees its own dot either way (isMine) — hiding the tablet from the family map
       // shouldn't blind the tablet.
+      // 1028: _hiddenRaw is the setting; _hiddenFromMap is what the map does. Tapping a HIDDEN
+      // row PEEKS it (window._peekUid) -- the dot shows until you close the card or tap the map.
+      // A private device is never peeked: its row is not even listed.
+      const _hiddenRaw = !isMine && ((window._isMemberHidden && window._isMemberHidden(uid)) ||
+                                     (window._isHiddenForAll && window._isHiddenForAll(uid)));
       const _hiddenFromMap = !isMine && ((window._isPrivateOther && window._isPrivateOther(uid, data)) ||
-                                         (window._isMemberHidden && window._isMemberHidden(uid)) ||
-                                         (window._isHiddenForAll && window._isHiddenForAll(uid)));
+                                         (_hiddenRaw && window._peekUid !== uid));
       if (_hiddenFromMap && userMarkers[uid]) {
         console.log('[GL-debug] removing marker (hide-from-map toggle is ON for this uid):', uid);
         userMarkers[uid].remove(); delete userMarkers[uid]; delete window._prevGroupOf[uid];
@@ -21865,7 +21877,8 @@ function listenUsers() {
       // else — LIVE / RESTING / etc. — instead of a second, redundant "YOU". Three "you" markers
       // on one row (the name's "(you)", the inline pill, and a "YOU" badge here) was the report.
       var bd;
-      if (_hiddenFromMap)    bd = { t: 'HIDDEN', bg: 'var(--border)', c: 'var(--muted)' };
+      if (_hiddenRaw && window._peekUid === uid) bd = { t: 'SHOWING', bg: 'var(--v2-chip-ok-bg)', c: 'var(--v2-chip-ok-ink)' };
+      else if (_hiddenFromMap) bd = { t: 'HIDDEN', bg: 'var(--border)', c: 'var(--muted)' };
       else if (_pres.key === 'live')
                              bd = { t: 'LIVE', bg: 'var(--v2-chip-ok-bg)', c: 'var(--v2-chip-ok-ink)' };
       else if (_pres.calm)   bd = { t: _pres.label, bg: 'rgba(46,196,182,.16)', c: _pres.color };
@@ -21948,8 +21961,10 @@ function listenUsers() {
         window._listZoomIn = Date.now();
         document.getElementById('user-drawer').classList.remove('open');
         setLocateMeVisible(true);
-        if (_hiddenFromMap) {
-          toast('Tap 👁 to show ' + data.name + ' on your map again');
+        if (_hiddenRaw) {
+          // 1028: the old toast pointed at an eye button that no longer exists on the row.
+          // Now the tap shows them, for as long as their card is open.
+          window._startPeek(uid, data);
           return;
         }
         // ONE door for everyone: _openPersonSheet hands off to the rich live sheet when this
@@ -31852,6 +31867,7 @@ window._showMemberSheet = function(uid, quiet) {
 };
 window._closeMemberSheet = function() {
   window._openMemberUid = null;
+  try { window._endPeek(); } catch (e) {}   // 1028: closing the card hides a peeked dot again
   window._openGroupUids = null;
   try { window._msAgeStop(); } catch (e) {}
   var sheet = document.getElementById('member-sheet'); if (sheet) sheet.style.display = 'none';
@@ -31914,6 +31930,37 @@ window._takeListZoom = function () {
   var t = window._listZoomIn; window._listZoomIn = 0;
   if (!t || Date.now() - t > 1000) return 0;
   try { return map.getZoom() < LIST_ZOOM - 0.05 ? LIST_ZOOM : 0; } catch (e) { return 0; }
+};
+// 1028: PEEK at a hidden dot. Jace: "if I click on a hidden device show it to me until I click
+// off of it". The hide setting itself is untouched; this only lifts it on THIS screen while the
+// card is open. A room-wide hide set by the owner/an admin can be peeked only by someone who could
+// lift it anyway -- otherwise a member could undo the owner's hide just by tapping.
+window._peekUid = null;
+function _rerenderPeople() { try { if (typeof listenUsers === 'function' && window._usersListenerUnsub) listenUsers(); } catch (e) {} }
+window._startPeek = function (uid, data) {
+  var nm = (data && data.name) || 'them';
+  var mineToLift = window._isMemberHidden && window._isMemberHidden(uid);
+  if (!mineToLift && !(window._canManageRoom && window._canManageRoom())) {
+    toast('The crew owner hid ' + nm + ' from everyone\u2019s map', 3200); return;
+  }
+  window._peekUid = uid;
+  try { window._evt('peek hidden ' + String(uid).slice(0, 6)); } catch (e) {}
+  _rerenderPeople();
+  var tries = 0;
+  (function open() {
+    if (window._peekUid !== uid) return;
+    if ((typeof userMarkers !== 'undefined' && userMarkers[uid]) || tries++ >= 12) {
+      window._openPersonSheet(uid, data);
+      toast('Showing ' + nm + ' until you close this. To keep them on your map: More, then Show their dot.', 4200);
+      return;
+    }
+    setTimeout(open, 150);
+  })();
+};
+window._endPeek = function () {
+  if (!window._peekUid) return;
+  window._peekUid = null;
+  _rerenderPeople();
 };
 window._openPersonSheet = function (uid, data) {
   if (!uid) return;
