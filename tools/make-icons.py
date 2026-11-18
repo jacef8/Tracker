@@ -1,3 +1,5 @@
+# RETIRED 2026-11-17: Jace asked for the gold icon back. Run tools/make-icons-gold.py instead;
+# running this file would put the green icon back on every phone.
 #!/usr/bin/env python3
 """
 GroundLink app icon — Pine & Powder.

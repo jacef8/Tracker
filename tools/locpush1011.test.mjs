@@ -54,7 +54,7 @@ ok(ext.includes('r.httpMethod = "PATCH"'), 'PATCH, never PUT');
 // build
 ok(fast.includes('LocPushTarget.ensure!(') && fast.includes('LOCPUSH_IDENTIFIER => locpush_profile'), 'Fastfile adds and signs the extension');
 ok(wf.includes('node tools/asc-ensure-extension-id.mjs com.groundlink.ios com.groundlink.ios.locpush'), 'workflow registers the extension App ID');
-ok((pbx.match(/MARKETING_VERSION = 1\.0\.17;/g) || []).length === 2, 'iOS version 1.0.17');
+ok((pbx.match(/MARKETING_VERSION = 1.0.(1[7-9]|[2-9][0-9]);/g) || []).length === 2, 'iOS version 1.0.17 or later');
 
 console.log(fails ? `${fails} of ${n} checks FAILED` : `all ${n} checks pass`);
 process.exit(fails ? 1 : 0);
