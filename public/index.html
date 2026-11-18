@@ -3257,6 +3257,11 @@ window._timedOnValue = function (orig) {
       <section class="join-panel" id="panel-account">
         <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.5;margin-bottom:2px">Keep your name, friends &amp; favorites across devices — or stay a guest. Your choice.</div>
         <!-- ══ ACCOUNT / IDENTITY ════ -->
+        <div id="foreign-phone-card" style="display:none;background:#3a1d00;border:2px solid #ff9800;border-radius:12px;padding:12px 14px;margin-bottom:10px">
+          <div style="font-size:15px;font-weight:800;color:#fff">This phone still has <span id="foreign-phone-who">someone else</span>’s crews and picture</div>
+          <div style="font-size:13px;color:#ffd8a8;margin-top:4px;line-height:1.45">It was signed in to another account before. Start fresh to clear their crews, name and picture off this phone. You stay signed in.</div>
+          <button type="button" onclick="window._startFreshPhone && window._startFreshPhone()" style="width:100%;margin-top:10px;min-height:44px;background:#ff9800;border:none;border-radius:10px;color:#1a1200;font-size:15px;font-weight:800;cursor:pointer">Start fresh on this phone</button>
+        </div>
         <div id="account-box">
           <!-- Guest / signed-out view -->
           <div id="acct-guest">
@@ -3289,7 +3294,7 @@ window._timedOnValue = function (orig) {
               <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-name"></div>
               <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="acct-email"></div>
             </div>
-            <button id="btn-signout" type="button" onclick="window.GLAuth ? GLAuth.signOutUser() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
+            <button id="btn-signout" type="button" onclick="window._settingsSignOut ? window._settingsSignOut() : (typeof toast === 'function' && toast('Still loading — try again in a second', 2400))" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;padding:6px 10px;flex-shrink:0">Sign out</button>
           </div>
           <!-- Signed in as the wrong account, or a session the mobile repair cannot fix from
                the inside? This is the escape hatch, and it belongs next to Sign out rather
@@ -5230,7 +5235,7 @@ window._timedOnValue = function (orig) {
   function row(fn) { return '#settings-sheet [onclick*="' + fn + '"]'; }
   function up(sel, tag) { var el = q(sel); return el && el.closest ? el.closest(tag) : null; }
   var MAP = {
-    you: ['#account-box', '#acct-extras', '#account-photo-row', row('_editDeviceName'), row('_toggleDevicePrivate'),
+    you: ['#foreign-phone-card', '#account-box', '#acct-extras', '#account-photo-row', row('_editDeviceName'), row('_toggleDevicePrivate'),
           function () { return up('#acct-hide-search', 'label'); },
           function () { var el = q('#account-sessions'); return el && el.parentElement; }],
     people: [function () { var el = q('#account-friends'); return el && el.parentElement; },
@@ -5300,6 +5305,7 @@ window._timedOnValue = function (orig) {
     try { inCrew = !!(typeof groupName !== 'undefined' && groupName && q('#map-screen') && getComputedStyle(q('#map-screen')).display !== 'none'); } catch (e) {}
     var cb = q('#set-mi-crew'); if (cb) cb.style.display = inCrew ? 'flex' : 'none';
     if (k === 'you' || k === 'people' || k === 'voice') { try { _renderAccountPage(); } catch (e) {} }
+    if (k === 'you') { try { window._checkForeignPhone && window._checkForeignPhone(); } catch (e) {} }
     var panel = q('#set-panel'); if (panel) panel.scrollTop = 0;
     var pages = q('#set-pages'); if (pages) pages.scrollTop = 0;
   };
@@ -5467,7 +5473,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1031;
+var APP_BUILD = 1032;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -12036,7 +12042,7 @@ window._settingsSignOut = function () {
     try { cu = window._fb && window._fb.auth && window._fb.auth.currentUser; } catch (e) {}
     var who = (cu && !cu.isAnonymous && (cu.email || cu.displayName)) || '';
     var msg = who ? ('Sign out of ' + who + '?') : 'Sign out of this account?';
-    if (!window.confirm(msg + '\n\nYour crews and pins stay where they are. You will need to sign in again on this device to see them.')) return;
+    if (!window.confirm(msg + '\n\nThis clears the phone: your crews, name and picture come off it, and it starts fresh for whoever signs in next. Sign in again and everything comes back.')) return;
     if (window.GLAuth && window.GLAuth.signOutUser) window.GLAuth.signOutUser();
     else if (typeof toast === 'function') toast('Still loading — try again in a second', 2400);
   } catch (e) {}
@@ -14975,7 +14981,12 @@ window._toggleColorSwatches = function () {
 window._setMyName = function(v) {
   v = (v || '').trim().slice(0, 24);
   if (!v) return;
+  var _same = (v === userName) && (function () { try { return localStorage.getItem('gl_name') === v; } catch (e) { return true; } })();
   userName = v;
+  // 1032: this box only renamed the map dot. The account card, the synced profile and everyone
+  // else's phones read gl_name, so a renamed person still showed the old name everywhere else.
+  try { localStorage.setItem('gl_name', v); localStorage.setItem('gl_name_custom', '1'); } catch (e) {}
+  try { if (!_same && window.GLAuth) { window.GLAuth.sync(); window.GLAuth.refreshUI(); } } catch (e) {}
   try { var ni = document.getElementById('inp-name'); if (ni) ni.value = v; } catch (e) {}
   try { var s = getSavedSession(); saveSession(v, (groupName || s.group || ''), (userId || s.uid || '')); } catch (e) {}
   try { window._writeSession && window._writeSession(); } catch (e) {}
@@ -33248,6 +33259,9 @@ try {
     try {
       var f = window._fb; if (!f || !f.db) return;
       var u = profileKey(); if (!u) return;
+      // 1032: this phone still carries another account's crews and name; uploading would copy
+      // them into the account now signed in (what happened to Max's new account).
+      try { if (_foreignOwner()) { _checkForeignPhone(); return; } } catch (e) {}
       var prof = localProfile();
       // A device-label word ("Tablet"/"phone"/"PC") is never a real name. The old label-as-name
       // bug let one leak into the synced profile, and because this push MERGES, the offending
@@ -34110,19 +34124,108 @@ try {
     });
   }
 
-  function signOutUser() {
-    var f = window._fb;
-    try { if (f && f.auth && f.authApi) f.authApi.signOut(f.auth); } catch (e) {}
-    try {
-      var FA = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
-      if (FA && FA.signOut) FA.signOut();
-    } catch (e) {}
-    LS.set('gl_account', '');
-    LS.set('gl_email', '');
-    LS.set('gl_account_uid', '');  // detach the account; keep this device's own id + name
-    refreshUI(); // device keeps its own id/name; profile reverts to this device's local copy
-    if (typeof toast === 'function') toast('Signed out — still here as a guest', 2600);
+  // 1032: signing out used to drop only the login. The phone kept its owner's crews, name,
+  // friends, pins and -- worst -- its device id, which the database still maps to that owner. The
+  // next person to sign in inherited all of it, their first sync uploaded it into their own
+  // account, and they reported location into the previous owner's crews under his name and
+  // picture (Jace's old phone handed to Max, 2026-11-18). Now the phone is wiped back to a fresh
+  // install: device-level settings stay (look, map layers, background-location setup, push
+  // tokens); everything that belongs to a person goes, including the device id.
+  var _KEEP_ON_RESET = /^gl_(is_native|bg_|os_settings|geo_ok|web_ok|ui_v2|daylight|3d|hillshade|contours|overlays|offline_areas|road_cache|autocache|car_audio|voice_notif_icon|loc_notif_icon|battsaver|onboarded|push_asked|wn_seen|ios_install_nudge|getapp_snooze|fcm|push_endpoint|voip_token|locpush_token|ptt_optin_migrated)/;
+  function _phoneRooms() {
+    var r = {};
+    try { Object.keys(JSON.parse(LS.get('gl_circles') || '{}')).forEach(function (k) { r[k] = 1; }); } catch (e) {}
+    try { (JSON.parse(LS.get('gl_favs') || '[]') || []).forEach(function (k) { if (k) r[k] = 1; }); } catch (e) {}
+    try { Object.keys(JSON.parse(LS.get('gl_joined') || '{}')).forEach(function (k) { r[k] = 1; }); } catch (e) {}
+    try { if (typeof groupName !== 'undefined' && groupName) r[groupName] = 1; } catch (e) {}
+    return Object.keys(r).filter(function (k) { return k && k.charAt(0) !== '_'; });
   }
+  // keepAuth: wipe the phone but stay signed in (used when the phone still holds someone else's
+  // data under the account now signed in). Without it, the login goes too.
+  function resetPhone(keepAuth, msg) {
+    if (window._phoneResetting) return;
+    window._phoneResetting = true;
+    var dev = uid() || '';
+    try { window._evt && window._evt('🧹 phone reset (' + (keepAuth ? 'start fresh' : 'sign out') + ') dev=' + String(dev).slice(0, 8)); } catch (e) {}
+    var f = window._fb, waits = [];
+    // Take this phone out of every crew it reports to, and stop that crew's alerts reaching it.
+    try {
+      if (dev && f && f.db && f.remove) {
+        _phoneRooms().forEach(function (k) {
+          ['users', 'pushSubs', 'favSubs'].forEach(function (b) {
+            try { waits.push(Promise.resolve(f.remove(f.ref(f.db, 'gl/' + k + '/' + b + '/' + dev))).catch(function () {})); } catch (e) {}
+          });
+        });
+      }
+    } catch (e) {}
+    try { if (window.leaveGroup && typeof groupName !== 'undefined' && groupName) { /* the reload below leaves the map */ } } catch (e) {}
+    var finish = function () {
+      if (!keepAuth) {
+        try { if (f && f.auth && f.authApi) f.authApi.signOut(f.auth); } catch (e) {}
+        try {
+          var FA = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+          if (FA && FA.signOut) FA.signOut();
+        } catch (e) {}
+      }
+      try {
+        var ks = []; for (var i = 0; i < localStorage.length; i++) ks.push(localStorage.key(i));
+        ks.forEach(function (k) { if (k && /^gl_/.test(k) && !_KEEP_ON_RESET.test(k)) localStorage.removeItem(k); });
+      } catch (e) {}
+      try { sessionStorage.clear(); } catch (e) {}
+      try { ['gl_uid', 'gl_name', 'gl_group', 'gl_ts'].forEach(function (c) { document.cookie = c + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'; }); } catch (e) {}
+      if (typeof toast === 'function') toast(msg || 'Signed out. This phone is starting fresh…', 2500);
+      setTimeout(function () { try { location.replace('/'); } catch (e) { location.reload(); } }, 1200);
+    };
+    Promise.race([Promise.all(waits), new Promise(function (r) { setTimeout(r, 2500); })]).then(finish, finish);
+  }
+  function signOutUser() { resetPhone(false); }
+  // The phone's device id is registered (gl/_devOwner) to a DIFFERENT real account than the one
+  // signed in: this phone still carries the previous person's identity and local data. Never
+  // upload from it, and offer the one-tap fix.
+  function _foreignOwner() {
+    try {
+      var acct = accountId(); if (!acct || !_reallySignedIn()) return '';
+      var dev = uid(); if (!dev || dev === acct) return '';
+      var o = window._devOwnerAll && window._devOwnerAll[dev];
+      var owner = o && o.acct;
+      if (!owner || owner === acct || owner === dev) return '';
+      // Only a real account counts (a guest id that got signed in is the normal first sign-in).
+      var dir = window._dirAll || null;
+      if (dir && (!dir[owner] || dir[owner].dev === owner)) return '';   // a device-keyed entry is not a person
+      return owner;
+    } catch (e) { return ''; }
+  }
+  window._foreignOwner = _foreignOwner;
+  window._startFreshPhone = function () { resetPhone(true, 'Starting fresh on this phone…'); };
+  function _checkForeignPhone() {
+    try {
+      var owner = _foreignOwner();
+      var el = document.getElementById('foreign-phone-card');
+      if (!owner) { if (el) el.style.display = 'none'; return; }
+      var who = '';
+      try { who = (window._dirAll && window._dirAll[owner] && window._dirAll[owner].name) || ''; } catch (e) {}
+      try { var t = document.getElementById('foreign-phone-who'); if (t) t.textContent = who || 'someone else'; } catch (e) {}
+      if (el) el.style.display = 'block';
+      if (!window._foreignNoted) {
+        window._foreignNoted = 1;
+        try { window._evt && window._evt('⚠ phone still registered to another account (' + String(owner).slice(0, 8) + ')'); } catch (e) {}
+        if (typeof toast === 'function') toast('This phone still has ' + (who || 'someone else') + '’s crews. Open Settings → You to start fresh.', 6000);
+      }
+    } catch (e) {}
+  }
+  window._checkForeignPhone = _checkForeignPhone;
+  try {
+    (function () {
+      var f = window._fb;
+      var go = function () {
+        try {
+          var ff = window._fb; if (!ff || !ff.db || !ff.get) return;
+          ff.get(ff.ref(ff.db, 'gl/_directory')).then(function (s) { window._dirAll = (s && s.val && s.val()) || {}; _checkForeignPhone(); }).catch(function () {});
+        } catch (e) {}
+      };
+      setTimeout(go, 6000); setTimeout(go, 20000);
+    })();
+  } catch (e) {}
 
   function ensureUid() {
     var u = uid();
