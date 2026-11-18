@@ -41,6 +41,11 @@ let _rec = null, _recChunks = [], _recStart = 0, _recCap = null;
 let _waitTimer = null;
 let _talkReconnectTimer = null, _talkReconnects = 0;
 let barMin = false;          // minimized bar (mic bubble only) — auto-joins start this way
+// 1030: bumps on every openVoice/leaveVoice. A connect still waiting on its token when a newer
+// openVoice arrives must give up instead of building a second room. Laura's tap on the incoming-
+// call banner also re-armed her crew channel, so two connects ran at once and fought over her
+// single identity -- "connected", but nobody heard anything.
+let _connGen = 0;
 let _reMinTimer = null;      // re-minimize after an auto-expand once the talking stops
 
 function emit(evt) {
@@ -274,18 +279,22 @@ export function unlockAudio() {
 // Initiator path (from a tap) primes the mic. Receiver path (`listen:true`,
 // auto-join) connects to hear, and acquires the mic only when the user taps PTT.
 export function openVoice(opts) {
-  const { room: roomName, identity, name, partnerName, livekitUrl, tokenEndpoint, listen } = opts || {};
+  const { room: roomName, identity, name, partnerName, livekitUrl, tokenEndpoint, listen, show } = opts || {};
   if (!roomName || !identity || !livekitUrl || !tokenEndpoint) {
     console.error('[voice] openVoice missing required fields', opts);
     emit({ type: 'error', message: 'voice not configured' });
     return;
   }
-  if (room && session && session.room === roomName) { showBar(); return; }
+  if (session && session.room === roomName && (room || session._connecting)) { if (show) session.show = true; if (show || !listen || !session.listen || session.show) showBar(); return; }
   if (room) { try { room.disconnect(); } catch (e) {} room = null; }
+  _connGen++;
 
   session = {
     room: roomName, identity, name: name || identity,
     partnerName: partnerName || 'member', livekitUrl, tokenEndpoint, listen: !!listen,
+    // 1030: an answered call connects without grabbing the mic (listen) but MUST show the bar --
+    // the HOLD button is the only way to talk back, and "Tap to hear" lives on it.
+    show: !!show,
   };
   micOn = false;
   remoteTalking = false;
@@ -298,7 +307,7 @@ export function openVoice(opts) {
   // Hidden auto-join: also drop the gv-active class renderBar added — it lifts the map's bottom
   // toolbar ~100px to clear a bar that isn't visible ("toolbar sitting too high up in the map").
   // showBar() restores the class when the bar is deliberately opened.
-  if (session.listen && barEl) { barEl.style.display = 'none'; try { document.body.classList.remove('gv-active'); } catch (e) {} }
+  if (session.listen && !session.show && barEl) { barEl.style.display = 'none'; try { document.body.classList.remove('gv-active'); } catch (e) {} }
   setTalker('connecting…', '#8b949e');
   connectVoice();
 }
@@ -308,6 +317,7 @@ export function leaveVoice() {
   // Null session FIRST so the room's Disconnected handler treats this as an intentional exit and
   // doesn't schedule a reconnect against the room we're deliberately tearing down.
   session = null;
+  _connGen++;
   try { if (_waitTimer) { clearTimeout(_waitTimer); _waitTimer = null; } } catch (e) {}
   try { if (_talkReconnectTimer) { clearTimeout(_talkReconnectTimer); _talkReconnectTimer = null; } } catch (e) {}
   _talkReconnects = 0;
@@ -497,6 +507,9 @@ export function deviceMonitorIds() { return Object.keys(monRooms); }
 // ───────────────────────────── connection ─────────────────────────────────
 async function connectVoice() {
   if (!session) return;
+  const _gen = _connGen;
+  const _sess = session;
+  _sess._connecting = true;
 
   let token;
   try {
@@ -510,12 +523,18 @@ async function connectVoice() {
     token = data.token;
     if (!token) throw new Error('no token in response');
   } catch (e) {
+    _sess._connecting = false;
+    if (_gen !== _connGen) return;
     console.error('[voice] token mint failed', e);
     setTalker('token error', '#f85149');
     emit({ type: 'error', message: 'token mint failed: ' + e.message });
     return;
   }
 
+  if (_gen !== _connGen || session !== _sess) {
+    emit({ type: 'diag', message: 'dropped a stale connect to ' + _sess.room });
+    return;
+  }
   room = new Room();
   const _thisRoom = room;   // capture: if openVoice (room switch) or leaveVoice swaps `room` out,
                             // the Disconnected handler below must NOT reconnect this stale instance.
@@ -605,7 +624,12 @@ async function connectVoice() {
 
   try {
     // Not forcing iceTransportPolicy:'relay' — see comment in the device-monitor path above.
-    await room.connect(session.livekitUrl, token);
+    await _thisRoom.connect(_sess.livekitUrl, token);
+    _sess._connecting = false;
+    if (room !== _thisRoom || session !== _sess) {   // replaced while connecting
+      try { _thisRoom.disconnect(); } catch (e) {}
+      return;
+    }
     // Don't grab the mic here — connect() is several awaits past the original tap,
     // so the user gesture is gone and getUserMedia would be blocked with no prompt.
     // The mic is acquired on the user's first PTT tap instead (a live gesture).
@@ -630,6 +654,8 @@ async function connectVoice() {
     emit({ type: 'joined', room: session.room });
     try { const _n = room && room.remoteParticipants ? room.remoteParticipants.size : 0; emit({ type: 'diag', message: 'connected room=' + session.room + ' remoteParticipants=' + _n }); } catch (e) {}
   } catch (e) {
+    _sess._connecting = false;
+    if (room !== _thisRoom) return;
     console.error('[voice] connect failed', e);
     setTalker('connect failed', '#f85149');
     emit({ type: 'error', message: 'connect failed: ' + e.message });
@@ -759,13 +785,15 @@ function updatePresence() {
 // ── Autoplay blocked: show a tap target that resumes audio ──────────────────
 function showAudioBlocked() {
   if (!barEl) return;
+  if (!barEl._audioBlocked) emit({ type: 'diag', message: 'audio blocked by the phone - showing Tap to hear' + (barEl.style.display === 'none' ? ' (bar hidden)' : '') });
   barEl._audioBlocked = true;
-  setTalker('Tap to hear', '#f0a500');
+  setTalker('🔊 Tap here to hear them', '#f0a500');
   barEl.style.cursor = 'pointer';
   barEl.addEventListener('click', _resumeAudio);
 }
 function hideAudioBlocked() {
   if (!barEl) return;
+  if (barEl._audioBlocked) emit({ type: 'diag', message: 'audio unblocked' });
   barEl._audioBlocked = false;
   barEl.style.cursor = '';
   barEl.removeEventListener('click', _resumeAudio);
