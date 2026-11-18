@@ -5305,7 +5305,7 @@ window._timedOnValue = function (orig) {
     try { inCrew = !!(typeof groupName !== 'undefined' && groupName && q('#map-screen') && getComputedStyle(q('#map-screen')).display !== 'none'); } catch (e) {}
     var cb = q('#set-mi-crew'); if (cb) cb.style.display = inCrew ? 'flex' : 'none';
     if (k === 'you' || k === 'people' || k === 'voice') { try { _renderAccountPage(); } catch (e) {} }
-    if (k === 'you') { try { window._checkForeignPhone && window._checkForeignPhone(); } catch (e) {} }
+    if (k === 'you') { try { window._checkForeignPhone && window._checkForeignPhone(); window._recheckForeignPhone && window._recheckForeignPhone(); } catch (e) {} }
     var panel = q('#set-panel'); if (panel) panel.scrollTop = 0;
     var pages = q('#set-pages'); if (pages) pages.scrollTop = 0;
   };
@@ -5473,7 +5473,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1032;
+var APP_BUILD = 1033;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -34220,10 +34220,21 @@ try {
       var go = function () {
         try {
           var ff = window._fb; if (!ff || !ff.db || !ff.get) return;
-          ff.get(ff.ref(ff.db, 'gl/_directory')).then(function (s) { window._dirAll = (s && s.val && s.val()) || {}; _checkForeignPhone(); }).catch(function () {});
+          // 1033: read this phone's owner directly. 1032 relied on _devOwnerAll, which only loads
+          // once the People/You lists subscribe -- so on Max's phone the card never appeared.
+          var dev = uid();
+          Promise.all([
+            ff.get(ff.ref(ff.db, 'gl/_directory')).then(function (s) { window._dirAll = (s && s.val && s.val()) || {}; }).catch(function () {}),
+            dev ? ff.get(ff.ref(ff.db, 'gl/_devOwner/' + dev)).then(function (s) {
+              var v = s && s.val && s.val();
+              window._devOwnerAll = window._devOwnerAll || {};
+              if (v) window._devOwnerAll[dev] = v;
+            }).catch(function () {}) : null
+          ]).then(function () { _checkForeignPhone(); });
         } catch (e) {}
       };
-      setTimeout(go, 6000); setTimeout(go, 20000);
+      setTimeout(go, 4000); setTimeout(go, 15000); setTimeout(go, 45000);
+      window._recheckForeignPhone = go;
     })();
   } catch (e) {}
 
