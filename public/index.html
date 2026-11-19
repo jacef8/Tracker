@@ -1564,6 +1564,12 @@ window._timedOnValue = function (orig) {
   @media (min-width: 760px) {
     body.ui-v2 .topbar-row2 { justify-content: flex-start !important; gap: 10px !important; }
   }
+  /* 1035: seven fixed-size buttons plus gaps are wider than a small phone (Galaxy S25, 360 px),
+     so the gear was cut in half. Below tablet width they share the row equally instead. */
+  @media (max-width: 759px) {
+    body.ui-v2 .topbar-row2 { gap: 5px !important; }
+    body.ui-v2 .topbar-row2 .icon-btn { flex: 1 1 0 !important; min-width: 0 !important; padding-left: 0 !important; padding-right: 0 !important; }
+  }
   /* Rooms and Exit: outline only, so the bar has no filled blocks of colour in it at all. */
   /* "Rooms" beside the glyph at every width. A bare map icon between the crew chip and a red
      EXIT does not say "switch to another crew", and this button went unrecognised. */
@@ -5473,7 +5479,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1034;
+var APP_BUILD = 1035;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -10103,20 +10109,42 @@ function _myAvatarKey() {
   } catch (e) {}
   return (typeof _myAcct === 'function') ? _myAcct() : '';
 }
-window._saveMyAvatar = function (rec, okMsg) {
+// 1035: picture saves are logged even outside a crew (the room debug log needs an open crew,
+// so Max's attempts from Home left no trace). Ten rolling slots, no picture data.
+function _avatarLog(step, extra) {
+  try {
+    var body = JSON.stringify({ step: step, extra: String(extra || '').slice(0, 160), ts: Date.now(), build: (typeof APP_BUILD !== 'undefined' ? APP_BUILD : 0),
+      acct: String(_myAcct() || '').slice(0, 8), auth: String(((window._fb && window._fb.auth && window._fb.auth.currentUser) || {}).uid || '').slice(0, 8),
+      ua: (navigator.userAgent || '').replace(/^.*\(Linux; Android [0-9.]+; ([^ ;)]+).*$/, '$1').slice(0, 40) });
+    fetch('https://tracker-58b87-default-rtdb.firebaseio.com/gl/_debug/avatarLog/' + (Date.now() % 10) + '.json', { method: 'PUT', body: body }).catch(function () {});
+  } catch (e) {}
+}
+window._avatarLog = _avatarLog;
+// Did the photo chooser even open? On some Android builds the system picker never appears.
+try { document.addEventListener('DOMContentLoaded', function () { var fi = document.getElementById('avatar-file-input'); if (fi) fi.addEventListener('click', function () { _avatarLog('picker-open'); }); }); } catch (e) {}
+window._saveMyAvatar = function (rec, okMsg, _retried) {
   var acct = _myAvatarKey();
+  _avatarLog(_retried ? 'save-retry' : 'save-start', (rec && rec.src) + ' bytes=' + String((rec && rec.img) || '').length);
   var authUid = ''; try { authUid = (window._fb.auth.currentUser || {}).uid || ''; } catch (e) {}
-  if (!acct) { toast('Sign in first to set a picture'); return; }
-  if (!db) { toast('Not connected yet - try again in a moment'); return; }
+  if (!acct) { _avatarLog('no-account'); toast('Sign in first to set a picture'); return; }
+  if (!db) { _avatarLog('no-db'); toast('Not connected yet - try again in a moment'); return; }
   try { window._evt('avatar save ' + (rec.src || '') + ' key=' + String(acct).slice(0, 6) + ' auth=' + String(authUid).slice(0, 6) + ' acct=' + String(_myAcct() || '').slice(0, 6) + ' bytes=' + String(rec.img || '').length); } catch (e) {}
   Promise.resolve(fbSet(fbRef(db, 'gl/_avatars/' + acct), rec)).then(function () {
     try { window._avatars[acct] = rec; } catch (e) {}
     try { window._repaintAllAvatars(); } catch (e) {}
     try { window._refreshAvatarPanel(); } catch (e) {}
     toast(okMsg);
+    _avatarLog('saved');
     try { window._evt('avatar saved'); } catch (e) {}
   }).catch(function (err) {
     var why = (err && (err.code || err.message)) || 'unknown';
+    _avatarLog('failed', why);
+    // Refused because the page is still signed in as the device, not the account: finish the
+    // native sign-in hand-off and try once more before telling the person it failed.
+    if (!_retried && /permission|denied/i.test(String(why)) && window._bridgeNativeAuth) {
+      window._bridgeNativeAuth(function (ok) { if (ok) window._saveMyAvatar(rec, okMsg, true); else toast('Could not save your picture (' + why + '). Try again.', 4000); });
+      return;
+    }
     toast('Could not save your picture (' + why + '). Try again.', 4000);
     try { window._evt('avatar save FAILED: ' + why); } catch (e) {}
   });
@@ -10125,7 +10153,8 @@ window._setPresetAvatar = function (i) {
   try {
     var pre = AVATAR_PRESETS[i]; if (!pre) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
-    if (!acct) { toast('Sign in first to set an icon'); return; }
+    try { _avatarLog('preset', i); } catch (e) {}
+    if (!acct) { try { _avatarLog('no-account'); } catch (e) {} toast('Sign in first to set an icon'); return; }
     var S = 160, c = document.createElement('canvas'); c.width = c.height = S;
     var x = c.getContext('2d');
     x.fillStyle = pre.bg; x.fillRect(0, 0, S, S);
@@ -10155,9 +10184,10 @@ window._renderPresetRow = function () {
 };
 window._pickAvatar = function (file) {
   try {
+    try { _avatarLog('picked', file ? ((file.type || '?') + ' ' + (file.size || 0)) : 'no file'); } catch (e) {}
     if (!file) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
-    if (!acct) { toast('Sign in first to set a photo'); return; }
+    if (!acct) { try { _avatarLog('no-account'); } catch (e) {} toast('Sign in first to set a photo'); return; }
     try { window._evt('avatar picked type=' + (file.type || '?') + ' size=' + (file.size || 0)); } catch (e) {}
     // An iPhone can hand over a photo with an empty type; let the image decoder decide.
     if (file.type && !/^image\//.test(file.type)) { toast('Pick an image file'); return; }
