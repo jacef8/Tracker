@@ -5241,7 +5241,7 @@ window._timedOnValue = function (orig) {
   function row(fn) { return '#settings-sheet [onclick*="' + fn + '"]'; }
   function up(sel, tag) { var el = q(sel); return el && el.closest ? el.closest(tag) : null; }
   var MAP = {
-    you: ['#foreign-phone-card', '#account-box', '#acct-extras', '#account-photo-row', row('_editDeviceName'), row('_toggleDevicePrivate'),
+    you: ['#foreign-phone-card', '#account-box', '#acct-extras', row('_editDeviceName'), row('_toggleDevicePrivate'),
           function () { return up('#acct-hide-search', 'label'); },
           function () { var el = q('#account-sessions'); return el && el.parentElement; }],
     people: [function () { var el = q('#account-friends'); return el && el.parentElement; },
@@ -5479,7 +5479,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1035;
+var APP_BUILD = 1036;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -10122,14 +10122,46 @@ function _avatarLog(step, extra) {
 window._avatarLog = _avatarLog;
 // Did the photo chooser even open? On some Android builds the system picker never appears.
 try { document.addEventListener('DOMContentLoaded', function () { var fi = document.getElementById('avatar-file-input'); if (fi) fi.addEventListener('click', function () { _avatarLog('picker-open'); }); }); } catch (e) {}
+// 1036: Max's phone (2026-11-18) started every picture save and none ever finished: the live
+// database link on that screen had stalled, so the write sat in a queue with no answer either way
+// (his location kept arriving through the background reporter). If the live write hasn't answered
+// in 5 s, send the same picture straight to the database over plain HTTPS with the sign-in token.
+function _avatarRest(acct, rec) {
+  var u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+  if (!u || !u.getIdToken) return Promise.reject(new Error('not signed in'));
+  return u.getIdToken().then(function (tok) {
+    var url = 'https://tracker-58b87-default-rtdb.firebaseio.com/gl/_avatars/' + encodeURIComponent(acct) + '.json?auth=' + encodeURIComponent(tok);
+    return fetch(url, rec === null ? { method: 'DELETE' } : { method: 'PUT', body: JSON.stringify(rec) });
+  }).then(function (r) {
+    if (!r.ok) return r.text().then(function (t) { throw new Error((r.status === 401 || r.status === 403 ? 'permission denied ' : 'error ') + r.status + ' ' + String(t).slice(0, 60)); });
+  });
+}
+function _avatarWrite(acct, rec, step) {
+  var f = window._fb || {};
+  var d = db || f.db, rf = fbRef || f.ref, st = fbSet || f.set, rm = fbRemove || f.remove;
+  return new Promise(function (resolve, reject) {
+    var done = false;
+    var finish = function (ok, v) { if (done) return; done = true; ok ? resolve(v) : reject(v); };
+    var viaRest = function (why) {
+      _avatarLog(step + '-rest', why);
+      _avatarRest(acct, rec).then(function () { _avatarLog(step + '-rest-ok'); finish(true); }, function (e) { finish(false, e); });
+    };
+    if (!d || !rf || !(rec === null ? rm : st)) { viaRest('no live link'); return; }
+    var t = setTimeout(function () { if (!done) viaRest('live link did not answer'); }, 5000);
+    try {
+      Promise.resolve(rec === null ? rm(rf(d, 'gl/_avatars/' + acct)) : st(rf(d, 'gl/_avatars/' + acct), rec))
+        .then(function () { clearTimeout(t); finish(true); }, function (e) { clearTimeout(t); finish(false, e); });
+    } catch (e) { clearTimeout(t); viaRest('live write threw'); }
+  });
+}
 window._saveMyAvatar = function (rec, okMsg, _retried) {
   var acct = _myAvatarKey();
   _avatarLog(_retried ? 'save-retry' : 'save-start', (rec && rec.src) + ' bytes=' + String((rec && rec.img) || '').length);
   var authUid = ''; try { authUid = (window._fb.auth.currentUser || {}).uid || ''; } catch (e) {}
   if (!acct) { _avatarLog('no-account'); toast('Sign in first to set a picture'); return; }
-  if (!db) { _avatarLog('no-db'); toast('Not connected yet - try again in a moment'); return; }
   try { window._evt('avatar save ' + (rec.src || '') + ' key=' + String(acct).slice(0, 6) + ' auth=' + String(authUid).slice(0, 6) + ' acct=' + String(_myAcct() || '').slice(0, 6) + ' bytes=' + String(rec.img || '').length); } catch (e) {}
-  Promise.resolve(fbSet(fbRef(db, 'gl/_avatars/' + acct), rec)).then(function () {
+  toast('Saving your picture…', 1800);
+  _avatarWrite(acct, rec, 'save').then(function () {
     try { window._avatars[acct] = rec; } catch (e) {}
     try { window._repaintAllAvatars(); } catch (e) {}
     try { window._refreshAvatarPanel(); } catch (e) {}
@@ -10179,7 +10211,8 @@ window._renderPresetRow = function () {
     }).join('');
     host.innerHTML =
       '<div style="font-size:11px;color:var(--muted);margin:10px 0 6px">No photo? Pick an icon instead.</div>' +
-      '<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + btns + '</div>';
+      '<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + btns + '</div>' +
+      '<button type="button" id="acct-photo-remove2" onclick="window._removeAvatar && window._removeAvatar()" style="margin-top:8px;padding:6px 0;background:none;border:none;color:var(--muted);font-size:13px;font-weight:700;text-decoration:underline;cursor:pointer">Remove my picture</button>';
   } catch (e) {}
 };
 window._pickAvatar = function (file) {
@@ -10215,9 +10248,13 @@ window._pickAvatar = function (file) {
 };
 window._removeAvatar = function () {
   try {
-    var acct = (typeof _myAcct === 'function') ? _myAcct() : ''; if (!acct) return;
-    fbRemove(fbRef(db, 'gl/_avatars/' + acct));
-    toast('Photo removed');
+    var acct = _myAvatarKey(); if (!acct) return;
+    _avatarWrite(acct, null, 'remove').then(function () {
+      try { delete window._avatars[acct]; } catch (e) {}
+      try { window._repaintAllAvatars(); } catch (e) {}
+      try { window._refreshAvatarPanel(); } catch (e) {}
+      toast('Picture removed');
+    }, function (err) { toast('Could not remove your picture (' + ((err && (err.code || err.message)) || 'unknown') + ')', 4000); });
   } catch (e) {}
 };
 // Account panel: show the current photo (or initials) and reveal the row only when signed in,
@@ -10261,7 +10298,7 @@ window._refreshAvatarPanel = function () {
   try {
     var row = document.getElementById('account-photo-row'); if (!row) return;
     var acct = (typeof _myAcct === 'function') ? _myAcct() : '';
-    row.style.display = acct ? 'block' : 'none';
+    row.style.display = 'none';   // 1036: one picture section only (the one at the top of You)
     if (!acct) return;
     var pv = document.getElementById('account-photo-preview');
     var rm = document.getElementById('account-photo-remove');
