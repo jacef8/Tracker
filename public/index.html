@@ -5479,7 +5479,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1036;
+var APP_BUILD = 1037;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -9449,8 +9449,10 @@ window._motionOf = function (uid, data) {
     var stamp = data.fixTs || data.ts;
     var last = h[h.length - 1];
     if (!last || last.ts !== stamp) h.push({ ts: stamp, spd: data.spd || 0 });
-    while (h.length && (now - h[0].ts) > 120000) h.shift();   // right now, not five minutes ago
-    if (h.length > 8) h.splice(0, h.length - 8);
+    // 1037: was the median of up to 8 readings across 2 minutes, which put the speed 30-40 s
+    // behind. The last 3 readings within 30 s still drop a single bad fix.
+    while (h.length && (now - h[0].ts) > 30000) h.shift();
+    if (h.length > 3) h.splice(0, h.length - 3);
     // The phone's own motion chip, when it has an answer. It reads the step-counter
     // coprocessor rather than GPS, which is the difference between knowing someone is walking
     // and inferring it from a dot that moved: 3 mph is a walk or an idling truck, and the GPS
@@ -19865,12 +19867,18 @@ function startLocationSharing() {
     }
     window._moveRun = _believable ? ((window._moveRun || 0) + 1) : 0;
     // The error bar is a per-fix judgement and can stand alone. Without one, a run of three.
-    if (!_believable || (_spdAccMph == null && window._moveRun < 3)) _inst = 0;
+    // 1037: a run of three cost 30 s at the 10 s cadence before ANY speed showed. Only small
+    // readings need the run: 10 mph+ is a vehicle, never a parked phone's wobble.
+    if (!_believable || (_spdAccMph == null && window._moveRun < 3 && _inst < 10)) _inst = 0;
 
     // Smooth it (exponential moving average) so the readout doesn't flicker, and hold
     // through brief gaps: a single missing/zero reading decays instead of blanking.
+    // 1037: the old 60/40 blend took four or five fixes (40-60 s) to catch up with a change, so
+    // the number was always a minute behind the car. Now the new reading carries 75%, and a
+    // stop decays to 0 in about three fixes instead of trailing on.
     if (window._smoothMph == null) window._smoothMph = _inst;
-    else window._smoothMph = window._smoothMph * 0.6 + _inst * 0.4;
+    else if (_inst === 0) window._smoothMph = window._smoothMph * 0.3;
+    else window._smoothMph = window._smoothMph * 0.25 + _inst * 0.75;
     // Backstop only — the gate above is what actually decides whether this is motion. Kept so
     // the smoothed value cannot creep up from a long tail of rounded-down noise.
     if (window._smoothMph < 1.5) window._smoothMph = 0;
