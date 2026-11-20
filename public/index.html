@@ -9,6 +9,59 @@
 <meta name="apple-mobile-web-app-title" content="GroundLink" />
 <meta name="theme-color" content="#141B1E" />
 <title>GroundLink</title>
+<script>
+/* 1044: old-engine fallback for the CSS `inset` shorthand.
+   `inset:0` (fill the whole screen) is used ~85 times: stylesheets, inline style="", and
+   style.cssText strings. Browsers older than Chrome 87 (e.g. the truck head unit's Android 8.1
+   WebView, Chrome 61) silently drop it, so every overlay collapses into the top-left corner.
+   The FIRST line asks the browser whether it understands `inset`. Every current phone, tablet
+   and PC answers yes and returns immediately -- nothing else here runs for them. Only an old
+   engine goes on to rewrite `inset:0` as top:0;right:0;bottom:0;left:0. */
+(function () {
+  try { if (window.CSS && CSS.supports && CSS.supports('inset', '0')) return; } catch (e) {}
+  var RX = /(^|[;{\s])inset\s*:\s*0(?:px)?\s*(?=;|}|$)/g;
+  function fix(s) {
+    return (typeof s === 'string' && s.indexOf('inset') > -1) ? s.replace(RX, '$1top:0;right:0;bottom:0;left:0') : s;
+  }
+  // style.cssText = '...inset:0...'
+  try {
+    var P = CSSStyleDeclaration.prototype, d = Object.getOwnPropertyDescriptor(P, 'cssText');
+    if (d && d.set && d.configurable) {
+      Object.defineProperty(P, 'cssText', { configurable: true, enumerable: d.enumerable, get: d.get,
+        set: function (v) { d.set.call(this, fix(v)); } });
+    }
+  } catch (e) {}
+  // el.setAttribute('style', '...inset:0...')
+  var sa = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (n, v) {
+    if (n === 'style' && typeof v === 'string') v = fix(v);
+    return sa.call(this, n, v);
+  };
+  function fixEl(el) {
+    var s = el.getAttribute && el.getAttribute('style');
+    if (s && s.indexOf('inset') > -1) { var f = fix(s); if (f !== s) sa.call(el, 'style', f); }
+    if (el.tagName === 'STYLE') { var t = el.textContent; if (t.indexOf('inset') > -1) { var g = fix(t); if (g !== t) el.textContent = g; } }
+  }
+  function fixTree(root) {
+    if (!root || root.nodeType !== 1) return;
+    fixEl(root);
+    var list = root.querySelectorAll('[style*="inset"],style');
+    for (var i = 0; i < list.length; i++) fixEl(list[i]);
+  }
+  // Parser-inserted markup, innerHTML, and <style> text set after insertion.
+  new MutationObserver(function (ms) {
+    for (var i = 0; i < ms.length; i++) {
+      var a = ms[i].addedNodes;
+      for (var j = 0; j < a.length; j++) {
+        var n = a[j];
+        if (n.nodeType === 1) fixTree(n);
+        else if (n.nodeType === 3 && n.parentNode && n.parentNode.tagName === 'STYLE') fixEl(n.parentNode);
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', function () { fixTree(document.documentElement); });
+})();
+</script>
 <!-- APP_VERSION: 3 — bump this + sw.js APP_VERSION on every deploy -->
 
 <!-- PWA manifest -->
@@ -5484,7 +5537,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1043;
+var APP_BUILD = 1044;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
