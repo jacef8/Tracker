@@ -183,6 +183,9 @@ if (mode === 'submitversion') {
       '- The app no longer keeps your screen awake unless you ask it to, in Settings',
       '- Many fixes and improvements',
     ],
+    '1.0.19': [
+      '- Helps us find and fix iPhone location sharing turning itself off in the background',
+    ],
     '1.0.18': [
       '- Your phone joins the family map\'s location check-ins on its own after an update, without opening the app',
     ],
