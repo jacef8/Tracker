@@ -5484,7 +5484,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1042;
+var APP_BUILD = 1043;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -35813,7 +35813,7 @@ window._voiceMod().then(function (m) {
     --ss-acc: var(--v2-acc, #A8D66A); --ss-on-acc: var(--v2-on-acc, #0C1113);
     --ss-warn: var(--v2-chip-warn-ink, #E0A05A); --ss-warn-bg: var(--v2-chip-warn-bg, #33281A);
     --ss-bad: var(--v2-bad, #FF6B5E);
-    --ss-tap: 56px; --ss-peek: 290px;
+    --ss-tap: 56px; --ss-peek: 290px; --ss-low: 76px;
   }
   /* Hidden in Simple mode. All of it returns with Hunting tools. */
   body.simple-ui #topbar, body.simple-ui #map-controls, body.simple-ui #member-sheet,
@@ -35839,7 +35839,8 @@ window._voiceMod().then(function (m) {
   #ss-top { position: fixed; top: calc(env(safe-area-inset-top,0px) + 12px); left: 12px; right: 12px; z-index: 160;
             display: flex; align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
   #ss-top > * { pointer-events: auto; }
-  #ss-circle { height: var(--ss-tap); max-width: calc(100vw - 100px); padding: 0 20px 0 18px; border-radius: 28px; border: 1px solid var(--ss-line);
+  #ss-topl { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  #ss-circle { height: var(--ss-tap); max-width: calc(100vw - 168px); padding: 0 20px 0 18px; border-radius: 28px; border: 1px solid var(--ss-line);
                background: var(--ss-e1); color: var(--ss-ink); display: flex; align-items: center; gap: 10px; cursor: pointer;
                font-family: var(--v2-geo, system-ui, sans-serif); font-weight: 800; font-size: 20px; box-shadow: 0 4px 12px rgba(0,0,0,.45); }
   #ss-circle span.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -35855,6 +35856,11 @@ window._voiceMod().then(function (m) {
               box-shadow: 0 -8px 26px rgba(0,0,0,.45); transform: translateY(calc(100% - var(--ss-peek)));
               transition: transform .28s cubic-bezier(.2,.8,.2,1); display: flex; flex-direction: column; }
   #ss-sheet.open { transform: translateY(0); }
+  /* 1043: swiped all the way down, only the handle stays on screen so the whole map is free. */
+  #ss-sheet.low { transform: translateY(calc(100% - var(--ss-low))); }
+  #ss-rail { transition: bottom .28s cubic-bezier(.2,.8,.2,1); }
+  body:has(#ss-sheet.low) #ss-rail { bottom: calc(var(--ss-low) + 16px); }
+  body.gv-active:has(#ss-sheet.low) #ss-rail { bottom: calc(var(--ss-low) + 124px); }
   body.gv-active #ss-sheet { bottom: calc(var(--safe-bot, 0px) + 108px); }
   body.gv-active #ss-rail { bottom: calc(var(--ss-peek) + 124px); }
   #ss-grab { height: 40px; display: flex; align-items: center; justify-content: center; cursor: grab; flex: 0 0 auto; touch-action: none; }
@@ -35925,7 +35931,10 @@ window._voiceMod().then(function (m) {
 </svg>
 <div id="ss-root" aria-label="Family map">
   <div id="ss-top">
-    <button id="ss-circle" type="button" aria-label="Switch circle" onclick="window._ssCircle()"><i></i><span class="n" id="ss-circle-name">Family</span><svg><use href="#ss-i-down"/></svg></button>
+    <div id="ss-topl">
+      <button class="ss-round" type="button" aria-label="Go to the Home screen" onclick="window._ssHome()"><svg><use href="#ss-i-home"/></svg></button>
+      <button id="ss-circle" type="button" aria-label="Switch circle" onclick="window._ssCircle()"><i></i><span class="n" id="ss-circle-name">Family</span><svg><use href="#ss-i-down"/></svg></button>
+    </div>
     <button class="ss-round" type="button" aria-label="Settings" onclick="openSettings()"><svg class="licon"><use href="#ic-gear"/></svg></button>
   </div>
   <div id="ss-rail">
@@ -36070,7 +36079,7 @@ window._voiceMod().then(function (m) {
     drawCard(uid);
     var sh = $('ss-sheet'); if (!sh) return;
     sh.classList.add('person');
-    if (window.innerWidth < 900) sh.classList.remove('open');
+    if (window.innerWidth < 900) { sh.classList.remove('open'); sh.classList.remove('low'); }
     window._ssFind(uid);
   };
   window._ssClosePerson = function () { openUid = null; var sh = $('ss-sheet'); if (sh) sh.classList.remove('person'); };
@@ -36100,6 +36109,8 @@ window._voiceMod().then(function (m) {
     } catch (e) {}
   };
   window._ssPlaces = function () { try { window._openPlacesManager(groupName, (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName); } catch (e) {} };
+  // 1043: Simple mode hides the top bar, and with it EXIT, so there was no way back to Home.
+  window._ssHome = function () { var b = $('switch-group-btn'); if (b) b.click(); };
   window._ssCircle = function () { try { window._openRoomSwitcher(); } catch (e) { try { openRoomInfo(); } catch (x) {} } };
   // Hunting tools on/off, for this phone only.
   window._setUiMode = function (mode) {
@@ -36130,7 +36141,7 @@ window._voiceMod().then(function (m) {
           if (quiet) return;
           var others = (uids || []).filter(function (u) { return u !== userId; });
           if (others.length === 1) { window._ssOpenPerson(others[0]); return; }
-          window._ssClosePerson(); var sh = $('ss-sheet'); if (sh) sh.classList.add('open');
+          window._ssClosePerson(); var sh = $('ss-sheet'); if (sh) { sh.classList.remove('low'); sh.classList.add('open'); }
           return;
         }
         return og.apply(this, arguments);
@@ -36156,11 +36167,16 @@ window._voiceMod().then(function (m) {
     var drag = null;
     function peek() { var v = parseFloat(getComputedStyle(sh).getPropertyValue('--ss-peek')); return isFinite(v) ? v : 290; }
     function closedY() { return Math.max(0, sh.offsetHeight - peek()); }
+    // 1043: a third resting place below the middle one -- tucked away, only the handle showing.
+    function low() { var v = parseFloat(getComputedStyle(sh).getPropertyValue('--ss-low')); return isFinite(v) ? v : 76; }
+    function lowY() { return Math.max(closedY(), sh.offsetHeight - low()); }
+    function state() { return sh.classList.contains('open') ? 'open' : (sh.classList.contains('low') ? 'low' : 'mid'); }
+    function setState(st) { sh.classList.toggle('open', st === 'open'); sh.classList.toggle('low', st === 'low'); }
     function start(e) {
       if (window.innerWidth >= 900) return;
       if (e.target && e.target.closest && e.target.closest('button')) return;
-      var y0 = sh.classList.contains('open') ? 0 : closedY();
-      drag = { id: e.pointerId, sy: e.clientY, y0: y0, y: y0, pts: [{ t: performance.now(), y: e.clientY }], moved: false };
+      var st = state(), y0 = st === 'open' ? 0 : (st === 'low' ? lowY() : closedY());
+      drag = { id: e.pointerId, sy: e.clientY, y0: y0, y: y0, st: st, pts: [{ t: performance.now(), y: e.clientY }], moved: false };
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
     }
     function move(e) {
@@ -36168,8 +36184,8 @@ window._voiceMod().then(function (m) {
       var dy = e.clientY - drag.sy;
       if (!drag.moved && Math.abs(dy) < 6) return;
       if (!drag.moved) { drag.moved = true; sh.classList.add('dragging'); }
-      var cy = closedY(), y = drag.y0 + dy;
-      if (y < 0) y = y / 3; else if (y > cy) y = cy + (y - cy) / 3;   // a little give past either end
+      var ly = lowY(), y = drag.y0 + dy;
+      if (y < 0) y = y / 3; else if (y > ly) y = ly + (y - ly) / 3;   // a little give past either end
       drag.pts.push({ t: performance.now(), y: e.clientY }); if (drag.pts.length > 20) drag.pts.shift();
       drag.y = y;
       sh.style.transform = 'translateY(' + y + 'px)';
@@ -36179,15 +36195,17 @@ window._voiceMod().then(function (m) {
       if (!drag || (e && e.pointerId !== drag.id)) return;
       var d = drag; drag = null;
       sh.classList.remove('dragging'); sh.style.transform = '';
-      if (!d.moved) { if (e && e.type === 'pointerup') sh.classList.toggle('open'); return; }
+      // A plain tap: tucked -> middle, middle -> open, open -> middle.
+      if (!d.moved) { if (e && e.type === 'pointerup') setState(d.st === 'mid' ? 'open' : 'mid'); return; }
       // Speed over the last ~120 ms of the finger's travel, in px per ms. A finger that stopped
       // before letting go reads as 0, so a slow drag settles by position alone.
       var now = performance.now(), pts = d.pts.filter(function (p) { return now - p.t <= 120; }), vy = 0;
       if (pts.length >= 2) { var a = pts[0], b = pts[pts.length - 1]; if (b.t - a.t >= 16) vy = (b.y - a.y) / (b.t - a.t); }
-      var open;
-      if (vy < -0.5) open = true; else if (vy > 0.5) open = false;
-      else open = d.y < closedY() / 2;
-      sh.classList.toggle('open', open);
+      var stops = [['open', 0], ['mid', closedY()], ['low', lowY()]], pick = null, k;
+      if (vy < -0.5) { for (k = stops.length - 1; k >= 0; k--) if (stops[k][1] < d.y - 1) { pick = stops[k][0]; break; } if (!pick) pick = 'open'; }
+      else if (vy > 0.5) { for (k = 0; k < stops.length; k++) if (stops[k][1] > d.y + 1) { pick = stops[k][0]; break; } if (!pick) pick = 'low'; }
+      else { var best = 1e9; stops.forEach(function (p) { var dd = Math.abs(p[1] - d.y); if (dd < best) { best = dd; pick = p[0]; } }); }
+      setState(pick);
     }
     [g, hd].forEach(function (el) {
       if (!el) return;
