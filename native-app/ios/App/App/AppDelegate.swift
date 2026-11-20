@@ -200,8 +200,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         // for here: When In Use first (iOS insists), then the Always upgrade.
         let status: CLAuthorizationStatus
         if #available(iOS 14.0, *) { status = mgr.authorizationStatus } else { status = CLLocationManager.authorizationStatus() }
-        if status == .notDetermined { mgr.requestWhenInUseAuthorization() }
+        GLFlight.mgr = mgr
+        GLFlight.log("launch", ["why": launchKind])
+        GLFlight.observeDevice()
+        if status == .notDetermined { GLFlight.log("ask", ["what": "whenInUse"]); mgr.requestWhenInUseAuthorization() }
         else if status == .authorizedWhenInUse && !UserDefaults.standard.bool(forKey: "gl_asked_always") {
+            GLFlight.log("ask", ["what": "always"])
             // The Always upgrade is asked for ONCE per install. Asking again after a downgrade
             // put the phone into provisional Always, and iOS then re-asked the person within
             // the hour -- "Change to Only While Using" is one of the two buttons -- so the
@@ -261,11 +265,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
+        GLFlight.log("resign")
         // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
         // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+        GLFlight.log("bg")
+        flightFlush()
         // Back to the coarse, cheap setting the battery budget is built around.
         setLocationFidelity(foreground: false)
         // Ask iOS for a background refresh later on; it decides when (see scheduleBgRefresh).
@@ -279,6 +286,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
+        GLFlight.log("terminate")
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
 
@@ -422,6 +430,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // __nativeSync() returning a JSON snapshot. Cached in UserDefaults for launches where the
     // UI (and thus the web app) never starts, e.g. a location-triggered background relaunch.
     func applicationDidBecomeActive(_ application: UIApplication) {
+        GLFlight.log("fg")
+        flightFlush()
         setLocationFidelity(foreground: true)
         // Once the page exists, and again shortly after, so the map has a position in hand well
         // inside the window where it would otherwise fall back to asking the WebView itself.
@@ -588,6 +598,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
+        GLFlight.logFix()
         // This manager runs unconditionally for the whole process lifetime (it has to, to survive
         // relaunch-after-termination) — but while the app is actually foregrounded, the main
         // Capacitor WebView's own GPS path is already reporting fixes at a much tighter cadence
@@ -643,6 +654,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         let now = manager.authorizationStatus
         lastAuth = now
         persistedAuth = now
+        GLFlight.log("auth", ["from": GLFlight.word(prev), "to": GLFlight.word(now),
+                              "full": manager.accuracyAuthorization == .fullAccuracy ? 1 : 0])
+        if prev != nil && prev != now { flightFlush() }
         if prev == .authorizedAlways && now == .authorizedWhenInUse {
             authDowngrades += 1
             lastAuthDowngradeAt = Date().timeIntervalSince1970
@@ -750,6 +764,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        GLFlight.log("locerr", ["code": (error as NSError).code])
         // Best-effort feature — a failed fix here should never crash or otherwise affect the app.
         // But it is exactly the moment to tell the Crew why there is no position (denied,
         // services off). Throttled inside.
@@ -854,11 +869,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         }
     }
 
+    /// Upload the flight recorder's pending entries (GLFlight, end of file). Uses the write
+    /// config the app already keeps for background writes; gl/_debug takes unauthenticated writes.
+    private func flightFlush() {
+        guard let cfg = nativeWriteConfig(), let dbUrl = cfg["dbUrl"] as? String,
+              let uid = cfg["uid"] as? String else { return }
+        GLFlight.flush(dbUrl: dbUrl, uid: uid)
+    }
+
     // MARK: - Wake heartbeat (the ONE path every background entry goes through)
 
     /// Record what woke us. Persisted, because every relaunch is a fresh process and an
     /// in-memory counter would read 1 forever.
     private func noteWake(_ reason: String) {
+        GLFlight.log("wake", ["why": reason])
+        flightFlush()
         lastWakeReason = reason
         lastWakeAt = Date().timeIntervalSince1970
         let d = UserDefaults.standard
@@ -1708,6 +1733,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
+        GLFlight.log("voip")
         // iOS 13+ REQUIRES reporting a CallKit call synchronously here or it terminates the app and
         // throttles future VoIP pushes. Parse room + caller from the payload, report the call.
         let dict = payload.dictionaryPayload
@@ -1895,5 +1921,119 @@ final class GLPushToTalk: NSObject, PTChannelManagerDelegate, PTChannelRestorati
     // MARK: PTChannelRestorationDelegate
     func channelDescriptor(restoredChannelUUID: UUID) -> PTChannelDescriptor {
         return PTChannelDescriptor(name: channelName, image: nil)
+    }
+}
+
+// MARK: - Flight recorder (1.0.19)
+//
+// Laura's iPhone keeps dropping from Always to While Using with nobody touching it -- seven times
+// since October, twice about 56 minutes after she set Always, always with GroundLink in the
+// background -- while Lexi, Jax and Vanesa on the same build hold Always. iOS never says why,
+// and until now the app only noticed at its next wake, up to 15 minutes later. This keeps a
+// short timeline of what the app and phone were doing (wakes, foreground/background, lock and
+// unlock, charger, Low Power, Talk pushes, permission asks, location errors) and the exact second
+// the permission changed, and uploads it to gl/_debug/flight/<uid>. Event names and times only:
+// no positions. Nothing is shown on the phone.
+final class GLFlight {
+    static weak var mgr: CLLocationManager?
+    private static let key = "gl_flight_pending"
+    private static let keep = 400
+    private static var lastFixLog: TimeInterval = 0
+    private static var flushing = false
+    private static var observing = false
+
+    static func word(_ s: CLAuthorizationStatus?) -> String {
+        guard let s = s else { return "?" }
+        switch s {
+        case .authorizedAlways: return "always"
+        case .authorizedWhenInUse: return "whenInUse"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .notDetermined: return "notDetermined"
+        @unknown default: return "other"
+        }
+    }
+
+    static func log(_ kind: String, _ extra: [String: Any] = [:]) {
+        if !Thread.isMainThread { DispatchQueue.main.async { log(kind, extra) }; return }
+        var e: [String: Any] = extra
+        e["k"] = kind
+        e["t"] = Int(Date().timeIntervalSince1970 * 1000)
+        let app = UIApplication.shared
+        e["st"] = app.applicationState == .active ? "fg" : (app.applicationState == .background ? "bg" : "in")
+        e["lock"] = app.isProtectedDataAvailable ? 0 : 1
+        if let m = mgr {
+            if #available(iOS 14.0, *) { e["auth"] = word(m.authorizationStatus) }
+            else { e["auth"] = word(CLLocationManager.authorizationStatus()) }
+        }
+        let dev = UIDevice.current
+        e["batt"] = Int((dev.batteryLevel < 0 ? 0 : dev.batteryLevel) * 100)
+        e["chg"] = (dev.batteryState == .charging || dev.batteryState == .full) ? 1 : 0
+        e["lowP"] = ProcessInfo.processInfo.isLowPowerModeEnabled ? 1 : 0
+        let d = UserDefaults.standard
+        var a = (d.array(forKey: key) as? [[String: Any]]) ?? []
+        a.append(e)
+        if a.count > keep { a.removeFirst(a.count - keep) }
+        d.set(a, forKey: key)
+    }
+
+    static func logFix() {
+        let now = Date().timeIntervalSince1970
+        if now - lastFixLog < 300 { return }
+        lastFixLog = now
+        log("fix")
+    }
+
+    /// Lock/unlock, charger, Low Power and clock changes, observed for the process lifetime.
+    static func observeDevice() {
+        if observing { return }
+        observing = true
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { _ in log("unlock") }
+        nc.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { _ in log("lock") }
+        nc.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { _ in log("power") }
+        nc.addObserver(forName: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { _ in log("lowpower") }
+        nc.addObserver(forName: UIApplication.significantTimeChangeNotification, object: nil, queue: .main) { _ in log("timechange") }
+    }
+
+    /// PATCH the pending entries to gl/_debug/flight/<uid>, keyed by their own time, and drop the
+    /// ones that landed. Fire-and-forget; a failure leaves them for the next flush.
+    static func flush(dbUrl: String, uid: String) {
+        if !Thread.isMainThread { DispatchQueue.main.async { flush(dbUrl: dbUrl, uid: uid) }; return }
+        if flushing { return }
+        let d = UserDefaults.standard
+        let a = (d.array(forKey: key) as? [[String: Any]]) ?? []
+        if a.isEmpty { return }
+        let batch = Array(a.prefix(150))
+        var body: [String: Any] = [:]
+        for e in batch {
+            var t = (e["t"] as? Int) ?? 0
+            while body["\(t)"] != nil { t += 1 }
+            body["\(t)"] = e
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let url = URL(string: "\(dbUrl)/gl/_debug/flight/\(uid).json") else { return }
+        var r = URLRequest(url: url)
+        r.httpMethod = "PATCH"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = data
+        r.timeoutInterval = 20
+        flushing = true
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "gl-flight") {
+            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+        }
+        URLSession.shared.dataTask(with: r) { _, resp, _ in
+            let ok = ((resp as? HTTPURLResponse)?.statusCode ?? 0) / 100 == 2
+            DispatchQueue.main.async {
+                flushing = false
+                if ok {
+                    let cur = (d.array(forKey: key) as? [[String: Any]]) ?? []
+                    let sent = Set(batch.compactMap { $0["t"] as? Int })
+                    d.set(cur.filter { !sent.contains(($0["t"] as? Int) ?? -1) }, forKey: key)
+                }
+                if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+            }
+        }.resume()
     }
 }

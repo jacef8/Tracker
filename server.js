@@ -760,6 +760,7 @@ async function _wakeJudge(uid, a, now, age) {
     // latencySec is the phone's clock minus ours; a negative value is a phone running behind.
     entry = { result: result, latencySec: Math.round((a.heard - p.at) / 1000), ageSec: Math.round(p.age / 1000),
               fix: a.fixTs > p.fixTs };   // false: woke and heartbeat, no new position
+    if (a.oss && a.oss.iosVer) { entry.auth = _authWord(a.oss); entry.ossAt = a.oss.at || 0; }
   } else if (now - p.at >= _wakeCooldown(a.u, p.age, uid)) {
     result = 'ignored';
     wakeStreaks.set(uid, (wakeStreaks.get(uid) || 0) + 1);
@@ -967,6 +968,10 @@ async function keepAliveSweep() {
       const a = alive.get(uid) || { heard: 0, fixTs: 0, u: u };
       a.heard = Math.max(a.heard, _heardAt(u));
       a.fixTs = Math.max(a.fixTs, u.fixTs || u.ts || 0);
+      // The freshest settings report across the phone's rows, so a wake verdict can say what the
+      // location permission was when the phone answered (pins an Always -> While Using flip
+      // between two wakes; Laura's phone, 2026-11-20).
+      if (u.oss && (!a.oss || (u.oss.at || 0) > (a.oss.at || 0))) a.oss = u.oss;
       alive.set(uid, a);
       if (age < _wakeStale(u) || age > WAKE_GIVE_UP_MS) continue;
       // An honest rest beat inside its window: the phone is alive and parked, and a GPS fix would
