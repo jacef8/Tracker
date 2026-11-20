@@ -2994,6 +2994,7 @@ window._timedOnValue = function (orig) {
 </style>
 </head>
 <body>
+<script>/* 1040: Simple mode is the default; set before first paint so the full toolbar never flashes. */try{if(localStorage.getItem('gl_ui_mode')!=='hunt')document.body.classList.add('simple-ui')}catch(e){}</script>
 
 <!-- ═══ LINE-ICON SPRITE — one 2px-stroke family, inherits currentColor ═══ -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
@@ -5483,7 +5484,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1039;
+var APP_BUILD = 1040;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -22095,6 +22096,7 @@ function listenUsers() {
         // and the gap drew straight through the blocks. These keep it current between reads.
         try { window._noteSeenFix(uid, data); } catch (e) {}
         userMarkers[uid]._acc = +data.accuracy || 0;        // HOW precisely — see the merge slack
+        userMarkers[uid]._data = data;                       // 1040: the Simple family list reads battery, place and speed from here
         userMarkers[uid]._sheetHTML =
           '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
             '<div style="color:' + statusColor + ';font-size:11px;font-weight:800;letter-spacing:.05em;padding-top:8px">' + statusLabel + (_driving ? ' · <span style="color:#ffa657">🚗 ' + window._displaySpeed(uid, data) + ' mph</span>'
@@ -35684,5 +35686,399 @@ window._voiceMod().then(function (m) {
   else apply();
 })();
 </script>
+<!-- ══ SIMPLE MODE (1040) ══════════════════════════════════════════════════════════════════
+     The family said the app was too hard to use (2026-11-19). Simple mode is the default on every
+     phone: a map, the family list, one card per person, Places, Talk and a small SOS. Everything
+     else is still here and comes back with "Hunting tools" in Settings, for that phone only.
+     Nothing is deleted or changed by switching; this only hides and shows. -->
+<style>
+  body.simple-ui {
+    --ss-e1: var(--v2-e1, #141B1E); --ss-e2: var(--v2-e2, #1D262A);
+    --ss-line: var(--v2-line2, rgba(255,255,255,.16));
+    --ss-ink: var(--v2-ink, #fff); --ss-ink2: var(--v2-ink2, rgba(255,255,255,.88)); --ss-ink3: var(--v2-ink3, rgba(255,255,255,.72));
+    --ss-acc: var(--v2-acc, #A8D66A); --ss-on-acc: var(--v2-on-acc, #0C1113);
+    --ss-warn: var(--v2-chip-warn-ink, #E0A05A); --ss-warn-bg: var(--v2-chip-warn-bg, #33281A);
+    --ss-bad: var(--v2-bad, #FF6B5E);
+    --ss-tap: 56px; --ss-peek: 290px;
+  }
+  /* Hidden in Simple mode. All of it returns with Hunting tools. */
+  body.simple-ui #topbar, body.simple-ui #map-controls, body.simple-ui #member-sheet,
+  body.simple-ui #rec-fab, body.simple-ui #unread-pin-bubble, body.simple-ui #gps-chip,
+  body.simple-ui #wakelock-indicator, body.simple-ui #radar-controls, body.simple-ui #track-view-bar,
+  body.simple-ui #act-panel, body.simple-ui #instr-panel, body.simple-ui #sky-panel, body.simple-ui #radar-panel { display: none !important; }
+  body.simple-ui .set-mi[data-k="people"], body.simple-ui .set-mi[data-k="voice"],
+  body.simple-ui .set-mi[data-k="look"], body.simple-ui #set-mi-crew { display: none !important; }
+  #ss-root { display: none; }
+  body.simple-ui #ss-root.on { display: block; }
+  #ss-root, #ss-root button { font-family: var(--v2-txt, system-ui, sans-serif); -webkit-tap-highlight-color: transparent; }
+  #ss-root .ss-round {
+    width: var(--ss-tap); height: var(--ss-tap); border-radius: 50%; border: 1px solid var(--ss-line);
+    background: var(--ss-e1); color: var(--ss-ink); display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,.45); cursor: pointer; padding: 0;
+  }
+  #ss-root .ss-round svg { width: 28px; height: 28px; }
+  #ss-root .ss-round:active { transform: scale(.94); }
+  #ss-root :focus-visible { outline: 3px solid var(--ss-acc); outline-offset: 2px; }
+  #ss-top { position: fixed; top: calc(env(safe-area-inset-top,0px) + 12px); left: 12px; right: 12px; z-index: 160;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
+  #ss-top > * { pointer-events: auto; }
+  #ss-circle { height: var(--ss-tap); max-width: calc(100vw - 100px); padding: 0 20px 0 18px; border-radius: 28px; border: 1px solid var(--ss-line);
+               background: var(--ss-e1); color: var(--ss-ink); display: flex; align-items: center; gap: 10px; cursor: pointer;
+               font-family: var(--v2-geo, system-ui, sans-serif); font-weight: 800; font-size: 20px; box-shadow: 0 4px 12px rgba(0,0,0,.45); }
+  #ss-circle span.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ss-circle i { width: 11px; height: 11px; border-radius: 50%; background: var(--ss-acc); flex: 0 0 auto; }
+  #ss-circle svg { width: 18px; height: 18px; color: var(--ss-ink3); flex: 0 0 auto; }
+  #ss-rail { position: fixed; right: 12px; bottom: calc(var(--ss-peek) + 16px); z-index: 160; display: flex; flex-direction: column; gap: 12px; }
+  #ss-sos { background: var(--ss-bad) !important; color: #fff !important; border: none !important; font-weight: 800; font-size: 14px; letter-spacing: .04em; position: relative; overflow: hidden; }
+  #ss-sos .f { position: absolute; inset: 0; background: rgba(255,255,255,.35); transform: scaleY(0); transform-origin: bottom; }
+  #ss-sos.hold .f { transform: scaleY(1); transition: transform 2s linear; }
+  #ss-sos b { position: relative; }
+  #ss-sheet { position: fixed; left: 0; right: 0; bottom: 0; height: min(78vh, 640px); z-index: 170;
+              background: var(--ss-e1); color: var(--ss-ink); border-top: 1px solid var(--ss-line); border-radius: 22px 22px 0 0;
+              box-shadow: 0 -8px 26px rgba(0,0,0,.45); transform: translateY(calc(100% - var(--ss-peek)));
+              transition: transform .28s cubic-bezier(.2,.8,.2,1); display: flex; flex-direction: column; }
+  #ss-sheet.open { transform: translateY(0); }
+  body.gv-active #ss-sheet { bottom: calc(var(--safe-bot, 0px) + 108px); }
+  body.gv-active #ss-rail { bottom: calc(var(--ss-peek) + 124px); }
+  #ss-grab { height: 30px; display: flex; align-items: center; justify-content: center; cursor: grab; flex: 0 0 auto; touch-action: none; }
+  #ss-grab i { width: 52px; height: 6px; border-radius: 3px; background: var(--ss-ink3); opacity: .6; }
+  #ss-head { display: flex; align-items: center; justify-content: space-between; padding: 0 18px 10px; flex: 0 0 auto; }
+  #ss-head h2 { margin: 0; font-family: var(--v2-geo, system-ui, sans-serif); font-size: 24px; font-weight: 800; color: var(--ss-ink); }
+  #ss-root .ss-pill { height: 48px; padding: 0 18px; border-radius: 24px; border: 1px solid var(--ss-line); background: var(--ss-e2); color: var(--ss-ink);
+                      font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  #ss-root .ss-pill svg { width: 22px; height: 22px; }
+  #ss-list { overflow-y: auto; flex: 1; padding: 0 10px calc(env(safe-area-inset-bottom,0px) + 12px); }
+  #ss-root .ss-row { display: flex; align-items: center; gap: 14px; padding: 12px 10px; min-height: 80px; border-radius: 16px; cursor: pointer; }
+  #ss-root .ss-row:active, #ss-root .ss-row:hover { background: var(--ss-e2); }
+  #ss-root .ss-av { width: 58px; height: 58px; border-radius: 50%; flex: 0 0 auto; background: #2e7d6b center/cover no-repeat;
+                    display: flex; align-items: center; justify-content: center; font-family: var(--v2-geo, system-ui, sans-serif); font-weight: 800; font-size: 20px; color: #fff; }
+  #ss-root .ss-who { flex: 1; min-width: 0; }
+  #ss-root .ss-name { font-size: 20px; font-weight: 700; color: var(--ss-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ss-root .ss-name small { color: var(--ss-ink3); font-weight: 600; font-size: 16px; }
+  #ss-root .ss-where { font-size: 17px; color: var(--ss-ink2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ss-root .ss-where b { color: var(--ss-acc); font-weight: 700; }
+  #ss-root .ss-when { font-size: 15px; color: var(--ss-ink3); margin-top: 1px; }
+  #ss-root .ss-attn { display: inline-block; margin-top: 4px; font-size: 15px; font-weight: 700; color: var(--ss-warn); background: var(--ss-warn-bg); border-radius: 8px; padding: 2px 8px; }
+  #ss-root .ss-batt { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: var(--ss-ink2); font-variant-numeric: tabular-nums; }
+  #ss-root .ss-batt svg { width: 26px; height: 26px; }
+  #ss-root .ss-batt.low { color: var(--ss-bad); }
+  #ss-empty { padding: 18px 12px; font-size: 17px; color: var(--ss-ink2); line-height: 1.5; }
+  #ss-card { display: none; padding: 4px 18px calc(env(safe-area-inset-bottom,0px) + 16px); overflow-y: auto; flex: 1; }
+  #ss-sheet.person #ss-card { display: block; }
+  #ss-sheet.person #ss-list, #ss-sheet.person #ss-head { display: none; }
+  #ss-card .ss-top { display: flex; align-items: center; gap: 16px; }
+  #ss-card .ss-av { width: 76px; height: 76px; font-size: 26px; }
+  #ss-card .ss-name { font-family: var(--v2-geo, system-ui, sans-serif); font-size: 26px; font-weight: 800; }
+  #ss-card .ss-x { margin-left: auto; flex: 0 0 auto; }
+  #ss-root .ss-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+  #ss-root .ss-act { height: 64px; border-radius: 16px; border: 1px solid var(--ss-line); background: var(--ss-e2); color: var(--ss-ink);
+                     font-size: 19px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; }
+  #ss-root .ss-act svg { width: 26px; height: 26px; }
+  #ss-root .ss-act.talk { grid-column: 1 / -1; height: 76px; background: var(--ss-acc); color: var(--ss-on-acc); border: none; font-size: 22px; font-weight: 800; }
+  /* The Hunting tools switch in Settings. */
+  #set-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; margin-bottom: 12px;
+                  border-radius: 14px; border: 1px solid var(--v2-line2, var(--border)); background: var(--v2-e2, var(--bg)); cursor: pointer; }
+  #set-mode-row b { display: block; font-size: 17px; color: var(--v2-ink, var(--text)); }
+  #set-mode-row small { display: block; font-size: 14px; color: var(--v2-ink3, var(--muted)); margin-top: 3px; line-height: 1.4; }
+  #set-mode-pill { flex: 0 0 auto; min-width: 64px; text-align: center; font-size: 15px; font-weight: 800; padding: 8px 12px; border-radius: 20px; background: var(--v2-e1, var(--border)); color: var(--v2-ink2, var(--muted)); }
+  #set-mode-pill.on { background: var(--v2-acc, var(--accent)); color: var(--v2-on-acc, #000); }
+  body.simple-ui #set-panel .set-mi { min-height: 64px; }
+  body.simple-ui #set-panel .set-mi b { font-size: 18px; }
+  body.simple-ui #set-panel .set-mi small { font-size: 14px; }
+  @media (min-width: 900px) {
+    #ss-sheet { left: 16px; right: auto; top: 84px; bottom: 16px; width: 420px; height: auto; transform: none !important; border-radius: 22px; border: 1px solid var(--ss-line); }
+    body.gv-active #ss-sheet { bottom: calc(var(--safe-bot, 0px) + 112px); }
+    #ss-grab { display: none; }
+    #ss-head { padding-top: 16px; }
+    #ss-rail { bottom: 24px !important; }
+    body.gv-active #ss-rail { bottom: 124px !important; }
+  }
+  @media (prefers-reduced-motion: reduce) { #ss-sheet, #ss-sos .f { transition: none !important; } }
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="ss-i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></symbol>
+  <symbol id="ss-i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="ss-i-nav" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></symbol>
+  <symbol id="ss-i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/></symbol>
+  <symbol id="ss-i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+  <symbol id="ss-i-batt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="17" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/></symbol>
+  <symbol id="ss-i-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+</svg>
+<div id="ss-root" aria-label="Family map">
+  <div id="ss-top">
+    <button id="ss-circle" type="button" aria-label="Switch circle" onclick="window._ssCircle()"><i></i><span class="n" id="ss-circle-name">Family</span><svg><use href="#ss-i-down"/></svg></button>
+    <button class="ss-round" type="button" aria-label="Settings" onclick="openSettings()"><svg class="licon"><use href="#ic-gear"/></svg></button>
+  </div>
+  <div id="ss-rail">
+    <button class="ss-round" type="button" aria-label="Show everyone" onclick="window._ssFitAll()"><svg class="licon"><use href="#ic-target"/></svg></button>
+    <button class="ss-round" id="ss-sos" type="button" aria-label="Hold two seconds to send SOS"><span class="f"></span><b>SOS</b></button>
+  </div>
+  <div id="ss-sheet">
+    <div id="ss-grab" aria-label="Pull up the family list"><i></i></div>
+    <div id="ss-head"><h2>Family</h2><button class="ss-pill" type="button" onclick="window._ssPlaces()"><svg><use href="#ss-i-home"/></svg>Places</button></div>
+    <div id="ss-list"></div>
+    <div id="ss-card"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var LIVE = 4 * 60 * 1000;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function $(id) { return document.getElementById(id); }
+  function isSimple() { try { return localStorage.getItem('gl_ui_mode') !== 'hunt'; } catch (e) { return true; } }
+  window._isSimpleUi = isSimple;
+  function onMap() { var t = $('topbar'); return !!(t && t.style.display && t.style.display !== 'none' && typeof groupName !== 'undefined' && groupName); }
+  function ago(ms) { var m = Math.floor(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; var h = Math.floor(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago'); var d = Math.floor(h / 24); return d + (d === 1 ? ' day ago' : ' days ago'); }
+  function clock(ts) { try { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
+  function placeAt(lat, lng) {
+    try {
+      try { if (typeof _ensurePlacesSubscribed === 'function') _ensurePlacesSubscribed(groupName); } catch (e) {}
+      var pl = (window._placesCache && window._placesCache[groupName]) || {};
+      var best = null;
+      Object.keys(pl).forEach(function (k) {
+        var p = pl[k]; if (!p || !p.name || best) return;
+        try { if (_placeEdgeM(lat, lng, p) >= 0) best = p.name; } catch (e) {}
+      });
+      return best;
+    } catch (e) { return null; }
+  }
+  // One row per PERSON: a person's phone, tablet and PC collapse to the freshest one.
+  function people() {
+    var byName = {}, out = [];
+    var me = String(userName || '').trim().toLowerCase();
+    Object.keys(userMarkers || {}).forEach(function (uid) {
+      var mk = userMarkers[uid]; if (!mk) return;
+      var d = mk._data || {};
+      if (d.hidden && uid !== userId) return;
+      var nm = mk._name || d.name || 'Member';
+      var key = String(nm).trim().toLowerCase();
+      var mine = (uid === userId) || (me && key === me);
+      if (mine) key = '~me';
+      var ts = d.fixTs || d.ts || mk._ts || 0;
+      var r = { uid: uid, name: mine ? (userName || nm) : nm, mine: mine, d: d, mk: mk, ts: ts, live: (Date.now() - ts) < LIVE };
+      var cur = byName[key];
+      if (!cur) byName[key] = r;
+      else if (cur.uid === userId) {}
+      else if (r.uid === userId) byName[key] = r;
+      else if (!cur.live && r.live) byName[key] = r;
+      else if (cur.live === r.live && r.ts > cur.ts) byName[key] = r;
+    });
+    // You are always on the list, even before this phone has a location to put on the map.
+    if (!byName['~me'] && userId) byName['~me'] = { uid: userId, name: userName || 'You', mine: true, d: {}, mk: userMarkers[userId] || null, ts: 0, live: false, noFix: true };
+    Object.keys(byName).forEach(function (k) { out.push(byName[k]); });
+    out.sort(function (a, b) { if (a.mine !== b.mine) return a.mine ? -1 : 1; return String(a.name).localeCompare(String(b.name)); });
+    return out;
+  }
+  function describe(r) {
+    var d = r.d || {}, now = Date.now(), lat = +d.lat, lng = +d.lng, has = isFinite(lat) && isFinite(lng) && !!(lat || lng);
+    var where = '', when = '', attn = '';
+    var place = has ? placeAt(lat, lng) : null;
+    var spd = 0;
+    try { spd = Math.round(+window._displaySpeed(r.uid, d) || 0); } catch (e) { spd = Math.round(+d.spd || 0); }
+    try { var ps = (window._posSeen || {})[r.uid]; if (ps && now - ps.movedAt > 90000) spd = 0; } catch (e) {}
+    if (r.mine) where = r.noFix ? 'Waiting for your location' : 'Sharing your location';
+    else if (!has) where = 'Location not shared yet';
+    else if (r.live && spd >= 8) where = d.spdH ? 'Driving' : ('Driving · ' + spd + ' mph');
+    else if (place) where = '<b>At ' + esc(place) + '</b>';
+    else {
+      try {
+        var me = window._lastGoodFix || window._lastGPS;
+        if (me && typeof metersApart === 'function') {
+          var mi = metersApart(me.lat, me.lng, lat, lng) / 1609.344;
+          where = mi < 0.1 ? 'Right by you' : ((mi < 10 ? mi.toFixed(1) : Math.round(mi)) + ' mi from you');
+        } else where = 'On the map';
+      } catch (e) { where = 'On the map'; }
+    }
+    if (!r.mine && has) {
+      if (place && d.hereSince && r.live) when = 'Since ' + clock(d.hereSince);
+      else if (r.live) when = 'Updated ' + ago(now - r.ts);
+      else when = 'Last seen ' + ago(now - r.ts);
+    }
+    var chip = String((r.mk && r.mk._chip) || '');
+    if (!r.mine && (/check phone/i.test(chip) || (has && now - r.ts > 3 * 3600 * 1000))) attn = 'Phone needs attention';
+    return { where: where, when: when, attn: attn, has: has, lat: lat, lng: lng };
+  }
+  function avatar(r) {
+    var src = ''; try { src = window._avatarSrc ? (window._avatarSrc(r.uid) || '') : ''; } catch (e) {}
+    var col = (r.mk && r.mk._fillColor) || '#2e7d6b';
+    var ini = esc((r.mk && r.mk._initials) || String(r.name).slice(0, 1).toUpperCase());
+    return '<div class="ss-av" style="background-color:' + esc(col) + (src ? ';background-image:url(&quot;' + esc(src) + '&quot;)' : '') + '">' + (src ? '' : ini) + '</div>';
+  }
+  function batt(r) {
+    var b = r.d && r.d.batt; if (b == null || b === '' || !isFinite(+b)) return '';
+    var chg = !!(r.d && r.d.chg);
+    return '<div class="ss-batt' + (+b <= 15 && !chg ? ' low' : '') + '"><svg><use href="#ss-i-' + (chg ? 'bolt' : 'batt') + '"/></svg>' + Math.round(+b) + '%</div>';
+  }
+  var lastSig = '', openUid = null;
+  function render() {
+    var root = $('ss-root'); if (!root) return;
+    var show = isSimple() && onMap();
+    root.classList.toggle('on', show);
+    if (!show) return;
+    try { var cn = $('ss-circle-name'); var g = (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName; if (cn && cn.textContent !== g) cn.textContent = g; } catch (e) {}
+    var rows = people();
+    var html = rows.map(function (r) {
+      var s = describe(r);
+      return '<div class="ss-row" role="button" tabindex="0" data-uid="' + esc(r.uid) + '">' + avatar(r) +
+        '<div class="ss-who"><div class="ss-name">' + esc(r.name) + (r.mine ? ' <small>(you)</small>' : '') + '</div>' +
+        '<div class="ss-where">' + s.where + '</div>' + (s.when ? '<div class="ss-when">' + esc(s.when) + '</div>' : '') +
+        (s.attn ? '<div class="ss-attn">⚠ ' + esc(s.attn) + '</div>' : '') + '</div>' + batt(r) + '</div>';
+    }).join('') || '<div id="ss-empty">Nobody is sharing in this circle yet. Tap the circle name at the top to switch, or open Settings to invite someone.</div>';
+    if (html !== lastSig) { lastSig = html; $('ss-list').innerHTML = html; }
+    if (openUid) drawCard(openUid);
+  }
+  function drawCard(uid) {
+    var r = people().filter(function (x) { return x.uid === uid; })[0];
+    if (!r) { var mk = userMarkers[uid]; if (!mk) return; r = { uid: uid, name: mk._name || 'Member', mine: uid === userId, d: mk._data || {}, mk: mk, ts: mk._ts || 0, live: (Date.now() - (mk._ts || 0)) < LIVE }; }
+    var s = describe(r);
+    var nm = esc(r.name), q = String(r.name).replace(/['"\\<>]/g, '');
+    var talk = (!r.mine && !document.body.classList.contains('voice-off'))
+      ? '<button class="ss-act talk" type="button" onclick="window._openVoiceTo(\'' + esc(r.uid) + '\',\'' + esc(q) + '\')"><svg class="licon"><use href="#ic-mic"/></svg>Talk to ' + nm + '</button>' : '';
+    var nav = (!r.mine && s.has) ? '<button class="ss-act" type="button" onclick="window._navigateTo(' + s.lat + ',' + s.lng + ',\'' + esc(q) + '\')"><svg><use href="#ss-i-nav"/></svg>Directions</button>' : '';
+    var find = s.has ? '<button class="ss-act" type="button" onclick="window._ssFind(\'' + esc(r.uid) + '\')"><svg><use href="#ss-i-pin"/></svg>Find on map</button>' : '';
+    var h = '<div class="ss-top">' + avatar(r) + '<div style="min-width:0"><div class="ss-name">' + nm + (r.mine ? ' <small>(you)</small>' : '') + '</div>' +
+      '<div class="ss-where" style="font-size:18px">' + s.where + '</div>' + (s.when ? '<div class="ss-when" style="font-size:16px">' + esc(s.when) + '</div>' : '') + '</div>' +
+      '<button class="ss-round ss-x" type="button" aria-label="Back to family" onclick="window._ssClosePerson()"><svg><use href="#ss-i-x"/></svg></button></div>' +
+      (s.attn ? '<div class="ss-attn" style="margin-top:14px;font-size:16px">⚠ ' + esc(s.attn) + ' — this location may be old</div>' : '') +
+      ((talk || nav || find) ? '<div class="ss-acts">' + talk + nav + find + '</div>' : '') +
+      (batt(r) ? '<div style="margin-top:14px;display:flex">' + batt(r) + '</div>' : '');
+    var c = $('ss-card');
+    if (c && c._sig !== h) { c._sig = h; c.innerHTML = h; }
+  }
+  window._ssOpenPerson = function (uid) {
+    if (!uid) return;
+    openUid = uid;
+    drawCard(uid);
+    var sh = $('ss-sheet'); if (!sh) return;
+    sh.classList.add('person');
+    if (window.innerWidth < 900) sh.classList.remove('open');
+    window._ssFind(uid);
+  };
+  window._ssClosePerson = function () { openUid = null; var sh = $('ss-sheet'); if (sh) sh.classList.remove('person'); };
+  window._ssFind = function (uid) {
+    try {
+      var mk = userMarkers[uid]; var ll = mk && mk._ll;
+      if (!ll && mk && mk.getLngLat) { var g = mk.getLngLat(); ll = [g.lng, g.lat]; }
+      if (!ll || typeof map === 'undefined' || !map) return;
+      try { if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}
+      try { if (typeof fitAllInterval !== 'undefined' && fitAllInterval && typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {}
+      var wide = window.innerWidth >= 900;
+      map.flyTo({ center: [ll[0], ll[1]], zoom: Math.max(map.getZoom(), 15), duration: 900,
+                  padding: wide ? { top: 80, bottom: 40, left: 460, right: 40 } : { top: 80, bottom: 300, left: 20, right: 20 } });
+    } catch (e) {}
+  };
+  window._ssFitAll = function () {
+    try {
+      if (typeof map === 'undefined' || !map) return;
+      try { if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}
+      var pts = people().map(function (r) { return [+r.d.lng, +r.d.lat]; }).filter(function (p) { return isFinite(p[0]) && isFinite(p[1]) && (p[0] || p[1]); });
+      if (!pts.length) return;
+      var mnx = 180, mny = 90, mxx = -180, mxy = -90;
+      pts.forEach(function (p) { mnx = Math.min(mnx, p[0]); mxx = Math.max(mxx, p[0]); mny = Math.min(mny, p[1]); mxy = Math.max(mxy, p[1]); });
+      var wide = window.innerWidth >= 900;
+      map.fitBounds([[mnx, mny], [mxx, mxy]], { duration: 900, maxZoom: 15,
+        padding: wide ? { top: 100, bottom: 60, left: 470, right: 100 } : { top: 90, bottom: 320, left: 50, right: 90 } });
+    } catch (e) {}
+  };
+  window._ssPlaces = function () { try { window._openPlacesManager(groupName, (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName); } catch (e) {} };
+  window._ssCircle = function () { try { window._openRoomSwitcher(); } catch (e) { try { openRoomInfo(); } catch (x) {} } };
+  // Hunting tools on/off, for this phone only.
+  window._setUiMode = function (mode) {
+    try { localStorage.setItem('gl_ui_mode', mode === 'hunt' ? 'hunt' : 'simple'); } catch (e) {}
+    document.body.classList.toggle('simple-ui', mode !== 'hunt');
+    var p = $('set-mode-pill'); if (p) { p.textContent = mode === 'hunt' ? 'ON' : 'OFF'; p.classList.toggle('on', mode === 'hunt'); }
+    lastSig = ''; render();
+    try { if (typeof toast === 'function') toast(mode === 'hunt' ? 'Hunting tools are on' : 'Simple mode is on', 2200); } catch (e) {}
+    try { window._evt && window._evt('🧭 switched to ' + (mode === 'hunt' ? 'Hunting tools' : 'Simple mode')); } catch (e) {}
+  };
+  window._toggleUiMode = function () { window._setUiMode(isSimple() ? 'hunt' : 'simple'); };
+  // In Simple mode a tap on someone's pin opens the simple card, not the full one.
+  function wrapSheet() {
+    if (!window._showMemberSheet || window._showMemberSheet._ss) return;
+    var orig = window._showMemberSheet;
+    var w = function (uid, quiet) {
+      if (isSimple()) { if (!quiet) window._ssOpenPerson(uid); return; }
+      return orig.apply(this, arguments);
+    };
+    w._ss = true;
+    window._showMemberSheet = w;
+    // A tap on a bubble of people riding together: in Simple mode, open the one they tap
+    // from the family list instead of the full group card.
+    if (window._showGroupedMemberSheet && !window._showGroupedMemberSheet._ss) {
+      var og = window._showGroupedMemberSheet;
+      var wg = function (uids, quiet) {
+        if (isSimple()) {
+          if (quiet) return;
+          var others = (uids || []).filter(function (u) { return u !== userId; });
+          if (others.length === 1) { window._ssOpenPerson(others[0]); return; }
+          window._ssClosePerson(); var sh = $('ss-sheet'); if (sh) sh.classList.add('open');
+          return;
+        }
+        return og.apply(this, arguments);
+      };
+      wg._ss = true;
+      window._showGroupedMemberSheet = wg;
+    }
+  }
+  document.addEventListener('click', function (ev) {
+    var row = ev.target && ev.target.closest && ev.target.closest('#ss-list .ss-row');
+    if (row) window._ssOpenPerson(row.getAttribute('data-uid'));
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter') return;
+    var row = ev.target && ev.target.closest && ev.target.closest('#ss-list .ss-row');
+    if (row) window._ssOpenPerson(row.getAttribute('data-uid'));
+  });
+  // Pull the list up or down: tap the handle, or drag it.
+  (function () {
+    var g = $('ss-grab'), sh = $('ss-sheet'), y0 = null, moved = false; if (!g || !sh) return;
+    g.addEventListener('pointerdown', function (e) { y0 = e.clientY; moved = false; try { g.setPointerCapture(e.pointerId); } catch (x) {} });
+    g.addEventListener('pointerup', function (e) {
+      if (y0 === null) return; var dy = e.clientY - y0; y0 = null;
+      if (dy < -30) sh.classList.add('open'); else if (dy > 30) sh.classList.remove('open'); else sh.classList.toggle('open');
+    });
+  })();
+  // SOS: hold two seconds. A tap alone does nothing, so it can't go off in a pocket.
+  (function () {
+    var b = $('ss-sos'), t = null, fired = false; if (!b) return;
+    function stop() { b.classList.remove('hold'); clearTimeout(t); }
+    b.addEventListener('pointerdown', function () {
+      fired = false; b.classList.add('hold');
+      t = setTimeout(function () { stop(); fired = true; try { sendSOS._ok = true; sendSOS(); } catch (e) {} finally { try { sendSOS._ok = false; } catch (e) {} } }, 2000);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (e) { b.addEventListener(e, stop); });
+    b.addEventListener('click', function () { if (!fired) { try { toast('Hold the SOS button for 2 seconds to send for help', 2600); } catch (e) {} } });
+  })();
+  // The Hunting tools switch, at the top of Settings.
+  function addSwitch() {
+    if ($('set-mode-row')) return;
+    var menu = $('set-menu'); if (!menu || !menu.parentNode) return;
+    var row = document.createElement('div');
+    row.id = 'set-mode-row'; row.setAttribute('role', 'switch'); row.tabIndex = 0;
+    row.onclick = function () { window._toggleUiMode(); };
+    row.innerHTML = '<div><b>Hunting tools</b><small>Turn on for the full map: pins, tracks, layers, measuring, radar. Off keeps GroundLink simple. This phone only.</small></div><span id="set-mode-pill"></span>';
+    menu.parentNode.insertBefore(row, menu);
+    var p = $('set-mode-pill'); var on = !isSimple(); p.textContent = on ? 'ON' : 'OFF'; p.classList.toggle('on', on);
+  }
+  function start() {
+    document.body.classList.toggle('simple-ui', isSimple());
+    wrapSheet(); addSwitch(); render();
+    setInterval(function () { try { wrapSheet(); render(); } catch (e) {} }, 2000);
+    // Tell a phone that was using the full app, once, where everything went.
+    try {
+      if (isSimple() && !localStorage.getItem('gl_simple_seen')) {
+        var tries = 0;
+        var iv = setInterval(function () {
+          tries++;
+          if (onMap()) { clearInterval(iv); try { localStorage.setItem('gl_simple_seen', '1'); toast('GroundLink is in Simple mode now. Settings, then Hunting tools, brings back the full map.', 6000); } catch (e) {} }
+          else if (tries > 90) clearInterval(iv);
+        }, 2000);
+      }
+    } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+</script>
+
 </body>
 </html>
