@@ -5484,7 +5484,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1041;
+var APP_BUILD = 1042;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -35857,8 +35857,10 @@ window._voiceMod().then(function (m) {
   #ss-sheet.open { transform: translateY(0); }
   body.gv-active #ss-sheet { bottom: calc(var(--safe-bot, 0px) + 108px); }
   body.gv-active #ss-rail { bottom: calc(var(--ss-peek) + 124px); }
-  #ss-grab { height: 30px; display: flex; align-items: center; justify-content: center; cursor: grab; flex: 0 0 auto; touch-action: none; }
-  #ss-grab i { width: 52px; height: 6px; border-radius: 3px; background: var(--ss-ink3); opacity: .6; }
+  #ss-grab { height: 40px; display: flex; align-items: center; justify-content: center; cursor: grab; flex: 0 0 auto; touch-action: none; }
+  #ss-grab i { width: 64px; height: 7px; border-radius: 4px; background: var(--ss-ink3); }
+  #ss-head { touch-action: none; cursor: grab; }
+  #ss-sheet.dragging { transition: none !important; }
   #ss-head { display: flex; align-items: center; justify-content: space-between; padding: 0 18px 10px; flex: 0 0 auto; }
   #ss-head h2 { margin: 0; font-family: var(--v2-geo, system-ui, sans-serif); font-size: 24px; font-weight: 800; color: var(--ss-ink); }
   #ss-root .ss-pill { height: 48px; padding: 0 18px; border-radius: 24px; border: 1px solid var(--ss-line); background: var(--ss-e2); color: var(--ss-ink);
@@ -36146,13 +36148,53 @@ window._voiceMod().then(function (m) {
     var row = ev.target && ev.target.closest && ev.target.closest('#ss-list .ss-row');
     if (row) window._ssOpenPerson(row.getAttribute('data-uid'));
   });
-  // Pull the list up or down: tap the handle, or drag it.
+  // 1042: pull the list up or down. The sheet follows the finger from the handle OR the "Family"
+  // header (not the Places button); let go and it settles open or closed by where it is and how
+  // fast it was moving. A plain tap on the handle or header toggles it.
   (function () {
-    var g = $('ss-grab'), sh = $('ss-sheet'), y0 = null, moved = false; if (!g || !sh) return;
-    g.addEventListener('pointerdown', function (e) { y0 = e.clientY; moved = false; try { g.setPointerCapture(e.pointerId); } catch (x) {} });
-    g.addEventListener('pointerup', function (e) {
-      if (y0 === null) return; var dy = e.clientY - y0; y0 = null;
-      if (dy < -30) sh.classList.add('open'); else if (dy > 30) sh.classList.remove('open'); else sh.classList.toggle('open');
+    var sh = $('ss-sheet'), g = $('ss-grab'), hd = $('ss-head'); if (!sh || !g) return;
+    var drag = null;
+    function peek() { var v = parseFloat(getComputedStyle(sh).getPropertyValue('--ss-peek')); return isFinite(v) ? v : 290; }
+    function closedY() { return Math.max(0, sh.offsetHeight - peek()); }
+    function start(e) {
+      if (window.innerWidth >= 900) return;
+      if (e.target && e.target.closest && e.target.closest('button')) return;
+      var y0 = sh.classList.contains('open') ? 0 : closedY();
+      drag = { id: e.pointerId, sy: e.clientY, y0: y0, y: y0, pts: [{ t: performance.now(), y: e.clientY }], moved: false };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
+    }
+    function move(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.abs(dy) < 6) return;
+      if (!drag.moved) { drag.moved = true; sh.classList.add('dragging'); }
+      var cy = closedY(), y = drag.y0 + dy;
+      if (y < 0) y = y / 3; else if (y > cy) y = cy + (y - cy) / 3;   // a little give past either end
+      drag.pts.push({ t: performance.now(), y: e.clientY }); if (drag.pts.length > 20) drag.pts.shift();
+      drag.y = y;
+      sh.style.transform = 'translateY(' + y + 'px)';
+      e.preventDefault();
+    }
+    function end(e) {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      var d = drag; drag = null;
+      sh.classList.remove('dragging'); sh.style.transform = '';
+      if (!d.moved) { if (e && e.type === 'pointerup') sh.classList.toggle('open'); return; }
+      // Speed over the last ~120 ms of the finger's travel, in px per ms. A finger that stopped
+      // before letting go reads as 0, so a slow drag settles by position alone.
+      var now = performance.now(), pts = d.pts.filter(function (p) { return now - p.t <= 120; }), vy = 0;
+      if (pts.length >= 2) { var a = pts[0], b = pts[pts.length - 1]; if (b.t - a.t >= 16) vy = (b.y - a.y) / (b.t - a.t); }
+      var open;
+      if (vy < -0.5) open = true; else if (vy > 0.5) open = false;
+      else open = d.y < closedY() / 2;
+      sh.classList.toggle('open', open);
+    }
+    [g, hd].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener('pointerdown', start);
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
     });
   })();
   // SOS: hold two seconds. A tap alone does nothing, so it can't go off in a pocket.
