@@ -5484,7 +5484,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1040;
+var APP_BUILD = 1041;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6093,6 +6093,55 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
   // five seconds and then sit frozen for the rest — the stutter that reads as "it stopped".
   var dur = Math.max(700, Math.min(30000, _gap * 1.08));
   marker._lastGapMs = _gap;   // the camera needs this too — see _followRecenter
+  // 1041: CHASE. A moving person's dot used to dash to each new fix in 1.2 s (often 400+ mph on
+  // screen), coast past it, and then -- because the next fix landed "behind" the coasting dot --
+  // freeze for the whole next interval: dash, coast, freeze, every 10 s (replayed in
+  // tools/pinspring.sim.mjs). Now the dot's target moves continuously at the car's own measured
+  // velocity from its latest fix, and the pin spring follows that target, so a new fix only nudges
+  // it. Past one reporting interval with no news, the target slows to a stop over ~3 s instead of
+  // running on. The camera-followed dot keeps the old path, which carries the camera with it.
+  if (typeof _pinSpringSet === 'function' && window._pinSpringOff !== true && marker) {
+    var _chased = false;
+    try {
+      var _camUid0 = window._camLockUid || (typeof followUid !== 'undefined' ? followUid : null);
+      if (opts && opts.remote && opts.fixTs > 0 && typeof opts.spd === 'number' && opts.spd >= EXTRAP_MIN_MPH
+          && !(marker._uid && marker._uid === _camUid0)) {
+        var _pf = marker._chasePrev, _vE = NaN, _vN = NaN;
+        var _cosC = Math.cos(toLat * Math.PI / 180) || 1;
+        if (_pf && opts.fixTs - _pf.ts > 2000 && opts.fixTs - _pf.ts < 60000) {
+          var _dtc = (opts.fixTs - _pf.ts) / 1000;
+          _vE = (toLng - _pf.lng) * 111320 * _cosC / _dtc; _vN = (toLat - _pf.lat) * 111320 / _dtc;
+          var _spC = Math.sqrt(_vE * _vE + _vN * _vN), _capC = Math.max(opts.spd / 2.23694 * 1.3, 3);
+          if (_spC > _capC) { _vE *= _capC / _spC; _vN *= _capC / _spC; }
+        }
+        if (!isFinite(_vE) && typeof opts.hdg === 'number' && isFinite(opts.hdg)) {
+          var _th0 = opts.hdg * Math.PI / 180, _ms0 = opts.spd / 2.23694;
+          _vE = _ms0 * Math.sin(_th0); _vN = _ms0 * Math.cos(_th0);
+        }
+        marker._chasePrev = { lng: toLng, lat: toLat, ts: opts.fixTs };
+        if (isFinite(_vE) && isFinite(_vN)) {
+          var _cadC = Math.min(Math.max(marker._cadMs || 10000, 3000), 20000);
+          var _fLng = toLng, _fLat = toLat, _fTs = opts.fixTs, _cvE = _vE, _cvN = _vN;
+          marker._extrap = null; marker._extrapEnded = null;
+          var _chase = function () {
+            var age = Math.max(0, Date.now() - _fTs);
+            var eff = age <= _cadC ? age : _cadC + 3000 * (1 - Math.exp(-(age - _cadC) / 3000));
+            var sec = eff / 1000;
+            var lat = _fLat + _cvN * sec / 111320, lng = _fLng + _cvE * sec / (111320 * _cosC);
+            marker._curLngLat = [lng, lat];
+            _pinSpringSet(marker, lng, lat);
+            try { if (marker._uid && window._updateTrailTip) window._updateTrailTip(marker._uid, lng, lat); } catch (e) {}
+            marker._anim = (age < _cadC + 15000) ? requestAnimationFrame(_chase) : null;
+          };
+          marker._anim = requestAnimationFrame(_chase);
+          _chased = true;
+        }
+      } else {
+        marker._chasePrev = (opts && opts.fixTs > 0) ? { lng: toLng, lat: toLat, ts: opts.fixTs } : null;
+      }
+    } catch (e) { _chased = false; }
+    if (_chased) return;
+  }
   var start = _nowMs;
   // A route is only meaningful as the line between where this dot is and where it is going.
   // `path` is written only when there IS a route to write, and the iPhone reporter merges its
@@ -6335,7 +6384,13 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
         else map.setCenter([_cl, _ca]);
       }
     } catch (e) {}
-    marker.setLngLat([lng, lat]); marker._curLngLat = [lng, lat];
+    // 1041: drawn through the spring (_pinSpringSet), which eases the pin toward this spot instead of
+    // putting it there. The math above still decides WHERE the person is; the spring only decides how
+    // the dot gets there, so the 1.2 s catch-up dash and the dead stop at the end of a coast both
+    // turn into a steady glide. _curLngLat stays the computed spot, which everything else reads.
+    marker._curLngLat = [lng, lat];
+    if (typeof _pinSpringSet === 'function' && window._pinSpringOff !== true) _pinSpringSet(marker, lng, lat);
+    else marker.setLngLat([lng, lat]);
     // Drag the breadcrumb line's tip along with the marker. The line is drawn from recorded
     // points and setData lands instantly, but the marker takes ~1.4s to glide there — so
     // without this the trail visibly arrives first and the pin chases it, which reads as the
@@ -6355,6 +6410,65 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
 // so tapping a LIVE person worked for about a second and then the next fix pulled them back
 // under the card — which is why "the window covers the person" came back for someone driving
 // while it looked fixed for someone parked.
+// ── 1041: pin spring ─────────────────────────────────────────────────────────────────────
+// A critically damped spring between where the glide math says a person is and where their dot is
+// drawn. Position AND speed change continuously, so a dot never dashes to catch up on a new fix
+// and never stops dead when its coast runs out; it eases. It trails a moving dot by about
+// 2/PIN_SPRING_W seconds of travel (0.6 s; about 40 ft at 45 mph). Anything else that moves a pin
+// directly (grouping, a resume snap, a far teleport) wins: the spring notices the dot is no longer
+// where it left it and starts again from there.
+var PIN_SPRING_W = 3.3;            // rad/s; higher = tighter, lower = floatier
+var PIN_SPRING_SNAP_M = 600;       // further than this from the target: jump, don't swim across the map
+var _pinSprings = [], _pinSpringRaf = 0;
+function _pinSpringSet(mk, lng, lat) {
+  try {
+    var s = mk._spr, g = mk.getLngLat();
+    if (!s) s = mk._spr = { x: g.lng, y: g.lat, vx: 0, vy: 0, last: null, t: 0 };
+    else if (s.last && (Math.abs(g.lng - s.last[0]) > 1e-9 || Math.abs(g.lat - s.last[1]) > 1e-9)) { s.x = g.lng; s.y = g.lat; s.vx = 0; s.vy = 0; }
+    s.tx = lng; s.ty = lat;
+    var cos = Math.cos(lat * Math.PI / 180) || 1;
+    var dm = Math.sqrt(Math.pow((lng - s.x) * cos * 111320, 2) + Math.pow((lat - s.y) * 111320, 2));
+    if (dm > PIN_SPRING_SNAP_M || document.visibilityState !== 'visible') {
+      s.x = lng; s.y = lat; s.vx = 0; s.vy = 0; s.last = [lng, lat]; mk.setLngLat([lng, lat]);
+      return;
+    }
+    if (_pinSprings.indexOf(mk) === -1) _pinSprings.push(mk);
+    if (!_pinSpringRaf) _pinSpringRaf = requestAnimationFrame(_pinSpringTick);
+  } catch (e) { try { mk.setLngLat([lng, lat]); } catch (x) {} }
+}
+function _pinSpringTick() {
+  _pinSpringRaf = 0;
+  var now = performance.now(), w = PIN_SPRING_W, keep = [];
+  for (var i = 0; i < _pinSprings.length; i++) {
+    var mk = _pinSprings[i], s = mk && mk._spr; if (!s) continue;
+    try {
+      var g = mk.getLngLat();
+      if (s.last && (Math.abs(g.lng - s.last[0]) > 1e-9 || Math.abs(g.lat - s.last[1]) > 1e-9)) { s.x = g.lng; s.y = g.lat; s.vx = 0; s.vy = 0; }
+      var dt = s.t ? Math.min(0.05, Math.max(0, (now - s.t) / 1000)) : 0.016;
+      s.t = now;
+      // Two half-steps keep the integration steady on a slow frame.
+      for (var k = 0; k < 2; k++) {
+        var h = dt / 2;
+        s.vx += (-2 * w * s.vx - w * w * (s.x - s.tx)) * h; s.x += s.vx * h;
+        s.vy += (-2 * w * s.vy - w * w * (s.y - s.ty)) * h; s.y += s.vy * h;
+      }
+      var cos = Math.cos(s.y * Math.PI / 180) || 1;
+      var offM = Math.sqrt(Math.pow((s.x - s.tx) * cos * 111320, 2) + Math.pow((s.y - s.ty) * 111320, 2));
+      var spdM = Math.sqrt(Math.pow(s.vx * cos * 111320, 2) + Math.pow(s.vy * 111320, 2));
+      var done = offM < 0.15 && spdM < 0.3 && !mk._anim;
+      if (done) { s.x = s.tx; s.y = s.ty; s.vx = 0; s.vy = 0; s.t = 0; }
+      mk.setLngLat([s.x, s.y]); s.last = [s.x, s.y];
+      if (!done) keep.push(mk);
+    } catch (e) {}
+  }
+  _pinSprings = keep;
+  if (_pinSprings.length) _pinSpringRaf = requestAnimationFrame(_pinSpringTick);
+}
+document.addEventListener('visibilitychange', function () {
+  // Back from the background: no swimming across the map to catch up. Everyone lands where they are.
+  if (document.visibilityState !== 'visible') return;
+  try { _pinSprings.forEach(function (mk) { var s = mk._spr; if (s && isFinite(s.tx)) { s.x = s.tx; s.y = s.ty; s.vx = 0; s.vy = 0; s.t = 0; } }); } catch (e) {}
+});
 function _camPad() {
   try {
     if (!document.body.classList.contains('member-open')) return null;
@@ -6708,7 +6822,7 @@ window._setCallout = function (mk, on) {
     // A merged oval is always a callout, at its own height; nothing else decides that for it.
     if (mk._mergedOval) on = true;
     on = !!on;
-    var st = on ? (mk._mergedOval ? MK_MERGE_LIFT : MK_LIFT) : 0;
+    var st = on ? (mk._mergedOval ? MK_MERGE_LIFT : (document.body.classList.contains('simple-ui') ? 28 + MK_TAIL : MK_LIFT)) : 0;
     if ((mk._calloutSt || 0) === st && !!mk._calloutOn === on) return;
     mk._calloutOn = on;
     mk._calloutSt = st;
@@ -35706,6 +35820,9 @@ window._voiceMod().then(function (m) {
   body.simple-ui #rec-fab, body.simple-ui #unread-pin-bubble, body.simple-ui #gps-chip,
   body.simple-ui #wakelock-indicator, body.simple-ui #radar-controls, body.simple-ui #track-view-bar,
   body.simple-ui #act-panel, body.simple-ui #instr-panel, body.simple-ui #sky-panel, body.simple-ui #radar-panel { display: none !important; }
+  /* 1041: bigger people pins (56 px, was 44) with bigger initials. Merged bubbles keep their size. */
+  body.simple-ui .mapboxgl-marker:not(.mk-merged):has(> .mk-initials) { width: 56px !important; height: 56px !important; }
+  body.simple-ui .mapboxgl-marker:not(.mk-merged) > .mk-initials { font-size: 18px !important; }
   body.simple-ui .set-mi[data-k="people"], body.simple-ui .set-mi[data-k="voice"],
   body.simple-ui .set-mi[data-k="look"], body.simple-ui #set-mi-crew { display: none !important; }
   #ss-root { display: none; }
