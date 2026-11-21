@@ -5540,7 +5540,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1046;
+var APP_BUILD = 1047;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6066,13 +6066,10 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
       marker._ovalGlide = true;                 // grouping must not jump the oval
       try { _updateMarkerGrouping(true); } catch (e) {}
       marker._ovalGlide = false;
-      var _cx = 0, _cy = 0, _cn = 0;
-      ((window._markerGroupMembers && window._markerGroupMembers[_gu]) || _grp).forEach(function (u) {
-        var l = userMarkers[u] && userMarkers[u]._ll;
-        if (l && isFinite(l[0]) && isFinite(l[1])) { _cx += +l[0]; _cy += +l[1]; _cn++; }
-      });
-      if (_cn) { toLng = _cx / _cn; toLat = _cy / _cn; }
-      path = null;                              // an oval has no single route to follow
+      // 1047: NO centroid. The members' fixes are taken at different moments -- at 70 mph a fix
+      // 8 s old is 800 ft behind -- so the average lurched forward and back every time one phone
+      // reported ("bouncing between individual pins", Jace, 2026-11-21). The oval now rides its
+      // anchor member's own fix (you, if you are in it), with that member's normal glide/chase.
       // ...and fall through to the glide, exactly like a solo dot.
     }
   } catch (e) {}
@@ -6836,10 +6833,17 @@ function _applyMarkerMerged(primary, members) {
   mk._mergedOval = true;
   el.classList.add('mk-merged');   // 1002: hides the one-member chips (CSS above)
   // 1003: a speed that fits everyone (all live, within 10 mph of each other) stays on.
-  var _spds = members.map(function (u) { var m = userMarkers[u]; return (m && m._isLive) ? (+m._spd || 0) : null; });
-  var _same = _spds.every(function (v) { return v !== null; }) &&
-              (Math.max.apply(null, _spds) - Math.min.apply(null, _spds)) <= 10;
-  el.classList.toggle('mk-same-speed', _same);
+  // 1047: it flickered on and off in a car, because every phone had to be live AND within 10 mph
+  // at the same instant, and their reports land at different times. Now: the anchor (whose dot
+  // this is) is live, and no other member with a fix under 30 s old disagrees by more than 15 mph.
+  // Once shown it holds for 10 s, so one late report cannot blink it off.
+  var _now = Date.now(), _pS = +mk._spd || 0;
+  var _same = !!mk._isLive && members.every(function (u) {
+    var m = userMarkers[u]; if (!m || u === primary || !m._isLive || !(_now - (m._ts || 0) < 30000)) return true;
+    return Math.abs((+m._spd || 0) - _pS) <= 15;
+  });
+  if (_same) el.__spdUntil = _now + 10000;
+  el.classList.toggle('mk-same-speed', _same || _now < (el.__spdUntil || 0));
   try { window._setCallout(mk, true); } catch (e) {}
   _setGroupBadge(el, ordered.length - shown.length);
 }
@@ -7329,6 +7333,7 @@ function _updateMarkerGrouping(immediate) {
   }
 
   window._markerGroupMembers = {};
+  var _newAnchors = {};
   Object.keys(finalGroups).forEach(function (sig) {
     var members = finalGroups[sig].filter(function (u) {
       var mk = userMarkers[u], el = mk && mk._el;
@@ -7343,40 +7348,35 @@ function _updateMarkerGrouping(immediate) {
     }
     // "You" wins as the visible primary if you're in the cluster; otherwise first by uid
     // (stable ordering — doesn't matter who, just needs to not swap arbitrarily each pass).
-    var primary = members.indexOf(userId) !== -1 ? userId : members.slice().sort()[0];
-    members.forEach(function (u) { if (u !== primary) userMarkers[u]._el.style.display = 'none'; });
+    // 1047: the oval rides ONE member's own dot (see _animateMarker). You, if you are in it;
+    // otherwise keep last pass's anchor while it is still live, else the freshest reporter.
+    var primary;
+    if (members.indexOf(userId) !== -1) primary = userId;
+    else {
+      var _prevA = members.filter(function (u) { return window._ovalAnchors && window._ovalAnchors[u] && userMarkers[u]._isLive; })[0];
+      primary = _prevA || members.slice().sort(function (a, b) {
+        var la = userMarkers[a]._isLive ? 1 : 0, lb = userMarkers[b]._isLive ? 1 : 0;
+        if (la !== lb) return lb - la;
+        var ta = userMarkers[a]._ts || 0, tb = userMarkers[b]._ts || 0;
+        return (tb - ta) || (a < b ? -1 : 1);
+      })[0];
+    }
+    _newAnchors[primary] = 1;
+    members.forEach(function (u) { if (u !== primary) { userMarkers[u]._el.style.display = 'none'; userMarkers[u]._el.classList.remove('mk-merged'); } });
     _applyMarkerMerged(primary, members);
     window._markerGroupMembers[primary] = members;
-    // The oval used to render wherever the PRIMARY happened to be, which quietly asserted the
-    // whole group was standing on one member. Put it at the centre of the people in it instead,
-    // so the shape marks the group rather than an arbitrary member of it. _ll is left alone --
-    // it is the member's own true position and the next grouping pass must keep measuring from
-    // it, not from where the oval was drawn.
+    // 1047: the oval is drawn on its anchor member's own dot. The centroid placement that was
+    // here mixed fixes of different ages and made a moving group jump back and forth. A marker
+    // left off its own spot by that older code is put back.
     try {
       var _pmk = userMarkers[primary];
-      if (_pmk && _pmk.setLngLat) {
-        var _sx = 0, _sy = 0, _n = 0;
-        members.forEach(function (u) {
-          var l = userMarkers[u] && userMarkers[u]._ll;
-          if (l && isFinite(l[0]) && isFinite(l[1])) { _sx += +l[0]; _sy += +l[1]; _n++; }
-        });
-        if (_n) {
-          if (!_pmk._mergeTrueLL) _pmk._mergeTrueLL = _pmk._ll ? _pmk._ll.slice() : null;
-          // A glide owns the oval's position while it runs (see the merged branch of
-          // _animateMarker); jumping it here would cancel the motion the glide is making.
-          // And a dead-reckoning tail that ended on its bound (_extrapEnded, set in step()) left
-          // the oval standing PAST the centroid of the members' true fixes on purpose, with no
-          // frame in flight. This pass runs on every presence snapshot; re-centring here would
-          // snap the oval back up to 60% of a leg, and the next glide, which starts from
-          // _curLngLat (still at the tail's end), would jump it forward again. The next fix
-          // clears the flag, so this stands down only while the dot is deliberately ahead.
-          if (!_pmk._extrapEnded) {
-            if (!_pmk._ovalGlide && !_pmk._anim) _pmk.setLngLat([_sx / _n, _sy / _n]);
-          }
-        }
+      if (_pmk && _pmk._mergeTrueLL && !_pmk._anim && _pmk.setLngLat) {
+        var _tl = _pmk._ll || _pmk._mergeTrueLL; _pmk.setLngLat([_tl[0], _tl[1]]); _pmk._curLngLat = [_tl[0], _tl[1]];
       }
+      if (_pmk) _pmk._mergeTrueLL = null;
     } catch (_ce) {}
   });
+  window._ovalAnchors = _newAnchors;
   // Belt and braces: any marker NOT in a merged group gets the canonical solo layout, every
   // pass. Earlier fixes each depended on a particular call site running -- the grouping pass,
   // then the per-fix update path -- and a marker left in the merged two-cell layout survived

@@ -670,56 +670,34 @@ for (const [label, spd, want] of [['spd 0', 0, false], ['spd 2', 2, false], ['no
   check('6 hdg 90 on a north leg: the tail runs east (~477 ft in 5 s), not north', within(east, mphFt(65, 5), 0.10) && Math.abs(north) < 1 && !!m._extrap && m._extrap.heading === 90, `east ${ft(east)}, north ${ft(north)}`);
 }
 
-// 7. A merged oval (two people riding together) goes through the same glide since 970, aimed at
-//    the centroid, with the primary's opts: it runs on along the CENTROID leg. The second rider
-//    stands still, so the centroid leg is about half the primary's and the tail's rate is capped at
-//    1.5 x that leg's own speed (~47 mph here), not the row's 65. Then the grouping pass's own
-//    centroid block (the real text) is run against it, as every presence snapshot does.
+// 7. A merged oval (two people riding together). Since 1047 the oval rides its ANCHOR member's own
+//    fix -- no centroid, whose mix of fixes taken at different moments lurched the oval back and
+//    forth at highway speed. So the anchor must move EXACTLY like a solo dot fed the same fixes, and
+//    the grouping pass's block (the real text) must never move it.
 {
   const H = harness();
   const P = makeMarker('p', LNG, LAT), Q = makeMarker('q', lngE(LNG, 100), LAT);
-  const cLng = (LNG + Q._ll[0]) / 2;
-  P._curLngLat = [cLng, LAT];                                // the oval is drawn at the centroid
   H.userMarkers.p = P; H.userMarkers.q = Q;
   H.win._markerGroupMembers = { p: ['p', 'q'] };
   const D = driver(H, P, 65, 18000); D.fix(); const f2 = D.fix();
-  H.advanceTo(f2.start + 18000);                              // the moment the third fix lands
-  const cFrom = P._curLngLat[1];                              // where the oval is drawn then
-  const f = D.fix();
-  const cLat = (f.lat + LAT) / 2;                             // the centroid target for this leg
-  const glideFt = ftN(cLat, cFrom);
+  const H2 = harness();
+  const S = makeMarker('s', LNG, LAT); H2.userMarkers.s = S;
+  const D2 = driver(H2, S, 65, 18000); D2.fix(); D2.fix();
+  H.advanceTo(f2.start + 18000); H2.advanceTo(f2.start + 18000);
+  const f = D.fix(); D2.fix();
   check('7 merged: grouping asked to rebuild the oval on each fix, the TRUE fix kept on _ll', H.grouping.calls === 3 && near(P._ll[1], f.lat));
-  H.advanceTo(f.landed);
-  check('7 merged: at t = dur the oval is ON the centroid', near(P._curLngLat[1], cLat) && near(P._curLngLat[0], cLng), `${ft(ftN(P._curLngLat[1], cLat))} off`);
-  H.advanceTo(f.landed + 5000);
-  const legSpeedMph = glideFt / (f.dur / 1000) * 3600 / 5280;
-  const past = ftN(P._curLngLat[1], cLat);
-  check(`7 merged: 5 s on, the oval is past the centroid along its leg at 1.5 x the leg's own speed (~${Math.round(mphFt(1.5 * legSpeedMph, 5))} ft), the row's 65 capped`,
-    within(past, mphFt(1.5 * legSpeedMph, 5), 0.03) && Math.abs(ftE(P._curLngLat[0], cLng)) < 1 && !!P._extrap, `${ft(past)}; leg ${ft(glideFt)} at ${legSpeedMph.toFixed(1)} mph`);
-  // The grouping pass, mid-tail: a frame is in flight, so it leaves the oval alone (as before).
+  H.advanceTo(f.landed); H2.advanceTo(f.landed);
+  check('7 merged: at t = dur the anchor is where a solo dot would be', near(P._curLngLat[1], S._curLngLat[1]) && near(P._curLngLat[0], S._curLngLat[0]), `${ft(ftN(P._curLngLat[1], S._curLngLat[1]))} apart`);
+  H.advanceTo(f.landed + 5000); H2.advanceTo(f.landed + 5000);
+  check('7 merged: 5 s on, still in step with the solo dot (same tail)', near(P._curLngLat[1], S._curLngLat[1]) && !!P._extrap === !!S._extrap, `${ft(ftN(P._curLngLat[1], S._curLngLat[1]))} apart`);
   let n0 = P.sets.length;
   H.centroid('p', ['p', 'q']);
-  check('7 grouping pass mid-tail (_anim set): does not touch the oval', P.sets.length === n0);
-  // ...and after the tail has ended on its bound: _anim is null again, the oval stands ~60% of the
-  // leg past the centroid of the TRUE fixes, and the pass -- which runs on every presence snapshot
-  // -- must NOT snap it back there (the next glide would start from _curLngLat and jump it forward again).
+  check('7 grouping pass mid-tail: does not touch the oval', P.sets.length === n0);
   H.drain();
-  check('7 setup: the tail ended on its bound, _anim null, _extrapEnded set, the oval past the centroid', P._anim === null && !!P._extrapEnded && ftN(P._curLngLat[1], cLat) > 400, `${ft(ftN(P._curLngLat[1], cLat))} past`);
   n0 = P.sets.length;
+  Q._ll = [lngE(LNG, 100), latN(LAT, 200)];
   H.centroid('p', ['p', 'q']);
-  check('7 grouping pass after the tail ended: stands down -- no setLngLat back to the centroid', P.sets.length === n0, `sets ${n0} -> ${P.sets.length}`);
-  // The next fix clears the memory; a row that reads 0 mph lands on the new centroid with no tail,
-  // and from then on the pass centres the oval again as it always did (the control).
-  const g = D.fix(40000, null, { spd: 0 });
-  check('7 the next fix clears _extrapEnded', P._extrapEnded === null);
-  H.drain();
-  const cLat2 = (g.lat + LAT) / 2;
-  check('7 a 0 mph fix lands the oval on the new centroid with no tail', near(P._curLngLat[1], cLat2) && !P._extrap && P._anim === null);
-  Q._ll = [lngE(LNG, 100), latN(LAT, 200)];                // the other rider moved 200 ft north
-  n0 = P.sets.length;
-  H.centroid('p', ['p', 'q']);
-  const want = [(g.lng + Q._ll[0]) / 2, (g.lat + Q._ll[1]) / 2];
-  check('7 control: with nothing in flight and no tail memory, the pass re-centres the oval as before', P.sets.length === n0 + 1 && near(P.sets[n0][0], want[0]) && near(P.sets[n0][1], want[1]));
+  check('7 grouping pass with nothing in flight: still does not pull the oval to a centroid', P.sets.length === n0, `sets ${n0} -> ${P.sets.length}`);
 }
 
 // 8. The teleport and resume-snap returns never enter the tail, and neither feeds the cadence.
@@ -872,7 +850,7 @@ check('source: the heading walk-back scales longitude by cos(lat)', /var _dE = \
 check('source: the overshoot guard is EXTRAP_BACK_FT along the heading (plus the 1027 live lag only when the lead is on)', /_along < -\(EXTRAP_BACK_FT \/ 3\.28084 \+ _liveLag\)\) marker\._noExtrapOnce = true/.test(fnOnly) && /if \(window\._liveLeadOff !== true && opts && opts\.remote/.test(fnOnly) && !/0\.25 \* _wasEx\.legM/.test(fnOnly));
 check('source: the camera block still honours _followPausedUntil and visibility', /Date\.now\(\) >= \(window\._followPausedUntil \|\| 0\)/.test(fnOnly) && /document\.visibilityState === 'visible'/.test(fnOnly));
 check('source: the trail tip is welded to the animated position every frame', /window\._updateTrailTip\(marker\._uid, lng, lat\)/.test(fnOnly));
-check('source: the grouping pass stands down on _extrapEnded, around the unchanged no-jump line', !!centroidText && /if \(!_pmk\._extrapEnded\) \{\s*if \(!_pmk\._ovalGlide && !_pmk\._anim\) _pmk\.setLngLat\(\[_sx \/ _n, _sy \/ _n\]\);/.test(centroidText));
+check('source: 1047 -- the grouping pass no longer places the oval at a centroid', !!centroidText && !centroidText.includes('_sx / _n'));
 check('source: the held-row gate skips a dot in or just past its tail, keeping the 1 m rule', !!gateText && /data\.lng\) < 1\) _glide = false;/.test(gateText) && /if \(userMarkers\[uid\]\._extrap \|\| userMarkers\[uid\]\._extrapEnded\) _glide = false;/.test(gateText));
 
 console.log(fail ? `\n${fail} failing` : '\nall pass');

@@ -1,4 +1,8 @@
-// A merged oval (two people riding together) must GLIDE to its new centre, not jump.
+// A merged oval (two people riding together) must GLIDE, not jump.
+//
+// 1047: the oval rides its ANCHOR member's own fix, not the centroid. Members' fixes are taken at
+// different moments, so the centroid of them lurched back and forth at highway speed. The checks
+// below that used to expect the centroid now expect the anchor's own fix.
 //
 // Before this change the merged branch of _animateMarker recorded the fix, re-centred the oval
 // through the grouping pass and returned before the glide: the oval sat still for ten seconds,
@@ -72,14 +76,13 @@ function harness() {
   check('grouping ran once, immediate, with the no-jump flag raised', H.groupingCalls.length === 1 && H.groupingCalls[0].immediate === true && H.groupingCalls[0].ovalGlideDuringCall === true, JSON.stringify(H.groupingCalls));
   check('the flag is lowered again after grouping', P._ovalGlide === false, String(P._ovalGlide));
 
-  const cx = (newLng + Q._ll[0]) / 2, cy = (newLat + Q._ll[1]) / 2;
+  const cx = newLng, cy = newLat;   // 1047: the anchor's own fix
   H.tick(5000);   // midway
   const mid = P._pos.slice();
-  check('midway the oval is between its old spot and the centroid', mid[0] > -84.9000 && mid[0] < cx && mid[1] > 30.4400 && mid[1] < cy, JSON.stringify(mid));
+  check('midway the oval is between its old spot and its own fix', mid[0] > -84.9000 && mid[0] < cx && mid[1] > 30.4400 && mid[1] < cy, JSON.stringify(mid));
   for (let i = 0; i < 40 && H.rafs.length; i++) H.tick(1000);
-  check('the glide ends ON the group centroid, not on the raw fix', Math.abs(P._pos[0] - cx) < 1e-9 && Math.abs(P._pos[1] - cy) < 1e-9, `end=${JSON.stringify(P._pos)} centroid=${JSON.stringify([cx, cy])}`);
-  check('the route (path) was ignored for the oval -- straight glide', mid[0] !== -84.8980, '');
-  check('after the glide, _ll still holds the true fix (not the centroid)', P._ll[0] === newLng && P._ll[1] === newLat, '');
+  check('the glide ends ON the anchor own fix (no centroid)', Math.abs(P._pos[0] - cx) < 1e-9 && Math.abs(P._pos[1] - cy) < 1e-9, `end=${JSON.stringify(P._pos)} centroid=${JSON.stringify([cx, cy])}`);
+    check('after the glide, _ll still holds the true fix (not the centroid)', P._ll[0] === newLng && P._ll[1] === newLat, '');
 }
 
 // ── Solo dot: nothing about the ordinary glide changed ───────────────────────────────────
@@ -97,7 +100,8 @@ function harness() {
 {
   const g = src.indexOf('function _updateMarkerGrouping(');
   const blk = src.slice(g, g + 12000);
-  check('grouping only jumps the oval when no glide owns it', blk.includes('if (!_pmk._ovalGlide && !_pmk._anim) _pmk.setLngLat([_sx / _n, _sy / _n]);'), '');
+  check('grouping no longer places the oval at a centroid', !blk.includes('_sx / _n'), '');
+  check('the anchor is you when you are in the group, else a sticky live member', blk.includes('if (members.indexOf(userId) !== -1) primary = userId;') && blk.includes('window._ovalAnchors[u]'), '');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall pass');
