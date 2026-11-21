@@ -5540,7 +5540,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1045;
+var APP_BUILD = 1046;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -15030,8 +15030,8 @@ window._closeRoomSwitcher = function () {
   var m = document.getElementById('room-switcher-modal');
   if (m) m.style.display = 'none';
 };
-function _renderRoomSwitcherList() {
-  var el = document.getElementById('room-switcher-list'); if (!el) return;
+// 1046: the rows are built once here; the Hunting switcher and the Simple-mode one both draw them.
+window._roomSwitcherRows = function () {
   var favs = (typeof _getFavs === 'function') ? _getFavs() : [];
   var circles = (typeof _getCircles === 'function') ? _getCircles() : {};
   var now = Date.now(), seen = {}, rows = [];
@@ -15057,11 +15057,16 @@ function _renderRoomSwitcherList() {
     var name = key.replace(/^test_/, '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
     rows.push({ key: key, name: name, sub: 'Favorite · tap to open', badge: '★' });
   });
+  rows.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  return rows;
+};
+function _renderRoomSwitcherList() {
+  var el = document.getElementById('room-switcher-list'); if (!el) return;
+  var rows = window._roomSwitcherRows();
   if (!rows.length) {
     el.innerHTML = '<div style="padding:24px 8px;text-align:center;color:var(--muted);font-size:13px">No other favorites or Crews yet. Favorite a room or make one a Crew to switch to it quickly from here.</div>';
     return;
   }
-  rows.sort(function (a, b) { return a.name.localeCompare(b.name); });
   el.innerHTML = rows.map(function (r) {
     var safeKey = String(r.key).replace(/'/g, ''), safeName = String(r.name).replace(/'/g, '');
     return '<div onclick="window._switchToRoom(\'' + safeKey + '\',\'' + safeName + '\')" style="display:flex;align-items:center;gap:10px;padding:11px 10px;border-bottom:1px solid var(--border);cursor:pointer">' +
@@ -36011,7 +36016,27 @@ window._voiceMod().then(function (m) {
     #ss-rail { bottom: 24px !important; }
     body.gv-active #ss-rail { bottom: 124px !important; }
   }
-  @media (prefers-reduced-motion: reduce) { #ss-sheet, #ss-sos .f { transition: none !important; } }
+  /* 1046: Simple-style pop-up for "Switch circle" and "Map style" (the old ones looked like Hunting mode). */
+  #ss-pop { position: fixed; inset: 0; z-index: 400; display: none; align-items: flex-end; justify-content: center; }
+  #ss-pop.on { display: flex; }
+  #ss-pop .bd { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+  #ss-pop .pan { position: relative; width: 100%; max-width: 560px; max-height: 82vh; display: flex; flex-direction: column;
+                 background: var(--ss-e1); color: var(--ss-ink); border: 1px solid var(--ss-line); border-bottom: none;
+                 border-radius: 22px 22px 0 0; box-shadow: 0 -8px 26px rgba(0,0,0,.45);
+                 padding-bottom: calc(env(safe-area-inset-bottom,0px) + 12px); animation: ssPopIn .24s cubic-bezier(.2,.8,.2,1); }
+  @keyframes ssPopIn { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  #ss-pop .ph { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px 20px; flex: 0 0 auto; }
+  #ss-pop .ph h2 { margin: 0; font-family: var(--v2-geo, system-ui, sans-serif); font-size: 24px; font-weight: 800; color: var(--ss-ink); }
+  #ss-pop .pl { overflow-y: auto; flex: 1; min-height: 0; padding: 0 10px 4px; display: flex; flex-direction: column; gap: 6px; }
+  #ss-pop .ss-row { border: 2px solid transparent; }
+  #ss-pop .ss-where { white-space: normal; }
+  #ss-pop .ss-row.cur { border-color: var(--ss-acc); background: var(--ss-e2); }
+  #ss-pop .ss-av svg { width: 30px; height: 30px; }
+  #ss-pop .ss-av.ic { background: var(--ss-e2); color: var(--ss-acc); border: 1px solid var(--ss-line); }
+  #ss-pop .ss-ok { flex: 0 0 auto; font-size: 15px; font-weight: 800; color: var(--ss-on-acc); background: var(--ss-acc); border-radius: 20px; padding: 5px 12px; }
+  #ss-pop .ss-go { flex: 0 0 auto; width: 26px; height: 26px; color: var(--ss-ink3); }
+  #ss-pop .ss-note { padding: 14px 12px 6px; font-size: 17px; color: var(--ss-ink2); line-height: 1.5; }
+  @media (prefers-reduced-motion: reduce) { #ss-sheet, #ss-sos .f { transition: none !important; } #ss-pop .pan { animation: none; } }
 </style>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="ss-i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></symbol>
@@ -36031,6 +36056,7 @@ window._voiceMod().then(function (m) {
     <button class="ss-round" type="button" aria-label="Settings" onclick="openSettings()"><svg class="licon"><use href="#ic-gear"/></svg></button>
   </div>
   <div id="ss-rail">
+    <button class="ss-round" type="button" aria-label="Map style" onclick="window._ssMaps()"><svg class="licon"><use href="#ic-layers"/></svg></button>
     <button class="ss-round" type="button" aria-label="Show everyone" onclick="window._ssFitAll()"><svg class="licon"><use href="#ic-target"/></svg></button>
     <button class="ss-round" id="ss-sos" type="button" aria-label="Hold two seconds to send SOS"><span class="f"></span><b>SOS</b></button>
   </div>
@@ -36039,6 +36065,13 @@ window._voiceMod().then(function (m) {
     <div id="ss-head"><h2>Family</h2><button class="ss-pill" type="button" onclick="window._ssPlaces()"><svg><use href="#ss-i-home"/></svg>Places</button></div>
     <div id="ss-list"></div>
     <div id="ss-card"></div>
+  </div>
+  <div id="ss-pop" role="dialog" aria-modal="true">
+    <div class="bd" onclick="window._ssPopClose()"></div>
+    <div class="pan">
+      <div class="ph"><h2 id="ss-pop-t"></h2><button class="ss-round" type="button" aria-label="Close" onclick="window._ssPopClose()"><svg><use href="#ss-i-x"/></svg></button></div>
+      <div class="pl" id="ss-pop-l"></div>
+    </div>
   </div>
 </div>
 <script>
@@ -36204,7 +36237,49 @@ window._voiceMod().then(function (m) {
   window._ssPlaces = function () { try { window._openPlacesManager(groupName, (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName); } catch (e) {} };
   // 1043: Simple mode hides the top bar, and with it EXIT, so there was no way back to Home.
   window._ssHome = function () { var b = $('switch-group-btn'); if (b) b.click(); };
-  window._ssCircle = function () { try { window._openRoomSwitcher(); } catch (e) { try { openRoomInfo(); } catch (x) {} } };
+  // 1046: Simple-style pop-up, shared by "Switch circle" and "Map style".
+  function pop(title, html) { var p = $('ss-pop'); if (!p) return; $('ss-pop-t').textContent = title; $('ss-pop-l').innerHTML = html; p.classList.add('on'); }
+  window._ssPopClose = function () { var p = $('ss-pop'); if (p) p.classList.remove('on'); };
+  function initial(n) { var c = String(n || '?').trim().charAt(0); return esc(c ? c.toUpperCase() : '?'); }
+  window._ssCircle = function () {
+    try {
+      var cl = $('ss-circle-name'), cur = (cl && cl.textContent.trim()) || ((typeof _prettyGroup === 'function' && groupName) ? _prettyGroup(groupName) : 'Family');
+      var rows = (window._roomSwitcherRows && window._roomSwitcherRows()) || [];
+      var h = '<div class="ss-row cur" onclick="window._ssPopClose()"><div class="ss-av">' + initial(cur) + '</div>' +
+              '<div class="ss-who"><div class="ss-name">' + esc(cur) + '</div><div class="ss-where">You are here</div></div><span class="ss-ok">Here</span></div>';
+      rows.forEach(function (r) {
+        h += '<div class="ss-row" data-k="' + esc(r.key) + '" data-n="' + esc(r.name) + '" onclick="window._ssPickCircle(this)"><div class="ss-av">' + initial(r.name) + '</div>' +
+             '<div class="ss-who"><div class="ss-name">' + esc(r.name) + '</div><div class="ss-where">' + esc(String(r.sub || '').replace(/ · tap to open$/, '')) + '</div></div>' +
+             '<svg class="ss-go"><use href="#ss-i-down" transform="rotate(-90 12 12)"/></svg></div>';
+      });
+      if (!rows.length) h += '<div class="ss-note">This is your only circle. Other circles you join will show up here.</div>';
+      pop('Switch circle', h);
+    } catch (e) { try { window._openRoomSwitcher(); } catch (x) {} }
+  };
+  window._ssPickCircle = function (el) {
+    window._ssPopClose();
+    try { window._switchToRoom(el.getAttribute('data-k'), el.getAttribute('data-n')); } catch (e) {}
+  };
+  var MAPS = [
+    ['mapbox://styles/mapbox/satellite-streets-v12', 'ic-satellite', 'Satellite', 'Photo from above, with road names'],
+    ['esri-imagery', 'ic-satellite', 'Satellite (Esri)', 'A second photo, often clearer'],
+    ['mapbox://styles/mapbox/streets-v12', 'ic-map', 'Street map', 'Plain roads and towns, easy to read'],
+    ['mapbox://styles/mapbox/outdoors-v12', 'ic-mountain', 'Outdoors', 'Woods, trails and hills']
+  ];
+  window._ssMaps = function () {
+    var a = document.querySelector('.layer-base-btn.active'), cur = a ? a.getAttribute('data-style') : '';
+    pop('Map style', MAPS.map(function (m, i) {
+      var on = m[0] === cur;
+      return '<div class="ss-row' + (on ? ' cur' : '') + '" onclick="window._ssPickMap(' + i + ')"><div class="ss-av ic"><svg class="licon"><use href="#' + m[1] + '"/></svg></div>' +
+             '<div class="ss-who"><div class="ss-name">' + m[2] + '</div><div class="ss-where">' + m[3] + '</div></div>' + (on ? '<span class="ss-ok">On</span>' : '') + '</div>';
+    }).join(''));
+  };
+  window._ssPickMap = function (i) {
+    window._ssPopClose();
+    var m = MAPS[i]; if (!m) return;
+    var b = document.querySelector('.layer-base-btn[data-style="' + m[0] + '"]');
+    if (b && !b.classList.contains('active')) { try { setBaseLayer(b); } catch (e) {} }
+  };
   // Hunting tools on/off, for this phone only.
   window._setUiMode = function (mode) {
     try { localStorage.setItem('gl_ui_mode', mode === 'hunt' ? 'hunt' : 'simple'); } catch (e) {}
