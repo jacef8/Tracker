@@ -5540,7 +5540,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1047;
+var APP_BUILD = 1048;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -35938,6 +35938,8 @@ window._voiceMod().then(function (m) {
   #ss-circle i { width: 11px; height: 11px; border-radius: 50%; background: var(--ss-acc); flex: 0 0 auto; }
   #ss-circle svg { width: 18px; height: 18px; color: var(--ss-ink3); flex: 0 0 auto; }
   #ss-rail { position: fixed; right: 12px; bottom: calc(var(--ss-peek) + 16px); z-index: 160; display: flex; flex-direction: column; gap: 12px; }
+  /* 1048: lit while the map is following (everyone, or one person). */
+  #ss-root #ss-follow.on { background: var(--ss-acc); color: var(--ss-on-acc); border-color: var(--ss-acc); }
   #ss-sos { background: var(--ss-bad) !important; color: #fff !important; border: none !important; font-weight: 800; font-size: 14px; letter-spacing: .04em; position: relative; overflow: hidden; }
   #ss-sos .f { position: absolute; inset: 0; background: rgba(255,255,255,.35); transform: scaleY(0); transform-origin: bottom; }
   #ss-sos.hold .f { transform: scaleY(1); transition: transform 2s linear; }
@@ -36057,7 +36059,7 @@ window._voiceMod().then(function (m) {
   </div>
   <div id="ss-rail">
     <button class="ss-round" type="button" aria-label="Map style" onclick="window._ssMaps()"><svg class="licon"><use href="#ic-layers"/></svg></button>
-    <button class="ss-round" type="button" aria-label="Show everyone" onclick="window._ssFitAll()"><svg class="licon"><use href="#ic-target"/></svg></button>
+    <button class="ss-round" id="ss-follow" type="button" aria-label="Follow everyone" onclick="window._ssFollowTap()"><svg class="licon"><use href="#ic-target"/></svg></button>
     <button class="ss-round" id="ss-sos" type="button" aria-label="Hold two seconds to send SOS"><span class="f"></span><b>SOS</b></button>
   </div>
   <div id="ss-sheet">
@@ -36233,6 +36235,35 @@ window._voiceMod().then(function (m) {
       map.fitBounds([[mnx, mny], [mxx, mxy]], { duration: 900, maxZoom: 15,
         padding: wide ? { top: 100, bottom: 60, left: 470, right: 100 } : { top: 90, bottom: 320, left: 50, right: 90 } });
     } catch (e) {}
+  };
+  // 1048: "Follow doesn't seem to do anything" (Jace, 2026-11-21). Group follow is already on when
+  // the map opens, so the old one-shot "fit everyone" landed on the same view, and the button never
+  // showed whether following was on. Now it is the follow switch, lit while following:
+  //   not following            -> follow everyone
+  //   following, map moved     -> back to everyone (the pause from a pan/pinch is cleared)
+  //   following, map untouched -> stop following
+  function following() { return !!((typeof fitAllInterval !== 'undefined' && fitAllInterval) || (typeof followUid !== 'undefined' && followUid)); }
+  function syncFollowBtn() { var b = $('ss-follow'); if (b) b.classList.toggle('on', following()); }
+  setInterval(syncFollowBtn, 700);
+  window._ssFollowTap = function () {
+    try {
+      var grp = typeof fitAllInterval !== 'undefined' && fitAllInterval;
+      var one = typeof followUid !== 'undefined' && followUid;
+      var moved = (window._followPausedUntil || 0) > Date.now() || window._groupFollowUserZoomed;
+      if (grp && moved) {
+        window._followPausedUntil = 0; window._groupFollowUserZoomed = false; window._groupFollowOutOfViewSince = null;
+        try { _groupFollowTick(true); } catch (e) {}
+        toast('Showing everyone', 1600);
+      } else if (grp || one) {
+        if (one && typeof stopFollowing === 'function') stopFollowing();
+        if (grp && typeof _stopFitAll === 'function') _stopFitAll();
+        toast('Stopped following. Tap again to follow everyone', 2400);
+      } else {
+        window._fitAllTapped();
+        if (following()) toast('Following everyone', 1600);
+      }
+    } catch (e) { try { window._ssFitAll(); } catch (x) {} }
+    syncFollowBtn();
   };
   window._ssPlaces = function () { try { window._openPlacesManager(groupName, (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName); } catch (e) {} };
   // 1043: Simple mode hides the top bar, and with it EXIT, so there was no way back to Home.
