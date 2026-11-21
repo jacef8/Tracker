@@ -5540,7 +5540,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1048;
+var APP_BUILD = 1049;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -36059,7 +36059,7 @@ window._voiceMod().then(function (m) {
   </div>
   <div id="ss-rail">
     <button class="ss-round" type="button" aria-label="Map style" onclick="window._ssMaps()"><svg class="licon"><use href="#ic-layers"/></svg></button>
-    <button class="ss-round" id="ss-follow" type="button" aria-label="Follow everyone" onclick="window._ssFollowTap()"><svg class="licon"><use href="#ic-target"/></svg></button>
+    <button class="ss-round" id="ss-follow" type="button" aria-label="Follow" onclick="window._ssFollowTap()"><svg class="licon"><use href="#ic-target"/></svg></button>
     <button class="ss-round" id="ss-sos" type="button" aria-label="Hold two seconds to send SOS"><span class="f"></span><b>SOS</b></button>
   </div>
   <div id="ss-sheet">
@@ -36245,24 +36245,40 @@ window._voiceMod().then(function (m) {
   function following() { return !!((typeof fitAllInterval !== 'undefined' && fitAllInterval) || (typeof followUid !== 'undefined' && followUid)); }
   function syncFollowBtn() { var b = $('ss-follow'); if (b) b.classList.toggle('on', following()); }
   setInterval(syncFollowBtn, 700);
+  // 1049: "it should still give you options to follow me or follow group" (Jace). The button opens
+  // a short Simple-style list instead of guessing which one you meant.
+  function isGrp() { return !!(typeof fitAllInterval !== 'undefined' && fitAllInterval); }
+  function isOne() { return (typeof followUid !== 'undefined' && followUid) || null; }
   window._ssFollowTap = function () {
+    var me = isOne() === userId, grp = isGrp(), other = isOne() && !me;
+    var row = function (k, ic, name, sub, on) {
+      return '<div class="ss-row' + (on ? ' cur' : '') + '" onclick="window._ssPickFollow(\'' + k + '\')"><div class="ss-av ic"><svg class="licon"><use href="#' + ic + '"/></svg></div>' +
+             '<div class="ss-who"><div class="ss-name">' + name + '</div><div class="ss-where">' + sub + '</div></div>' + (on ? '<span class="ss-ok">On</span>' : '') + '</div>';
+    };
+    var h = row('me', 'ic-target', 'Follow me', 'Keep the map on you as you move', me) +
+            row('all', 'ic-users', 'Follow everyone', 'Keep the whole family in view', grp);
+    if (me || grp || other) h += row('stop', 'ic-x', 'Stop following', 'Leave the map where it is', false);
+    pop('Follow', h);
+  };
+  window._ssPickFollow = function (k) {
+    window._ssPopClose();
     try {
-      var grp = typeof fitAllInterval !== 'undefined' && fitAllInterval;
-      var one = typeof followUid !== 'undefined' && followUid;
-      var moved = (window._followPausedUntil || 0) > Date.now() || window._groupFollowUserZoomed;
-      if (grp && moved) {
+      if (k === 'stop') {
+        if (isOne() && typeof stopFollowing === 'function') stopFollowing();
+        if (isGrp() && typeof _stopFitAll === 'function') _stopFitAll();
+        toast('Stopped following', 1600);
+      } else if (k === 'me') {
+        if (isOne() && typeof stopFollowing === 'function') stopFollowing();   // re-start = re-centre on you
+        window._followPausedUntil = 0;
+        window._locateMeTapped();
+        if (isOne() === userId) toast('Following you', 1600);
+      } else if (k === 'all') {
+        if (isOne() && typeof stopFollowing === 'function') stopFollowing();
         window._followPausedUntil = 0; window._groupFollowUserZoomed = false; window._groupFollowOutOfViewSince = null;
-        try { _groupFollowTick(true); } catch (e) {}
-        toast('Showing everyone', 1600);
-      } else if (grp || one) {
-        if (one && typeof stopFollowing === 'function') stopFollowing();
-        if (grp && typeof _stopFitAll === 'function') _stopFitAll();
-        toast('Stopped following. Tap again to follow everyone', 2400);
-      } else {
-        window._fitAllTapped();
-        if (following()) toast('Following everyone', 1600);
+        if (isGrp()) { try { _groupFollowTick(true); } catch (e) {} } else window._fitAllTapped();
+        if (isGrp()) toast('Following everyone', 1600);
       }
-    } catch (e) { try { window._ssFitAll(); } catch (x) {} }
+    } catch (e) {}
     syncFollowBtn();
   };
   window._ssPlaces = function () { try { window._openPlacesManager(groupName, (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName); } catch (e) {} };
