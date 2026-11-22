@@ -2367,6 +2367,12 @@ window._timedOnValue = function (orig) {
   .fv-mk i.live { opacity: 1; border-color: #A8D66A; }
   .fv-mk span { background: rgba(12,17,19,.9); color: #fff; font: 700 13px system-ui, sans-serif; padding: 2px 8px; border-radius: 8px; }
   .fv-av { width: 52px; height: 52px; border-radius: 50%; flex: 0 0 auto; color: #fff; font: 800 19px system-ui, sans-serif; display: flex; align-items: center; justify-content: center; }
+  /* 1061: ring that pulses around a shared or notified pin so it is easy to find. */
+  .gl-pin-hl { width: 64px; height: 64px; pointer-events: none; }   /* no position here: the map places it absolutely */
+  .gl-pin-hl i { position: absolute; inset: 0; border-radius: 50%; border: 4px solid #FFD54A; box-shadow: 0 0 0 2px #0B0F11; animation: glPinHl 1.6s ease-out infinite; }
+  .gl-pin-hl i + i { animation-delay: .8s; }
+  @keyframes glPinHl { 0% { transform: scale(.55); opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .gl-pin-hl i { animation: none; transform: scale(1.1); } .gl-pin-hl i + i { display: none; } }
   /* 1050: star and share are real 48 px targets (the old star was ~28 px, the arrow did nothing). */
   .pf-btn { flex: 0 0 auto; width: 48px; height: 48px; margin: -6px -4px; border-radius: 12px; background: none; border: none;
             color: rgba(255,255,255,.75); display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -5633,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1060;
+var APP_BUILD = 1061;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -13034,12 +13040,37 @@ window._showNotifPin = function (pin) {
     if (id) setTimeout(function () { try { delete window._pendingPins[id]; updatePinSource(lastPins); } catch (e) {} }, 120000);
   } catch (e) {}
 };
+// 1061: "when someone touches a link to shared pins it needs to zoom to and highlight those pins
+// so the receiver can see them easily" (Jace). A pulsing ring around each pin for 20 s.
+window._pinHlMarkers = [];
+window._highlightPins = function (pins) {
+  try {
+    if (typeof map === 'undefined' || !map || !pins) return;
+    window._pinHlMarkers.forEach(function (mk) { try { mk.remove(); } catch (e) {} });
+    window._pinHlMarkers = [];
+    pins.forEach(function (p) {
+      if (!isFinite(+p.lat) || !isFinite(+p.lng)) return;
+      var el = document.createElement('div'); el.className = 'gl-pin-hl'; el.innerHTML = '<i></i><i></i>';
+      el.setAttribute('aria-hidden', 'true');
+      window._pinHlMarkers.push(new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([+p.lng, +p.lat]).addTo(map));
+    });
+    clearTimeout(window._pinHlT);
+    window._pinHlT = setTimeout(function () { window._pinHlMarkers.forEach(function (mk) { try { mk.remove(); } catch (e) {} }); window._pinHlMarkers = []; }, 20000);
+  } catch (e) {}
+};
+// Stop following people so the camera stays on the pins until the person moves the map.
+function _holdCameraOnPins() {
+  try { if (typeof _stopFitAll === 'function') _stopFitAll(); } catch (e) {}
+  try { if (typeof window._releaseCamera === 'function') window._releaseCamera(); } catch (e) {}
+  try { if (window._pauseFollow) window._pauseFollow(60000); } catch (e) {}
+}
 window._flyToNotifPin = function (lat, lng) {
   try {
     var go = function () {
       try {
+        _holdCameraOnPins();
         map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom ? map.getZoom() : 0, 16), duration: 900 });
-        if (window._pauseFollow) window._pauseFollow(12000);   // do not let follow drag it away
+        window._highlightPins([{ lat: lat, lng: lng }]);
       } catch (e) {}
     };
     if (window._mapReady) go();
@@ -13115,6 +13146,8 @@ window._toggleNotifType = function (type) {
 window._handleNotifOpen = function (data) {
   try {
     data = data || {};
+    window._notifTapAt = Date.now();   // 1061: an update must not restart the app under this tap
+    try { if (data.type === 'pin' || /[?&]pin=/.test(String(data.url || ''))) sessionStorage.setItem('gl_notif_pin', JSON.stringify({ at: Date.now(), url: String(data.url || ''), group: data.group || '' })); } catch (e) {}
     // 1029: a Talk notification answers the call (or opens the voice messages) wherever you are.
     if (data.type === 'voice' && (data.kind || data.voiceRoom)) { try { window._talkTapLog('tap', data.kind || ''); } catch (e) {} window._openTalkNotif(data); return; }
     // 1014: tapping an invite notification IS the yes. 1013 showed an Accept prompt instead,
@@ -16029,9 +16062,14 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
             var _recent = false;
             try { _recent = Date.now() - (+sessionStorage.getItem('gl_auto_upd') || 0) < 120000; } catch (e) {}
             if (autoApply && !_recent && !_busy() && document.visibilityState === 'visible' && typeof window._applyUpdate === 'function') {
-              try { sessionStorage.setItem('gl_auto_upd', String(Date.now())); } catch (e) {}
-              try { if (typeof toast === 'function') toast('Updating to the latest version…', 2500); } catch (e) {}
-              window._applyUpdate();
+              // 1061: a notification tap lands a beat after the app comes back. Give it that beat;
+              // if the person came back BY tapping one, they want that pin, not a restart.
+              setTimeout(function () {
+                if (Date.now() - (window._notifTapAt || 0) < 30000 || _busy()) { var b0 = document.getElementById('update-banner'); if (b0) b0.style.display = 'flex'; return; }
+                try { sessionStorage.setItem('gl_auto_upd', String(Date.now())); } catch (e) {}
+                try { if (typeof toast === 'function') toast('Updating to the latest version…', 2500); } catch (e) {}
+                window._applyUpdate();
+              }, 1500);
               return;
             }
             var b = document.getElementById('update-banner');
@@ -16138,7 +16176,11 @@ window._applyUpdate = function () {
         if (document.visibilityState !== 'visible') return;
         document.removeEventListener('visibilitychange', _go);
         window._updateDeferred = 0;
-        window._applyUpdate();
+        // 1061: same beat as the return check -- a tapped notification wins over the update.
+        setTimeout(function () {
+          if (Date.now() - (window._notifTapAt || 0) < 30000) { var b1 = document.getElementById('update-banner'); if (b1) b1.style.display = 'flex'; return; }
+          window._applyUpdate();
+        }, 1500);
       });
     }
     return;
@@ -16937,14 +16979,19 @@ function enterMap(name, group, uid) {
     if (window._pendingNotif === 'voice') { window._pendingNotif = null; setTimeout(function () { try { if (window._openVoiceLog) window._openVoiceLog(); } catch (e) {} }, 1400); }
     // Opened from a pin notification -> land on the pin, not just the room.
     if (window._pendingPinShow) { try { window._showNotifPin(window._pendingPinShow); } catch (e) {} window._pendingPinShow = null; }   // 1021
-    if (window._pendingPinFly) { var _ppf = window._pendingPinFly; window._pendingPinFly = null; setTimeout(function () { window._flyToNotifPin(_ppf.lat, _ppf.lng); }, 1600); }
+    if (window._pendingPinFly) { var _ppf = window._pendingPinFly; window._pendingPinFly = null; setTimeout(function () { window._flyToNotifPin(_ppf.lat, _ppf.lng); try { sessionStorage.removeItem('gl_notif_pin'); } catch (e) {} }, 300); }
     // 1055: a shared pin -- after the room's own pins have had a moment to arrive, so a pin that is
     // already in the room is not drawn twice.
     if (window._pendingSharedPin) {
       var _psp = window._pendingSharedPin; window._pendingSharedPin = null;
-      var _spGo = function () { window._dropSharedPin(_psp); };
-      if (window._mapReady) setTimeout(_spGo, 2500);
-      else { var _spT = setInterval(function () { if (window._mapReady) { clearInterval(_spT); setTimeout(_spGo, 2500); } }, 300); setTimeout(function () { clearInterval(_spT); }, 20000); }
+      var _spDone = false, _spStart = Date.now();
+      var _spGo = function () { if (_spDone) return; _spDone = true; window._dropSharedPin(_psp); };
+      // 1061: as soon as the map is up AND the room's own pins have arrived (so nothing is drawn
+      // twice) -- or after 2.5 s at most. It used to wait a flat 2.5 s on top of the map.
+      var _spT = setInterval(function () {
+        if (!window._mapReady) { if (Date.now() - _spStart > 20000) clearInterval(_spT); return; }
+        if (typeof window._roomLivePins === 'number' || Date.now() - _spStart > 2500) { clearInterval(_spT); _spGo(); }
+      }, 150);
     }
     // Admin "Close Room" sets a flag here — eject cleanly when it appears.
     try { fbOnValue(fbRef(db, 'gl/' + groupName + '/closed'), function(snap) {
@@ -17561,9 +17608,9 @@ window._dropSharedPin = function (sp) {
         .setLngLat([p.lng, p.lat]).addTo(map);
       window._sharedPinMarkers.push(mk);
     });
-    try { if (typeof _stopFitAll === 'function') _stopFitAll(); if (window._pauseFollow) window._pauseFollow(20000); } catch (e) {}
+    _holdCameraOnPins();
     if (sp.pins.length === 1) window._flyToNotifPin(sp.pins[0].lat, sp.pins[0].lng);
-    else _spFit(map, sp.pins, { duration: 900 });
+    else { _spFit(map, sp.pins, { duration: 900, padding: { top: 140, bottom: 140, left: 70, right: 70 } }); window._highlightPins(sp.pins); }
     try { toast(sp.pins.length === 1 ? 'Showing the shared pin' : 'Showing ' + sp.pins.length + ' shared pins', 2400); } catch (e) {}
   } catch (e) {}
 };
@@ -17813,6 +17860,16 @@ window._showGetAppScreen = function (kind) {
     if (!_sp) {
       try { var _pp = _parsePinParam(_q.get('pin')); if (_pp) window._pendingPinFly = _pp; } catch (e) {}   // opened from a pin
       try { window._pendingPinShow = window._pinFromNotifUrl(location.search); } catch (e) {}   // 1021
+      // 1061: a pin tapped just before a reload/update, for this same room.
+      try {
+        var _np = JSON.parse(sessionStorage.getItem('gl_notif_pin') || 'null');
+        sessionStorage.removeItem('gl_notif_pin');
+        if (!window._pendingPinFly && _np && Date.now() - _np.at < 90000 && (!_np.group || _np.group === _invRoom)) {
+          var _npm = String(_np.url).match(/[?&]pin=([^&]+)/);
+          var _npp = _npm && _parsePinParam(decodeURIComponent(_npm[1]));
+          if (_npp) { window._pendingPinFly = _npp; window._pendingPinShow = window._pinFromNotifUrl(_np.url); }
+        }
+      } catch (e) {}
     }
     var _k = _q.get('k');
     if (_k) { try { window._invitePin = atob(_k); } catch (e) { window._invitePin = _k; } }
@@ -18078,24 +18135,24 @@ const PIN_DEFS = {
   // ranch gate (posts + rails + diagonal brace). The door emoji looked like a floating
   // house door and the torii replacement "looked like a Chinese something" — there is no
   // good gate emoji, so we draw one. Pickers show the ≡ glyph, which reads as rails.
-  'Gate':         { color: '#795548', emoji: '≡', theme: 'General', label: 'GA' },
+  'Gate':         { color: '#A8743F', emoji: '≡', theme: 'General', label: 'GA' },
   'Photo':        { color: '#90a4ae', emoji: '📸', theme: 'General', label: 'PH' },
   // ── Hunting ──
-  'Deer Stand':   { color: '#8B5E3C', emoji: '🪜', theme: 'Hunting', label: 'DS' },
-  'Ground Blind': { color: '#6d4c41', emoji: '🛖', theme: 'Hunting', label: 'GB' },
+  'Deer Stand':   { color: '#B0662A', emoji: '🪜', theme: 'Hunting', label: 'DS' },
+  'Ground Blind': { color: '#9A5B3A', emoji: '🛖', theme: 'Hunting', label: 'GB' },
   'Trail Camera': { color: '#455a64', emoji: '📷', theme: 'Hunting', label: 'TC' },
   'Game Trail':   { color: '#5a8a3c', emoji: '🐾', theme: 'Hunting', label: 'GT' },
-  'Deer':         { color: '#8d6e63', emoji: '🦌', theme: 'Hunting', label: 'DR' },
-  'Hog':          { color: '#7f6000', emoji: '🐗', theme: 'Hunting', label: 'HG' },
+  'Deer':         { color: '#C8742E', emoji: '🦌', theme: 'Hunting', label: 'DR' },
+  'Hog':          { color: '#A67C00', emoji: '🐗', theme: 'Hunting', label: 'HG' },
   'Gobbler':      { color: '#8e44ad', emoji: '🦃', theme: 'Hunting', label: 'GB' },
   'Bear':         { color: '#4a235a', emoji: '🐻', theme: 'Hunting', label: 'BR' },
   'Duck':         { color: '#1565c0', emoji: '🦆', theme: 'Hunting', label: 'DK' },
   'Dove':         { color: '#b0bec5', emoji: '🕊️', theme: 'Hunting', label: 'DV' },
   'Feeder':       { color: '#27ae60', emoji: '🌽', theme: 'Hunting', label: 'FD' },
   'Food Plot':    { color: '#558b2f', emoji: '🌱', theme: 'Hunting', label: 'FP' },
-  'Scrape':       { color: '#6d4c41', emoji: '🍂', theme: 'Hunting', label: 'SC' },
-  'Rub':          { color: '#795548', emoji: '🪵', theme: 'Hunting', label: 'RB' },
-  'Bedding':      { color: '#5d4037', emoji: '🛏️', theme: 'Hunting', label: 'BD' },
+  'Scrape':       { color: '#A4572F', emoji: '🍂', theme: 'Hunting', label: 'SC' },
+  'Rub':          { color: '#B5703C', emoji: '🪵', theme: 'Hunting', label: 'RB' },
+  'Bedding':      { color: '#8E5233', emoji: '🛏️', theme: 'Hunting', label: 'BD' },
   'Harvest':      { color: '#c0392b', emoji: '🏆', theme: 'Hunting', label: 'HV' },
   'Blood Trail':  { color: '#b71c1c', emoji: '🩸', theme: 'Hunting', label: 'BT' },
   'Shooting Lane':{ color: '#d84315', emoji: '🎯', theme: 'Hunting', label: 'SL' },
@@ -18359,7 +18416,8 @@ function makePinImage(catColor, ringColor, glyph, cat) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
-  ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,.9)';
+  // 1061: a full white edge (was a hairline) so dark pins read on dark woods.
+  ctx.lineWidth = 5; ctx.strokeStyle = '#ffffff';
   ctx.stroke();
   if (ic && (ic.d || ic.f)) {
     ctx.save();
@@ -18577,7 +18635,7 @@ function initMap() {
         filter: ['!', ['has', 'point_count']],
         layout: {
           'icon-image': ['get', 'imageId'],
-          'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.78, 12, 0.82, 16, 0.95],
           'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
@@ -19297,7 +19355,7 @@ function _ensurePinLayers() {
     if (!map.getLayer('pins-layer')) {
       map.addLayer({ id: 'pins-layer', type: 'symbol', source: 'pins', filter: ['!', ['has', 'point_count']],
         layout: { 'icon-image': ['get', 'imageId'],
-                  'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
+                  'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.78, 12, 0.82, 16, 0.95],
                   'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
                   'text-field': ['get', 'shortLabel'], 'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
                   'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 1.2], 'text-optional': true },
@@ -27561,7 +27619,7 @@ function setBaseLayer(btn) {
         filter: ['!', ['has', 'point_count']],
         layout: {
           'icon-image': ['get', 'imageId'],
-          'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 13, 0.65, 16, 0.85],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.78, 12, 0.82, 16, 0.95],
           'icon-anchor': 'center', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
           'text-field': ['get', 'shortLabel'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
