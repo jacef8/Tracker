@@ -2290,6 +2290,7 @@ window._timedOnValue = function (orig) {
     padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px;
   }
   .pin-feed-card {
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;   /* 1059: hold = select the pin, not its text */
     display: flex; align-items: center; gap: 12px;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 12px; padding: 10px 12px;
@@ -5632,7 +5633,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1058;
+var APP_BUILD = 1059;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -24208,6 +24209,7 @@ function renderPinFeed(pins) {
         lpT = setTimeout(function () {
           lpT = null;
           window._pfLongFired = Date.now();
+          try { var _gs = window.getSelection && window.getSelection(); if (_gs) _gs.removeAllRanges(); } catch (x) {}
           try { if (navigator.vibrate) navigator.vibrate(25); } catch (x) {}
           window._pfSelect(true, pid);
         }, 480);
@@ -24215,6 +24217,7 @@ function renderPinFeed(pins) {
       card.addEventListener('pointermove', function (e) { if (lpT && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) cancel(); });
       ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) { card.addEventListener(t, cancel); });
       card.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // no browser menu on a long press
+      card.addEventListener('selectstart', function (e) { e.preventDefault(); });   // 1059: no text selection either
     })();
     card.addEventListener('click', function() {
       // The release of the long press arrives as a click; it must not untick the pin it just ticked.
