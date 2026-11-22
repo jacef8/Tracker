@@ -5633,7 +5633,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1059;
+var APP_BUILD = 1060;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27318,6 +27318,14 @@ function _glrQuery(base, bbox, fields) {
   return base + '?where=1%3D1&geometry=' + bbox.join(',') + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326' +
     '&spatialRel=esriSpatialRelIntersects&outFields=' + fields + '&returnGeometry=true&maxAllowableOffset=0.00002&f=geojson';
 }
+// Same road from two tiles = same shape: key it by its kind, size and end points.
+function _glrKey(kind, g) {
+  try {
+    var c = g.type === 'LineString' ? g.coordinates : g.coordinates[0], l = g.type === 'LineString' ? g.coordinates : g.coordinates[g.coordinates.length - 1];
+    var a = c[0], b = l[l.length - 1];
+    return kind + ':' + JSON.stringify(g.coordinates).length + ':' + a[0].toFixed(5) + ',' + a[1].toFixed(5) + ':' + b[0].toFixed(5) + ',' + b[1].toFixed(5);
+  } catch (e) { return ''; }
+}
 function _glrFetchTile(x, y) {
   var k = x + '/' + y;
   if (window._glrCache[k]) return;
@@ -27326,15 +27334,39 @@ function _glrFetchTile(x, y) {
   var get = function (u) { return fetch(u).then(function (r) { return r.ok ? r.json() : { features: [] }; }).catch(function () { return { features: [] }; }); };
   Promise.all([get(_glrQuery(GLR_FS, bbox, 'id,name')), get(_glrQuery(GLR_TIGER, bbox, 'NAME'))]).then(function (res) {
     var out = [];
+    // Ground the forest roads cover: ~150 ft cells along every Forest Service line (filled in
+    // every ~50 ft so long straight stretches count too).
+    var CELL = 0.0004, near = {};
+    var cellKey = function (lng, lat) { return Math.floor(lng / CELL) + ',' + Math.floor(lat / CELL); };
+    var linesOf = function (g) { return !g ? [] : g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []; };
     (res[0].features || []).forEach(function (f) {
       var p = f.properties || {}, id = String(p.id || p.ID || '').trim(), nm = String(p.name || p.NAME || '').trim();
       nm = nm.toLowerCase().replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });   // "FIREWOOD" -> "Firewood"
       var label = id ? ('FR ' + id + (nm && nm.toUpperCase() !== id.toUpperCase() ? ' ' + nm : '')) : nm;
-      out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'fs', n: label } });
+      out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'fs', n: label, u: _glrKey('fs', f.geometry) } });
+      linesOf(f.geometry).forEach(function (l) {
+        for (var i = 1; i < l.length; i++) {
+          var a = l[i - 1], b = l[i], steps = Math.max(1, Math.ceil(Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) / 0.00015));
+          for (var j = 0; j <= steps; j++) near[cellKey(a[0] + (b[0] - a[0]) * j / steps, a[1] + (b[1] - a[1]) * j / steps)] = 1;
+        }
+      });
     });
+    var onForestRoad = function (g) {
+      var n = 0, hit = 0;
+      linesOf(g).forEach(function (l) {
+        l.forEach(function (pt) {
+          n++;
+          var cx = Math.floor(pt[0] / CELL), cy = Math.floor(pt[1] / CELL), found = false;
+          for (var dx = -1; dx <= 1 && !found; dx++) for (var dy = -1; dy <= 1 && !found; dy++) if (near[(cx + dx) + ',' + (cy + dy)]) found = true;
+          if (found) hit++;
+        });
+      });
+      return n > 0 && hit / n >= 0.6;
+    };
     (res[1].features || []).forEach(function (f) {
       var p = f.properties || {};
-      out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'loc', n: String(p.NAME || '').trim() } });
+      if (onForestRoad(f.geometry)) return;
+      out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'loc', n: String(p.NAME || '').trim(), u: _glrKey('loc', f.geometry) } });
     });
     // A failed fetch is not cached as "no roads here": it tries again next time this ground is shown.
     if (!res[0].features && !res[1].features) { delete window._glrCache[k]; return; }
@@ -27353,7 +27385,12 @@ function _glrPaint() {
       if (window._glrOn() && map.getZoom() >= GLR_MINZ - 0.5) {
         var b = map.getBounds(), z = GLR_TZ;
         var x0 = _lon2tx(b.getWest(), z), x1 = _lon2tx(b.getEast(), z), y0 = _lat2ty(b.getNorth(), z), y1 = _lat2ty(b.getSouth(), z);
-        for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) { var c = window._glrCache[x + '/' + y]; if (c && c !== 'loading') feats = feats.concat(c); }
+        // A road that crosses a tile edge is in every tile it touches: draw it once.
+        var seen = {};
+        for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) {
+          var c = window._glrCache[x + '/' + y]; if (!c || c === 'loading') continue;
+          for (var i = 0; i < c.length; i++) { var u = c[i].properties.u; if (u && seen[u]) continue; if (u) seen[u] = 1; feats.push(c[i]); }
+        }
       }
       src.setData({ type: 'FeatureCollection', features: feats });
     } catch (e) {}
