@@ -2320,7 +2320,13 @@ window._timedOnValue = function (orig) {
   .pf-check.on { background: var(--accent); border-color: var(--accent); }
   .pin-feed-card.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
   #pf-sharebar { display: none; gap: 10px; padding: 10px 12px calc(env(safe-area-inset-bottom,0px) + 10px); border-top: 1px solid var(--border); flex-shrink: 0; }
-  #pf-sharebar.on { display: flex; }
+  #pf-sharebar.on { display: flex; flex-wrap: wrap; }
+  /* 1053: a count line over Cancel / Save / Delete / Share. */
+  #pf-sel-count { flex: 1 0 100%; font-size: 14px; font-weight: 700; color: var(--text); padding: 0 2px 2px; }
+  #pf-sharebar .pf-act { flex: 1; padding: 0 10px; background: none; color: var(--text); border: 1px solid var(--border); }
+  #pf-sharebar .pf-act:disabled { opacity: .45; }
+  #pf-sharebar .pf-danger { color: #ff6b5e; border-color: rgba(255,107,94,.55); }
+  #pf-sharebar button:active:not(:disabled) { transform: scale(.96); filter: brightness(.85); }
   #pf-sharebar button { height: 52px; border-radius: 12px; font-size: 16px; font-weight: 800; cursor: pointer; }
   #pf-share-go { flex: 1; background: var(--accent); color: #1a1200; border: none; }
   #pf-share-go:disabled { opacity: .45; }
@@ -4296,7 +4302,13 @@ window._timedOnValue = function (orig) {
   <div id="pins-tab-room" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden">
     <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">Live pins dropped by everyone in this room. Tap to fly there.</div>
     <div id="pin-feed-items"></div>
-    <div id="pf-sharebar"><button id="pf-share-cancel" type="button" onclick="window._pfSelect(false)">Cancel</button><button id="pf-share-go" type="button" onclick="window._pfShareSelected()" disabled>Pick pins to share</button></div>
+    <div id="pf-sharebar">
+      <div id="pf-sel-count">Tap pins to select them</div>
+      <button id="pf-share-cancel" type="button" onclick="window._pfSelect(false)">Cancel</button>
+      <button id="pf-save-go" class="pf-act" type="button" onclick="window._pfSaveSelected()" disabled>&#9733; Save</button>
+      <button id="pf-del-go" class="pf-act pf-danger" type="button" onclick="window._pfDeleteSelected()" disabled>Delete</button>
+      <button id="pf-share-go" type="button" onclick="window._pfShareSelected()" disabled>Pick pins</button>
+    </div>
   </div>
   <div id="pins-tab-saved" style="display:none;flex:1;min-height:0;flex-direction:column;overflow:hidden">
     <div style="padding:8px 12px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">
@@ -5564,7 +5576,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1052;
+var APP_BUILD = 1053;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -23279,11 +23291,18 @@ function _pfSync() {
   var n = Object.keys(window._pfPicked).length;
   var bar = document.getElementById('pf-sharebar'), go = document.getElementById('pf-share-go'), sb = document.getElementById('pf-select-btn');
   if (bar) bar.classList.toggle('on', !!window._pfSelecting);
-  if (go) { go.disabled = !n; go.textContent = n ? ('Share ' + n + ' pin' + (n === 1 ? '' : 's')) : 'Pick pins to share'; }
+  if (go) { go.disabled = !n; go.textContent = n ? ('Share ' + n) : 'Pick pins'; }
+  var sv = document.getElementById('pf-save-go'), dl = document.getElementById('pf-del-go');
+  if (sv) sv.disabled = !n;
+  if (dl) dl.disabled = !n;
+  var lab = document.getElementById('pf-sel-count');
+  if (lab) lab.textContent = n ? (n + ' selected') : 'Tap pins to select them';
   if (sb) sb.textContent = window._pfSelecting ? 'Done' : 'Select';
 }
-window._pfSelect = function (on) {
+// 1053: firstPid -- a long press starts selecting with that pin already ticked.
+window._pfSelect = function (on, firstPid) {
   window._pfSelecting = !!on; window._pfPicked = {};
+  if (on && firstPid) window._pfPicked[firstPid] = 1;
   try { renderPinFeed(lastPins); } catch (e) {}
   _pfSync();
 };
@@ -23291,6 +23310,35 @@ window._pfTogglePick = function (pid) {
   if (window._pfPicked[pid]) delete window._pfPicked[pid]; else window._pfPicked[pid] = 1;
   try { renderPinFeed(lastPins); } catch (e) {}
   _pfSync();
+};
+// 1053: changes to every selected pin at once.
+window._pfSaveSelected = function () {
+  try {
+    var saved = getSavedPins(), added = 0;
+    Object.keys(window._pfPicked).forEach(function (pid) {
+      if (_isPinSaved(pid)) return;
+      var pin = window._anyPin(pid); if (!pin) return;
+      saved.unshift({ pid: pid, cat: pin.cat, label: pin.label, name: pin.name, lat: pin.lat, lng: pin.lng, ts: pin.ts, savedAt: Date.now() });
+      added++;
+    });
+    if (added) setSavedPins(saved);
+    toast(added ? (added + ' saved to My Pins') : 'Those are already in My Pins', 2000);
+    window._pfSelect(false);
+    try { window._pinsChanged(); } catch (e) {}
+  } catch (e) { try { toast('Could not save those pins'); } catch (_e) {} }
+};
+window._pfDeleteSelected = function () {
+  var ids = Object.keys(window._pfPicked), mine = [], others = 0;
+  ids.forEach(function (pid) { var p = lastPins[pid]; if (p && window._pinIsMine(p)) mine.push(pid); else others++; });
+  if (!mine.length) { toast('You can only delete pins you dropped', 2600); return; }
+  var msg = 'Delete ' + mine.length + ' pin' + (mine.length === 1 ? '' : 's') + ' from this room?' +
+            (others ? ' (' + others + ' dropped by someone else will be left alone.)' : '');
+  _confirm(msg, function () {
+    mine.forEach(function (pid) { try { fbRemove(fbRef(db, 'gl/' + groupName + '/pins/' + pid)); } catch (e) {} delete lastPins[pid]; });
+    window._pfSelect(false);
+    try { window._pinsChanged(); } catch (e) {}
+    toast(mine.length + ' pin' + (mine.length === 1 ? '' : 's') + ' deleted', 2000);
+  }, { yes: 'Delete', danger: true });
 };
 window._pfShareSelected = function () {
   try {
@@ -23719,7 +23767,29 @@ function renderPinFeed(pins) {
       '<button class="pin-feed-star pf-btn" onclick="event.stopPropagation();window._feedToggleSave(\'' + pid + '\')" aria-label="' + (_isPinSaved(pid) ? 'Remove from My Pins' : 'Save to My Pins') + '"><svg class="licon" style="color:' + (_isPinSaved(pid) ? '#f0a500' : 'rgba(255,255,255,.55)') + '"><use href="#ic-star"/></svg></button>' +
       '<button class="pf-btn" onclick="event.stopPropagation();window._sharePin(\'' + pid + '\')" aria-label="Share this pin"><svg class="licon"><use href="#ic-share"/></svg></button>');
 
+    // 1053: press and hold a pin to start selecting with it already ticked; after that every tap
+    // ticks or unticks another one ("long click a pin... every other pin I click after that will
+    // also be selected").
+    (function () {
+      var lpT = null, sx = 0, sy = 0;
+      var cancel = function () { if (lpT) { clearTimeout(lpT); lpT = null; } };
+      card.addEventListener('pointerdown', function (e) {
+        if (window._pfSelecting || (e.target && e.target.closest && e.target.closest('button'))) return;
+        sx = e.clientX; sy = e.clientY; cancel();
+        lpT = setTimeout(function () {
+          lpT = null;
+          window._pfLongFired = Date.now();
+          try { if (navigator.vibrate) navigator.vibrate(25); } catch (x) {}
+          window._pfSelect(true, pid);
+        }, 480);
+      });
+      card.addEventListener('pointermove', function (e) { if (lpT && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) cancel(); });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) { card.addEventListener(t, cancel); });
+      card.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // no browser menu on a long press
+    })();
     card.addEventListener('click', function() {
+      // The release of the long press arrives as a click; it must not untick the pin it just ticked.
+      if (window._pfLongFired && Date.now() - window._pfLongFired < 800) { window._pfLongFired = 0; return; }
       if (window._pfSelecting) { window._pfTogglePick(pid); return; }
       window._releaseCamera();
       map.flyTo({ center: [pin.lng, pin.lat], zoom: 17, duration: 1200 });
