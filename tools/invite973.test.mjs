@@ -169,7 +169,7 @@ const ok = (c, m) => { n++; if (!c) { fails++; console.log('FAIL —', m); } };
   ok(!an.els['get-app-gate'] && an.ss.gl_web_ok === '1', 'continuing hides it for this visit');
 
   // the gate runs first thing in tryResume, and iPhone returns before any session resumes
-  const tr = src.slice(src.indexOf('(function tryResume() {'), src.indexOf('(function tryResume() {') + 900);
+  const tr = src.slice(src.indexOf('(function tryResume() {'), src.indexOf('(function tryResume() {') + 1800);
   ok(/if \(_pbk === 'ios'\) \{ window\._showGetAppScreen\('ios'\); return; \}/.test(tr) && tr.indexOf("_pbk === 'ios'") < tr.indexOf('getSavedSession()'), 'iPhone browser stops before resuming a session');
 }
 

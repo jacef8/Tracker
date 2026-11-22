@@ -2310,27 +2310,39 @@ window._timedOnValue = function (orig) {
   .pin-feed-meta { font-size: 11px; color: var(--muted); }
   .pin-feed-dist { font-size: 12px; font-weight: 700; color: var(--accent); }
   .pin-feed-arrow { font-size: 20px; color: var(--muted); flex-shrink: 0; }
-  /* 1055: shared pin -- the viewer for people outside the room, and the marker + card inside it. */
-  #sp-viewer { position: fixed; inset: 0; z-index: 2147483100; background: #0f1418; color: #f2f5f7; display: flex; flex-direction: column;
-               font-family: system-ui, sans-serif; overflow: auto; }
-  #sp-viewer .spv-map { flex: 1 1 62%; min-height: 260px; background: #1b2226 center/cover no-repeat; position: relative; }
-  #sp-viewer .spv-pin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
-  #sp-viewer .spv-card { padding: 18px 18px calc(env(safe-area-inset-bottom,0px) + 18px); background: #141b1e; border-top: 1px solid rgba(255,255,255,.14); }
-  #sp-viewer .spv-kind { font-size: 15px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
-  #sp-viewer .spv-title { font-size: 26px; font-weight: 800; margin-top: 2px; }
-  #sp-viewer .spv-sub { font-size: 17px; color: rgba(255,255,255,.85); margin-top: 4px; }
-  #sp-viewer .spv-ll { font-size: 14px; color: rgba(255,255,255,.7); margin-top: 2px; font-variant-numeric: tabular-nums; }
-  #sp-viewer .spv-go { display: block; width: 100%; height: 58px; margin-top: 16px; border: none; border-radius: 14px; background: #A8D66A; color: #0C1113; font-size: 19px; font-weight: 800; cursor: pointer; }
-  #sp-viewer .spv-row { display: flex; gap: 10px; margin-top: 10px; }
-  #sp-viewer .spv-b { flex: 1; height: 54px; border-radius: 14px; border: 1px solid rgba(255,255,255,.22); background: #1d262a; color: #fff; font-size: 16px; font-weight: 700;
-                      display: flex; align-items: center; justify-content: center; text-decoration: none; cursor: pointer; }
-  #sp-viewer button:active, #sp-viewer a:active { transform: scale(.97); filter: brightness(.85); }
+  /* 1055/1056: shared pins -- a plain map viewer for people outside the room, and the pin card. */
+  #sp-viewer { position: fixed; inset: 0; z-index: 2147483100; background: #0f1418; font-family: system-ui, sans-serif; }
+  #spv-map { position: absolute; inset: 0; }
+  #sp-viewer .spv-banner { position: absolute; left: 10px; right: 10px; top: calc(env(safe-area-inset-top,0px) + 10px); z-index: 3;
+                           display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: 16px;
+                           background: rgba(15,20,24,.94); color: #fff; border: 1px solid rgba(255,255,255,.16); box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  #sp-viewer .spv-btxt { flex: 1; min-width: 0; }
+  #sp-viewer .spv-btxt b { display: block; font-size: 16px; line-height: 1.25; }
+  #sp-viewer .spv-btxt small { display: block; font-size: 14px; color: rgba(255,255,255,.78); margin-top: 2px; }
+  #sp-viewer .spv-get { flex: 0 0 auto; height: 44px; padding: 0 14px; border-radius: 12px; background: #A8D66A; color: #0C1113; font-weight: 800; font-size: 15px;
+                        display: flex; align-items: center; text-decoration: none; }
+  #sp-viewer .spv-bx { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: none; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; cursor: pointer; }
+  #sp-viewer .spv-chip { position: absolute; left: 10px; top: calc(env(safe-area-inset-top,0px) + 10px); z-index: 3; height: 40px; padding: 0 12px 0 5px;
+                         display: flex; align-items: center; gap: 8px; border-radius: 20px; background: rgba(15,20,24,.9); color: #fff;
+                         border: 1px solid rgba(255,255,255,.2); font: 700 14px system-ui, sans-serif; text-decoration: none; box-shadow: 0 3px 10px rgba(0,0,0,.35); }
+  #sp-viewer .spv-chip img { width: 30px; height: 30px; border-radius: 8px; }
+  #sp-viewer .spv-close { position: absolute; right: 12px; bottom: calc(env(safe-area-inset-bottom,0px) + 14px); z-index: 2; height: 48px; padding: 0 20px;
+                          border-radius: 24px; border: 1px solid rgba(255,255,255,.25); background: rgba(15,20,24,.92); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .spv-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483101; transform: translateY(110%); transition: transform .22s cubic-bezier(.2,.8,.2,1);
+               background: #141b1e; color: #fff; border-radius: 20px 20px 0 0; border-top: 1px solid rgba(255,255,255,.16);
+               padding: 16px 16px calc(env(safe-area-inset-bottom,0px) + 16px); font-family: system-ui, sans-serif; box-shadow: 0 -8px 24px rgba(0,0,0,.45); }
+  .spv-sheet.on { transform: none; }
+  .spv-sheet .spv-head { display: flex; align-items: center; gap: 14px; }
+  .spv-sheet .spv-kind { font-size: 14px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+  .spv-sheet .spv-title { font-size: 22px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spv-sheet .spv-sub { font-size: 15px; color: rgba(255,255,255,.8); margin-top: 2px; }
+  .spv-sheet .spv-go { display: block; width: 100%; height: 56px; margin-top: 14px; border: none; border-radius: 14px; background: #A8D66A; color: #0C1113; font-size: 18px; font-weight: 800; cursor: pointer; }
+  .spv-sheet .spv-row { display: flex; gap: 10px; margin-top: 10px; }
+  .spv-sheet .spv-b { flex: 1; height: 52px; border-radius: 14px; border: 1px solid rgba(255,255,255,.22); background: #1d262a; color: #fff; font-size: 16px; font-weight: 700;
+                      display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 8px; text-decoration: none; cursor: pointer; }
+  #sp-viewer button:active, .spv-sheet button:active, .spv-sheet a:active, #sp-viewer a:active { transform: scale(.97); filter: brightness(.85); }
   .sp-mk { background: none; border: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; filter: drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
   .sp-mk span { background: rgba(12,17,19,.9); color: #fff; font: 700 13px system-ui, sans-serif; padding: 3px 8px; border-radius: 8px; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sp-pop b { display: block; font-size: 17px; color: #111; }
-  .sp-pop small { display: block; font-size: 13px; color: #444; margin: 2px 0 8px; }
-  .sp-pop div { display: flex; gap: 6px; }
-  .sp-pop button { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid #ccc; background: #f4f4f4; font-weight: 700; font-size: 14px; cursor: pointer; }
   /* 1050: star and share are real 48 px targets (the old star was ~28 px, the arrow did nothing). */
   .pf-btn { flex: 0 0 auto; width: 48px; height: 48px; margin: -6px -4px; border-radius: 12px; background: none; border: none;
             color: rgba(255,255,255,.75); display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -5597,7 +5609,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1055;
+var APP_BUILD = 1056;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17328,7 +17340,7 @@ function _showNativeUpdateBar(msg, url, mine, need) {
       var target = '/?room=' + encodeURIComponent(room) + (k ? '&k=' + encodeURIComponent(k) : '') +
                    (ik ? '&ik=' + encodeURIComponent(ik) : '');
       // 1055: a shared pin link's spot and details came this far and were dropped here.
-      ['pin', 'sp', 'pc', 'pl', 'pb'].forEach(function (p) { var v = u.searchParams.get(p); if (v) target += '&' + p + '=' + encodeURIComponent(v); });
+      ['pin', 'pins', 'sp', 'pc', 'pl', 'pb'].forEach(function (p) { var v = u.searchParams.get(p); if (v) target += '&' + p + '=' + encodeURIComponent(v); });
       if (target === window.location.pathname + window.location.search) return; // already here — avoid a loop
       window.location.replace(target);
     }
@@ -17341,8 +17353,15 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   } catch (e) {}
 })();
 
-// 1055: a shared pin carries what it IS, not just where. Before, the link held only the spot,
-// so a saved pin arrived as nothing on the map, and the app dropped even the spot on the way in.
+// 1055/1056: SHARED PINS. A share link carries what each pin IS (type, name, who sent it), and
+// several pins can ride in one link. Someone in the pin's room lands on the family map with the
+// pins drawn; anyone else gets a plain map VIEWER -- pan, zoom, tap a pin for a short list
+// (directions, save) -- with GroundLink offered in a banner they can close. Nothing is held back:
+// "I don't want to hold the pins hostage" (Jace). The viewer is only a viewer: no people, no
+// dropping, no measuring.
+//   one pin:  ?room=R&sp=1&pin=lat,lng&pc=Type&pl=Name&pb=Sender
+//   several:  ?room=R&sp=1&pins=[[lat,lng,"Type","Name"],...]&pb=Sender
+var SP_MAX = 30;
 window._sharedPinUrl = function (pin) {
   var lat = +pin.lat, lng = +pin.lng;
   return INVITE_BASE + '?room=' + encodeURIComponent(groupName || '') +
@@ -17351,118 +17370,177 @@ window._sharedPinUrl = function (pin) {
     (pin.label ? '&pl=' + encodeURIComponent(String(pin.label).slice(0, 60)) : '') +
     '&pb=' + encodeURIComponent(String((typeof userName !== 'undefined' && userName) || '').slice(0, 40));
 };
+window._sharedPinsUrl = function (pins) {
+  var arr = pins.slice(0, SP_MAX).map(function (p) {
+    var a = [+(+p.lat).toFixed(6), +(+p.lng).toFixed(6), p.cat || 'Waypoint'];
+    if (p.label) a.push(String(p.label).slice(0, 40));
+    return a;
+  });
+  return INVITE_BASE + '?room=' + encodeURIComponent(groupName || '') + '&sp=1' +
+    '&pins=' + encodeURIComponent(JSON.stringify(arr)) +
+    '&pb=' + encodeURIComponent(String((typeof userName !== 'undefined' && userName) || '').slice(0, 40));
+};
+// -> { room, by, pins: [{ lat, lng, cat, label }] } or null
 window._sharedPinFromUrl = function (search) {
   try {
     var q = new URLSearchParams(String(search || '').replace(/^[^?]*\?/, ''));
     if (q.get('sp') !== '1') return null;
-    var ll = _parsePinParam(q.get('pin')); if (!ll) return null;
-    var cat = q.get('pc') || 'Waypoint';   // checked against PIN_DEFS when drawn (a later const)
-    return { lat: ll.lat, lng: ll.lng, cat: cat, label: (q.get('pl') || '').slice(0, 60), by: (q.get('pb') || '').slice(0, 40), room: q.get('room') || '' };
+    var pins = [];
+    var one = _parsePinParam(q.get('pin'));
+    if (one) pins.push({ lat: one.lat, lng: one.lng, cat: q.get('pc') || 'Waypoint', label: (q.get('pl') || '').slice(0, 60) });
+    if (q.get('pins')) {
+      try {
+        JSON.parse(q.get('pins')).slice(0, SP_MAX).forEach(function (a) {
+          var la = +a[0], lo = +a[1];
+          if (isFinite(la) && isFinite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180)
+            pins.push({ lat: la, lng: lo, cat: String(a[2] || 'Waypoint'), label: String(a[3] || '').slice(0, 60) });
+        });
+      } catch (e) {}
+    }
+    if (!pins.length) return null;
+    return { room: q.get('room') || '', by: (q.get('pb') || '').slice(0, 40), pins: pins };
   } catch (e) { return null; }
 };
-window._saveSharedPin = function (sp) {
+// Types are checked against PIN_DEFS only when drawn -- PIN_DEFS is a const declared later in the file.
+function _spFix(sp) { sp.pins.forEach(function (p) { if (!PIN_DEFS[p.cat]) p.cat = 'Waypoint'; }); }
+function _spTitle(p) { return p.label || p.cat || 'Pin'; }
+function _spEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+window._saveSharedPin = function (p, by) {
   try {
-    var saved = getSavedPins(), pid = 'shared_' + sp.lat.toFixed(6) + ',' + sp.lng.toFixed(6);
-    if (saved.some(function (p) { return p && (p.pid === pid || (Math.abs(p.lat - sp.lat) < 1e-5 && Math.abs(p.lng - sp.lng) < 1e-5)); })) { toast('Already in My Pins', 1800); return; }
-    saved.unshift({ pid: pid, cat: sp.cat, label: sp.label || '', name: sp.by || '', lat: sp.lat, lng: sp.lng, ts: Date.now(), savedAt: Date.now() });
+    var saved = getSavedPins(), pid = 'shared_' + (+p.lat).toFixed(6) + ',' + (+p.lng).toFixed(6);
+    if (saved.some(function (s) { return s && (s.pid === pid || (Math.abs(s.lat - p.lat) < 1e-5 && Math.abs(s.lng - p.lng) < 1e-5)); })) { toast('Already in My Pins', 1800); return; }
+    saved.unshift({ pid: pid, cat: p.cat, label: p.label || '', name: by || '', lat: p.lat, lng: p.lng, ts: Date.now(), savedAt: Date.now() });
     setSavedPins(saved);
     try { if (typeof renderSavedPins === 'function') renderSavedPins(); } catch (e) {}
     toast('Saved to My Pins', 1800);
   } catch (e) { try { toast('Could not save that pin'); } catch (_e) {} }
 };
-window._sharedPinDirections = function (sp) {
-  var u = 'https://www.google.com/maps/dir/?api=1&destination=' + sp.lat.toFixed(6) + ',' + sp.lng.toFixed(6);
+window._sharedPinDirections = function (p) {
+  var u = 'https://www.google.com/maps/dir/?api=1&destination=' + (+p.lat).toFixed(6) + ',' + (+p.lng).toFixed(6);
   try { window.open(u, '_blank'); } catch (e) { location.href = u; }
 };
-function _spTitle(sp) { return sp.label || sp.cat || 'Pin'; }
-function _spEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-function _spDist(sp) {
-  try { var g = window._lastGPS; if (!g) return ''; return distanceMiles(g.lat, g.lng, sp.lat, sp.lng) + ' ' + getBearing(g.lat, g.lng, sp.lat, sp.lng) + ' of you'; } catch (e) { return ''; }
+function _spStore() {
+  var k = (typeof window._phoneBrowserKind === 'function') ? window._phoneBrowserKind() : '';
+  return k === 'ios' ? GL_APPSTORE_URL : (k === 'android' ? GL_PLAY_TEST_URL : '/download.html');
 }
-// For anyone who is NOT in the pin's room (or has no GroundLink at all): just the spot. A satellite
-// photo with the pin on it, what it is and who sent it, Directions and Save. No joining anything.
+// A pin marker: its own picture with its name under it. Shared by the viewer and the family map.
+function _spMarkerEl(p, onTap) {
+  var el = document.createElement('button');
+  el.type = 'button'; el.className = 'sp-mk'; el.setAttribute('aria-label', _spTitle(p));
+  el.innerHTML = window._pinIconHTML(p.cat, 44) + '<span>' + _spEsc(_spTitle(p)) + '</span>';
+  el.addEventListener('click', function (e) { e.stopPropagation(); onTap(p); });
+  return el;
+}
+function _spFit(m, pins, opts) {
+  if (pins.length === 1) { m.jumpTo({ center: [pins[0].lng, pins[0].lat], zoom: 16 }); return; }
+  var b = new mapboxgl.LngLatBounds();
+  pins.forEach(function (p) { b.extend([p.lng, p.lat]); });
+  m.fitBounds(b, Object.assign({ padding: 70, maxZoom: 16, duration: 0 }, opts || {}));
+}
+// The short list for one pin, as a card over the bottom of the map.
+function _spSheet(host, p, by, native, onClose) {
+  var def = PIN_DEFS[p.cat] || { color: '#00bcd4' };
+  host.innerHTML =
+    '<div class="spv-head">' + window._pinIconHTML(p.cat, 48) + '<div style="min-width:0">' +
+      '<div class="spv-kind" style="color:' + def.color + '">' + _spEsc(p.cat) + '</div>' +
+      '<div class="spv-title">' + _spEsc(_spTitle(p)) + '</div>' +
+      (by ? '<div class="spv-sub">Shared by ' + _spEsc(by) + '</div>' : '') +
+    '</div></div>' +
+    '<button type="button" class="spv-go" data-a="dir">Get directions</button>' +
+    '<div class="spv-row">' +
+      (native ? '<button type="button" class="spv-b" data-a="save">&#9733; Save to My Pins</button>'
+              : '<a class="spv-b" href="' + _spStore() + '">&#9733; Save in app</a>') +
+      '<button type="button" class="spv-b" data-a="close">Close</button>' +
+    '</div>';
+  host.classList.add('on');
+  host.onclick = function (e) {
+    var a = e.target && e.target.closest && e.target.closest('[data-a]'); if (!a) return;
+    var k = a.getAttribute('data-a');
+    if (k === 'dir') window._sharedPinDirections(p);
+    if (k === 'save') window._saveSharedPin(p, by);
+    if (k === 'close') { host.classList.remove('on'); if (onClose) onClose(); }
+  };
+}
 window._showSharedPinViewer = function (sp, onClose) {
   try {
-    if (!sp || document.getElementById('sp-viewer')) return;
-    if (!PIN_DEFS[sp.cat]) sp.cat = 'Waypoint';
-    var w = Math.min(1280, Math.round(window.innerWidth || 400)), h = Math.min(1280, Math.round((window.innerHeight || 800) * 0.62));
-    var img = 'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/' + sp.lng.toFixed(6) + ',' + sp.lat.toFixed(6) + ',16,0/' +
-              w + 'x' + h + '@2x?attribution=false&logo=false&access_token=' + encodeURIComponent(window.MAPBOX_TOKEN || '');
-    var def = (typeof PIN_DEFS !== 'undefined' && PIN_DEFS[sp.cat]) || { color: '#00bcd4' };
+    if (!sp || !sp.pins || !sp.pins.length || document.getElementById('sp-viewer')) return;
+    _spFix(sp);
     var native = (typeof _isNativeApp === 'function') && _isNativeApp();
+    var n = sp.pins.length;
     var d = document.createElement('div');
     d.id = 'sp-viewer';
-    d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-label', 'Shared pin');
+    d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-label', 'Shared pins');
     d.innerHTML =
-      '<div class="spv-map"><div class="spv-pin">' + window._pinIconHTML(sp.cat, 56) + '</div></div>' +
-      '<div class="spv-card">' +
-        '<div class="spv-kind" style="color:' + def.color + '">' + _spEsc(sp.cat) + '</div>' +
-        '<div class="spv-title">' + _spEsc(_spTitle(sp)) + '</div>' +
-        '<div class="spv-sub">' + (sp.by ? 'Shared by ' + _spEsc(sp.by) : 'Shared pin') + (_spDist(sp) ? ' &middot; ' + _spEsc(_spDist(sp)) : '') + '</div>' +
-        '<div class="spv-ll">' + sp.lat.toFixed(5) + ', ' + sp.lng.toFixed(5) + '</div>' +
-        '<button type="button" class="spv-go" id="spv-dir">Directions</button>' +
-        '<div class="spv-row">' +
-          (native ? '<button type="button" class="spv-b" id="spv-save">&#9733; Save to My Pins</button>' : '<a class="spv-b" href="https://maps.google.com/?q=' + sp.lat.toFixed(6) + ',' + sp.lng.toFixed(6) + '" target="_blank" rel="noopener">Open in Google Maps</a>') +
-          '<button type="button" class="spv-b" id="spv-close">Close</button>' +
-        '</div>' +
-      '</div>';
+      '<div id="spv-map"></div>' +
+      '<div class="spv-banner" id="spv-banner">' +
+        '<div class="spv-btxt"><b>' + (sp.by ? _spEsc(sp.by) + ' shared ' : 'Shared: ') + (n === 1 ? 'a pin' : n + ' pins') + ' with you</b>' +
+          '<small>Tap a pin for directions' + (native ? ' or to save it' : '') + '</small></div>' +
+        (native ? '' : '<a class="spv-get" href="' + _spStore() + '">Get GroundLink</a>') +
+        '<button type="button" class="spv-bx" aria-label="Hide this banner">&#10005;</button>' +
+      '</div>' +
+      '<button type="button" class="spv-close" aria-label="Close the map">Close</button>' +
+      '<div class="spv-sheet" id="spv-sheet"></div>';
     document.body.appendChild(d);
-    // The photo needs the map key, which is set by the module script that loads after this can
-    // run on a phone browser. Wait for it (a few seconds at most) rather than ask without it.
-    (function () {
-      var tries = 0, m = d.querySelector('.spv-map');
-      var put = function () {
-        if (window.MAPBOX_TOKEN) { m.style.backgroundImage = 'url("' + img.replace(/access_token=[^&]*$/, 'access_token=' + encodeURIComponent(window.MAPBOX_TOKEN)) + '")'; return; }
-        if (++tries < 40) setTimeout(put, 150);
-      };
-      put();
+    // The X shrinks the banner to a small "Get GroundLink" chip in the corner rather than taking the
+    // offer away entirely ("dismiss it to a much smaller, out of the way notification" -- Jace). With
+    // the app already, there is nothing to offer, so it simply goes.
+    d.querySelector('.spv-bx').onclick = function () {
+      var b = document.getElementById('spv-banner'); if (b) b.remove();
+      if (native) return;
+      var chip = document.createElement('a');
+      chip.className = 'spv-chip'; chip.href = _spStore();
+      chip.innerHTML = '<img src="/icons/icon-192.png" alt="">Get GroundLink';
+      d.appendChild(chip);
+    };
+    d.querySelector('.spv-close').onclick = function () {
+      try { if (d._map) d._map.remove(); } catch (e) {}
+      try { d.remove(); } catch (e) {}
+      if (typeof onClose === 'function') { try { onClose(); } catch (e) {} }
+    };
+    var sheet = d.querySelector('#spv-sheet');
+    // The map needs mapbox-gl and the key, which the module script sets a moment after this can run.
+    var tries = 0;
+    (function start() {
+      if (typeof mapboxgl === 'undefined' || !window.MAPBOX_TOKEN) { if (++tries < 60) setTimeout(start, 150); return; }
+      try {
+        mapboxgl.accessToken = window.MAPBOX_TOKEN;
+        var m = d._map = new mapboxgl.Map({ container: 'spv-map', style: 'mapbox://styles/mapbox/satellite-streets-v12',
+          center: [sp.pins[0].lng, sp.pins[0].lat], zoom: 15, projection: 'mercator', attributionControl: true });
+        m.on('load', function () {
+          sp.pins.forEach(function (p) {
+            new mapboxgl.Marker({ element: _spMarkerEl(p, function (pp) { _spSheet(sheet, pp, sp.by, native); }), anchor: 'top' })
+              .setLngLat([p.lng, p.lat]).addTo(m);
+          });
+          _spFit(m, sp.pins, { padding: { top: 120, bottom: 90, left: 50, right: 50 } });
+        });
+        m.on('click', function () { sheet.classList.remove('on'); });
+      } catch (e) {}
     })();
-    d.querySelector('#spv-dir').onclick = function () { window._sharedPinDirections(sp); };
-    var sv = d.querySelector('#spv-save'); if (sv) sv.onclick = function () { window._saveSharedPin(sp); };
-    d.querySelector('#spv-close').onclick = function () { try { d.remove(); } catch (e) {} if (typeof onClose === 'function') { try { onClose(); } catch (e) {} } };
   } catch (e) {}
 };
-// For someone IN the room: the pin itself on the family map, with its picture, until they take it
-// off -- unless the very same pin is already there (a room pin shared to the room).
-window._sharedPinMarker = null;
+// In the room: the shared pins on the family map until taken off (a pin already in the room is
+// not drawn twice). Tapping one gives the same short list.
+window._sharedPinMarkers = [];
 window._dropSharedPin = function (sp) {
   try {
-    if (!sp || typeof map === 'undefined' || !map) return;
-    if (!PIN_DEFS[sp.cat]) sp.cat = 'Waypoint';
-    var dup = false;
-    try {
-      Object.keys(lastPins || {}).forEach(function (k) {
-        var p = lastPins[k];
-        if (p && Math.abs(p.lat - sp.lat) < 2e-5 && Math.abs(p.lng - sp.lng) < 2e-5) dup = true;
-      });
-    } catch (e) {}
-    if (!dup) {
-      if (window._sharedPinMarker) { try { window._sharedPinMarker.remove(); } catch (e) {} }
-      var el = document.createElement('button');
-      el.type = 'button'; el.className = 'sp-mk'; el.setAttribute('aria-label', 'Shared pin: ' + _spTitle(sp));
-      el.innerHTML = window._pinIconHTML(sp.cat, 44) + '<span>' + _spEsc(_spTitle(sp)) + '</span>';
-      el.addEventListener('click', function (e) { e.stopPropagation(); window._sharedPinPopup(sp); });
-      window._sharedPinMarker = new mapboxgl.Marker({ element: el, anchor: 'top' }).setLngLat([sp.lng, sp.lat]).addTo(map);
-      window._sharedPinPopup(sp);
-    }
-    window._flyToNotifPin(sp.lat, sp.lng);
-  } catch (e) {}
-};
-window._sharedPinPopup = function (sp) {
-  try {
-    if (window._spPop) { try { window._spPop.remove(); } catch (e) {} }
-    var box = document.createElement('div');
-    box.className = 'sp-pop';
-    box.innerHTML = '<b>' + _spEsc(_spTitle(sp)) + '</b><small>' + (sp.by ? 'Shared by ' + _spEsc(sp.by) : 'Shared pin') + '</small>' +
-      '<div><button type="button" data-a="save">&#9733; Save</button><button type="button" data-a="dir">Directions</button><button type="button" data-a="rm">Remove</button></div>';
-    box.addEventListener('click', function (e) {
-      var a = e.target && e.target.getAttribute && e.target.getAttribute('data-a'); if (!a) return;
-      if (a === 'save') window._saveSharedPin(sp);
-      if (a === 'dir') window._sharedPinDirections(sp);
-      if (a === 'rm') { try { window._sharedPinMarker && window._sharedPinMarker.remove(); } catch (x) {} window._sharedPinMarker = null; }
-      try { window._spPop.remove(); } catch (x) {} window._spPop = null;
+    if (!sp || !sp.pins || typeof map === 'undefined' || !map) return;
+    _spFix(sp);
+    window._sharedPinMarkers.forEach(function (mk) { try { mk.remove(); } catch (e) {} });
+    window._sharedPinMarkers = [];
+    var host = document.getElementById('sp-room-sheet');
+    if (!host) { host = document.createElement('div'); host.id = 'sp-room-sheet'; host.className = 'spv-sheet'; document.body.appendChild(host); }
+    sp.pins.forEach(function (p) {
+      var dup = false;
+      try { Object.keys(lastPins || {}).forEach(function (k) { var q = lastPins[k]; if (q && Math.abs(q.lat - p.lat) < 2e-5 && Math.abs(q.lng - p.lng) < 2e-5) dup = true; }); } catch (e) {}
+      if (dup) return;
+      var mk = new mapboxgl.Marker({ element: _spMarkerEl(p, function (pp) { _spSheet(host, pp, sp.by, true); }), anchor: 'top' })
+        .setLngLat([p.lng, p.lat]).addTo(map);
+      window._sharedPinMarkers.push(mk);
     });
-    window._spPop = new mapboxgl.Popup({ offset: 30, closeButton: true, maxWidth: '300px' }).setLngLat([sp.lng, sp.lat]).setDOMContent(box).addTo(map);
+    try { if (typeof _stopFitAll === 'function') _stopFitAll(); if (window._pauseFollow) window._pauseFollow(20000); } catch (e) {}
+    if (sp.pins.length === 1) window._flyToNotifPin(sp.pins[0].lat, sp.pins[0].lng);
+    else _spFit(map, sp.pins, { duration: 900 });
+    try { toast(sp.pins.length === 1 ? 'Showing the shared pin' : 'Showing ' + sp.pins.length + ' shared pins', 2400); } catch (e) {}
   } catch (e) {}
 };
 // 973: GroundLink needs the app on a phone. A phone browser only reports while the page is on
@@ -23486,8 +23564,9 @@ window._sharePin = function (pid) {
     var NL = String.fromCharCode(10);
     var what = (pin.label || '') || (pin.cat || 'Pin');
     var url = window._sharedPinUrl(pin);
-    var text = what + ' (' + (pin.cat || 'Pin') + ')' + NL + lat.toFixed(5) + ', ' + lng.toFixed(5) +
-               NL + 'https://maps.google.com/?q=' + lat.toFixed(6) + ',' + lng.toFixed(6);
+    // 1056: the link only. "Be careful making it so they can just open this in Google Maps -- this
+    // is a good opportunity to get them to download our app" (Jace). No coordinates, no maps link.
+    var text = (pin.label ? (pin.cat || 'Pin') + ': ' + pin.label : what) + ' - open it in GroundLink:';
     window._nativeShare({ title: 'GroundLink pin - ' + what, text: text, url: url }, 'Pin link copied');
   } catch (e) { try { toast('Could not share that pin'); } catch (_e) {} }
 };
@@ -23547,19 +23626,20 @@ window._pfDeleteSelected = function () {
   }, { yes: 'Delete', danger: true });
 };
 window._pfShareSelected = function () {
+  // 1056: ONE link for all of them -- it opens one map with every pin on it.
   try {
-    var NL = String.fromCharCode(10), lines = [], n = 0;
+    var pins = [];
     Object.keys(window._pfPicked).forEach(function (pid) {
       var pin = window._anyPin(pid); if (!pin) return;
-      var lat = +pin.lat, lng = +pin.lng; if (!isFinite(lat) || !isFinite(lng)) return;
-      n++;
-      var what = (pin.label || '') || (pin.cat || 'Pin');
-      lines.push(n + '. ' + what + (pin.label ? ' (' + (pin.cat || 'Pin') + ')' : '') + NL +
-        '   ' + window._sharedPinUrl(pin) + NL +
-        '   https://maps.google.com/?q=' + lat.toFixed(6) + ',' + lng.toFixed(6));
+      if (!isFinite(+pin.lat) || !isFinite(+pin.lng)) return;
+      pins.push(pin);
     });
-    if (!n) { toast('Pick at least one pin'); return; }
-    window._nativeShare({ title: n + ' GroundLink pins', text: n + ' pins from GroundLink:' + NL + NL + lines.join(NL + NL) }, n + ' pins copied');
+    if (!pins.length) { toast('Pick at least one pin'); return; }
+    var n = pins.length;
+    if (n === 1) { window._sharePin(Object.keys(window._pfPicked)[0]); window._pfSelect(false); return; }
+    if (n > SP_MAX) toast('Sharing the first ' + SP_MAX + ' pins', 2400);
+    var url = window._sharedPinsUrl(pins);
+    window._nativeShare({ title: Math.min(n, SP_MAX) + ' GroundLink pins', text: Math.min(n, SP_MAX) + ' pins from GroundLink:', url: url }, 'Link copied');
     window._pfSelect(false);
   } catch (e) { try { toast('Could not share those pins'); } catch (_e) {} }
 };
