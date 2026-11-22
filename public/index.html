@@ -5576,7 +5576,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1053;
+var APP_BUILD = 1054;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -15951,13 +15951,32 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
   function _maybeAutoUpdate() {
     if (window._updatePending && _atHome() && typeof window._applyUpdate === 'function') window._applyUpdate();
   }
-  function check() {
+  // 1054: "my phone shows there is an update all the time when I open it" (Jace). Coming back to
+  // an app left in the background found the newer build and put up a "tap to update" bar -- on
+  // a day with ten deploys, nearly every time. Now an update found as the app opens or comes back
+  // after a minute or more away is simply applied (a short "Updating..." note), the same rule the
+  // service-worker path already used. The bar is only for an update that lands mid-use, and that
+  // one applies itself on the next return too.
+  function _busy() {
+    var pm = document.getElementById('pin-modal');
+    return (pm && pm.classList.contains('show')) || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName));
+  }
+  var _hiddenAt = 0;
+  function check(autoApply) {
     try {
       fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
         .then(function(r) { return r && r.ok ? r.json() : null; })
         .then(function(j) {
           if (j && typeof j.build === 'number' && j.build > APP_BUILD) {
             window._updatePending = true;
+            var _recent = false;
+            try { _recent = Date.now() - (+sessionStorage.getItem('gl_auto_upd') || 0) < 120000; } catch (e) {}
+            if (autoApply && !_recent && !_busy() && document.visibilityState === 'visible' && typeof window._applyUpdate === 'function') {
+              try { sessionStorage.setItem('gl_auto_upd', String(Date.now())); } catch (e) {}
+              try { if (typeof toast === 'function') toast('Updating to the latest version…', 2500); } catch (e) {}
+              window._applyUpdate();
+              return;
+            }
             var b = document.getElementById('update-banner');
             if (b) b.style.display = 'flex';
             _maybeAutoUpdate(); // if we're sitting on the home screen, just refresh now
@@ -15966,10 +15985,15 @@ try { var _stx = document.getElementById('build-stamp'); if (_stx) _stx.textCont
         .catch(function() {});
     } catch (e) {}
   }
-  setTimeout(check, 15000);                 // shortly after load
-  setInterval(check, 5 * 60 * 1000);        // every 5 minutes
+  setTimeout(function () { check(true); }, 4000);   // just opened: nobody is doing anything yet
+  setInterval(function () { check(false); }, 5 * 60 * 1000);        // every 5 minutes
   document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') { check(); _maybeAutoUpdate(); } // whenever the app regains focus
+    if (document.visibilityState === 'hidden') { _hiddenAt = Date.now(); return; }
+    if (document.visibilityState === 'visible') {
+      var away = _hiddenAt ? Date.now() - _hiddenAt : 0;
+      check(away >= 60000 || window._updatePending === true && away >= 5000);
+      _maybeAutoUpdate();
+    } // whenever the app regains focus
   });
 })();
 
