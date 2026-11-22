@@ -2343,6 +2343,29 @@ window._timedOnValue = function (orig) {
   #sp-viewer button:active, .spv-sheet button:active, .spv-sheet a:active, #sp-viewer a:active { transform: scale(.97); filter: brightness(.85); }
   .sp-mk { background: none; border: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; filter: drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
   .sp-mk span { background: rgba(12,17,19,.9); color: #fff; font: 700 13px system-ui, sans-serif; padding: 3px 8px; border-radius: 8px; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 1058: the read-only family map for an invite opened in a phone browser. */
+  .fv { position: fixed; inset: 0; z-index: 2147483100; background: #0f1418; font-family: system-ui, sans-serif; }
+  #fv-map { position: absolute; inset: 0; }
+  .fv .fv-banner { position: absolute; left: 10px; right: 10px; top: calc(env(safe-area-inset-top,0px) + 10px); z-index: 3; display: flex; align-items: center; gap: 10px;
+                   padding: 10px 10px 10px 14px; border-radius: 16px; background: rgba(15,20,24,.94); color: #fff; border: 1px solid rgba(255,255,255,.16); box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  .fv .fv-btxt { flex: 1; min-width: 0; }
+  .fv .fv-btxt b { display: block; font-size: 17px; }
+  .fv .fv-btxt small { display: block; font-size: 14px; line-height: 1.3; color: rgba(255,255,255,.8); margin-top: 2px; }
+  .fv .fv-get { flex: 0 0 auto; height: 44px; padding: 0 14px; border-radius: 12px; background: #A8D66A; color: #0C1113; font-weight: 800; font-size: 15px; display: flex; align-items: center; text-decoration: none; }
+  .fv .fv-bx { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: none; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; cursor: pointer; }
+  .fv .fv-chip { position: absolute; left: 10px; top: calc(env(safe-area-inset-top,0px) + 10px); z-index: 3; height: 40px; padding: 0 12px 0 5px; display: flex; align-items: center; gap: 8px;
+                 border-radius: 20px; background: rgba(15,20,24,.9); color: #fff; border: 1px solid rgba(255,255,255,.2); font: 700 14px system-ui, sans-serif; text-decoration: none; }
+  .fv .fv-chip img { width: 30px; height: 30px; border-radius: 8px; }
+  .fv .fv-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; max-width: 80%; text-align: center; padding: 12px 16px; border-radius: 14px;
+                   background: rgba(15,20,24,.92); color: #fff; font-size: 16px; font-weight: 700; }
+  .fv .fv-fit { position: absolute; right: 12px; bottom: calc(env(safe-area-inset-bottom,0px) + 14px); z-index: 2; height: 52px; padding: 0 20px; border-radius: 26px;
+                border: 1px solid rgba(255,255,255,.25); background: rgba(15,20,24,.92); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .fv-mk { background: none; border: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; filter: drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
+  .fv-mk i { width: 48px; height: 48px; border-radius: 50%; border: 3px solid #fff; color: #fff; font: 800 17px system-ui, sans-serif; font-style: normal;
+             display: flex; align-items: center; justify-content: center; opacity: .8; }
+  .fv-mk i.live { opacity: 1; border-color: #A8D66A; }
+  .fv-mk span { background: rgba(12,17,19,.9); color: #fff; font: 700 13px system-ui, sans-serif; padding: 2px 8px; border-radius: 8px; }
+  .fv-av { width: 52px; height: 52px; border-radius: 50%; flex: 0 0 auto; color: #fff; font: 800 19px system-ui, sans-serif; display: flex; align-items: center; justify-content: center; }
   /* 1050: star and share are real 48 px targets (the old star was ~28 px, the arrow did nothing). */
   .pf-btn { flex: 0 0 auto; width: 48px; height: 48px; margin: -6px -4px; border-radius: 12px; background: none; border: none;
             color: rgba(255,255,255,.75); display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -5609,7 +5632,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1057;
+var APP_BUILD = 1058;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17543,6 +17566,118 @@ window._dropSharedPin = function (sp) {
     try { toast(sp.pins.length === 1 ? 'Showing the shared pin' : 'Showing ' + sp.pins.length + ' shared pins', 2400); } catch (e) {}
   } catch (e) {}
 };
+// 1058: FAMILY MAP VIEWER for an invite opened in a phone BROWSER. A browser only reports while the
+// page is on screen, so joining from one would leave a dot that freezes the moment the phone locks
+// -- which is why a phone browser used to stop at "Get the app". Now it gets a look instead: the
+// family on a live map and the room's pins, read-only. Nothing is written for this person except
+// the room's own invite-key access entry, so they never appear on anyone's map. A banner (its X
+// shrinks it to a chip) offers the app: "so your family can see you too".
+window._showFamilyViewer = function (room, ik, kind) {
+  try {
+    if (!room || document.getElementById('fv-viewer')) return;
+    var rk = String(room).toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
+    var title = (typeof _prettyGroup === 'function') ? _prettyGroup(rk) : rk;
+    var store = kind === 'ios' ? GL_APPSTORE_URL : (kind === 'android' ? GL_PLAY_TEST_URL : '/download.html');
+    var d = document.createElement('div');
+    d.id = 'fv-viewer'; d.className = 'fv';
+    d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', title + ' family map');
+    d.innerHTML =
+      '<div id="fv-map"></div>' +
+      '<div class="fv-banner" id="fv-banner"><div class="fv-btxt"><b>' + _spEsc(title) + '</b><small>You can see everyone here. Get GroundLink so they can see you too.</small></div>' +
+        '<a class="fv-get" href="' + store + '">Get GroundLink</a><button type="button" class="fv-bx" aria-label="Hide this banner">&#10005;</button></div>' +
+      '<div class="fv-status" id="fv-status">Loading the family map…</div>' +
+      '<button type="button" class="fv-fit" id="fv-fit" aria-label="Show everyone">Show everyone</button>' +
+      '<div class="spv-sheet" id="fv-sheet"></div>';
+    document.body.appendChild(d);
+    var status = function (t) { var s = document.getElementById('fv-status'); if (!s) return; if (t) { s.textContent = t; s.style.display = ''; } else s.style.display = 'none'; };
+    d.querySelector('.fv-bx').onclick = function () {
+      var b = document.getElementById('fv-banner'); if (b) b.remove();
+      var chip = document.createElement('a'); chip.className = 'spv-chip fv-chip'; chip.href = store;
+      chip.innerHTML = '<img src="/icons/icon-192.png" alt="">Get GroundLink'; d.appendChild(chip);
+    };
+    var sheet = d.querySelector('#fv-sheet');
+    var people = {}, markers = {}, pinMarkers = [], m = null, fitted = false;
+    var LIVE = 4 * 60 * 1000, STALE = 3 * 24 * 60 * 60 * 1000;
+    var ago = function (ts) { var s = Math.max(0, (Date.now() - ts) / 1000); if (s < 90) return 'just now'; var mn = Math.round(s / 60); if (mn < 60) return mn + ' min ago'; var h = Math.round(mn / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago'); var dd = Math.round(h / 24); return dd + (dd === 1 ? ' day ago' : ' days ago'); };
+    var initials = function (n) { return String(n || '?').trim().split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join(''); };
+    var fit = function () {
+      var pts = Object.keys(people).map(function (k) { return people[k]; });
+      if (!m || !pts.length) return;
+      if (pts.length === 1) { m.easeTo({ center: [pts[0].lng, pts[0].lat], zoom: 14, duration: 600 }); return; }
+      var b = new mapboxgl.LngLatBounds(); pts.forEach(function (p) { b.extend([p.lng, p.lat]); });
+      m.fitBounds(b, { padding: { top: 130, bottom: 110, left: 60, right: 60 }, maxZoom: 15, duration: 600 });
+    };
+    d.querySelector('#fv-fit').onclick = fit;
+    var personSheet = function (p) {
+      sheet.innerHTML =
+        '<div class="spv-head"><div class="fv-av" style="background:' + (p.color || '#2e7d6b') + '">' + _spEsc(initials(p.name)) + '</div><div style="min-width:0">' +
+          '<div class="spv-title">' + _spEsc(p.name) + '</div>' +
+          '<div class="spv-sub">' + (p.live ? 'Here now' : 'Last seen ' + ago(p.ts)) + (p.batt ? ' &middot; battery ' + p.batt + '%' : '') + '</div></div></div>' +
+        '<button type="button" class="spv-go" data-a="dir">Get directions</button>' +
+        '<div class="spv-row"><a class="spv-b" href="' + store + '">Get GroundLink</a><button type="button" class="spv-b" data-a="close">Close</button></div>';
+      sheet.classList.add('on');
+      sheet.onclick = function (e) {
+        var a = e.target && e.target.closest && e.target.closest('[data-a]'); if (!a) return;
+        if (a.getAttribute('data-a') === 'dir') window._sharedPinDirections(p);
+        if (a.getAttribute('data-a') === 'close') sheet.classList.remove('on');
+      };
+    };
+    var drawPeople = function (users) {
+      // One dot per PERSON: a person's phone, tablet and PC collapse to the freshest one.
+      var byName = {};
+      Object.keys(users || {}).forEach(function (uid) {
+        var u = users[uid]; if (!u || u.hidden || u.noGps) return;
+        var lat = +u.lat, lng = +u.lng; if (!isFinite(lat) || !isFinite(lng) || (!lat && !lng)) return;
+        var ts = +(u.fixTs || u.ts || 0); if (!ts || Date.now() - ts > STALE) return;
+        var nm = String(u.name || 'Member').trim(), key = nm.toLowerCase();
+        if (byName[key] && byName[key].ts >= ts) return;
+        byName[key] = { name: nm, lat: lat, lng: lng, ts: ts, live: Date.now() - ts < LIVE, batt: u.batt || 0, color: u.color || '' };
+      });
+      people = byName;
+      Object.keys(markers).forEach(function (k) { if (!people[k]) { try { markers[k].remove(); } catch (e) {} delete markers[k]; } });
+      Object.keys(people).forEach(function (k) {
+        var p = people[k];
+        if (!markers[k]) {
+          var el = document.createElement('button'); el.type = 'button'; el.className = 'fv-mk';
+          el.addEventListener('click', function (e) { e.stopPropagation(); personSheet(people[k] || p); });
+          markers[k] = new mapboxgl.Marker({ element: el, anchor: 'top' }).setLngLat([p.lng, p.lat]).addTo(m);
+        }
+        var el2 = markers[k].getElement();
+        el2.innerHTML = '<i style="background:' + (p.color || '#2e7d6b') + '" class="' + (p.live ? 'live' : '') + '">' + _spEsc(initials(p.name)) + '</i><span>' + _spEsc(p.name.split(' ')[0]) + '</span>';
+        el2.setAttribute('aria-label', p.name + ', ' + (p.live ? 'here now' : 'last seen ' + ago(p.ts)));
+        markers[k].setLngLat([p.lng, p.lat]);
+      });
+      var n = Object.keys(people).length;
+      status(n ? '' : 'Nobody in ' + title + ' is sharing a location right now.');
+      if (!fitted && n) { fitted = true; fit(); }
+    };
+    var drawPins = function (pins) {
+      pinMarkers.forEach(function (x) { try { x.remove(); } catch (e) {} }); pinMarkers = [];
+      Object.keys(pins || {}).forEach(function (k) {
+        var p = pins[k]; if (!p || !isFinite(+p.lat) || !isFinite(+p.lng)) return;
+        var q = { lat: +p.lat, lng: +p.lng, cat: PIN_DEFS[p.cat] ? p.cat : 'Waypoint', label: p.label || '' };
+        pinMarkers.push(new mapboxgl.Marker({ element: _spMarkerEl(q, function (pp) { _spSheet(sheet, pp, p.name || '', false); }), anchor: 'top' }).setLngLat([q.lng, q.lat]).addTo(m));
+      });
+    };
+    var tries = 0;
+    (function start() {
+      var fb = window._fb;
+      if (typeof mapboxgl === 'undefined' || !window.MAPBOX_TOKEN || !fb || !fb.db) { if (++tries < 80) setTimeout(start, 150); else status('Could not load the map. Check your signal and try again.'); return; }
+      mapboxgl.accessToken = window.MAPBOX_TOKEN;
+      m = d._map = new mapboxgl.Map({ container: 'fv-map', style: 'mapbox://styles/mapbox/satellite-streets-v12', center: [-84.95, 30.35], zoom: 9, projection: 'mercator' });
+      m.on('click', function () { sheet.classList.remove('on'); });
+      // The invite key is what lets this browser read the room. Then just listen.
+      (ik ? window._grantSelfWithKey(rk, ik) : Promise.resolve(true)).then(function () {
+        var listen = function () {
+          fb.onValue(fb.ref(fb.db, 'gl/' + rk + '/users'), function (snap) { try { drawPeople(snap.val() || {}); } catch (e) {} },
+            function () { status('This invite has expired. Ask for a new one, or get GroundLink.'); });
+          fb.onValue(fb.ref(fb.db, 'gl/' + rk + '/pins'), function (snap) { try { drawPins(snap.val() || {}); } catch (e) {} }, function () {});
+        };
+        if (m.loaded()) listen(); else m.on('load', listen);
+      });
+    })();
+  } catch (e) {}
+};
 // 973: GroundLink needs the app on a phone. A phone browser only reports while the page is on
 // screen, so someone who joins from Safari shows up for a few seconds and then freezes on the map.
 var GL_APPSTORE_URL = 'https://apps.apple.com/us/app/groundlink-family/id6790179901';
@@ -17608,6 +17743,10 @@ window._showGetAppScreen = function (kind) {
     if (_pbk) {
       var _spB = null; try { _spB = window._sharedPinFromUrl(window.location.search); } catch (e) {}
       if (_spB) { setTimeout(function () { window._showSharedPinViewer(_spB, function () { window._showGetAppScreen(_pbk); }); }, 0); return; }
+      // 1058: an invite -> the read-only family map.
+      var _q0 = new URLSearchParams(window.location.search), _vr = _q0.get('room'), _vk = _q0.get('ik');
+      if (!_vr) { var _jm = location.pathname.match(/^\/j\/([^\/?#]+)/); if (_jm) _vr = decodeURIComponent(_jm[1]); }
+      if (_vr && _vk) { setTimeout(function () { window._showFamilyViewer(_vr, _vk, _pbk); }, 0); return; }
     }
     if (_pbk === 'ios') { window._showGetAppScreen('ios'); return; }
     if (_pbk === 'android') {
