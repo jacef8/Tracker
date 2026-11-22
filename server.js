@@ -1879,7 +1879,9 @@ app.get('/.well-known/assetlinks.json', function(req, res) {
     "target": {
       "namespace": "android_app",
       "package_name": "com.groundlink.app",
-      "sha256_cert_fingerprints": ["66:D4:5E:8A:57:E7:1E:75:92:B6:A5:EF:CC:C9:04:6D:B7:AA:CD:D7:E2:A9:14:45:B6:7E:5E:66:07:06:90:4C", "D5:BF:39:0E:56:EA:85:26:BD:DA:3D:77:CF:C7:1E:1C:C4:2A:E2:C3:50:68:DD:23:00:96:00:26:2D:96:9C:17", "10:09:BB:FE:B3:3B:9A:44:79:50:C8:07:88:23:25:D0:A5:AA:1A:53:75:84:29:34:5B:24:CA:0A:CD:A9:70:EB"]
+      // C6:CD:AC:D2… is the RELEASE key every installed phone carries (build-release.bat). It was
+      // missing, so Android never verified the links and every texted link opened the browser.
+      "sha256_cert_fingerprints": ["C6:CD:AC:D2:57:51:2A:1C:7B:5D:C9:CD:F0:7E:C7:1F:FE:96:44:91:73:50:AC:27:3D:E9:8C:F3:2B:3E:D4:3E", "66:D4:5E:8A:57:E7:1E:75:92:B6:A5:EF:CC:C9:04:6D:B7:AA:CD:D7:E2:A9:14:45:B6:7E:5E:66:07:06:90:4C", "D5:BF:39:0E:56:EA:85:26:BD:DA:3D:77:CF:C7:1E:1C:C4:2A:E2:C3:50:68:DD:23:00:96:00:26:2D:96:9C:17", "10:09:BB:FE:B3:3B:9A:44:79:50:C8:07:88:23:25:D0:A5:AA:1A:53:75:84:29:34:5B:24:CA:0A:CD:A9:70:EB"]
     }
   }]));
 });
