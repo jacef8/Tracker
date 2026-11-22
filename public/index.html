@@ -161,7 +161,7 @@ window._timedOnValue = function (orig) {
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp }
+  import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp, query, limitToFirst, limitToLast }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
   import { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signInWithCustomToken, onAuthStateChanged, signOut, signInAnonymously }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -191,7 +191,7 @@ window._timedOnValue = function (orig) {
   // ───────────────────────────────────────────────────────────────────
 
   const app = initializeApp(firebaseConfig);
-  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp };
+  window._fb = { db: getDatabase(app), ref, set, push, onValue, remove, onDisconnect, get, update, serverTimestamp, query, limitToFirst, limitToLast };
   // ── Refused writes ────────────────────────────────────────────────────────────────────────
   // Nearly every write in this file is fire-and-forget inside try/catch, so when the database
   // rules refuse one, nothing anywhere notices: the feature just quietly stops working. Count
@@ -5564,7 +5564,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1051;
+var APP_BUILD = 1052;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -19233,8 +19233,13 @@ function clearUnreadPins() {
 // Two names for one value on purpose: they answer different questions and can diverge later
 // (drawing less than is retained is reasonable; the reverse is not).
 const TRAIL_DRAW_MS = 2 * 60 * 60 * 1000;  // on-map line window
-const TRAIL_KEEP_MS = TRAIL_DRAW_MS;       // retention for gl/<room>/trails/<uid>
+const TRAIL_KEEP_MS = 12 * 60 * 60 * 1000;  // retention for gl/<room>/trails/<uid>. 1052: 12 h -- "I would never need a trail more than 8 to 12 hours old" (Jace)
 const TRAIL_MIN_DIST_M = 5;          // only log if moved > 5 meters
+// 1052: and no closer together than this. Background fixes arrive every SECOND while driving, and
+// every one became a trail point -- Max's phone wrote 13,451 in 11 hours. A line on the map needs
+// nothing like that: one point per 4 s and 80 ft is still smooth on any road, ~20x less data.
+const TRAIL_MIN_GAP_MS = 4000;
+const TRAIL_SPACE_M = 24;
 const TRAIL_MAX_ACC_M = 50;          // skip breadcrumbs from fixes worse than 50 m accuracy
 const TRAIL_MAX_MPH = 150;           // skip breadcrumbs implying an impossible teleport (bad fix)
 const LIVE_MAX_ACC_M = 150;           // a fix this bad noticeably drifts the pin off the actual
@@ -20571,7 +20576,8 @@ function startLocationSharing() {
         if (mph > TRAIL_MAX_MPH) plausible = false; // jumped too far, too fast → bad fix
       }
 
-      if (moved && goodAccuracy && plausible) {
+      const spaced = !lastBreadcrumbTs || ((now - lastBreadcrumbTs) >= TRAIL_MIN_GAP_MS && distM >= TRAIL_SPACE_M);   // 1052
+      if (moved && spaced && goodAccuracy && plausible) {
         lastBreadcrumbPos = { lat, lng };
         lastBreadcrumbTs = now;
         _trailRooms.forEach(function (_room) {
@@ -20580,14 +20586,27 @@ function startLocationSharing() {
                     { src: window._lastFixSrc || 'web' });
 
           // Prune points past the retention window.
-          fbOnValue(fbRef(db, `gl/${_room}/trails/${userId}`), snap => {
-            const trail = snap.val() || {};
-            Object.entries(trail).forEach(([key, pt]) => {
-              if (now - pt.ts > TRAIL_KEEP_MS) {
-                fbRemove(fbRef(db, `gl/${_room}/trails/${userId}/${key}`));
-              }
-            });
-          }, { onlyOnce: true });
+          // 1052: this used to read this person's WHOLE trail, in every room, on every point
+          // written -- and pruning had silently not kept up, so a trail was 20,000-36,000 points
+          // (Jace's phone froze 1.3-2.2 s per room on it, Max's 12.5 s; stall probe, 2026-11-21).
+          // Points are push ids, so key order is time order: read only the OLDEST 60, delete
+          // the stale ones in one write, at most once a minute per room. A backlog drains a bit
+          // at a time without ever reading the lot.
+          try {
+            window._trailPruneAt = window._trailPruneAt || {};
+            if (now - (window._trailPruneAt[_room] || 0) > 60000 && window._fb && window._fb.query && window._fb.limitToFirst) {
+              window._trailPruneAt[_room] = now;
+              var _F = window._fb, _tref = _F.ref(_F.db, `gl/${_room}/trails/${userId}`);
+              _F.get(_F.query(_tref, _F.limitToFirst(60))).then(function (snap) {
+                var trail = snap.val() || {}, del = {}, n = 0;
+                Object.keys(trail).forEach(function (key) {
+                  var pt = trail[key];
+                  if (!pt || !pt.ts || now - pt.ts > TRAIL_KEEP_MS) { del[key] = null; n++; }
+                });
+                if (n) _F.update(_tref, del).catch(function () {});
+              }).catch(function () {});
+            }
+          } catch (e) {}
         });
       }
     }
@@ -23902,11 +23921,47 @@ window._updateTrailTip = function (uid, lng, lat) {
 // Cache the latest raw snapshot so toggling that preference can redraw immediately, without
 // waiting for the next Firebase write to trigger a re-render.
 var _lastTrailsSnap = null;
+// 1052: this listened to the room's WHOLE trails node -- 7.5 MB for Our Crew, every point
+// everyone ever kept -- and Firebase hands back all of it on every single change, so each fix
+// anyone reported meant downloading and unpacking megabytes on the main thread: the lag and
+// the taps that went nowhere. Now it listens only to the people whose line is actually shown,
+// and only their newest points (a 2-hour line at one point per 4 s is 1,800).
+var TRAIL_LISTEN_PTS = 1800;   // 2 h at one point per 4 s
+window._trailSubs = window._trailSubs || {};
+function _syncTrailSubs() {
+  try {
+    var F = window._fb; if (!F || !F.query || !F.limitToLast || !groupName) return;
+    var want = {};
+    if (breadcrumbsOn && userId) want[userId] = 1;
+    Object.keys(_getTrailShow()).forEach(function (u) { if (_getTrailShow()[u]) want[u] = 1; });
+    var room = groupName;
+    Object.keys(window._trailSubs).forEach(function (k) {
+      var sub = window._trailSubs[k];
+      if (sub.room !== room || !want[sub.uid]) {
+        try { sub.off(); } catch (e) {}
+        delete window._trailSubs[k];
+        if (sub.room === room && _lastTrailsSnap) delete _lastTrailsSnap[sub.uid];
+      }
+    });
+    Object.keys(want).forEach(function (u) {
+      var k = room + '|' + u;
+      if (window._trailSubs[k]) return;
+      // Claimed BEFORE subscribing: a cached value can arrive synchronously and re-enter here.
+      var sub = window._trailSubs[k] = { room: room, uid: u, off: function () {} };
+      var off = fbOnValue(F.query(F.ref(F.db, 'gl/' + room + '/trails/' + u), F.limitToLast(TRAIL_LISTEN_PTS)), function (snap) {
+        if (room !== groupName) return;
+        _lastTrailsSnap = _lastTrailsSnap || {};
+        var v = snap.val(); if (v) _lastTrailsSnap[u] = v; else delete _lastTrailsSnap[u];
+        _renderTrailLines();
+      });
+      if (typeof off === 'function') sub.off = off;
+    });
+  } catch (e) {}
+}
+window._syncTrailSubs = _syncTrailSubs;
 function listenTrails() {
-  fbOnValue(fbRef(db, `gl/${groupName}/trails`), snap => {
-    _lastTrailsSnap = snap.val() || {};
-    _renderTrailLines();
-  });
+  _lastTrailsSnap = {};
+  _syncTrailSubs();
 }
 // 985: fixes this viewer has received, per person (session memory only).
 window._seenFixes = window._seenFixes || {};
@@ -23948,6 +24003,7 @@ function _renderTrailLines() {
     // Per-person, not global. `breadcrumbsOn` gates only your own line; every other member
     // is opt-in via their member card (_trailShownFor). Previously this single flag drew
     // EVERY member's trail, so the toolbar button silently turned the whole room on.
+    try { _syncTrailSubs(); } catch (e) {}   // 1052: subscribe/unsubscribe as lines are turned on and off
     const _trailSnap = _lastTrailsSnap || {};
     const allTrails = {};
     Object.keys(_trailSnap).forEach(function (uid) {
