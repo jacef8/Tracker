@@ -5639,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1062;
+var APP_BUILD = 1063;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18518,6 +18518,7 @@ function initMap() {
   map.on('style.load', function () { setTimeout(window._glrEnsure, 0); });
   map.on('load', function () { window._glrEnsure(); });
   map.on('moveend', function () { window._glrUpdate(); });
+  map.on('idle', function () { try { _glrPaint(); } catch (e) {} });   // 1063: base-map road names are in now
   // 1051: with no signal, or a signal too weak to bring the map style in 8 s, fall back to the
   // aerial photos kept on the phone rather than leaving a black screen.
   try {
@@ -27444,6 +27445,27 @@ function _glrFetchTile(x, y) {
     _glrPaint();
   });
 }
+// "NW Hoecake Rd", "Hoecake Road" -> "hoecake": the part both maps agree on.
+var GLR_DIRS = { n: 1, s: 1, e: 1, w: 1, ne: 1, nw: 1, se: 1, sw: 1, north: 1, south: 1, east: 1, west: 1 };
+var GLR_TYPES = { rd: 1, road: 1, ln: 1, lane: 1, st: 1, street: 1, ave: 1, avenue: 1, dr: 1, drive: 1, ct: 1, court: 1, cir: 1, circle: 1, way: 1, trl: 1, trail: 1, hwy: 1, highway: 1, blvd: 1, pl: 1, place: 1, loop: 1, path: 1, pkwy: 1 };
+function _glrNorm(n) {
+  var w = String(n || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  while (w.length > 1 && GLR_DIRS[w[0]]) w.shift();
+  while (w.length > 1 && (GLR_TYPES[w[w.length - 1]] || GLR_DIRS[w[w.length - 1]])) w.pop();
+  return w.join(' ');
+}
+// Names of the roads the base map itself has in view, or null if it names none (photo-only maps).
+function _glrBaseRoadNames() {
+  try {
+    if (!map.getSource('composite')) return null;
+    var names = {}, n = 0;
+    map.querySourceFeatures('composite', { sourceLayer: 'road' }).forEach(function (f) {
+      var nm = f.properties && (f.properties.name || f.properties.name_en);
+      if (nm) { names[_glrNorm(nm)] = 1; n++; }
+    });
+    return n ? names : null;
+  } catch (e) { return null; }
+}
 var _glrPaintT = null;
 function _glrPaint() {
   if (_glrPaintT) return;
@@ -27462,7 +27484,21 @@ function _glrPaint() {
           for (var i = 0; i < c.length; i++) { var u = c[i].properties.u; if (u && seen[u]) continue; if (u) seen[u] = 1; feats.push(c[i]); }
         }
       }
-      src.setData({ type: 'FeatureCollection', features: feats });
+      // 1063: "roads are still double labeled". On a base map that names its own roads (Mapbox
+      // Satellite 1) a Census road was labeled twice: "Hoecake Rd" by Mapbox and "NW Hoecake Rd"
+      // by us. Skip our label when the base map has a road of the same name in view.
+      var baseNames = _glrBaseRoadNames();
+      var out = feats.map(function (f) {
+        var p = f.properties;
+        var dup = !!(baseNames && p.k === 'loc' && p.n && baseNames[_glrNorm(p.n)]);
+        return dup === !!p.dup ? f : { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, p, { dup: dup ? 1 : 0 }) };
+      });
+      // setData re-renders, and a re-render ends in 'idle', which calls this again: only send
+      // when something actually changed.
+      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|');
+      if (sig === window._glrSig && src._glrSet) return;
+      window._glrSig = sig; src._glrSet = 1;
+      src.setData({ type: 'FeatureCollection', features: out });
     } catch (e) {}
   }, 120);
 }
@@ -27486,14 +27522,15 @@ window._glrEnsure = function () {
     var before;
     (map.getStyle().layers || []).some(function (l) { if (/^(pin|pins|trail|gl-trail|place|places)/.test(l.id)) { before = l.id; return true; } return false; });
     var col = ['match', ['get', 'k'], 'fs', '#FFD54A', '#FFFFFF'];
-    if (!map.getLayer('gl-roads-case')) map.addLayer({ id: 'gl-roads-case', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
+
+    if (!map.getLayer('gl-roads-case')) map.addLayer(Object.assign({ id: 'gl-roads-case', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': '#101417', 'line-opacity': 0.55, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6] } }, before);
-    if (!map.getLayer('gl-roads-line')) map.addLayer({ id: 'gl-roads-line', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
+      paint: { 'line-color': '#101417', 'line-opacity': 0.55, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6] } }, {}), before);
+    if (!map.getLayer('gl-roads-line')) map.addLayer(Object.assign({ id: 'gl-roads-line', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': col, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.2, 16, 3] } }, before);
+      paint: { 'line-color': col, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.2, 16, 3] } }, {}), before);
     if (!map.getLayer('gl-roads-label')) map.addLayer({ id: 'gl-roads-label', type: 'symbol', source: 'gl-roads', minzoom: 13,
-      filter: ['!=', ['get', 'n'], ''],
+      filter: ['all', ['!=', ['get', 'n'], ''], ['!=', ['get', 'dup'], 1]],
       layout: { 'symbol-placement': 'line', 'text-field': ['get', 'n'], 'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
                 'text-size': ['interpolate', ['linear'], ['zoom'], 13, 13, 16, 16], 'text-max-angle': 30, 'symbol-spacing': 320, 'text-padding': 4 },
       paint: { 'text-color': col, 'text-halo-color': '#0B0F11', 'text-halo-width': 1.8 } }, before);
