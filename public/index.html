@@ -5639,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1061;
+var APP_BUILD = 1062;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18473,10 +18473,13 @@ function initMap() {
   // signal the map stayed black. The USGS aerial photos ARE kept on the phone (the auto-cache
   // holds ~2.5 mi around you, and saved areas), so start on those when the phone is offline.
   var _offAtStart = (typeof navigator !== 'undefined' && navigator.onLine === false);
+  // 1062: last picked Satellite 2 -> start on it (it used to load Satellite 1 first, then switch).
+  var _startEsri = false;
+  try { _startEsri = !_offAtStart && localStorage.getItem('gl_base') === 'esri-imagery' && typeof window._esriStyle === 'function'; } catch (e) {}
   try {
   map = new mapboxgl.Map({
     container: 'map',
-    style: _offAtStart ? window._usgsAerialStyle() : 'mapbox://styles/mapbox/satellite-streets-v12',
+    style: _offAtStart ? window._usgsAerialStyle() : (_startEsri ? window._esriStyle() : 'mapbox://styles/mapbox/satellite-streets-v12'),
     // Mapbox GL v3 defaults to the GLOBE projection, and that default caused both halves of
     // the 2026-10-10 report: "every time I open the map it will not pan" plus "weird rounded
     // corners". The corners are the globe's own limb curving away at the bottom of the screen.
@@ -18567,7 +18570,11 @@ function initMap() {
   window.addEventListener('resize', _applyChromePadding);
 
   // Initial map load — set up pins, images, _mapReady
-  map.on('load', function() {
+  // 1062: on whichever comes first: the style being ready (seconds) or the full load (all tiles).
+  var _mapUp = function() {
+    if (window._mapUpDone) return;
+    window._mapUpDone = true;
+    try { window._markOpen('style'); } catch (e) {}
     try { map.setPadding(_followPadding()); } catch (e) {}
     // Add pin images.
     //
@@ -18657,7 +18664,9 @@ function initMap() {
     } else if (lastPins && Object.keys(lastPins).length) {
       updatePinSource(lastPins);
     }
-  });
+  };
+  map.once('style.load', _mapUp);
+  map.once('load', _mapUp);
 
   // Parcel label refresh on pan/zoom
   map.on('moveend', function() { if (parcelsOn) loadParcelLabels(); });
@@ -18818,7 +18827,10 @@ function initMap() {
       var _b = localStorage.getItem('gl_base');
       if (_b !== 'esri-imagery') return;   // only the Esri choice sticks; the others stay per-visit as before
       var _bb = document.querySelector('.layer-base-btn[data-style="' + _b.replace(/"/g, '') + '"]');
-      if (_bb && !_bb.classList.contains('active')) setTimeout(function () { setBaseLayer(_bb); }, 0);
+      if (!_bb) return;
+      // 1062: already started on it -- just mark it as the current one.
+      if (map.getSource && map.getSource('esri-imagery')) { document.querySelectorAll('.layer-base-btn').forEach(function (x) { x.classList.toggle('active', x === _bb); }); return; }
+      if (!_bb.classList.contains('active')) setTimeout(function () { setBaseLayer(_bb); }, 0);
     } catch (e) {}
   });
   try { window._updateNorthIndicator(); } catch (e) {}
@@ -27496,6 +27508,28 @@ window._glrToggle = function () {
   try { toast(on ? 'Road names on' : 'Road names off', 1600); } catch (e) {}
   return on;
 };
+// 1045: a second satellite source. Mapbox's photo of some places is a pale, hazy Maxar
+// capture with no colour correction (checked 2026-11-21 against the raw Mapbox image);
+// Esri's World Imagery often uses newer, clearer aerials for the same spot. One copy, used by
+// the Map style picker and (1062) by start-up when it was the last one picked.
+window._esriStyle = function () {
+  var _esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  return {
+    version: 8,
+    glyphs: 'mapbox://fonts/mapbox/{fontstack}/{range}.pbf',
+    sources: {
+      'esri-imagery': { type: 'raster', tiles: [_esri + 'World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19,
+                        attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community' },
+      'esri-roads': { type: 'raster', tiles: [_esri + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19 },
+      'esri-places': { type: 'raster', tiles: [_esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19 }
+    },
+    layers: [
+      { id: 'esri-imagery-layer', type: 'raster', source: 'esri-imagery' },
+      { id: 'esri-roads-layer', type: 'raster', source: 'esri-roads', paint: { 'raster-opacity': 0.85 } },
+      { id: 'esri-places-layer', type: 'raster', source: 'esri-places' }
+    ]
+  };
+};
 // USGS National Map orthoimagery (USDA/USGS, public domain → cacheable offline). One copy, used
 // by the Layers button and by the no-signal start (1051).
 window._usgsAerialStyle = function () {
@@ -27536,25 +27570,7 @@ function setBaseLayer(btn) {
       layers: [{ id: 'usgs-topo-layer', type: 'raster', source: 'usgs-topo' }]
     });
   } else if (style === 'esri-imagery') {
-    // 1045: a second satellite source. Mapbox's photo of some places is a pale, hazy Maxar
-    // capture with no colour correction (checked 2026-11-21 against the raw Mapbox image);
-    // Esri's World Imagery often uses newer, clearer aerials for the same spot.
-    var _esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
-    map.setStyle({
-      version: 8,
-      glyphs: 'mapbox://fonts/mapbox/{fontstack}/{range}.pbf',
-      sources: {
-        'esri-imagery': { type: 'raster', tiles: [_esri + 'World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19,
-                          attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community' },
-        'esri-roads': { type: 'raster', tiles: [_esri + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19 },
-        'esri-places': { type: 'raster', tiles: [_esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19 }
-      },
-      layers: [
-        { id: 'esri-imagery-layer', type: 'raster', source: 'esri-imagery' },
-        { id: 'esri-roads-layer', type: 'raster', source: 'esri-roads', paint: { 'raster-opacity': 0.85 } },
-        { id: 'esri-places-layer', type: 'raster', source: 'esri-places' }
-      ]
-    });
+    map.setStyle(window._esriStyle());
   } else if (style === 'usgs-aerial') {
     map.setStyle(window._usgsAerialStyle());
   } else {
