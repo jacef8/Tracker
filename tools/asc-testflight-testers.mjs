@@ -113,6 +113,12 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    // First App Store release since 1.0.16: carries the native work of 1.0.17-1.0.20.
+    '1.0.20': [
+      '- Smoother live location while driving: your phone keeps sharing steadily in the background, instead of only every quarter mile after iPhone restarts the app',
+      '- Your family can check in on a quiet phone and get its location even when GroundLink is closed',
+      '- Fixes and reliability improvements for background location',
+    ],
     // First App Store release since 1.0.11, so this carries the native changes of 1.0.12-1.0.16.
     '1.0.16': [
       '- Invite links open straight into your crew in the app, with no waiting for approval',
