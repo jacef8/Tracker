@@ -5639,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1067;
+var APP_BUILD = 1068;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7490,6 +7490,47 @@ function _updateMarkerGrouping(immediate) {
       } catch (_spe) {}
     }
   }
+
+  // 1068: "multiple pin groups stacked on top of each other" (Jace, 2026-11-23, zoomed out over
+  // the Panhandle). The tests above join PEOPLE whose dots are within ~22 px, but an oval is up
+  // to ~150 px wide and stands on a stem above its spot, so two groups whose members were just
+  // past that distance drew one oval over the other. Now whole shapes are compared: any two
+  // groups (or a group and a lone dot) whose drawn shapes would touch become one group, repeated
+  // until nothing touches. Zooming in gives them room and they come apart again.
+  try {
+    var _simpleUi = document.body.classList.contains('simple-ui');
+    var _pt = {};
+    uids.forEach(function (u) { var ll = userMarkers[u]._ll; _pt[u] = map.project({ lng: ll[0], lat: ll[1] }); });
+    for (var _pass = 0; _pass < 8; _pass++) {
+      var _gs = {};
+      uids.forEach(function (u) { var r = find(u); (_gs[r] = _gs[r] || []).push(u); });
+      var _bx = Object.keys(_gs).map(function (r) {
+        var ms = _gs[r], n = Math.min(ms.length, MERGE_MAX_IN_OVAL);
+        var hw = ms.length > 1 ? (34 * n + 16) / 2 + 4 : 24;
+        var lift = ms.length > 1 ? MK_MERGE_LIFT : (_simpleUi ? 28 + MK_TAIL : 0);
+        var b = { r: r, ms: ms, x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+        ms.forEach(function (u) {
+          var p = _pt[u];
+          b.x0 = Math.min(b.x0, p.x - hw); b.x1 = Math.max(b.x1, p.x + hw);
+          b.y0 = Math.min(b.y0, p.y - lift - 24); b.y1 = Math.max(b.y1, p.y + (lift ? 4 : 24));
+        });
+        return b;
+      });
+      var _joined = false;
+      for (var _i = 0; _i < _bx.length; _i++) {
+        for (var _j = _i + 1; _j < _bx.length; _j++) {
+          var A = _bx[_i], B = _bx[_j];
+          if (find(A.r) === find(B.r)) continue;
+          // Hysteresis as elsewhere: shapes that were one group stay one until there is a clear
+          // 10 px gap between them, so a group on the edge cannot flicker.
+          var was = A.ms.some(function (a) { return B.ms.some(function (b) { return window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b]; }); });
+          var g = was ? 10 : 0;
+          if (A.x0 < B.x1 + g && B.x0 < A.x1 + g && A.y0 < B.y1 + g && B.y0 < A.y1 + g) { union(A.r, B.r); _joined = true; }
+        }
+      }
+      if (!_joined) break;
+    }
+  } catch (_ove) {}
 
   var rawGroups = {};
   uids.forEach(function (u) { var r = find(u); (rawGroups[r] = rawGroups[r] || []).push(u); });

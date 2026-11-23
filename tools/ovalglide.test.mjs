@@ -99,7 +99,7 @@ function harness() {
 // ── The grouping pass leaves a gliding oval alone (static guard on the shipped text) ───────
 {
   const g = src.indexOf('function _updateMarkerGrouping(');
-  const blk = src.slice(g, g + 12000);
+  const blk = src.slice(g, g + 16000);
   check('grouping no longer places the oval at a centroid', !blk.includes('_sx / _n'), '');
   check('the anchor is you when you are in the group, else a sticky live member', blk.includes('if (members.indexOf(userId) !== -1) primary = userId;') && blk.includes('window._ovalAnchors[u]'), '');
 }
