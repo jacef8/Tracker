@@ -81,11 +81,39 @@ console.log(`App: ${app.attributes?.name || BUNDLE_ID}  (id ${app.id})\n`);
 // The email positional carries "<versionString>:<buildNumber>", e.g. "1.0.2:41".
 if (mode === 'submitversion') {
   const parts = (argEmail || '').split(':');
-  const verStr = parts[0], buildNum = parts[1];
+  const verStr = parts[0], buildNum = parts[1], replace = parts[2] === 'replace';
   if (!verStr || !buildNum) { console.error('submitversion needs "<version>:<build>" in the email field, e.g. 1.0.2:41'); process.exit(2); }
 
   let vRes = await asc('GET', `/apps/${app.id}/appStoreVersions?filter[versionString]=${encodeURIComponent(verStr)}&limit=5`);
   let ver = (vRes.json?.data || [])[0];
+  // "<ver>:<build>:replace": a version that is still waiting in App Review (never released) is
+  // pulled out of review and renamed to verStr, so the newer build goes in its place. Apple
+  // allows only one unreleased version at a time, so a new one cannot be created beside it.
+  if (!ver && replace) {
+    const all = await asc('GET', `/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=10`);
+    const pending = (all.json?.data || []).find(v => /WAITING_FOR_REVIEW|IN_REVIEW|READY_FOR_REVIEW|PREPARE_FOR_SUBMISSION|DEVELOPER_REJECTED|REJECTED|METADATA_REJECTED/.test(v.attributes?.appStoreState || ''));
+    if (pending) {
+      console.log(`replacing unreleased ${pending.attributes.versionString} (state ${pending.attributes.appStoreState})`);
+      const subs = await asc('GET', `/reviewSubmissions?filter[app]=${app.id}&filter[state]=WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES,READY_FOR_REVIEW&limit=5`);
+      for (const sb of (subs.json?.data || [])) {
+        const c = await asc('PATCH', `/reviewSubmissions/${sb.id}`, { data: { type: 'reviewSubmissions', id: sb.id, attributes: { canceled: true } } });
+        console.log(`${c.ok ? '+' : '!'} review submission ${sb.id} (${sb.attributes?.state}) withdrawn${c.ok ? '' : ': HTTP ' + c.status + ' ' + c.text.slice(0, 300)}`);
+        if (!c.ok) process.exit(1);
+      }
+      let st = '';
+      for (let i = 0; i < 40; i++) {
+        const g = await asc('GET', `/appStoreVersions/${pending.id}`);
+        st = g.json?.data?.attributes?.appStoreState || '';
+        if (!/WAITING_FOR_REVIEW|IN_REVIEW/.test(st)) break;
+        await new Promise(r => setTimeout(r, 15000));
+      }
+      console.log(`version now ${st}`);
+      const ren = await asc('PATCH', `/appStoreVersions/${pending.id}`, { data: { type: 'appStoreVersions', id: pending.id, attributes: { versionString: verStr } } });
+      if (!ren.ok) { console.error(`! rename FAILED (HTTP ${ren.status}): ${ren.json?.errors?.map(e => e.detail || e.title).join('; ') || ren.text.slice(0, 300)}`); process.exit(1); }
+      console.log(`+ renamed ${pending.attributes.versionString} -> ${verStr}`);
+      ver = ren.json.data;
+    }
+  }
   if (!ver) {
     const mk = await asc('POST', '/appStoreVersions', {
       data: {
@@ -113,8 +141,10 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    // Replaced 1.0.20 in App Review before it was released, so it carries 1.0.20's list.
     '1.0.21': [
-      '- Diagnostic help for background location: if a phone being tracked for testing loses "Always", GroundLink asks for a diagnostic report',
+      '- Smoother live location while driving: your phone keeps sharing steadily in the background, instead of only every quarter mile after iPhone restarts the app',
+      '- Your family can check in on a quiet phone and get its location even when GroundLink is closed',
       '- Fixes and reliability improvements for background location',
     ],
     // First App Store release since 1.0.16: carries the native work of 1.0.17-1.0.20.
