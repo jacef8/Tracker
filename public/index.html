@@ -5639,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1063;
+var APP_BUILD = 1064;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27487,15 +27487,21 @@ function _glrPaint() {
       // 1063: "roads are still double labeled". On a base map that names its own roads (Mapbox
       // Satellite 1) a Census road was labeled twice: "Hoecake Rd" by Mapbox and "NW Hoecake Rd"
       // by us. Skip our label when the base map has a road of the same name in view.
-      var baseNames = _glrBaseRoadNames();
-      var out = feats.map(function (f) {
+      // 1064: "still has duplicate lines and labels" (Satellite 2). Esri's road layer on Satellite 2
+      // already draws and names every county road, a few feet off from the Census line, so there
+      // the county roads are left to Esri. On Satellite 1 a county road Mapbox already names is
+      // dropped whole (line and name); a road Mapbox leaves blank keeps ours. Forest roads always stay.
+      var esriRoads = !!map.getLayer('esri-roads-layer');
+      var baseNames = esriRoads ? null : _glrBaseRoadNames();
+      var out = feats.filter(function (f) {
         var p = f.properties;
-        var dup = !!(baseNames && p.k === 'loc' && p.n && baseNames[_glrNorm(p.n)]);
-        return dup === !!p.dup ? f : { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, p, { dup: dup ? 1 : 0 }) };
+        if (p.k !== 'loc') return true;
+        if (esriRoads) return false;
+        return !(baseNames && p.n && baseNames[_glrNorm(p.n)]);
       });
       // setData re-renders, and a re-render ends in 'idle', which calls this again: only send
       // when something actually changed.
-      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|');
+      var sig = out.map(function (f) { return f.properties.u || ''; }).join('|');
       if (sig === window._glrSig && src._glrSet) return;
       window._glrSig = sig; src._glrSet = 1;
       src.setData({ type: 'FeatureCollection', features: out });
