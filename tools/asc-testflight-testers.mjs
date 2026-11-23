@@ -113,6 +113,10 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    '1.0.21': [
+      '- Diagnostic help for background location: if a phone being tracked for testing loses "Always", GroundLink asks for a diagnostic report',
+      '- Fixes and reliability improvements for background location',
+    ],
     // First App Store release since 1.0.16: carries the native work of 1.0.17-1.0.20.
     '1.0.20': [
       '- Smoother live location while driving: your phone keeps sharing steadily in the background, instead of only every quarter mile after iPhone restarts the app',
