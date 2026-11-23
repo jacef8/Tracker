@@ -764,10 +764,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     /// Tell them at the moment it happens. Waiting for someone to notice they have been missing
     /// from the map, and then to go hunting through Settings, is how this went unexplained for a
     /// fortnight.
+    /// 1.0.21: phones that should ask for an iPhone diagnostic report the moment Always is lost.
+    /// Laura's iPhone drops Always -> While Using on its own (caught 2026-11-23 at 5:11-5:27 AM
+    /// while GroundLink was suspended and she saw no prompt), and only iOS's own log, in a
+    /// sysdiagnose taken soon after, says why. Remove her uid once the cause is found.
+    private static let askDiagnosticUids: Set<String> = ["2n6kLQu5LpPzzoi5fdVOvvNfQKW2"]
     private func notifyBackgroundSharingStopped() {
         let c = UNMutableNotificationContent()
-        c.title = "GroundLink stopped sharing in the background"
-        c.body = "Your family can't see you when your phone is locked. Tap here and GroundLink will show you the two taps to fix it."
+        let uid = (nativeWriteConfig()?["uid"] as? String) ?? ""
+        if AppDelegate.askDiagnosticUids.contains(uid) {
+            c.title = "Location switched to While Using. Please take a diagnostic now"
+            c.body = "Press both volume buttons and the side button together for 1 second (the phone buzzes once). Wait 10 minutes, then send the sysdiagnose file to Jace. Tap here to turn Always back on."
+            GLFlight.log("askdiag", [:])
+        } else {
+            c.title = "GroundLink stopped sharing in the background"
+            c.body = "Your family can't see you when your phone is locked. Tap here and GroundLink will show you the two taps to fix it."
+        }
         c.sound = .default
         let req = UNNotificationRequest(identifier: "gl-loc-downgrade-\(Int(Date().timeIntervalSince1970))",
                                         content: c, trigger: nil)
