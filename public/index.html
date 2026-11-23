@@ -5639,7 +5639,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1066;
+var APP_BUILD = 1067;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -6111,6 +6111,120 @@ function _writeRun(base, route, endRec, extra) {
   } catch (e) {}
 }
 
+// 1067: "really struggle with turns ... moved across fields and past turns" (Jace, 2026-11-22,
+// watching Laura and Lexi drive). Their iPhones were reporting once every ~16 s (a quarter mile),
+// and the chase below carried the dot in a STRAIGHT line along the last heading for that whole
+// time: off the road at every bend, past every turn, then a cut across the field to the next fix.
+// Now the dot is carried along the ROAD it is on: the nearest mapped road (GroundLink's own road
+// lines, and Mapbox's road lines when that map is up), followed through bends and straight on
+// through crossings, and it STOPS at a T, a dead end or a turn it cannot know about, until the
+// next fix says which way they went.
+function _roadLinesNear(lng, lat, radM) {
+  var out = [], cos = Math.cos(lat * Math.PI / 180) || 1;
+  var dLat = radM / 111320, dLng = radM / (111320 * cos);
+  var w = lng - dLng, e = lng + dLng, so = lat - dLat, no = lat + dLat;
+  var take = function (g) {
+    if (!g) return;
+    var ls = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+    for (var j = 0; j < ls.length; j++) {
+      var l = ls[j];
+      for (var i = 1; i < l.length; i++) {
+        var a = l[i - 1], b = l[i];
+        if (Math.max(a[0], b[0]) >= w && Math.min(a[0], b[0]) <= e && Math.max(a[1], b[1]) >= so && Math.min(a[1], b[1]) <= no) { out.push(l); break; }
+      }
+    }
+  };
+  try {
+    if (window._glrCache && typeof GLR_TZ !== 'undefined') {
+      var tx = _lon2tx(lng, GLR_TZ), ty = _lat2ty(lat, GLR_TZ);
+      for (var x = tx - 1; x <= tx + 1; x++) for (var y = ty - 1; y <= ty + 1; y++) {
+        var c = window._glrCache[x + '/' + y];
+        if (c && c !== 'loading') for (var k = 0; k < c.length; k++) take(c[k].geometry);
+        else if (!c && typeof _glrFetchTile === 'function') { try { _glrFetchTile(x, y); } catch (e) {} }   // ready for their next fix, map in view or not
+      }
+    }
+  } catch (e) {}
+  try {
+    if (typeof map !== 'undefined' && map && map.getSource && map.getSource('composite')) {
+      map.querySourceFeatures('composite', { sourceLayer: 'road' }).forEach(function (f) {
+        var cl = f.properties && f.properties['class'];
+        if (/^(path|pedestrian|major_rail|minor_rail|service_rail|aerialway|ferry|golf)$/.test(cl || '')) return;
+        take(f.geometry);
+      });
+    }
+  } catch (e) {}
+  return out;
+}
+// The road ahead of a moving dot: from (lng, lat) heading (vE, vN) m/s, up to aheadM metres.
+// Returns { pts: [[lng, lat]...], cum: [metres...] } or null when there is no road under the dot
+// (off-road, or the dot is crossing a road rather than driving along it).
+function _roadAhead(lng, lat, vE, vN, aheadM) {
+  var sp = Math.sqrt(vE * vE + vN * vN);
+  if (!(sp > 0) || !(aheadM > 0)) return null;
+  var lines = _roadLinesNear(lng, lat, aheadM + 150);
+  if (!lines.length) return null;
+  var cos = Math.cos(lat * Math.PI / 180) || 1;
+  var L = lines.map(function (l) { return l.map(function (p) { return [(p[0] - lng) * 111320 * cos, (p[1] - lat) * 111320]; }); });
+  var best = null;
+  for (var li0 = 0; li0 < L.length; li0++) {
+    var l0 = L[li0];
+    for (var i0 = 1; i0 < l0.length; i0++) {
+      var a = l0[i0 - 1], b = l0[i0], dx = b[0] - a[0], dy = b[1] - a[1], len2 = dx * dx + dy * dy;
+      if (!len2) continue;
+      var t = Math.max(0, Math.min(1, -(a[0] * dx + a[1] * dy) / len2));
+      var px = a[0] + dx * t, py = a[1] + dy * t, d = Math.sqrt(px * px + py * py);
+      if (!best || d < best.d) best = { d: d, li: li0, i: i0, px: px, py: py, dx: dx, dy: dy };
+    }
+  }
+  if (!best || best.d > 30) return null;                      // ~100 ft: not on a mapped road
+  var segLen = Math.sqrt(best.dx * best.dx + best.dy * best.dy), dot = (best.dx * vE + best.dy * vN) / (segLen * sp);
+  if (Math.abs(dot) < 0.7) return null;                       // more than ~45 degrees off the road's line
+  var fwd = dot > 0, li = best.li, l = L[li], i = fwd ? best.i : best.i - 1;
+  var pts = [[best.px, best.py]], cum = [0], acc = 0, hx = fwd ? best.dx : -best.dx, hy = fwd ? best.dy : -best.dy, guard = 0;
+  while (acc < aheadM && guard++ < 600) {
+    if (i >= 0 && i < l.length) {
+      var q = l[i], last = pts[pts.length - 1], dd = Math.sqrt((q[0] - last[0]) * (q[0] - last[0]) + (q[1] - last[1]) * (q[1] - last[1]));
+      if (dd > 0.01) { hx = q[0] - last[0]; hy = q[1] - last[1]; pts.push(q); acc += dd; cum.push(acc); }
+      i += fwd ? 1 : -1;
+      continue;
+    }
+    // End of this piece of road: carry on along whichever piece leaves here most nearly straight
+    // ahead (a crossing or the next stretch of the same road). A bend sharper than ~50 degrees, a
+    // T or a dead end: stop -- the next fix will say which way they went.
+    var end = pts[pts.length - 1], hl = Math.sqrt(hx * hx + hy * hy) || 1, nb = null;
+    for (var mi = 0; mi < L.length; mi++) {
+      if (mi === li) continue;
+      var m = L[mi];
+      for (var k = 0; k < m.length; k++) {
+        var p = m[k];
+        if (Math.abs(p[0] - end[0]) > 12 || Math.abs(p[1] - end[1]) > 12) continue;
+        for (var s2 = -1; s2 <= 1; s2 += 2) {
+          var k2 = k + s2;
+          if (k2 < 0 || k2 >= m.length) continue;
+          var nx = m[k2][0] - p[0], ny = m[k2][1] - p[1], nl = Math.sqrt(nx * nx + ny * ny);
+          if (!nl) continue;
+          var cs = (nx * hx + ny * hy) / (nl * hl);
+          if (cs > 0.64 && (!nb || cs > nb.c)) nb = { c: cs, mi: mi, k: k2, dir: s2 };
+        }
+      }
+    }
+    if (!nb) break;
+    li = nb.mi; l = L[li]; i = nb.k; fwd = nb.dir > 0;
+  }
+  if (pts.length < 2) return null;
+  return { cum: cum, pts: pts.map(function (p) { return [lng + p[0] / (111320 * cos), lat + p[1] / 111320]; }) };
+}
+function _roadAt(r, dM) {
+  var c = r.cum, p = r.pts, n = c.length;
+  if (dM <= 0) return p[0];
+  if (dM >= c[n - 1]) return p[n - 1];
+  for (var i = 1; i < n; i++) if (c[i] >= dM) {
+    var u = (dM - c[i - 1]) / ((c[i] - c[i - 1]) || 1);
+    return [p[i - 1][0] + (p[i][0] - p[i - 1][0]) * u, p[i - 1][1] + (p[i][1] - p[i - 1][1]) * u];
+  }
+  return p[n - 1];
+}
+
 // Dead reckoning past the last fix (viewer-only -- nothing here is written). Measured live on
 // 2026-10-25 (Lexi, iOS 1.0.13, 65 mph): fixes land every 15-22 s, jittering, each 1,400-2,100 ft
 // apart. The glide is paced to ONE reporter interval (964), so whenever the NEXT fix lands later
@@ -6274,12 +6388,19 @@ function _animateMarker(marker, toLng, toLat, path, opts) {
         if (isFinite(_vE) && isFinite(_vN)) {
           var _cadC = Math.min(Math.max(marker._cadMs || 10000, 3000), 20000);
           var _fLng = toLng, _fLat = toLat, _fTs = opts.fixTs, _cvE = _vE, _cvN = _vN;
+          // 1067: along the road, not in a straight line (see _roadAhead).
+          var _spM = Math.sqrt(_vE * _vE + _vN * _vN), _road = null;
+          try { _road = _roadAhead(toLng, toLat, _vE, _vN, _spM * (_cadC + 3000) / 1000 + 20); } catch (e) { _road = null; }
+          // No road under them (a field, a two-track nobody has mapped): still straight ahead, but a
+          // phone that reports this rarely is not carried more than ~4 s past its fix.
+          var _maxStraightS = (_road || _cadC <= 8000) ? Infinity : 4;
           marker._extrap = null; marker._extrapEnded = null;
           var _chase = function () {
             var age = Math.max(0, Date.now() - _fTs);
             var eff = age <= _cadC ? age : _cadC + 3000 * (1 - Math.exp(-(age - _cadC) / 3000));
-            var sec = eff / 1000;
-            var lat = _fLat + _cvN * sec / 111320, lng = _fLng + _cvE * sec / (111320 * _cosC);
+            var sec = eff / 1000, lat, lng;
+            if (_road) { var _rp = _roadAt(_road, _spM * sec); lng = _rp[0]; lat = _rp[1]; }
+            else { sec = Math.min(sec, _maxStraightS); lat = _fLat + _cvN * sec / 111320; lng = _fLng + _cvE * sec / (111320 * _cosC); }
             marker._curLngLat = [lng, lat];
             _pinSpringSet(marker, lng, lat);
             try { if (marker._uid && window._updateTrailTip) window._updateTrailTip(marker._uid, lng, lat); } catch (e) {}

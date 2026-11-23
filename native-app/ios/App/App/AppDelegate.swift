@@ -40,6 +40,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     // enough. This CLLocationManager instance must be created unconditionally on every launch
     // (including that relaunch) for the delegate callback below to actually fire.
     private var bgLocationManager: CLLocationManager?
+    /// 1.0.20: the steady background location feed, kept alive across background relaunches.
+    /// Seen 2026-11-22 (Laura and Lexi, iOS 1.0.19): once iOS had relaunched the app in the
+    /// background (a push, a region crossing), startUpdatingLocation() delivered nothing more than
+    /// a few seconds after each wake -- the process was suspended again -- so for the rest of the
+    /// day a DRIVING phone reported only when it crossed the 120 m "here" region: one point every
+    /// ~16 s, a quarter mile apart, and the map drew them across fields and past turns. iOS 17's
+    /// CLBackgroundActivitySession is the documented way to keep a location session running in the
+    /// background; re-creating it on a background relaunch resumes the one started in the
+    /// foreground. Held for the life of the process, never invalidated.
+    private var bgActivitySession: AnyObject?
+    private func holdBackgroundSession(_ why: String) {
+        guard #available(iOS 17.0, *) else { return }
+        if bgActivitySession != nil { return }
+        bgActivitySession = CLBackgroundActivitySession()
+        GLFlight.log("bgsession", ["why": why])
+    }
     /// Authorization as the DELEGATE last reported it. authorizationStatus is only meaningful on
     /// a manager the app keeps and whose delegate has fired; a freshly built one has not been
     /// told anything yet. settingsDict() used to construct one on the spot, so the "While Using"
@@ -214,6 +230,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             UserDefaults.standard.set(true, forKey: "gl_asked_always")
             mgr.requestAlwaysAuthorization()
         }
+        bgLocationManager = mgr          // (set again below) so the session sees a live manager
+        holdBackgroundSession(launchKind)   // 1.0.20: before the session starts, on every launch
         mgr.startUpdatingLocation()
         if CLLocationManager.significantLocationChangeMonitoringAvailable() {
             mgr.startMonitoringSignificantLocationChanges()
@@ -432,6 +450,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     func applicationDidBecomeActive(_ application: UIApplication) {
         GLFlight.log("fg")
         flightFlush()
+        holdBackgroundSession("fg")   // 1.0.20: a session STARTED in the foreground is the one iOS lets resume later
         setLocationFidelity(foreground: true)
         // Once the page exists, and again shortly after, so the map has a position in hand well
         // inside the window where it would otherwise fall back to asking the WebView itself.
@@ -546,6 +565,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         d["authDowns"] = authDowngrades
         if lastAuthDowngradeAt > 0 { d["authDownAt"] = Int(lastAuthDowngradeAt * 1000) }
         d["bgFixes"] = bgFixCount
+        d["bgSess"] = bgActivitySession != nil   // 1.0.20: is the background session held
         d["bgMoving"] = bgMoving      // tightened fidelity while driving (see setLocationFidelity)
         if lastBgFixAt > 0 { d["bgFixAt"] = Int(lastBgFixAt * 1000) }
         d["fgBridge"] = fgBridgeSent
@@ -938,7 +958,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
     private func wakeHeartbeat(reason: String, fix: CLLocation? = nil, done: ((Bool) -> Void)? = nil) {
         // The timer is the one caller that is NOT a wake -- it only runs while the process is
         // already alive -- so it stays out of the tally that exists to measure real wakes.
-        if reason != "timer" { noteWake(reason) }
+        if reason != "timer" {
+            noteWake(reason)
+            // 1.0.20: a wake is a chance to get the steady feed back (see bgActivitySession).
+            holdBackgroundSession(reason)
+            bgLocationManager?.startUpdatingLocation()
+        }
         if let f = fix { reportFixInBackground(f, force: true, done: done); return }
         guard let cfg = nativeWriteConfig(),
               let dbUrl = cfg["dbUrl"] as? String,
