@@ -507,6 +507,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             // reporting while the app looks perfectly healthy in the foreground.
             let js = "window.__nativeSettings && window.__nativeSettings(\(self.settingsJSON()))"
             wv.evaluateJavaScript(js, completionHandler: nil)
+            // 1.0.22: tell the page whether this copy came from TestFlight or the App Store, so the
+            // "needs an update" bar sends people to the right place (TestFlight installs carry a
+            // sandbox receipt).
+            let tf = Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+            wv.evaluateJavaScript("window.__glChannel='\(tf ? "testflight" : "appstore")';window._checkNativeUpdate&&window._checkNativeUpdate()", completionHandler: nil)
         }
     }
 

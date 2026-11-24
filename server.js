@@ -1786,6 +1786,23 @@ app.get('/api/parcel', function(req, res) {
   var qpublicUrl = 'https://qpublic.schneidercorp.com/Application.aspx?App=LibertyCountyFL&Layer=Parcels&PageType=Map&Q=' + lat + '%2C' + lng;
   res.json({ qpublicUrl: qpublicUrl, lat: lat, lng: lng });
 });
+// What version of GroundLink the App Store is serving right now, from Apple's public lookup.
+// The phone app compares its own version to this and shows "needs an update" when it is
+// behind. Proxied (and cached for 30 minutes) because Apple's lookup does not allow browser
+// requests from our page.
+var _storeVer = { at: 0, body: null };
+app.get('/api/store-version', async function (req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    if (!_storeVer.body || Date.now() - _storeVer.at > 30 * 60000) {
+      var r = await fetch('https://itunes.apple.com/lookup?id=6790179901&country=us&t=' + Date.now());
+      var j = await r.json();
+      var a = (j && j.results && j.results[0]) || {};
+      if (a.version) _storeVer = { at: Date.now(), body: { ios: String(a.version) } };
+    }
+    res.json(_storeVer.body || {});
+  } catch (e) { res.json(_storeVer.body || {}); }
+});
 app.get('/join', function(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.redirect('/?fresh=1');
@@ -1942,7 +1959,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('index.html') || filePath.endsWith('headless.html')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
-    if (filePath.endsWith('version.json')) {
+    if (filePath.endsWith('version.json') || filePath.endsWith('native-latest.json')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
     if (filePath.endsWith('admin.html')) {

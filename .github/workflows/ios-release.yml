@@ -135,3 +135,33 @@ jobs:
         run: |
           cd ios/App
           fastlane "${LANE}"
+
+  # Once Apple has processed a new TestFlight build, publish its number to public/native-latest.json.
+  # Phones on an older build then show "Your GroundLink app needs an update" with an Open TestFlight
+  # button (see _checkNativeUpdate in public/index.html). Pushing the file redeploys the web app.
+  announce:
+    needs: build-and-upload
+    if: ${{ (inputs.lane || 'beta') == 'beta' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Wait for Apple, then publish the new build number
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          VER=$(grep -m1 -o 'MARKETING_VERSION = [0-9.]*' native-app/ios/App/App.xcodeproj/project.pbxproj | grep -o '[0-9.]*$')
+          node tools/asc-announce-beta.mjs "$BUILD_NUMBER" "$VER"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add public/native-latest.json
+          git commit -m "TestFlight build $BUILD_NUMBER ($VER) is ready: phones behind it are asked to update"
+          for i in 1 2 3 4 5; do git pull --rebase origin main && git push origin HEAD:main && break; sleep 10; done

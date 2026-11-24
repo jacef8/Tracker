@@ -17475,6 +17475,7 @@ window._refreshBuildStamp = function () {
       window._nativeAppInfo = info || null;
       try { window._refreshBuildStamp(); } catch (e) {}
       try { _watchMinNative(); } catch (e) {}
+      try { window._checkNativeUpdate(); } catch (e) {}
     }).catch(function () {});
   } catch (e) {}
 })();
@@ -17514,19 +17515,60 @@ function _watchMinNative() {
           var mine = _nativeBuildNum();
           if (mine == null) return;                       // not the native app — nothing to update
           var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
+          if (ios) return;   // 1070: iPhones check themselves automatically (_checkNativeUpdate)
           var need = parseInt(ios ? cfg.ios : cfg.android, 10);
           if (!isFinite(need) || mine >= need) { _hideNativeUpdateBar(); return; }
           // Per-platform link when provided (urlIos/urlAndroid) — TestFlight and Play are
           // different destinations; a single url sent iPhones to the Play Store.
           var _updUrl = (ios ? cfg.urlIos : cfg.urlAndroid) || cfg.url || '';
-          _showNativeUpdateBar(cfg.msg || 'A new version of the GroundLink app is available.', _updUrl, mine, need);
+          _showNativeUpdateBar('Your GroundLink app needs an update.', _updUrl, mine, need, 'Update');
         } catch (e) {}
       });
     } catch (e) {}
   }, 400);
 }
+// 1070: automatic for iPhones (Jace, 2026-11-23: "anytime we send a new app version ... not
+// allow them to be three or four builds behind"). Lexi and Laura sat two builds behind on
+// TestFlight with nothing telling them, because the bar only came on when someone raised
+// _minNative by hand. Now the phone compares itself to two things, on open, on return, and
+// every 30 minutes:
+//   - /native-latest.json: the newest TestFlight build, written by the ios-release workflow
+//     only after Apple finishes processing it (tools/asc-announce-beta.mjs);
+//   - /api/store-version: what the App Store is serving, from Apple's public lookup.
+// A phone newer than the App Store is a TestFlight phone, so it is told to open TestFlight
+// when a newer test build exists. Any other phone is told to update in the App Store only
+// when the App Store really has something newer.
+function _verCmp(a, b) {
+  var x = String(a || '').split('.'), y = String(b || '').split('.');
+  for (var i = 0; i < Math.max(x.length, y.length); i++) {
+    var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+window._checkNativeUpdate = function () {
+  var info = window._nativeAppInfo; if (!info) return;
+  var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
+  if (!ios) return;
+  var mine = _nativeBuildNum(), myVer = String(info.version || '');
+  if (mine == null || !myVer) return;
+  var get = function (u) { return fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }); };
+  Promise.all([get('/native-latest.json'), get('/api/store-version')]).then(function (r) {
+    var beta = r[0] || {}, store = (r[1] || {}).ios || '';
+    var onTestFlight = window.__glChannel ? window.__glChannel === 'testflight' : (!!store && _verCmp(myVer, store) > 0);
+    if (onTestFlight && +beta.ios > mine) {
+      _showNativeUpdateBar('Your GroundLink app needs an update.', 'itms-beta://', mine, +beta.ios, 'Open TestFlight');
+    } else if (!onTestFlight && store && _verCmp(store, myVer) > 0) {
+      _showNativeUpdateBar('Your GroundLink app needs an update.', GL_APPSTORE_URL, mine, 0, 'Update');
+    } else {
+      _hideNativeUpdateBar();
+    }
+  });
+};
+setInterval(function () { try { window._checkNativeUpdate(); } catch (e) {} }, 30 * 60000);
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { try { window._checkNativeUpdate(); } catch (e) {} } });
 function _hideNativeUpdateBar() { try { var b = document.getElementById('native-update-bar'); if (b) b.style.display = 'none'; } catch (e) {} }
-function _showNativeUpdateBar(msg, url, mine, need) {
+function _showNativeUpdateBar(msg, url, mine, need, btn) {
   var bar = document.getElementById('native-update-bar');
   if (!bar) {
     bar = document.createElement('div');
@@ -17539,12 +17581,12 @@ function _showNativeUpdateBar(msg, url, mine, need) {
   bar.innerHTML = '';
   var txt = document.createElement('div');
   txt.style.cssText = 'flex:1;min-width:0;line-height:1.35';
-  txt.textContent = msg + ' (you have build ' + mine + ', latest is ' + need + ')';
+  txt.textContent = msg;   // 1070: plain words, no build numbers
   bar.appendChild(txt);
   if (url) {
     var a = document.createElement('a');
     a.href = url; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = 'Update';
+    a.textContent = btn || 'Update';
     a.style.cssText = 'flex-shrink:0;background:#000;color:#f0a500;border-radius:8px;padding:8px 14px;text-decoration:none;font-weight:800';
     bar.appendChild(a);
   }
