@@ -26,7 +26,7 @@ ok(/stem\.className = 'mk-stem'/.test(idx) && /var len = MK_MERGE_LIFT - 19;/.te
 ok(!/_groupLeaderFeats\(\)/.test(idx) && !/grpdot/.test(idx), 'the lagging map-layer line is gone');
 ok(/if \(v\.mk && v\.mk\._mergedOval\) \{ ml = ''; mt = ''; \}/.test(idx), 'the spread pass no longer bends the stem sideways');
 ok(/if \(v\.mk && v\.mk\._mergedOval\) return;/.test(idx), 'an oval does not also get a spread leader to one member');
-ok(/var _skip = immediate === 'zoom' \|\| \(immediate && !_splits\);/.test(idx), 'a group only splits after the debounce...');
+ok(/var _skip = immediate === 'zoom' \|\| \(immediate && !_splits\) \|\| _farSplit \|\| _heldTooLong;/.test(idx), 'a group only splits after the debounce, unless someone is clearly gone or it has waited 20 s (1071)...');
 ok(/_updateMarkerGrouping\(window\._gfCamDriving \? true : 'zoom'\)/.test(idx), '...unless the person zoomed themselves');
 
 console.log(fails ? `${fails} of ${n} checks FAILED` : `all ${n} checks pass`);

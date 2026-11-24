@@ -5637,7 +5637,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1070;
+var APP_BUILD = 1071;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7581,9 +7581,35 @@ function _updateMarkerGrouping(immediate) {
       });
     }
   } catch (e) {}
-  var _skip = immediate === 'zoom' || (immediate && !_splits);
+  // 1071: a bubble held people who were miles apart (Jace, 2026-11-24: Lexi and Vanesa shown in
+  // his bubble; tapping Lexi flew somewhere with no pin). Breaking a group up waits for the WHOLE
+  // map's grouping to hold still for 5 s, and with one pair jittering in a moving car it never
+  // held still, so a group formed earlier (zoomed out, or all at home) was never broken up. Now a
+  // member who is clearly gone (over 400 m and 90 px from everyone else in the bubble) splits off
+  // at once, and no change waits more than 20 s however much the rest of the map jitters.
+  var _farSplit = false;
+  try {
+    if (_splits && window._lastAppliedGroups) {
+      _farSplit = Object.keys(window._lastAppliedGroups).some(function (sig) {
+        var ms = window._lastAppliedGroups[sig].filter(function (u) { return uids.indexOf(u) !== -1; });
+        return ms.length > 1 && ms.some(function (u) {
+          var pu = userMarkers[u]._ll, su = map.project({ lng: pu[0], lat: pu[1] });
+          return ms.every(function (v) {
+            if (v === u) return true;
+            var pv = userMarkers[v]._ll, sv = map.project({ lng: pv[0], lat: pv[1] });
+            return metersApart(pu[1], pu[0], pv[1], pv[0]) > 400 && Math.hypot(su.x - sv.x, su.y - sv.y) > 90;
+          });
+        });
+      });
+    }
+  } catch (e) {}
+  if (allSig === window._lastStableGroupSig) window._groupPendingSince = 0;
+  else if (!window._groupPendingSince) window._groupPendingSince = now;
+  var _heldTooLong = !!window._groupPendingSince && (now - window._groupPendingSince) > 20000;
+  var _skip = immediate === 'zoom' || (immediate && !_splits) || _farSplit || _heldTooLong;
   if (_skip || allSig === window._lastStableGroupSig || (now - cand.since) >= GROUP_DEBOUNCE_MS || !window._lastAppliedGroups) {
     window._lastStableGroupSig = allSig;
+    window._groupPendingSince = 0;
     Object.keys(rawGroups).forEach(function (r) { finalGroups[rawGroups[r].slice().sort().join(',')] = rawGroups[r]; });
     window._lastAppliedGroups = finalGroups;
   } else {
@@ -27743,11 +27769,17 @@ function _glrPaint() {
       // dropped whole (line and name); a road Mapbox leaves blank keeps ours. Forest roads always stay.
       var esriRoads = !!map.getLayer('esri-roads-layer');
       var baseNames = esriRoads ? null : _glrBaseRoadNames();
-      var out = feats.filter(function (f) {
+      // 1071: "scattered pieces of road sections that are not contiguous to any other road" (Jace,
+      // 2026-11-24, Satellite 1 over Bristol). Dropping a road whole wherever Mapbox printed its
+      // name left only the roads Mapbox left blank, in bits. Now every county road keeps its line,
+      // so the network is whole, and only OUR NAME is hidden where Mapbox already names it.
+      var out = [];
+      feats.forEach(function (f) {
         var p = f.properties;
-        if (p.k !== 'loc') return true;
-        if (esriRoads) return false;
-        return !(baseNames && p.n && baseNames[_glrNorm(p.n)]);
+        if (p.k !== 'loc') { out.push(f); return; }
+        if (esriRoads) return;
+        var dup = !!(baseNames && p.n && baseNames[_glrNorm(p.n)]);
+        out.push(dup === !!p.dup ? f : { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, p, { dup: dup ? 1 : 0 }) });
       });
       // 1066: forest roads the other way round: Mapbox Satellite writes "Five Points Rd" and an
       // "FS 112" sign on FR 112, a second name next to ours. Ours carries the FR number hunters go
@@ -27755,7 +27787,7 @@ function _glrPaint() {
       if (!esriRoads) _glrHideBaseForestNames(out);
       // setData re-renders, and a re-render ends in 'idle', which calls this again: only send
       // when something actually changed.
-      var sig = out.map(function (f) { return f.properties.u || ''; }).join('|');
+      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|');
       if (sig === window._glrSig && src._glrSet) return;
       window._glrSig = sig; src._glrSet = 1;
       src.setData({ type: 'FeatureCollection', features: out });
