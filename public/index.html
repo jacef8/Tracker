@@ -3913,8 +3913,6 @@ window._timedOnValue = function (orig) {
     <div id="qt-hours-row" style="display:flex;gap:6px;margin-bottom:10px">
       <button class="qt-hr" data-h="3" onclick="window._setTrailHours(3)">3h</button>
       <button class="qt-hr" data-h="6" onclick="window._setTrailHours(6)">6h</button>
-      <button class="qt-hr" data-h="12" onclick="window._setTrailHours(12)">12h</button>
-      <button class="qt-hr" data-h="0" onclick="window._setTrailHours(0)">All day</button>
     </div>
     <div id="qt-body"></div>
   </div>
@@ -5639,7 +5637,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1068;
+var APP_BUILD = 1069;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7058,8 +7056,14 @@ function _applyMarkerMerged(primary, members) {
   // this is) is live, and no other member with a fix under 30 s old disagrees by more than 15 mph.
   // Once shown it holds for 10 s, so one late report cannot blink it off.
   var _now = Date.now(), _pS = +mk._spd || 0;
+  // 1069: "shows a speed for an individual that's grouped with other individuals that are not
+  // going that speed" (Jace, 2026-11-23). A member who was offline, or had not reported in 30 s,
+  // used to count as AGREEING, so a parked or quiet person grouped with a driver wore the
+  // driver's 60 mph. Now every member must be live and recently heard from (60 s: iPhones
+  // report every 15-22 s on the road) and within 15 mph, or the oval shows no speed.
   var _same = !!mk._isLive && members.every(function (u) {
-    var m = userMarkers[u]; if (!m || u === primary || !m._isLive || !(_now - (m._ts || 0) < 30000)) return true;
+    if (u === primary) return true;
+    var m = userMarkers[u]; if (!m || !m._isLive || !(_now - (m._ts || 0) < 60000)) return false;
     return Math.abs((+m._spd || 0) - _pS) <= 15;
   });
   if (_same) el.__spdUntil = _now + 10000;
@@ -7614,10 +7618,18 @@ function _updateMarkerGrouping(immediate) {
     var primary;
     if (members.indexOf(userId) !== -1) primary = userId;
     else {
-      var _prevA = members.filter(function (u) { return window._ovalAnchors && window._ovalAnchors[u] && userMarkers[u]._isLive; })[0];
+      // 1069: ride the phone that reports most OFTEN. Laura and Lexi in one car (2026-11-23):
+      // the oval stuck to Laura's iPhone 1.0.19, which reported once every ~16 s, a quarter mile
+      // apart, so it sat back down the road while Lexi's steady trail line ran on ahead of it.
+      // Keep last pass's anchor only while it reports about as often as the best phone here.
+      var _cad = function (u) { return Math.min(Math.max(+userMarkers[u]._cadMs || 10000, 1000), 60000); };
+      var _bestCad = Math.min.apply(null, members.filter(function (u) { return userMarkers[u]._isLive; }).map(_cad).concat([60000]));
+      var _prevA = members.filter(function (u) { return window._ovalAnchors && window._ovalAnchors[u] && userMarkers[u]._isLive && _cad(u) <= _bestCad * 1.5 + 2000; })[0];
       primary = _prevA || members.slice().sort(function (a, b) {
         var la = userMarkers[a]._isLive ? 1 : 0, lb = userMarkers[b]._isLive ? 1 : 0;
         if (la !== lb) return lb - la;
+        var ca = Math.round(_cad(a) / 3000), cb = Math.round(_cad(b) / 3000);
+        if (ca !== cb) return ca - cb;
         var ta = userMarkers[a]._ts || 0, tb = userMarkers[b]._ts || 0;
         return (tb - ta) || (a < b ? -1 : 1);
       })[0];
@@ -30358,8 +30370,11 @@ function _trackStats(pts){
       // moving; a barely-moved long gap (pace <1 mph) is a stop and is excluded, and an impossible
       // jump (a bad fix) is excluded so it can't inflate the average either.
       if (dt>0){ var _segMph=(dM/(dt/1000))*2.23694; if (_segMph>=1 && _segMph<=120) s.movMs+=dt; }
-      var sp=(p.sp!=null&&p.sp>=0)?p.sp:(dt>0?dM/(dt/1000):0);
-      var mph=sp*2.23694; if (mph<200 && mph>s.maxMph) s.maxMph=mph;
+      // 1069: "150.1 mph" max on a drive that never passed 80. Two fixes a second or two apart
+      // with 100+ ft of GPS error between them read as a huge speed. A speed worked out from
+      // positions now needs at least 5 s between them, and anything over 120 mph is a bad fix.
+      var sp=(p.sp!=null&&p.sp>=0)?p.sp:(dt>=5000?dM/(dt/1000):0);
+      var mph=sp*2.23694; if (mph<=120 && mph>s.maxMph) s.maxMph=mph;
     }
   }
   s.durMs=s.endTs-s.startTs;
@@ -30617,8 +30632,9 @@ window._openHistoryForMember = function (uid, name, circleKey) {
     // Past days only exist for a Crew (that's where location history is kept), so outside one
     // the picker is pointless — pin it to today and hide it rather than offering dates that
     // can never hold anything.
-    dateInput.style.display = isCrew ? 'block' : 'none';
-    if (!isCrew) dateInput.value = new Date().toLocaleDateString('en-CA');
+    // 1069: history on screen is the last 3 or 6 hours only (Jace, 2026-11-23): no past days.
+    dateInput.style.display = 'none';
+    dateInput.value = new Date().toLocaleDateString('en-CA');
     // Default to TODAY. This used to default to yesterday (Date.now() - 86400000), so tapping
     // "Day" silently looked up a date you very likely weren't recording on yet and reported
     // "No trail for <date>" — indistinguishable from the feature being broken, which is exactly
@@ -30759,9 +30775,9 @@ window._pickTrailRange = function () { window._loadTrailRange(); };
 // Adjustable trail window (0 = the whole selected day). Applies on TOP of the day view: for
 // today, "3h" means the trailing 3 hours ending now. Chips restyle here + visibility is decided
 // in _loadTrailRange (hidden for past dates, where only the full day makes sense).
-window._trailHours = 0;
+window._trailHours = 6;   // 1069: 3h or 6h only; 12h and All day were removed
 window._setTrailHours = function (h) {
-  window._trailHours = h || 0;
+  window._trailHours = h === 3 ? 3 : 6;
   window._loadTrailRange();
 };
 window._styleTrailChips = function (isToday) {
@@ -30855,8 +30871,8 @@ window._loadTrailRange = function () {
     var now = Date.now();
     // Adjustable window: for TODAY, an hours chip narrows the view to the trailing N hours
     // ending now. Past dates are always the whole day (the chips are hidden there).
-    try { window._styleTrailChips(isToday); } catch (e) {}
-    var _hrs = isToday ? (window._trailHours || 0) : 0;
+    try { window._styleTrailChips(true); } catch (e) {}
+    var _hrs = window._trailHours === 3 ? 3 : 6;
     if (_hrs > 0) pts = pts.filter(function (p) { return p.t >= now - _hrs * 3600000; });
     var label = dateStr;
     if (pts.length >= 2) {
