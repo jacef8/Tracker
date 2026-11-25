@@ -3934,15 +3934,55 @@ window._timedOnValue = function (orig) {
   <div id="place-events-list" style="overflow-y:auto;flex:1;padding:4px 0 12px"></div>
 </div>
 
+<!-- ══ SAVED MAPS LIBRARY (1073) ════════════════════════════════════
+     "we need a library of saved map areas so we can see what is saved and manage it, such as
+     delete or edit or rename" (Jace, 2026-11-24). Every area saved for no signal, with a
+     picture, its size and date, and Show / Rename / Update / Delete. -->
+<style>
+  #maps-lib { position: fixed; inset: 0; z-index: 420; display: none; align-items: flex-end; justify-content: center; }
+  #maps-lib.on { display: flex; }
+  #maps-lib .ml-bd { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+  #maps-lib .ml-pan { position: relative; width: 100%; max-width: 620px; max-height: 88vh; display: flex; flex-direction: column; background: var(--surface, #161b22); border: 1px solid var(--border); border-bottom: none; border-radius: 20px 20px 0 0; padding-bottom: var(--safe-bot, 0px); }
+  #maps-lib .ml-hd { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 6px 20px; }
+  #maps-lib h2 { margin: 0; font-size: 24px; font-weight: 800; color: var(--text); }
+  #maps-lib .ml-x { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 22px; cursor: pointer; }
+  #maps-lib .ml-body { overflow-y: auto; min-height: 0; flex: 1; padding: 4px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  #maps-lib .ml-use { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #maps-lib .ml-bar { height: 8px; border-radius: 5px; background: var(--border); overflow: hidden; margin-top: 6px; }
+  #maps-lib .ml-bar > i { display: block; height: 100%; background: var(--accent); }
+  #maps-lib .ml-new { min-height: 56px; border: none; border-radius: 14px; background: var(--accent); color: #0C1113; font-size: 17px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  #maps-lib .ml-card { display: flex; gap: 12px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; }
+  #maps-lib .ml-pic { width: 88px; height: 88px; border-radius: 10px; flex-shrink: 0; background: #22303a center/cover no-repeat; }
+  #maps-lib .ml-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  #maps-lib .ml-name { font-size: 17px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #maps-lib .ml-meta { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #maps-lib .ml-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  #maps-lib .ml-btns button { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 14px; font-weight: 700; cursor: pointer; }
+  #maps-lib .ml-btns button.del { color: #FF6B5E; border-color: #6b2a24; }
+  #maps-lib .ml-btns button:active { transform: scale(.97); }
+  #maps-lib input.ml-ren { width: 100%; box-sizing: border-box; min-height: 44px; padding: 8px 10px; font-size: 16px; border-radius: 10px; border: 1px solid var(--accent); background: var(--surface, #161b22); color: var(--text); }
+  #maps-lib .ml-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; cursor: pointer; }
+  #maps-lib .ml-row b { font-size: 15px; color: var(--text); }
+  #maps-lib .ml-row small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  #maps-lib .ml-empty { padding: 18px 6px; font-size: 15px; color: var(--muted); line-height: 1.5; text-align: center; }
+</style>
+<div id="maps-lib">
+  <div class="ml-bd" onclick="window._closeMapsLib()"></div>
+  <div class="ml-pan">
+    <div class="ml-hd"><h2>Saved maps</h2><button class="ml-x" onclick="window._closeMapsLib()" aria-label="Close">&times;</button></div>
+    <div class="ml-body" id="maps-lib-body"></div>
+  </div>
+</div>
+
 <!-- ══ OFFLINE DOWNLOAD MODE BAR (map stays visible; frame the area) ════ -->
 <div id="offline-mode-bar" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot, 0px) + 16px);z-index:360;flex-direction:column;gap:8px;background:rgba(13,17,23,.93);border:1px solid var(--accent);border-radius:14px;padding:11px 13px;box-shadow:0 6px 26px rgba(0,0,0,.6);width:min(360px,92vw)">
-  <div style="font-size:12px;color:#fff;text-align:center;font-weight:600;line-height:1.4">Everything on screen gets saved — pan &amp; zoom to frame your area</div>
+  <div style="font-size:12px;color:#fff;text-align:center;font-weight:600;line-height:1.4">Everything on screen gets saved. Move and zoom the map to frame the area.</div>
   <input id="offline-name" type="text" placeholder="Name this area (e.g. Buck Camp)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:9px;color:var(--text);font-size:13px" />
   <div id="offline-est" style="font-size:14px;font-weight:800;text-align:center;color:var(--accent)">~0&nbsp;MB · 0 tiles</div>
   <div id="offline-progress" style="display:none;height:7px;background:#21262d;border-radius:5px;overflow:hidden"><div id="offline-progress-fill" style="height:100%;width:0;background:var(--accent);transition:width .15s"></div></div>
   <div style="display:flex;gap:8px">
     <button id="offline-done-btn" onclick="window._cancelOfflineMode && window._cancelOfflineMode()" style="flex:1;padding:9px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer">Done</button>
-    <button id="offline-dl-btn" onclick="window._confirmOfflineDownload && window._confirmOfflineDownload()" style="flex:2;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:13px;font-weight:800;cursor:pointer">Download this area</button>
+    <button id="offline-dl-btn" onclick="window._confirmOfflineDownload && window._confirmOfflineDownload()" style="flex:2;padding:9px;background:var(--accent);border:none;border-radius:9px;color:#1a1200;font-size:13px;font-weight:800;cursor:pointer">Save this area</button>
     <button id="offline-cancel-btn" onclick="window._offlineCancel=true" style="display:none;flex:2;padding:9px;background:#5a1d1d;border:1px solid #f85149;border-radius:9px;color:#ffb3ab;font-size:13px;font-weight:800;cursor:pointer">Stop download</button>
   </div>
   <div id="offline-status" style="font-size:11px;color:var(--muted);text-align:center;min-height:14px"></div>
@@ -4685,20 +4725,14 @@ window._timedOnValue = function (orig) {
         <button class="layer-base-btn base-row active" data-style="mapbox://styles/mapbox/satellite-streets-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-satellite"/></svg><span class="base-row-txt"><b>Mapbox Satellite</b><small>Photo from above, with road and place names</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="esri-imagery" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-satellite"/></svg><span class="base-row-txt"><b>Esri Satellite</b><small>A second photo, often newer and sharper</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="usgs-topo" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-mountain"/></svg><span class="base-row-txt"><b>Topo Map</b><small>Government topo with contour lines</small></span><span class="base-row-on">On</span></button>
-        <button class="layer-base-btn base-row" data-style="usgs-aerial" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-globe"/></svg><span class="base-row-txt"><b>Offline Photo</b><small>Government photo, saves for use with no signal</small></span><span class="base-row-on">On</span></button>
+        <button class="layer-base-btn base-row" data-style="usgs-aerial" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-globe"/></svg><span class="base-row-txt"><b>Government Photo</b><small>Works with no signal in areas you've saved</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="mapbox://styles/mapbox/streets-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-map"/></svg><span class="base-row-txt"><b>Street Map</b><small>Plain roads and towns, easy to read</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="mapbox://styles/mapbox/outdoors-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-mountain"/></svg><span class="base-row-txt"><b>Outdoors</b><small>Woods, trails and hills</small></span><span class="base-row-on">On</span></button>
       </div>
-      <div class="section-title">Offline maps</div>
+      <div class="section-title">Saved maps</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-        <div style="font-size:11px;color:var(--muted);line-height:1.5">Save aerial imagery for an area to use with no signal. USGS imagery, ~200&nbsp;MB cap.</div>
-        <div id="offline-storage-meter"></div>
-        <button onclick="window._startOfflineMode && window._startOfflineMode()" style="padding:11px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#1a1200;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px"><svg class="licon licon-sm"><use href="#ic-download"/></svg>Download an area for offline</button>
-        <div id="offline-areas"></div>
-        <div onclick="window._setToggleAutoCache && window._setToggleAutoCache()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-top:8px;-webkit-tap-highlight-color:transparent">
-          <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-download"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Cache around me automatically</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Quietly saves a few miles of imagery around wherever you are, while you still have signal. Uses data.</div></div></div>
-          <span id="set-autocache-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">ON</span>
-        </div>
+        <!-- 1073: one place for saved maps (the library), instead of a list buried here. -->
+        <button id="layer-savedmaps-btn" onclick="window._openMapsLib && window._openMapsLib()" style="padding:13px 14px;background:var(--bg);border:1px solid var(--accent);border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-download"/></svg><span style="flex:1"><span style="display:block">Saved maps</span><small id="layer-savedmaps-sub" style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Areas saved for no signal</small></span><span style="color:var(--muted);font-size:20px">&rsaquo;</span></button>
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
@@ -5637,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1072;
+var APP_BUILD = 1073;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27301,7 +27335,7 @@ function _updateOfflineEst() {
   var est = document.getElementById('offline-est');
   if (est) { est.textContent = '~' + mb.toFixed(0) + ' MB · ' + ids.length + ' tiles'; est.style.color = over ? '#f85149' : 'var(--accent)'; }
   var dl = document.getElementById('offline-dl-btn');
-  if (dl) dl.textContent = over ? 'Zoom in — over ' + capMB + ' MB cap' : 'Download this area';
+  if (dl) dl.textContent = over ? 'Zoom in: over the ' + capMB + ' MB limit' : 'Save this area';
 }
 // Enter "frame the area" mode: close the layers sheet so the map is fully visible,
 // switch to Aerial, and float a small bar with a LIVE size estimate as you pan/zoom.
@@ -27424,6 +27458,164 @@ function _offlineProgress(frac) {
   var f = document.getElementById('offline-progress-fill');
   if (f) f.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + '%';
 }
+// 1072: "Why is this taking so long. It's just over 100mb" (Jace, 2026-11-24). Tiles were
+// fetched ONE AT A TIME, each waiting on the government server's round trip, so a 100 MB area
+// (~5,000 tiles) took the better part of an hour. Now 8 at a time. Shared by Save and Update.
+async function _fetchTilesInto(cache, ids, onProgress) {
+  var r = { done: 0, bytes: 0, failed: 0, capped: false, stopped: false }, next = 0, started = 0;
+  var worker = async function () {
+    while (true) {
+      if (window._offlineCancel) { r.stopped = true; return; }
+      if (r.bytes >= GL_TILE_CAP_BYTES) { r.capped = true; return; }
+      var i = next++; if (i >= ids.length) return;
+      var p = ids[i].split('/');                          // z/y/x
+      var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
+      try {
+        var resp = await fetch(url, { mode: 'cors' });
+        if (resp.ok) { r.bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); r.done++; }
+        else r.failed++;
+      } catch (e) { r.failed++; }
+      if (++started % 10 === 0 && onProgress) { try { onProgress(started, r.done, r.bytes); } catch (e) {} }
+    }
+  };
+  var pool = []; for (var w = 0; w < 8; w++) pool.push(worker());
+  await Promise.all(pool);
+  return r;
+}
+// Tile ids for a saved area's own box (not the current view), z11-17 like a fresh save.
+function _areaTileIds(bbox) {
+  var W = bbox[0], S = bbox[1], E = bbox[2], N = bbox[3], out = [];
+  for (var z = 11; z <= 17; z++) {
+    var x0 = _lon2tx(W, z), x1 = _lon2tx(E, z), y0 = _lat2ty(N, z), y1 = _lat2ty(S, z);
+    for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) out.push(z + '/' + y + '/' + x);
+  }
+  return out;
+}
+
+// ── Saved maps library (1073) ─────────────────────────────────────────────────────────────────
+// "we need a library of saved map areas so we can see what is saved and manage it, such as
+// delete or edit or rename" (Jace, 2026-11-24).
+window._mapsLibBusy = null;   // id of the area being updated, if any
+function _mlEsc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+// The area's own picture: one saved tile from its middle, which the phone already holds.
+function _mlPic(a) {
+  try {
+    var lat = a.lat, lng = a.lng;
+    if (a.bbox) { lng = (a.bbox[0] + a.bbox[2]) / 2; lat = (a.bbox[1] + a.bbox[3]) / 2; }
+    var z = 14;
+    if (a.bbox) { var w = Math.abs(a.bbox[2] - a.bbox[0]); z = Math.max(11, Math.min(16, Math.round(Math.log2(360 / Math.max(w, 0.0005))))); }
+    return GL_AERIAL_TPL.replace('{z}', z).replace('{y}', _lat2ty(lat, z)).replace('{x}', _lon2tx(lng, z));
+  } catch (e) { return ''; }
+}
+function _mlDate(ts) { try { return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return ''; } }
+window._refreshSavedMapsLabel = function () {
+  var el = document.getElementById('layer-savedmaps-sub'); if (!el) return;
+  var areas = _getAreas(), total = areas.reduce(function (t, a) { return t + (a.bytes || 0); }, 0);
+  el.textContent = areas.length ? areas.length + ' saved · ' + _fmtMB(total) : 'Areas saved for no signal';
+};
+window._openMapsLib = function () {
+  if (typeof closeLayerSheet === 'function') { try { closeLayerSheet(); } catch (e) {} }
+  try { window._ssPopClose && window._ssPopClose(); } catch (e) {}
+  document.getElementById('maps-lib').classList.add('on');
+  window._renderMapsLib();
+};
+window._closeMapsLib = function () { document.getElementById('maps-lib').classList.remove('on'); };
+function _mlBtn(label, call, cls) { return '<button' + (cls ? ' class="' + cls + '"' : '') + ' data-ml="' + call + '">' + label + '</button>'; }
+window._renderMapsLib = async function (renameId) {
+  var body = document.getElementById('maps-lib-body'); if (!body) return;
+  var areas = _getAreas().slice().sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+  var total = areas.reduce(function (t, a) { return t + (a.bytes || 0); }, 0);
+  var quota = 0, usage = 0;
+  try { if (navigator.storage && navigator.storage.estimate) { var est = await navigator.storage.estimate(); quota = est.quota || 0; usage = est.usage || 0; } } catch (e) {}
+  var pct = quota ? Math.min(100, Math.round(usage / quota * 100)) : 0;
+  var auto = window._autoCacheOn();
+  var h = '<div><div class="ml-use"><b style="color:var(--text)">' + _fmtMB(total) + '</b> in ' + areas.length + ' saved map' + (areas.length === 1 ? '' : 's') +
+      (quota ? ' · ' + _fmtMB(usage) + ' of ' + _fmtGB(quota) + ' used on this phone' : '') + '</div>' +
+      (quota ? '<div class="ml-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>' +
+    '<button class="ml-new" data-ml="new"><svg class="licon"><use href="#ic-download"/></svg>Save a new area</button>' +
+    '<div class="ml-row" data-ml="auto"><div><b>Keep the area around me saved</b><small>Saves about 2.5 miles around wherever you are, while you have signal. Uses data.</small></div>' +
+      '<span style="font-size:13px;font-weight:800;padding:6px 12px;border-radius:20px;' + (auto ? 'background:var(--accent);color:#0C1113' : 'background:var(--border);color:var(--muted)') + '">' + (auto ? 'ON' : 'OFF') + '</span></div>';
+  if (!areas.length) {
+    h += '<div class="ml-empty">No saved maps yet. Tap <b>Save a new area</b>, frame the ground you want on screen, and it will be there with no signal.</div>';
+  }
+  areas.forEach(function (a) {
+    var busy = window._mapsLibBusy === a.id, ren = renameId === a.id, pic = _mlPic(a);
+    h += '<div class="ml-card" data-id="' + a.id + '"><div class="ml-pic" style="' + (pic ? 'background-image:url(&quot;' + pic + '&quot;)' : '') + '"></div><div class="ml-info">' +
+      (ren ? '<input class="ml-ren" maxlength="60" value="' + _mlEsc(a.name || '') + '">'
+           : '<div class="ml-name">' + _mlEsc(a.name || 'Saved area') + '</div>') +
+      '<div class="ml-meta">' + _fmtMB(a.bytes || 0) + ' · saved ' + _mlDate(a.updated || a.ts) + (a.parcelKeys && a.parcelKeys.length ? ' · property lines' : '') + '</div>' +
+      '<div class="ml-meta ml-st">' + (busy ? 'Updating…' : '') + '</div>' +
+      '<div class="ml-btns">' +
+        (ren ? _mlBtn('Save name', 'savename') + _mlBtn('Cancel', 'cancel')
+             : busy ? _mlBtn('Stop', 'stop')
+             : _mlBtn('Show on map', 'show') + _mlBtn('Rename', 'rename') + _mlBtn('Update', 'update') + _mlBtn('Delete', 'delete', 'del')) +
+      '</div></div></div>';
+  });
+  body.innerHTML = h;
+  if (renameId) {
+    var inp = body.querySelector('.ml-ren');
+    if (inp) {
+      inp.focus(); inp.select();
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') window._mlSaveName(renameId, inp.value); if (e.key === 'Escape') window._renderMapsLib(); });
+    }
+  }
+  window._refreshSavedMapsLabel();
+};
+// One click handler for the whole sheet, so no area id or name is ever written into an onclick.
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest && e.target.closest('#maps-lib [data-ml]'); if (!b) return;
+  var act = b.getAttribute('data-ml'), card = b.closest('.ml-card'), id = card && card.getAttribute('data-id');
+  if (act === 'new') { window._closeMapsLib(); window._startOfflineMode(); }
+  else if (act === 'auto') { window._setToggleAutoCache(); window._renderMapsLib(); }
+  else if (act === 'show') { window._closeMapsLib(); window._goToOfflineArea(id); }
+  else if (act === 'rename') window._renderMapsLib(id);
+  else if (act === 'savename') { var inp = card.querySelector('.ml-ren'); window._mlSaveName(id, inp && inp.value); }
+  else if (act === 'cancel') window._renderMapsLib();
+  else if (act === 'update') window._mlUpdate(id);
+  else if (act === 'stop') window._offlineCancel = true;
+  else if (act === 'delete') window._mlDelete(id);
+});
+window._mlSaveName = function (id, val) {
+  var v = String(val || '').trim();
+  if (!v) { try { toast('Type a name first', 2000); } catch (e) {} return; }
+  _setAreas(_getAreas().map(function (a) { if (a.id === id) a.name = v.slice(0, 60); return a; }));
+  window._renderMapsLib();
+  try { _renderOfflineAreas(); if (_offlineFpShown) _renderOfflineFootprints(); } catch (e) {}
+};
+window._mlDelete = function (id) {
+  var a = _getAreas().filter(function (x) { return x.id === id; })[0]; if (!a) return;
+  _confirm('Delete "' + (a.name || 'this area') + '"? It will no longer show with no signal. This cannot be undone.', async function () {
+    await window._doDeleteOfflineArea(id, a);
+    window._renderMapsLib();
+  }, { danger: true, yes: 'Delete' });
+};
+// Download the area again for fresh pictures. New tiles go into a fresh cache and replace the old
+// one only once the download finished, so a stopped or failed update keeps the old pictures.
+window._mlUpdate = async function (id) {
+  if (window._mapsLibBusy) { try { toast('One update at a time', 2000); } catch (e) {} return; }
+  var a = _getAreas().filter(function (x) { return x.id === id; })[0]; if (!a) return;
+  if (!a.bbox) { try { toast('This area is too old to update. Delete it and save it again.', 3500); } catch (e) {} return; }
+  var ids = _areaTileIds(a.bbox);
+  window._mapsLibBusy = id; window._offlineCancel = false;
+  window._renderMapsLib();
+  var newName = 'gltiles_' + id + '_u' + Date.now();
+  var cache = await caches.open(newName);
+  var r = await _fetchTilesInto(cache, ids, function (n) {
+    var c = document.querySelector('#maps-lib .ml-card[data-id="' + id + '"] .ml-st');
+    if (c) c.textContent = 'Updating… ' + Math.round(n / ids.length * 100) + '%';
+  });
+  window._mapsLibBusy = null;
+  if (r.stopped || !r.done) {
+    try { await caches.delete(newName); } catch (e) {}
+    try { toast(r.stopped ? 'Update stopped. The old pictures are kept.' : 'Could not update. Check signal and try again.', 3000); } catch (e) {}
+  } else {
+    try { await caches.delete(a.cache || ('gltiles_' + id)); } catch (e) {}
+    _setAreas(_getAreas().map(function (x) { if (x.id === id) { x.cache = newName; x.count = r.done; x.bytes = r.bytes; x.updated = Date.now(); } return x; }));
+    try { toast('"' + (a.name || 'Area') + '" updated', 2500); } catch (e) {}
+  }
+  window._renderMapsLib();
+};
+
 window._confirmOfflineDownload = async function () {
   var nameEl = document.getElementById('offline-name');
   var name = ((nameEl && nameEl.value) || '').trim();
@@ -27439,27 +27631,11 @@ window._confirmOfflineDownload = async function () {
   _offlineDlUI(true); _offlineProgress(0);
   var cache = await caches.open(cacheName);
   var done = 0, bytes = 0, failed = 0, capped = false, stopped = false;
-  // 1072: "Why is this taking so long. It's just over 100mb" (Jace, 2026-11-24). Tiles were
-  // fetched ONE AT A TIME, each waiting on the government server's round trip, so a 100 MB area
-  // (~5,000 tiles) took the better part of an hour. Now 8 at a time.
-  var next = 0, started = 0;
-  var worker = async function () {
-    while (true) {
-      if (window._offlineCancel) { stopped = true; return; }
-      if (bytes >= GL_TILE_CAP_BYTES) { capped = true; return; }
-      var i = next++; if (i >= ids.length) return;
-      var p = ids[i].split('/');                          // z/y/x
-      var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
-      try {
-        var resp = await fetch(url, { mode: 'cors' });
-        if (resp.ok) { bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); done++; }
-        else failed++;
-      } catch (e) { failed++; }
-      if (++started % 10 === 0) { _offlineProgress(started / ids.length); _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)'); }
-    }
-  };
-  var pool = []; for (var wk = 0; wk < 8; wk++) pool.push(worker());
-  await Promise.all(pool);
+  var _r = await _fetchTilesInto(cache, ids, function (n, d, b) {
+    done = d; bytes = b;
+    _offlineProgress(n / ids.length); _setOfflineStatus('Saving "' + name + '"… ' + d + ' of ' + ids.length + ' (' + (b / 1048576).toFixed(1) + ' MB)');
+  });
+  done = _r.done; bytes = _r.bytes; failed = _r.failed; capped = _r.capped; stopped = _r.stopped;
   var parcelKeys = [];
   if (done > 0) {
     if (!stopped) { try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(bnds); } catch (e) {} }
@@ -27469,6 +27645,7 @@ window._confirmOfflineDownload = async function () {
     if (nameEl) nameEl.value = '';
     _renderOfflineAreas();
     if (_offlineFpShown) _renderOfflineFootprints();
+    try { window._refreshSavedMapsLabel(); } catch (e) {}
   } else {
     try { await caches.delete(cacheName); } catch (e) {}   // nothing saved → don't leave an empty cache
   }
@@ -27481,7 +27658,7 @@ window._deleteOfflineArea = function (id) {
   _confirm('Delete offline area "' + (a ? a.name : id) + '"? Its tiles will no longer work offline.', function () { _doDeleteOfflineArea(id, a); }, { danger: true, yes: 'Delete' });
 };
 window._doDeleteOfflineArea = async function (id, a) {
-  try { if (window.caches) await caches.delete('gltiles_' + id); } catch (e) {}
+  try { if (window.caches) { await caches.delete('gltiles_' + id); if (a && a.cache) await caches.delete(a.cache); } } catch (e) {}
   // Drop this area's parcel tiles too — but keep any still claimed by another saved area.
   if (a && a.parcelKeys && a.parcelKeys.length) {
     var keep = {};
@@ -37593,6 +37770,7 @@ window._voiceMod().then(function (m) {
   var MAPS = [
     ['mapbox://styles/mapbox/satellite-streets-v12', 'ic-satellite', 'Mapbox Satellite', 'Photo from above, with road and place names'],
     ['esri-imagery', 'ic-satellite', 'Esri Satellite', 'A second photo, often newer and sharper'],
+    ['usgs-aerial', 'ic-globe', 'Government photo', "Works with no signal in areas you've saved"],
     ['mapbox://styles/mapbox/streets-v12', 'ic-map', 'Street map', 'Plain roads and towns, easy to read'],
     ['mapbox://styles/mapbox/outdoors-v12', 'ic-mountain', 'Outdoors', 'Woods, trails and hills']
   ];
@@ -37607,7 +37785,10 @@ window._voiceMod().then(function (m) {
     // 1057: road names on top of whichever map is chosen.
     '<div class="ss-row" onclick="window._glrToggle(); window._ssMaps();"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
       '<div class="ss-who"><div class="ss-name">Road names</div><div class="ss-where">Forest roads by number, back roads by name</div></div>' +
-      '<span class="ss-ok" style="' + (rn ? '' : 'background:var(--ss-e2);color:var(--ss-ink2)') + '">' + (rn ? 'On' : 'Off') + '</span></div>');
+      '<span class="ss-ok" style="' + (rn ? '' : 'background:var(--ss-e2);color:var(--ss-ink2)') + '">' + (rn ? 'On' : 'Off') + '</span></div>' +
+    // 1073: the saved-maps library, from the simple map menu too.
+    '<div class="ss-row" onclick="window._openMapsLib()"><div class="ss-av ic"><svg class="licon"><use href="#ic-download"/></svg></div>' +
+      '<div class="ss-who"><div class="ss-name">Saved maps</div><div class="ss-where">Areas saved for no signal: see, rename, update, delete</div></div></div>');
   };
   window._ssPickMap = function (i) {
     window._ssPopClose();
