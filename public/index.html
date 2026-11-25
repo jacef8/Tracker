@@ -4725,7 +4725,7 @@ window._timedOnValue = function (orig) {
         <button class="layer-base-btn base-row active" data-style="mapbox://styles/mapbox/satellite-streets-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-satellite"/></svg><span class="base-row-txt"><b>Mapbox Satellite</b><small>Photo from above, with road and place names</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="esri-imagery" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-satellite"/></svg><span class="base-row-txt"><b>Esri Satellite</b><small>A second photo, often newer and sharper</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="usgs-topo" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-mountain"/></svg><span class="base-row-txt"><b>Topo Map</b><small>Government topo with contour lines</small></span><span class="base-row-on">On</span></button>
-        <button class="layer-base-btn base-row" data-style="usgs-aerial" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-globe"/></svg><span class="base-row-txt"><b>Government Photo</b><small>Works with no signal in areas you've saved</small></span><span class="base-row-on">On</span></button>
+        <button class="layer-base-btn base-row" data-style="usgs-aerial" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-globe"/></svg><span class="base-row-txt"><b>Offline Photo</b><small>Shows your saved maps. Turns on by itself when signal drops</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="mapbox://styles/mapbox/streets-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-map"/></svg><span class="base-row-txt"><b>Street Map</b><small>Plain roads and towns, easy to read</small></span><span class="base-row-on">On</span></button>
         <button class="layer-base-btn base-row" data-style="mapbox://styles/mapbox/outdoors-v12" onclick="setBaseLayer(this)"><svg class="licon"><use href="#ic-mountain"/></svg><span class="base-row-txt"><b>Outdoors</b><small>Woods, trails and hills</small></span><span class="base-row-on">On</span></button>
       </div>
@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1073;
+var APP_BUILD = 1074;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18801,6 +18801,7 @@ function initMap() {
   try {
     var _usgsBtn = document.querySelector('.layer-base-btn[data-style="usgs-aerial"]');
     if (_offAtStart) {
+      try { window._glOffPrev = (localStorage.getItem('gl_base') === 'esri-imagery') ? 'esri-imagery' : 'mapbox://styles/mapbox/satellite-streets-v12'; } catch (e) {}
       document.querySelectorAll('.layer-base-btn').forEach(function (b) { b.classList.toggle('active', b === _usgsBtn); });
       setTimeout(function () { try { toast('No signal. Showing the map photos saved on this phone', 3500); } catch (e) {} }, 1200);
     } else {
@@ -18808,11 +18809,68 @@ function initMap() {
         try {
           if (_styleReady() || !_usgsBtn) return;
           window._evt && window._evt('map style not loaded in 8 s -- switched to saved aerial photos');
-          setBaseLayer(_usgsBtn);
+          window._offlineSwitch('weak');
           toast('Weak signal. Showing the map photos saved on this phone', 3500);
         } catch (e) {}
       }, 8000);
     }
+  } catch (e) {}
+  // 1074: "I still don't understand why I would turn on the government photo layer if I have the
+  // offline layer" (Jace, 2026-11-24). They were the same thing: saved maps only draw on that
+  // layer. So nobody should have to pick it. When signal drops mid-use (phone says offline, or the
+  // map's own tiles keep failing), switch to it; when signal is back, return to the map they had.
+  try {
+    var _offBtn = function (st) { return document.querySelector('.layer-base-btn[data-style="' + st + '"]'); };
+    var _curBase = function () { var a = document.querySelector('.layer-base-btn.active'); return a ? a.getAttribute('data-style') : ''; };
+    window._offlineSwitch = function (why) {
+      var cur = _curBase();
+      if (cur === 'usgs-aerial' || window._glOffPrev) return;
+      var b = _offBtn('usgs-aerial'); if (!b) return;
+      var keep = null; try { keep = localStorage.getItem('gl_base'); } catch (e) {}
+      window._glOffPrev = cur || 'mapbox://styles/mapbox/satellite-streets-v12';
+      setBaseLayer(b);
+      try { if (keep != null) localStorage.setItem('gl_base', keep); else localStorage.removeItem('gl_base'); } catch (e) {}   // their own pick stays their pick
+      window._evt && window._evt('no signal (' + why + ') -- switched to Offline photo');
+      try { toast(why === 'weak' ? 'Weak signal. Showing your saved maps' : 'No signal. Showing your saved maps', 3500); } catch (e) {}
+    };
+    window._onlineSwitchBack = function () {
+      var prev = window._glOffPrev; if (!prev) return;
+      window._glOffPrev = null;
+      if (_curBase() !== 'usgs-aerial') return;          // they picked another map themselves meanwhile
+      var b = _offBtn(prev); if (!b) return;
+      setBaseLayer(b);
+      window._evt && window._evt('signal back -- returned to ' + prev);
+      try { toast('Signal is back', 2500); } catch (e) {}
+    };
+    // A hand-picked map while switched cancels the automatic return.
+    document.addEventListener('click', function (e) {
+      var t = e.target && e.target.closest && e.target.closest('.layer-base-btn');
+      if (t && e.isTrusted) window._glOffPrev = null;
+    }, true);
+    window.addEventListener('offline', function () { try { window._offlineSwitch('offline'); } catch (e) {} });
+    window.addEventListener('online', function () { setTimeout(function () { try { window._onlineSwitchBack(); } catch (e) {} }, 1500); });
+    // Phones often still say "online" with a bar and no data. Count the map's failed tiles: 6 in
+    // 20 s on an online map means the signal is gone in practice.
+    var _tileFails = [];
+    map.on('error', function (e) {
+      try {
+        if (!e || !e.tile || _curBase() === 'usgs-aerial') return;
+        if (e.error && e.error.status) return;           // a server answer (404 etc.) is not lost signal
+        var now = Date.now(); _tileFails.push(now);
+        _tileFails = _tileFails.filter(function (t) { return now - t < 20000; });
+        if (_tileFails.length >= 6) { _tileFails = []; window._offlineSwitch('weak'); }
+      } catch (x) {}
+    });
+    // With "online" never changing, check every 45 s whether real data gets through again.
+    setInterval(function () {
+      if (!window._glOffPrev || navigator.onLine === false || document.visibilityState !== 'visible') return;
+      var ctl = window.AbortController ? new AbortController() : null;
+      var to = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 6000);
+      fetch('/version.json?dl=sig&t=' + Date.now(),   // dl = straight to network, never stored by sw.js
+         { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+        .then(function (r) { clearTimeout(to); if (r.ok) window._onlineSwitchBack(); })
+        .catch(function () { clearTimeout(to); });
+    }, 45000);
   } catch (e) {}
   // NavigationControl replaced by custom buttons below
 
@@ -37770,7 +37828,7 @@ window._voiceMod().then(function (m) {
   var MAPS = [
     ['mapbox://styles/mapbox/satellite-streets-v12', 'ic-satellite', 'Mapbox Satellite', 'Photo from above, with road and place names'],
     ['esri-imagery', 'ic-satellite', 'Esri Satellite', 'A second photo, often newer and sharper'],
-    ['usgs-aerial', 'ic-globe', 'Government photo', "Works with no signal in areas you've saved"],
+    ['usgs-aerial', 'ic-globe', 'Offline photo', 'Shows your saved maps. Turns on by itself when signal drops'],
     ['mapbox://styles/mapbox/streets-v12', 'ic-map', 'Street map', 'Plain roads and towns, easy to read'],
     ['mapbox://styles/mapbox/outdoors-v12', 'ic-mountain', 'Outdoors', 'Woods, trails and hills']
   ];
