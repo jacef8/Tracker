@@ -5733,7 +5733,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1089;
+var APP_BUILD = 1090;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17726,6 +17726,11 @@ window._checkAndroidUpdate = function () {
   if (mine == null || mine < GL_APK_MIN_SIDELOAD) return;
   fetch('/native-latest.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }).then(function (j) {
     var latest = parseInt((j || {}).android, 10);
+    // 1090: truck-map fixes ship as "androidCar" first -- only phones set up for Android Auto
+    // are offered them, so nobody else sees an update notice for a change that isn't theirs.
+    var _cst0 = null; try { _cst0 = window._carInstallState(); } catch (e) {}
+    var carLatest = parseInt((j || {}).androidCar, 10);
+    if (_cst0 && _cst0.ready && isFinite(carLatest) && (!isFinite(latest) || carLatest > latest)) latest = carLatest;
     if (isFinite(latest) && latest > mine) {
       // The file itself, from GitHub: the app claims every link on its own site, so a download
       // there was handed back into the app, which cannot download (Jace, 2026-11-25). GitHub is an

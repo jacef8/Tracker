@@ -41,6 +41,12 @@ class CarMapRenderer {
     // ── state ──
     private Surface surface;
     private int w, h; private float k = 1.5f;              // k = density scale (dp -> px)
+    // 1.5.5: "the symbology for the roads is almost invisible especially in the forest the labels
+    // are extremely small" (Jace, 2026-11-25, first real truck test). Map pictures are made for a
+    // desk monitor; the truck screen reports a low density, so they were drawn 1:1 and the road
+    // lines and names came out tiny. Each 256-pixel tile is now drawn at least twice as big, which
+    // doubles road width and label size, and needs a quarter as many pictures per screen (faster).
+    static double T = 512;
     Rect visible = new Rect(), stable = new Rect();
     double lat = 30.43, lng = -84.98, zoom = 11;          // current camera
     double tLat = lat, tLng = lng, tZoom = zoom;           // target
@@ -53,7 +59,7 @@ class CarMapRenderer {
     private boolean haveCam = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ExecutorService net = Executors.newFixedThreadPool(5);
+    private final ExecutorService net = Executors.newFixedThreadPool(8);
     private final LruCache<String, Bitmap> tiles = new LruCache<String, Bitmap>(40 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
     };
@@ -62,6 +68,15 @@ class CarMapRenderer {
     private boolean drawQueued = false;
 
     private final Paint tilePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint roadPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    {
+        android.graphics.ColorMatrix cm = new android.graphics.ColorMatrix(new float[]{
+            1.15f, 0, 0, 0, 0,
+            0, 1.15f, 0, 0, 0,
+            0, 0, 1.15f, 0, 0,
+            0, 0, 0, 2.2f, 0 });
+        roadPaint.setColorFilter(new android.graphics.ColorMatrixColorFilter(cm));
+    }
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -76,7 +91,13 @@ class CarMapRenderer {
     }
 
     void setSurface(Surface s, int width, int height, int dpi) {
-        surface = s; w = width; h = height; k = Math.max(1f, dpi / 160f);
+        surface = s; w = width; h = height; k = Math.max(1.4f, dpi / 160f);
+        double mag = Math.max(2.0, Math.min(3.0, dpi / 160.0 * 1.5));
+        if (Math.abs(256 * mag - T) > 1) {
+            // keep the same place on screen when the scale changes
+            zoom = tZoom = zoom + Math.log(T / (256 * mag)) / Math.log(2);
+            T = 256 * mag;
+        }
         if (visible.isEmpty()) visible.set(0, 0, w, h);
         if (stable.isEmpty()) stable.set(0, 0, w, h);
         requestDraw();
@@ -85,14 +106,14 @@ class CarMapRenderer {
     boolean hasCamera() { return haveCam; }
 
     // ── projection (world pixels at zoom z) ──
-    static double wx(double lng, double z) { return (lng + 180.0) / 360.0 * 256.0 * Math.pow(2, z); }
+    static double wx(double lng, double z) { return (lng + 180.0) / 360.0 * T * Math.pow(2, z); }
     static double wy(double lat, double z) {
         double s = Math.sin(Math.toRadians(Math.max(-85, Math.min(85, lat))));
-        return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256.0 * Math.pow(2, z);
+        return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * T * Math.pow(2, z);
     }
-    static double lngOf(double x, double z) { return x / (256.0 * Math.pow(2, z)) * 360.0 - 180.0; }
+    static double lngOf(double x, double z) { return x / (T * Math.pow(2, z)) * 360.0 - 180.0; }
     static double latOf(double y, double z) {
-        double n = Math.PI - 2.0 * Math.PI * y / (256.0 * Math.pow(2, z));
+        double n = Math.PI - 2.0 * Math.PI * y / (T * Math.pow(2, z));
         return Math.toDegrees(Math.atan(Math.sinh(n)));
     }
     private float cx() { return visible.isEmpty() ? w / 2f : visible.exactCenterX(); }
@@ -195,7 +216,7 @@ class CarMapRenderer {
     private void drawTiles(Canvas c) {
         int tz = (int) Math.max(2, Math.min(18, Math.round(zoom)));
         double scale = Math.pow(2, zoom - tz);
-        double ts = 256 * scale;
+        double ts = T * scale;
         double ox = wx(lng, tz) * scale - cx(), oy = wy(lat, tz) * scale - cy();   // world px (at zoom) of screen 0,0
         int x0 = (int) Math.floor(ox / ts), y0 = (int) Math.floor(oy / ts);
         int x1 = (int) Math.floor((ox + w) / ts), y1 = (int) Math.floor((oy + h) / ts);
@@ -207,7 +228,8 @@ class CarMapRenderer {
                     int wxp = ((tx % n) + n) % n;
                     RectF dst = new RectF((float) (tx * ts - ox), (float) (ty * ts - oy), (float) ((tx + 1) * ts - ox), (float) ((ty + 1) * ts - oy));
                     Bitmap b = tile(layer, tz, wxp, ty, true);
-                    if (b != null) { c.drawBitmap(b, null, dst, tilePaint); continue; }
+                    Paint tp = layer.startsWith("Reference") ? roadPaint : tilePaint;
+                    if (b != null) { c.drawBitmap(b, null, dst, tp); continue; }
                     // stretch a parent tile while this one loads
                     for (int up = 1; up <= 5 && tz - up >= 0; up++) {
                         int pz = tz - up, px = wxp >> up, py = ty >> up;
@@ -215,7 +237,7 @@ class CarMapRenderer {
                         if (pb == null) continue;
                         int span = 1 << up, sub = 256 / span;
                         int ix = (wxp - (px << up)) * sub, iy = (ty - (py << up)) * sub;
-                        c.drawBitmap(pb, new Rect(ix, iy, ix + sub, iy + sub), dst, tilePaint);
+                        c.drawBitmap(pb, new Rect(ix, iy, ix + sub, iy + sub), dst, tp);
                         break;
                     }
                 }
