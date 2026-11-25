@@ -8,7 +8,7 @@
 // Uses the same App Store Connect key as the other asc-* tools (ASC_KEY_ID / ASC_ISSUER_ID /
 // ASC_KEY_CONTENT). Writes the file only; the workflow commits it.
 import crypto from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 
 const API = 'https://api.appstoreconnect.apple.com/v1';
 const BUNDLE_ID = 'com.groundlink.ios';
@@ -45,5 +45,6 @@ while (Date.now() < deadline) {
   await new Promise(r => setTimeout(r, 30000));
 }
 if (state !== 'VALID') { console.error('build never finished processing; not announcing'); process.exit(1); }
-writeFileSync('public/native-latest.json', JSON.stringify({ ios: +build, iosVersion: version, ts: Date.now() }) + '\n');
+let prev = {}; try { prev = JSON.parse(readFileSync('public/native-latest.json', 'utf8')); } catch (e) {}
+writeFileSync('public/native-latest.json', JSON.stringify({ ...prev, ios: +build, iosVersion: version, ts: Date.now() }) + '\n');   // keeps android/androidVersion
 console.log('announced build', build, '(' + version + ')');

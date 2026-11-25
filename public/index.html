@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1079;
+var APP_BUILD = 1080;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17591,7 +17591,9 @@ function _watchMinNative() {
           var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
           if (ios) return;   // 1070: iPhones check themselves automatically (_checkNativeUpdate)
           var need = parseInt(ios ? cfg.ios : cfg.android, 10);
-          if (!isFinite(need) || mine >= need) { _hideNativeUpdateBar(); return; }
+          // 1080: on Android a met minimum hands over to the automatic download check, which
+          // decides whether the bar shows; hiding it here would race and erase that bar.
+          if (!isFinite(need) || mine >= need) { try { window._checkAndroidUpdate(); } catch (e) { _hideNativeUpdateBar(); } return; }
           // Per-platform link when provided (urlIos/urlAndroid) — TestFlight and Play are
           // different destinations; a single url sent iPhones to the Play Store.
           var _updUrl = (ios ? cfg.urlIos : cfg.urlAndroid) || cfg.url || '';
@@ -17620,10 +17622,29 @@ function _verCmp(a, b) {
   }
   return 0;
 }
+// 1080: Android too (Jace, 2026-11-25: "turn on the android update notice"). His phone sat on 1.4.6
+// while 1.4.9 was out, with nothing telling him. /native-latest.json carries the newest download
+// build. Only phones that came from the download link are told: build 22 or newer, since the Play
+// Store only ever had 21 and a Play-installed copy will not accept the downloaded file (Google
+// signs it with a different key), which would leave an update bar that can never clear.
+var GL_APK_MIN_SIDELOAD = 22;
+window._checkAndroidUpdate = function () {
+  var info = window._nativeAppInfo; if (!info) return;
+  var mine = _nativeBuildNum();
+  if (mine == null || mine < GL_APK_MIN_SIDELOAD) return;
+  fetch('/native-latest.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }).then(function (j) {
+    var latest = parseInt((j || {}).android, 10);
+    if (isFinite(latest) && latest > mine) {
+      _showNativeUpdateBar('A new GroundLink app is ready. Tap Download, then open the file to install it.', 'https://tracker-production-3b03.up.railway.app/download', mine, latest, 'Download');
+    } else {
+      _hideNativeUpdateBar();
+    }
+  });
+};
 window._checkNativeUpdate = function () {
   var info = window._nativeAppInfo; if (!info) return;
   var ios = false; try { ios = (typeof _isIOS === 'function') && _isIOS(); } catch (e) {}
-  if (!ios) return;
+  if (!ios) { try { window._checkAndroidUpdate(); } catch (e) {} return; }
   var mine = _nativeBuildNum(), myVer = String(info.version || '');
   if (mine == null || !myVer) return;
   var get = function (u) { return fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }); };
