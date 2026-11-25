@@ -30,6 +30,12 @@ public class GLMessagingService extends MessagingService {
         try {
             Map<String, String> data = msg.getData();
             String type = data != null ? data.get("type") : null;
+            // Android Auto: chat sent data-only for the car (see CarChat). With the app on screen
+            // the web layer shows it; otherwise this is the only thing that will.
+            if ("chat".equals(type) && "1".equals(data.get("aa"))) {
+                if (!appInForeground(this)) CarChat.onChat(getApplicationContext(), data);
+                return;
+            }
             if (!"bump".equals(type)) return;
             if (appInForeground(this)) {
                 Log.i(TAG, "bump: app is in front — the in-app path handles it");

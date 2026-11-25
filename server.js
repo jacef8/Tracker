@@ -1584,11 +1584,13 @@ function _pushDuplicate(uid, type, body) {
 
 // Fan-out a push to everyone in a group except the sender. The client calls
 // this from pushNotify(); subscriptions live in Firebase at gl/<group>/pushSubs.
-app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
+app.post('/push', rateLimit(30, 60000), requireUser, function (req, res) { return _pushHandler(req, res); });
+async function _pushHandler(req, res) {
   if (!pushReady && !fcmAdmin) return res.json({ ok: false, reason: 'push-not-configured' });
   const b = req.body || {};
   const group = b.group, senderId = b.senderId;
-  if (!(await roomAccess(String(group || ''), req.authUid))) return res.status(403).json({ ok: false, reason: 'not-a-member' });
+  // _trusted: a call from inside this server (the car reply below), already checked by its key.
+  if (!req._trusted && !(await roomAccess(String(group || ''), req.authUid))) return res.status(403).json({ ok: false, reason: 'not-a-member' });
   const senderFcm = b.senderFcm || '', senderEndpoint = b.senderEndpoint || '';
   if (!group) return res.status(400).json({ ok: false, reason: 'no-group' });
   // DB root namespace — sanitized + defaulted to production ('gl').
@@ -1682,7 +1684,34 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
         }
       }
       // FCM — native app
-      if (fcmAdmin && rec.fcm) {
+      // Android Auto (2026-11-24): an Android phone whose app can draw car conversations (rec.aa,
+      // set by Android 1.4.9+) gets chat as data only. The app builds a conversation notification
+      // with a Reply that works by voice, and the reply key below lets that reply post as this
+      // person in this crew without the app being signed in to the database.
+      if (fcmAdmin && rec.fcm && rec.aa && String(b.type || '') === 'chat') {
+        decisions.push(uid.slice(0, 10) + ':SENT-fcm-car');
+        try {
+          const raw = String(b.body || ''), cut = raw.indexOf(': ');
+          await fcmAdmin.messaging().send({
+            token: rec.fcm,
+            data: {
+              type: 'chat', aa: '1', group: String(group), fromUid: String(senderId || ''),
+              sender: cut > 0 ? raw.slice(0, cut).slice(0, 60) : 'Someone',
+              text: (cut > 0 ? raw.slice(cut + 2) : raw).slice(0, 1000),
+              title: String(b.title || 'GroundLink').replace(/\s+—\s+new message$/, '').slice(0, 80),
+              me: uid, rtok: _aaReplyToken(String(group), uid), ts: String(Date.now())
+            },
+            android: { priority: 'high', ttl: 3600000 }
+          });
+          sent++;
+        } catch (err) {
+          const code = (err && err.errorInfo && err.errorInfo.code) || (err && err.code) || '';
+          decisions.push(uid.slice(0, 10) + ':FAILED-fcm-car ' + String(code).slice(0, 40));
+          if (/not-registered|invalid-registration-token/i.test(code)) {
+            try { await _dbDelete(from + '/' + uid + '/fcm'); } catch (e2) {}
+          }
+        }
+      } else if (fcmAdmin && rec.fcm) {
         decisions.push(uid.slice(0, 10) + ':SENT-fcm');
         try {
           await fcmAdmin.messaging().send({
@@ -1734,6 +1763,47 @@ app.post('/push', rateLimit(30, 60000), requireUser, async function(req, res) {
   } catch (e) {
     console.warn('/push error:', e.message);
     res.json({ ok: false, reason: 'send-failed' });
+  }
+}
+
+// ─── Android Auto replies ───────────────────────────────────────────────────────────────────
+// A chat sent to a car-capable Android phone carries rtok: a key, good for 48 hours, that lets
+// THAT person post into THAT crew's chat. Android Auto hands the spoken reply to the app with no
+// screen and no database sign-in, so the app posts here with the key instead.
+const AA_SECRET = crypto.createHash('sha256').update('gl-aa|' + String(process.env.AA_REPLY_SECRET || process.env.FIREBASE_SERVICE_ACCOUNT || 'groundlink')).digest();
+const AA_TTL_MS = 48 * 3600 * 1000;
+function _aaReplyToken(group, uid) {
+  const exp = Date.now() + AA_TTL_MS;
+  const sig = crypto.createHmac('sha256', AA_SECRET).update(group + '|' + uid + '|' + exp).digest('base64url');
+  return exp + '.' + sig;
+}
+function _aaReplyOk(group, uid, tok) {
+  const m = /^(\d{10,16})\.([A-Za-z0-9_-]{20,})$/.exec(String(tok || ''));
+  if (!m || +m[1] < Date.now()) return false;
+  const want = crypto.createHmac('sha256', AA_SECRET).update(group + '|' + uid + '|' + m[1]).digest('base64url');
+  const a = Buffer.from(want), b = Buffer.from(m[2]);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+app.post('/api/aa-reply', rateLimit(20, 60000), async function (req, res) {
+  try {
+    const b = req.body || {};
+    const group = String(b.group || ''), uid = String(b.uid || ''), text = String(b.text || '').trim().slice(0, 1000);
+    if (!/^[a-z0-9_-]{1,80}$/.test(group) || !/^[A-Za-z0-9_-]{6,64}$/.test(uid) || !text) return res.status(400).json({ ok: false, reason: 'bad-request' });
+    if (!_aaReplyOk(group, uid, b.tok)) return res.status(403).json({ ok: false, reason: 'bad-key' });
+    if (!adminDb) return res.status(503).json({ ok: false, reason: 'no-admin' });
+    let name = '';
+    try { name = (await _dbGet('gl/' + group + '/users/' + uid + '/name')) || ''; } catch (e) {}
+    if (!name) { try { name = (await _dbGet('gl/' + group + '/pushSubs/' + uid + '/name')) || ''; } catch (e) {} }
+    name = String(name || 'Someone').slice(0, 60);
+    await adminDb.ref('gl/' + group + '/chat').push({ uid: uid, name: name, text: text, ts: Date.now(), isPin: false, via: 'car' });
+    console.log('/api/aa-reply group=' + group + ' uid=' + uid.slice(0, 10) + ' chars=' + text.length);
+    // Tell the rest of the crew, exactly as a chat sent from the app would.
+    await _pushHandler({ _trusted: true, body: { group: group, senderId: uid, type: 'chat', title: group + ' — new message', body: name + ': ' + text } },
+                       { json: function () { return this; }, status: function () { return this; } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.warn('/api/aa-reply error:', e.message);
+    res.status(500).json({ ok: false });
   }
 });
 
