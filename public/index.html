@@ -2029,6 +2029,23 @@ window._timedOnValue = function (orig) {
   }
   #map-controls button svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55)); }
   /* Locate-button flyout (Follow Me / Show Group) */
+  #gf-pick { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-end; justify-content: center; }
+  #gf-pick .gfp-bd { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+  #gf-pick .gfp-pan { position: relative; width: 100%; max-width: 520px; max-height: 80vh; display: flex; flex-direction: column;
+    background: #161b22; color: #f0f6fc; border-radius: 20px 20px 0 0; padding: 18px 16px calc(14px + env(safe-area-inset-bottom)); }
+  #gf-pick .gfp-t { font-size: 20px; font-weight: 800; }
+  #gf-pick .gfp-s { font-size: 15px; color: #c9d1d9; margin: 4px 0 12px; line-height: 1.35; }
+  #gf-pick .gfp-list { overflow: auto; min-height: 0; flex: 1 1 auto; }
+  #gf-pick .gfp-row { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 0 8px; border-radius: 12px; cursor: pointer; font-size: 18px; font-weight: 700; }
+  #gf-pick .gfp-row:active { background: #21262d; }
+  #gf-pick .gfp-row input { width: 26px; height: 26px; accent-color: #f0a500; flex: 0 0 auto; }
+  #gf-pick .gfp-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #gf-pick .gfp-note { padding: 16px 8px; font-size: 16px; color: #c9d1d9; }
+  #gf-pick .gfp-btns { display: flex; gap: 10px; margin-top: 12px; }
+  #gf-pick .gfp-btns button { flex: 1; min-height: 56px; border-radius: 14px; font-size: 17px; font-weight: 800; border: 0; cursor: pointer; }
+  #gf-pick .gfp-no { background: #21262d; color: #f0f6fc; }
+  #gf-pick .gfp-go { background: #f0a500; color: #1a1206; }
+  #gf-pick .gfp-go:disabled { opacity: .5; }
   #locate-menu { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); flex-direction: column; gap: 8px; align-items: stretch; }
   #map-controls #locate-menu .locate-opt {
     width: auto; height: auto; white-space: nowrap;
@@ -3793,6 +3810,7 @@ window._timedOnValue = function (orig) {
     <div id="locate-menu" style="display:none">
       <button class="locate-opt" type="button" onclick="window._chooseFollowMe(event)"><svg class="licon licon-sm"><use href="#ic-target"/></svg>Follow Me</button>
       <button class="locate-opt" type="button" onclick="window._chooseShowGroup(event)"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Follow Group</button>
+      <button class="locate-opt" type="button" onclick="window._chooseFollowPicks(event)"><svg class="licon licon-sm"><use href="#ic-users"/></svg>Follow My Picks</button>
     </div>
     <button id="locate-me" title="Locate / Follow" type="button" onclick="window._locateBtnTapped()"><svg class="licon licon-lg"><use href="#ic-target"/></svg></button>
   </div>
@@ -5671,7 +5689,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1081;
+var APP_BUILD = 1082;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -33742,7 +33760,8 @@ window._locateBtnTapped = function() {
   _toggleLocateMenu();
 };
 window._chooseFollowMe = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._locateMeTapped(); };
-window._chooseShowGroup = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._fitAllTapped(); };
+window._chooseShowGroup = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); var on = !!fitAllInterval; window._gfSetMode('all'); window._gfStartGroup(); if (on) toast('Following everyone', 1600); };
+window._chooseFollowPicks = function(e) { if (e) e.stopPropagation(); _toggleLocateMenu(false); window._gfOpenPicker(); };
 
 // ── North-button flyout (North Up / Heading Up) ────────────────────
 var headingUpOn = false;
@@ -34168,7 +34187,87 @@ window._openPersonSheet = function (uid, data) {
 // per id. Shared by people (userMarkers) and devices (_deviceMarkers) since both use the same id
 // namespace for their marker keys.
 window._groupFollowExcluded = function (id) {
-  try { return localStorage.getItem('gl_gf_excl_' + id) === '1'; } catch (e) { return false; }
+  try { if (localStorage.getItem('gl_gf_excl_' + id) === '1') return true; } catch (e) { return false; }
+  // 1082: following a chosen few. Everyone not picked is left out of the fit (still on the map).
+  try { var pk = window._gfPicksActive(); if (pk && !pk[id]) return true; } catch (e) {}
+  return false;
+};
+// 1082: "select a few people in the crew to follow" (Jace, 2026-11-25). Per crew, on this device:
+//   gl_gf_picks_<crew> = ["uid", ...]   who you picked
+//   gl_gf_mode_<crew>  = 'picks' | 'all'
+// The group camera (_groupFollowTick) frames only the picks while the mode is 'picks'.
+window._gfPicks = function (g) {
+  try { var a = JSON.parse(localStorage.getItem('gl_gf_picks_' + (g || groupName)) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+};
+window._gfMode = function (g) { try { return localStorage.getItem('gl_gf_mode_' + (g || groupName)) === 'picks' ? 'picks' : 'all'; } catch (e) { return 'all'; } };
+window._gfPicksActive = function () {
+  if (typeof groupName === 'undefined' || !groupName || window._gfMode() !== 'picks') return null;
+  var a = window._gfPicks(); if (!a.length) return null;
+  var m = {}; a.forEach(function (u) { m[u] = 1; }); return m;
+};
+window._gfSetMode = function (mode) { try { localStorage.setItem('gl_gf_mode_' + groupName, mode === 'picks' ? 'picks' : 'all'); } catch (e) {} };
+// Who can be picked: the people on this crew's map right now (same filters the map uses).
+window._gfPickable = function () {
+  var out = [], seen = {};
+  var snap = window._roomLiveSnap || {};
+  var nm = function (uid, n) { try { return window._nickOf ? window._nickOf(uid, n) : n; } catch (e) { return n; } };
+  if (userId) { out.push({ uid: userId, name: 'You' }); seen[userId] = 1; }
+  Object.keys(snap).forEach(function (uid) {
+    var u = snap[uid] || {}; if (seen[uid] || !u.name || u.hidden || u.claiming) return;
+    try { if (window._isMemberHidden && window._isMemberHidden(uid)) return; } catch (e) {}
+    try { if (window._isHiddenForAll && window._isHiddenForAll(uid)) return; } catch (e) {}
+    try { if (window._isPrivateOther && window._isPrivateOther(uid, u)) return; } catch (e) {}
+    seen[uid] = 1; out.push({ uid: uid, name: nm(uid, u.realName || u.name) || u.name });
+  });
+  Object.keys(userMarkers || {}).forEach(function (uid) {
+    if (seen[uid]) return; var mk = userMarkers[uid]; if (!mk || !mk._name) return;
+    seen[uid] = 1; out.push({ uid: uid, name: nm(uid, mk._name) });
+  });
+  var me = out.shift();
+  out.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  if (me && me.uid === userId) out.unshift(me); else if (me) out.push(me);
+  return out;
+};
+// The chooser: a plain sheet that works in both Simple and Hunting modes.
+window._gfOpenPicker = function () {
+  try {
+    var ppl = window._gfPickable();
+    var cur = {}; window._gfPicks().forEach(function (u) { cur[u] = 1; });
+    var old = document.getElementById('gf-pick'); if (old) old.remove();
+    var el = document.createElement('div'); el.id = 'gf-pick';
+    var rows = ppl.map(function (p) {
+      return '<label class="gfp-row"><input type="checkbox" data-u="' + _escHtml(p.uid) + '"' + (cur[p.uid] ? ' checked' : '') + '>' +
+             '<span class="gfp-nm">' + _escHtml(p.name) + '</span></label>';
+    }).join('') || '<div class="gfp-note">Nobody with a location in this crew yet.</div>';
+    el.innerHTML = '<div class="gfp-bd" onclick="window._gfClosePicker()"></div><div class="gfp-pan">' +
+      '<div class="gfp-t">Follow my picks</div><div class="gfp-s">The map keeps just these people in view. Everyone else stays on the map.</div>' +
+      '<div class="gfp-list">' + rows + '</div>' +
+      '<div class="gfp-btns"><button type="button" class="gfp-no" onclick="window._gfClosePicker()">Cancel</button>' +
+      '<button type="button" class="gfp-go" id="gfp-go" onclick="window._gfApplyPicks()">Follow</button></div></div>';
+    document.body.appendChild(el);
+    var upd = function () {
+      var n = el.querySelectorAll('input:checked').length, b = document.getElementById('gfp-go');
+      if (b) { b.disabled = !n; b.textContent = n ? 'Follow ' + n + (n === 1 ? ' person' : ' people') : 'Pick someone'; }
+    };
+    el.addEventListener('change', upd); upd();
+  } catch (e) {}
+};
+window._gfClosePicker = function () { var el = document.getElementById('gf-pick'); if (el) el.remove(); };
+window._gfApplyPicks = function () {
+  var el = document.getElementById('gf-pick'); if (!el) return;
+  var a = []; el.querySelectorAll('input:checked').forEach(function (i) { a.push(i.getAttribute('data-u')); });
+  window._gfClosePicker();
+  if (!a.length) return;
+  try { localStorage.setItem('gl_gf_picks_' + groupName, JSON.stringify(a)); } catch (e) {}
+  window._gfSetMode('picks');
+  window._gfStartGroup();
+  toast('Following ' + a.length + (a.length === 1 ? ' person' : ' people'), 1800);
+};
+// Start (or re-aim) the group camera with whatever mode is set.
+window._gfStartGroup = function () {
+  try { if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}
+  window._followPausedUntil = 0; window._groupFollowUserZoomed = false; window._groupFollowOutOfViewSince = null;
+  try { if (fitAllInterval) _groupFollowTick(true); else window._fitAllTapped(); } catch (e) {}
 };
 // Small standalone toggle button (not the Settings-page ON/OFF-pill-next-to-label row pattern —
 // this lives in the compact member-sheet/device-popup button column, so it restyles itself
@@ -34525,7 +34624,7 @@ function _groupFollowTick(force) {
   try {
     var _myFresh = window._lastGPS && (Date.now() - (window._lastFixTs || 0)) < GROUP_FIT_ACTIVE_MS;
     var _myAcc = window._lastAccM || 0;
-    if (_myFresh && _myAcc < 5000) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
+    if (_myFresh && _myAcc < 5000 && !window._groupFollowExcluded(userId || '__me')) _add(userId || '__me', window._lastGPS.lng, window._lastGPS.lat);
   } catch (e) {}
   // Everything with a marker on the map gets framed, active or not. Anything else means the
   // camera frames some of what you can see, which is not what "follow the group" says.
@@ -34534,6 +34633,27 @@ function _groupFollowTick(force) {
     ptsStale.forEach(function (q) { pts.push(q); });
     ptsStale.length = 0;
   }
+  // 1082: "Follow everyone" leaves out anyone more than 100 miles from the group, so one person
+  // across the country can't zoom the map out until the people near you are specks. The anchor
+  // is you when you have a position, otherwise the middle of the group. Picks are framed as picked.
+  try {
+    window._gfFarDropped = 0;
+    if (pts.length > 1 && !window._gfPicksActive()) {
+      var _anc = null;
+      if (window._lastGPS && isFinite(window._lastGPS.lat) && (Date.now() - (window._lastFixTs || 0)) < GROUP_FIT_REST_MS) _anc = [window._lastGPS.lng, window._lastGPS.lat];
+      if (!_anc) {
+        var _xs = pts.map(function (p) { return p[0]; }).sort(function (a, b) { return a - b; });
+        var _ys = pts.map(function (p) { return p[1]; }).sort(function (a, b) { return a - b; });
+        _anc = [_xs[_xs.length >> 1], _ys[_ys.length >> 1]];
+      }
+      var _near = pts.filter(function (p) { return metersApart(_anc[1], _anc[0], p[1], p[0]) <= 160934; });
+      if (_near.length && _near.length < pts.length) {
+        window._gfFarDropped = pts.length - _near.length;
+        if (_near.length !== ptsUids.length) ptsUids = [];   // the solo lock reads uids; don't mispair them
+        pts = _near;
+      } else window._gfFarDropped = 0;
+    }
+  } catch (e) {}
   window._gfLastPts = pts.length;   // surfaced in diag so "it only zoomed to me" is measurable
   if (!pts.length) return false;
   // Everyone standing together (the merged-dot case) makes a degenerate bounding box, which
@@ -38007,8 +38127,11 @@ window._voiceMod().then(function (m) {
       return '<div class="ss-row' + (on ? ' cur' : '') + '" onclick="window._ssPickFollow(\'' + k + '\')"><div class="ss-av ic"><svg class="licon"><use href="#' + ic + '"/></svg></div>' +
              '<div class="ss-who"><div class="ss-name">' + name + '</div><div class="ss-where">' + sub + '</div></div>' + (on ? '<span class="ss-ok">On</span>' : '') + '</div>';
     };
+    var pk = grp && !!window._gfPicksActive();
+    var pn = window._gfPicks().length;
     var h = row('me', 'ic-target', 'Follow me', 'Keep the map on you as you move', me) +
-            row('all', 'ic-users', 'Follow everyone', 'Keep the whole family in view', grp);
+            row('all', 'ic-users', 'Follow everyone', 'Keep the whole family in view', grp && !pk) +
+            row('picks', 'ic-users', 'Follow my picks', pn ? 'Just the ' + pn + (pn === 1 ? ' person' : ' people') + ' you chose. Tap to change' : 'Choose a few people to keep in view', pk);
     if (me || grp || other) h += row('stop', 'ic-x', 'Stop following', 'Leave the map where it is', false);
     pop('Follow', h);
   };
@@ -38024,7 +38147,10 @@ window._voiceMod().then(function (m) {
         window._followPausedUntil = 0;
         window._locateMeTapped();
         if (isOne() === userId) toast('Following you', 1600);
+      } else if (k === 'picks') {
+        window._gfOpenPicker();
       } else if (k === 'all') {
+        window._gfSetMode('all');
         if (isOne() && typeof stopFollowing === 'function') stopFollowing();
         window._followPausedUntil = 0; window._groupFollowUserZoomed = false; window._groupFollowOutOfViewSince = null;
         if (isGrp()) { try { _groupFollowTick(true); } catch (e) {} } else window._fitAllTapped();
