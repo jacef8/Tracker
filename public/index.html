@@ -5637,7 +5637,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1071;
+var APP_BUILD = 1072;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27439,18 +27439,27 @@ window._confirmOfflineDownload = async function () {
   _offlineDlUI(true); _offlineProgress(0);
   var cache = await caches.open(cacheName);
   var done = 0, bytes = 0, failed = 0, capped = false, stopped = false;
-  for (var i = 0; i < ids.length; i++) {
-    if (window._offlineCancel) { stopped = true; break; }
-    if (bytes >= GL_TILE_CAP_BYTES) { capped = true; break; }
-    var p = ids[i].split('/');                          // z/y/x
-    var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
-    try {
-      var resp = await fetch(url, { mode: 'cors' });
-      if (resp.ok) { bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); done++; }
-      else failed++;
-    } catch (e) { failed++; }
-    if (i % 5 === 0) { _offlineProgress((i + 1) / ids.length); _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)'); }
-  }
+  // 1072: "Why is this taking so long. It's just over 100mb" (Jace, 2026-11-24). Tiles were
+  // fetched ONE AT A TIME, each waiting on the government server's round trip, so a 100 MB area
+  // (~5,000 tiles) took the better part of an hour. Now 8 at a time.
+  var next = 0, started = 0;
+  var worker = async function () {
+    while (true) {
+      if (window._offlineCancel) { stopped = true; return; }
+      if (bytes >= GL_TILE_CAP_BYTES) { capped = true; return; }
+      var i = next++; if (i >= ids.length) return;
+      var p = ids[i].split('/');                          // z/y/x
+      var url = GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2]);
+      try {
+        var resp = await fetch(url, { mode: 'cors' });
+        if (resp.ok) { bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); done++; }
+        else failed++;
+      } catch (e) { failed++; }
+      if (++started % 10 === 0) { _offlineProgress(started / ids.length); _setOfflineStatus('Downloading "' + name + '"… ' + done + '/' + ids.length + ' (' + (bytes / 1048576).toFixed(1) + ' MB)'); }
+    }
+  };
+  var pool = []; for (var wk = 0; wk < 8; wk++) pool.push(worker());
+  await Promise.all(pool);
   var parcelKeys = [];
   if (done > 0) {
     if (!stopped) { try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(bnds); } catch (e) {} }
