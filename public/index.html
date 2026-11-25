@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1077;
+var APP_BUILD = 1078;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18180,7 +18180,12 @@ window._showGetAppScreen = function (kind) {
       var _s0 = getSavedSession() || {};
       var _rk = _invRoom.toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
       var _sg = (_s0.group || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/__+/g, '_');
-      if (_s0.uid && _s0.name && (_isCircleMember(_rk) || _sg === _rk)) {
+      // 1078: "it was asking me to join the outkasts crew. A crew I started" (Jace, 2026-11-25).
+      // Crew membership here read only the local crews cache, which can be empty for a moment
+      // at launch. _knownRoom also counts a room this phone has been in or holds a passcode for.
+      var _known = _isCircleMember(_rk) || _sg === _rk;
+      try { if (!_known && typeof window._knownRoom === 'function') _known = window._knownRoom(_rk); } catch (e) {}
+      if (_s0.uid && _s0.name && _known) {
         checkGroupPasscode(_s0.name, _invRoom, _s0.uid, window._invitePin || null);
         return;
       }
@@ -18965,17 +18970,11 @@ function initMap() {
         clusterMaxZoom: 14,     // past this everything stands alone
         clusterRadius: 55       // screen pixels, so it adapts as you zoom
       });
+      try { _ensureClusterImg(map); } catch (e) {}
       map.addLayer({
-        id: 'pin-clusters', type: 'circle', source: 'pins',
+        id: 'pin-clusters', type: 'symbol', source: 'pins',
         filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': '#f0a500',
-          'circle-opacity': 0.92,
-          // Grows with how many it holds, so a big bundle reads as big at a glance.
-          'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': 'rgba(13,17,23,0.85)'
-        }
+        layout: _CLUSTER_LAYOUT
       });
       map.addLayer({
         id: 'pin-cluster-count', type: 'symbol', source: 'pins',
@@ -18983,7 +18982,7 @@ function initMap() {
         layout: {
           'text-field': ['get', 'point_count_abbreviated'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15],
+          'text-size': ['step', ['get', 'point_count'], 11, 20, 12, 100, 13],
           'text-allow-overlap': true, 'text-ignore-placement': true
         },
         paint: { 'text-color': '#1a1206' }
@@ -19280,7 +19279,7 @@ function initMap() {
 
     // ── 2a. Tapped a cluster → zoom to exactly where it splits, rather than guessing ──
     if (map.getLayer('pin-clusters')) {
-      var _cl = map.queryRenderedFeatures(e.point, { layers: ['pin-clusters'] });
+      var _cl = map.queryRenderedFeatures([[e.point.x - 14, e.point.y - 14], [e.point.x + 14, e.point.y + 14]], { layers: ['pin-clusters'] });
       if (_cl.length) {
         var _cid = _cl[0].properties.cluster_id;
         var _src = map.getSource('pins');
@@ -19697,11 +19696,9 @@ function _ensurePinLayers() {
     }
   } catch (e) {}
   try {
+    if (!map.hasImage('pin-cluster-dia')) { _ensureClusterImg(map); fixed.push('cimg'); }
     if (!map.getLayer('pin-clusters')) {
-      map.addLayer({ id: 'pin-clusters', type: 'circle', source: 'pins', filter: ['has', 'point_count'],
-        paint: { 'circle-color': '#f0a500', 'circle-opacity': 0.92,
-                 'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
-                 'circle-stroke-width': 2, 'circle-stroke-color': 'rgba(13,17,23,0.85)' } });
+      map.addLayer({ id: 'pin-clusters', type: 'symbol', source: 'pins', filter: ['has', 'point_count'], layout: _CLUSTER_LAYOUT });
       fixed.push('clu');
     }
   } catch (e) {}
@@ -19709,7 +19706,7 @@ function _ensurePinLayers() {
     if (!map.getLayer('pin-cluster-count')) {
       map.addLayer({ id: 'pin-cluster-count', type: 'symbol', source: 'pins', filter: ['has', 'point_count'],
         layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-                  'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15], 'text-allow-overlap': true, 'text-ignore-placement': true },
+                  'text-size': ['step', ['get', 'point_count'], 11, 20, 12, 100, 13], 'text-allow-overlap': true, 'text-ignore-placement': true },
         paint: { 'text-color': '#1a1206' } });
       fixed.push('cnt');
     }
@@ -19736,6 +19733,29 @@ function _ensurePinLayers() {
     }
   } catch (e) {}
   if (fixed.length) { try { window._pinFixes = (window._pinFixes || 0) + 1; window._pinFixLast = fixed.join(' '); } catch (e) {} }
+}
+// 1078: a bundle of place pins is a gold DIAMOND with its count, the same shape as a single place
+// pin. People are round, so "round = person, diamond = place" holds at every zoom. Jace,
+// 2026-11-25: the round gold bundles were "too similar in size and color to the people pins".
+var _CLUSTER_LAYOUT = {
+  'icon-image': 'pin-cluster-dia',
+  'icon-size': ['step', ['get', 'point_count'], 0.85, 5, 0.95, 20, 1.08, 100, 1.2],
+  'icon-allow-overlap': true, 'icon-ignore-placement': true
+};
+function _ensureClusterImg(m) {
+  if (!m || m.hasImage('pin-cluster-dia')) return;
+  var S = 68, c = document.createElement('canvas'); c.width = S; c.height = S;
+  var g = c.getContext('2d'), h = S / 2, r = h - 4;
+  g.translate(h, h); g.rotate(Math.PI / 4);
+  var a = r / Math.SQRT2, rr = 6;
+  g.beginPath();
+  g.moveTo(-a + rr, -a); g.lineTo(a - rr, -a); g.quadraticCurveTo(a, -a, a, -a + rr);
+  g.lineTo(a, a - rr); g.quadraticCurveTo(a, a, a - rr, a); g.lineTo(-a + rr, a);
+  g.quadraticCurveTo(-a, a, -a, a - rr); g.lineTo(-a, -a + rr); g.quadraticCurveTo(-a, -a, -a + rr, -a);
+  g.closePath();
+  g.fillStyle = '#f0a500'; g.fill();
+  g.lineWidth = 4; g.strokeStyle = '#ffffff'; g.stroke();
+  m.addImage('pin-cluster-dia', g.getImageData(0, 0, S, S), { pixelRatio: 2 });
 }
 function updatePinSource(pins) {
   // Drops made here that the server has not echoed back yet are drawn too, so a pin shows up
@@ -28255,17 +28275,11 @@ function setBaseLayer(btn) {
         clusterMaxZoom: 14,     // past this everything stands alone
         clusterRadius: 55       // screen pixels, so it adapts as you zoom
       });
+      try { _ensureClusterImg(map); } catch (e) {}
       map.addLayer({
-        id: 'pin-clusters', type: 'circle', source: 'pins',
+        id: 'pin-clusters', type: 'symbol', source: 'pins',
         filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': '#f0a500',
-          'circle-opacity': 0.92,
-          // Grows with how many it holds, so a big bundle reads as big at a glance.
-          'circle-radius': ['step', ['get', 'point_count'], 15, 5, 19, 20, 24, 100, 30],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': 'rgba(13,17,23,0.85)'
-        }
+        layout: _CLUSTER_LAYOUT
       });
       map.addLayer({
         id: 'pin-cluster-count', type: 'symbol', source: 'pins',
@@ -28273,7 +28287,7 @@ function setBaseLayer(btn) {
         layout: {
           'text-field': ['get', 'point_count_abbreviated'],
           'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-size': ['step', ['get', 'point_count'], 12, 20, 14, 100, 15],
+          'text-size': ['step', ['get', 'point_count'], 11, 20, 12, 100, 13],
           'text-allow-overlap': true, 'text-ignore-placement': true
         },
         paint: { 'text-color': '#1a1206' }
