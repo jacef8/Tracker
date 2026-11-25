@@ -51,6 +51,37 @@ self.addEventListener('message', e => {
   if (e.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// Saved map pictures (Offline Photo): any gltiles_* cache, or the old single cache.
+async function _savedTile(u) {
+  var keys = await caches.keys();
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf('gltiles_') === 0 || keys[i] === 'gl-offline-tiles') {
+      var hit = await (await caches.open(keys[i])).match(u);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+// 1075: the piece of a saved wider-zoom picture that covers this tile, enlarged to full size.
+async function _stretchedTile(u) {
+  var m = /\/tile\/(\d+)\/(\d+)\/(\d+)(\?.*)?$/.exec(u);
+  if (!m || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
+  var z = +m[1], y = +m[2], x = +m[3];
+  for (var dz = 1; dz <= 7 && z - dz >= 0; dz++) {
+    var pz = z - dz, px = x >> dz, py = y >> dz;
+    var hit = await _savedTile(u.slice(0, m.index) + '/tile/' + pz + '/' + py + '/' + px);
+    if (!hit) continue;
+    var bmp = await createImageBitmap(await hit.blob());
+    var part = bmp.width / (1 << dz), sx = (x - (px << dz)) * part, sy = (y - (py << dz)) * part;
+    var cv = new OffscreenCanvas(256, 256), cx = cv.getContext('2d');
+    cx.imageSmoothingQuality = 'high';
+    cx.drawImage(bmp, sx, sy, part, part, 0, 0, 256, 256);
+    var blob = await cv.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+    return new Response(blob, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' } });
+  }
+  return null;
+}
+
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   const href = e.request.url;
@@ -78,16 +109,19 @@ self.addEventListener('fetch', e => {
   // through to the network (un-downloaded areas still load online).
   if (url.hostname.indexOf('basemap.nationalmap.gov') !== -1) {
     e.respondWith((async function() {
+      try { var hit = await _savedTile(e.request.url); if (hit) return hit; } catch (e2) {}
+      // 1075: zoomed in past what was saved, or outside it, with no or weak signal, the map went
+      // black (Jace, Apalachicola NF, 2026-11-24). Give the network 6 s; then stretch the nearest
+      // saved picture from a wider zoom. Blurry beats black.
       try {
-        var keys = await caches.keys();
-        for (var i = 0; i < keys.length; i++) {
-          if (keys[i].indexOf('gltiles_') === 0 || keys[i] === 'gl-offline-tiles') {
-            var hit = await (await caches.open(keys[i])).match(e.request);
-            if (hit) return hit;
-          }
-        }
-      } catch (e2) {}
-      return fetch(e.request);
+        return await Promise.race([
+          fetch(e.request).then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r; }),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error('slow')); }, 6000); })
+        ]);
+      } catch (err) {
+        try { var up = await _stretchedTile(e.request.url); if (up) return up; } catch (e3) {}
+        return new Response('', { status: 504 });
+      }
     })());
     return;
   }
