@@ -5287,6 +5287,10 @@ window._timedOnValue = function (orig) {
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-sun"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Daylight</div><div style="font-size:11px;color:var(--muted);margin-top:2px">A bright screen for daylight and a dark one for night. Follow your phone, or pin it — auto-brightness guesses wrong in a truck.</div></div></div>
       <span id="set-day-pill" style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--border);color:var(--muted);white-space:nowrap">PHONE</span>
     </div>
+    <div id="set-carinst-row" onclick="window._carInstallGo && window._carInstallGo()" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
+      <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-map"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Set up for Android Auto</div><div style="font-size:12px;color:var(--muted)">One-time reinstall so the crew map shows on your car screen. Keeps your sign-in.</div></div></div>
+      <span style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;background:var(--accent);color:#000;white-space:nowrap">SET UP</span>
+    </div>
     <div class="section-title" style="margin:2px 0 7px">Notifications</div>
     <div onclick="_setToggleAlerts()" style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">
       <div style="display:flex;align-items:center;gap:10px"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-bell"/></svg><div><div style="font-size:14px;font-weight:600;color:var(--text)">Notifications</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Chat, pins, joins &amp; SOS alerts</div></div></div>
@@ -5729,7 +5733,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1088;
+var APP_BUILD = 1089;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -11980,8 +11984,32 @@ function autoEnableAlerts() {
 }
 
 // ── Settings sheet ───────────────────────────────────────────────
+// 1089: Android Auto only shows the truck map if the Play Store is recorded as GroundLink's
+// installer; "Unknown sources" doesn't cover map apps (Jace's phone log, 2026-11-25). The native
+// app (1.5.4+) can reinstall itself through the phone's own installer with that record. Only
+// phones that have Android Auto and aren't set up yet ever see the row -- nobody else does.
+var GL_APK_RAW = 'https://raw.githubusercontent.com/jacef8/Tracker/main/public/GroundLink.apk';
+window._carInstallState = function () {
+  try { if (window.GLCar && GLCar.installState) return JSON.parse(GLCar.installState()) || null; } catch (e) {}
+  return null;
+};
+window._carInstallSync = function () {
+  try {
+    var row = document.getElementById('set-carinst-row'); if (!row) return;
+    var st = window._carInstallState();
+    row.style.display = (st && st.aa && !st.ready) ? 'flex' : 'none';
+  } catch (e) {}
+};
+window._carInstallGo = function () {
+  try {
+    if (!window.GLCar || !GLCar.installCarReady) return;
+    toast('Getting GroundLink ready for Android Auto. When the installer opens, tap Update.', 4500);
+    GLCar.installCarReady(GL_APK_RAW);
+  } catch (e) {}
+};
 function openSettings(page) {
   document.getElementById('settings-sheet').style.display = 'block'; _syncSettings();
+  try { window._carInstallSync(); } catch (e) {}
   try { window._syncSettingsAccountRow(); } catch (e) {}
   try { window._setPage(typeof page === 'string' ? page : null); } catch (e) {}
 }
@@ -17702,7 +17730,16 @@ window._checkAndroidUpdate = function () {
       // The file itself, from GitHub: the app claims every link on its own site, so a download
       // there was handed back into the app, which cannot download (Jace, 2026-11-25). GitHub is an
       // address the app does not claim, so Android opens it in Chrome, which downloads it.
-      _showNativeUpdateBar('A new GroundLink app is ready. Tap Download, then open the file to install it.', 'https://raw.githubusercontent.com/jacef8/Tracker/main/public/GroundLink.apk', mine, latest, 'Download');
+      var _cst = window._carInstallState();
+      if (_cst && _cst.ready && window.GLCar && GLCar.installCarReady) {
+        _showNativeUpdateBar('A new GroundLink app is ready. Tap Update, then Update again in the installer.', GL_APK_RAW, mine, latest, 'Update');
+        try {
+          var _a = document.querySelector('#native-update-bar a');
+          if (_a) _a.onclick = function (ev) { ev.preventDefault(); try { GLCar.installCarReady(GL_APK_RAW); } catch (e) {} };
+        } catch (e) {}
+      } else {
+        _showNativeUpdateBar('A new GroundLink app is ready. Tap Download, then open the file to install it.', GL_APK_RAW, mine, latest, 'Download');
+      }
     } else {
       _hideNativeUpdateBar();
     }
