@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1080;
+var APP_BUILD = 1081;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -13435,6 +13435,12 @@ window._handleNotifOpen = function (data) {
 function _onForegroundNotif(n) {
   try {
     n = n || {}; var data = n.data || {}; var type = data.type || '';
+    // 1081: "Why does this keep popping up?" (Jace, 2026-11-25: a bare "GroundLink" box on the map).
+    // The server's silent wake-ups ("bump": report your location now) carry no words at all, and
+    // this turned each one into a toast reading just the fallback "GroundLink". Nothing to say,
+    // nothing to show.
+    if (!n.title && !n.body) return;
+    if (type === 'bump' || type === 'wake' || type === 'locreq') return;
     if (type && !_notifPref(type)) return;
     if (type === 'pin' && data.group && typeof groupName !== 'undefined' && data.group === groupName) {
       try { window._showNotifPin(window._pinFromNotifUrl(data.url)); } catch (e) {}   // 1021
