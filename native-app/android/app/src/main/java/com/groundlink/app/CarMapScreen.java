@@ -51,6 +51,8 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
     private static final int MODE_ALL = 0, MODE_PICKS = 1, MODE_ME = 2;
     private static final long POLL_MS = 5000, PAUSE_MS = 30000, EXTRA_MS = 30000;
     private long lastExtraAt = 0;
+    private boolean loggedData = false;
+    private volatile boolean loggedHttp = false;
 
     private final CarMapRenderer map = new CarMapRenderer();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -76,7 +78,20 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
 
     // ── lifecycle ──
     @Override public void onCreate(@NonNull LifecycleOwner o) {
-        getCarContext().getCarService(AppManager.class).setSurfaceCallback(this);
+        try { getCarContext().getCarService(AppManager.class).setSurfaceCallback(this); CarLog.step("surface callback set"); }
+        catch (Throwable t) { CarLog.error("setSurfaceCallback", t); lastError = t; }
+    }
+    private Throwable lastError = null;
+    private boolean loggedTemplate = false;
+    /** A plain screen that says what went wrong, instead of Android Auto's generic error. */
+    static Screen errorScreen(@NonNull CarContext ctx, Throwable t) {
+        final String why = String.valueOf(t);
+        return new Screen(ctx) {
+            @NonNull @Override public Template onGetTemplate() {
+                return new androidx.car.app.model.MessageTemplate.Builder("The map hit a problem: " + (why.length() > 300 ? why.substring(0, 300) : why))
+                    .setTitle("GroundLink").setHeaderAction(Action.APP_ICON).build();
+            }
+        };
     }
     @Override public void onStart(@NonNull LifecycleOwner o) { running = true; poll(); }
     @Override public void onStop(@NonNull LifecycleOwner o) { running = false; main.removeCallbacksAndMessages(null); }
@@ -86,6 +101,18 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
     @NonNull
     @Override
     public Template onGetTemplate() {
+        try {
+            Template t = buildTemplate();
+            if (!loggedTemplate) { loggedTemplate = true; CarLog.step("template built"); }
+            return t;
+        } catch (Throwable t) {
+            CarLog.error("onGetTemplate", t);
+            String why = String.valueOf(t);
+            return new androidx.car.app.model.MessageTemplate.Builder("The map hit a problem: " + (why.length() > 300 ? why.substring(0, 300) : why))
+                .setTitle("GroundLink").setHeaderAction(Action.APP_ICON).build();
+        }
+    }
+    private Template buildTemplate() {
         String modeLbl = mode == MODE_ALL ? "Everyone" : mode == MODE_PICKS ? "My picks" : "Me";
         ActionStrip.Builder tb = new ActionStrip.Builder()
             .addAction(new Action.Builder().setTitle(modeLbl).setOnClickListener(this::cycleMode).build())
@@ -121,8 +148,11 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
 
     // ── surface ──
     @Override public void onSurfaceAvailable(@NonNull SurfaceContainer s) {
-        map.setSurface(s.getSurface(), s.getWidth(), s.getHeight(), s.getDpi());
-        aimCamera();
+        try {
+            CarLog.step("surface " + s.getWidth() + "x" + s.getHeight() + " dpi " + s.getDpi());
+            map.setSurface(s.getSurface(), s.getWidth(), s.getHeight(), s.getDpi());
+            aimCamera();
+        } catch (Throwable t) { CarLog.error("onSurfaceAvailable", t); }
     }
     @Override public void onSurfaceDestroyed(@NonNull SurfaceContainer s) { map.clearSurface(); }
     @Override public void onVisibleAreaChanged(@NonNull Rect r) { map.visible.set(r); map.requestDraw(); }
@@ -202,7 +232,7 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             if (cr.optString("k").equals(cur)) { tok = cr.optString("tok"); name = cr.optString("n"); }
         }
         if (uid.isEmpty() || cur.isEmpty() || tok.isEmpty()) {
-            if (!warnedNoKey) { warnedNoKey = true; CarToast.makeText(getCarContext(), "Open GroundLink on your phone and go into a crew", CarToast.LENGTH_LONG).show(); }
+            if (!warnedNoKey) { warnedNoKey = true; CarLog.step("no car key yet: uid=" + !uid.isEmpty() + " crew=" + !cur.isEmpty() + " key=" + !tok.isEmpty()); CarToast.makeText(getCarContext(), "Open GroundLink on your phone and go into a crew", CarToast.LENGTH_LONG).show(); }
             return;
         }
         if (!cur.equals(crewKey)) lastExtraAt = 0;
@@ -226,7 +256,7 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
                     byte[] buf = new byte[8192]; java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); int n;
                     while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
                     res = new JSONObject(bo.toString("UTF-8"));
-                } else Log.w(TAG, "crew HTTP " + con.getResponseCode());
+                } else { int hc = con.getResponseCode(); Log.w(TAG, "crew HTTP " + hc); if (!loggedHttp) { loggedHttp = true; CarLog.step("crew HTTP " + hc); } }
                 con.disconnect();
             } catch (Exception e) { Log.w(TAG, "crew fetch failed: " + e); }
             final JSONObject fr = res;
@@ -234,7 +264,8 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
                 fetching = false;
                 if (fr == null || !fr.optBoolean("ok")) { if (extra) lastExtraAt = 0; return; }
                 if (!fCur.equals(crewKey)) return;          // the crew was switched while this was in flight
-                apply(fr, c);
+                try { apply(fr, c); if (!loggedData) { loggedData = true; CarLog.step("crew data: " + map.people.size() + " people"); } }
+                catch (Throwable t) { CarLog.error("apply", t); }
             });
         });
     }

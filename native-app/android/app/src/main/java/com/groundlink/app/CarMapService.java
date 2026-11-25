@@ -20,6 +20,9 @@ public class CarMapService extends CarAppService {
     @Override
     public void onCreate() {
         super.onCreate();
+        CarLog.installCrashHook();
+        try { android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0); CarLog.app = pi.versionName + " (" + pi.versionCode + ")"; } catch (Exception e) {}
+        CarLog.step("service created");
         // Map pictures survive a restart and a dead zone: Esri tiles are cached on disk.
         try {
             if (HttpResponseCache.getInstalled() == null)
@@ -40,7 +43,13 @@ public class CarMapService extends CarAppService {
             @NonNull
             @Override
             public Screen onCreateScreen(@NonNull Intent intent) {
-                return new CarMapScreen(getCarContext());
+                CarLog.step("session: creating screen, host api " + getCarContext().getCarAppApiLevel());
+                try {
+                    return new CarMapScreen(getCarContext());
+                } catch (Throwable t) {
+                    CarLog.error("onCreateScreen", t);
+                    return CarMapScreen.errorScreen(getCarContext(), t);
+                }
             }
         };
     }

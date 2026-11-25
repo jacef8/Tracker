@@ -1826,6 +1826,16 @@ function _carKeyOk(group, uid, tok) {
   const a = Buffer.from(want), b = Buffer.from(m[2]);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+// Truck-map diagnostics from Android 1.5.3+: start-up steps and crashes, written to the server log
+// only ("[car-log]"). Carries no location or names. Read with Railway's log viewer.
+app.post('/api/car-log', rateLimit(40, 60000), function (req, res) {
+  try {
+    const b = req.body || {};
+    const clip = function (v, n) { return String(v == null ? '' : v).replace(/[\r\n]+/g, ' | ').slice(0, n); };
+    console.warn('[car-log] ' + clip(b.kind, 10) + ' app=' + clip(b.app, 20) + ' sdk=' + clip(b.sdk, 4) + ' model=' + clip(b.model, 40) + ' :: ' + clip(b.msg, 3600));
+  } catch (e) {}
+  res.json({ ok: true });
+});
 app.post('/api/car-keys', rateLimit(20, 60000), requireUser, async function (req, res) {
   try {
     const b = req.body || {};
