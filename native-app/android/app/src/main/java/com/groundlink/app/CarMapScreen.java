@@ -49,7 +49,8 @@ import java.util.concurrent.Executors;
 public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLifecycleObserver {
     private static final String TAG = "GLCarMap";
     private static final int MODE_ALL = 0, MODE_PICKS = 1, MODE_ME = 2;
-    private static final long POLL_MS = 5000, PAUSE_MS = 30000;
+    private static final long POLL_MS = 5000, PAUSE_MS = 30000, EXTRA_MS = 30000;
+    private long lastExtraAt = 0;
 
     private final CarMapRenderer map = new CarMapRenderer();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -86,10 +87,13 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
     @Override
     public Template onGetTemplate() {
         String modeLbl = mode == MODE_ALL ? "Everyone" : mode == MODE_PICKS ? "My picks" : "Me";
-        ActionStrip top = new ActionStrip.Builder()
+        ActionStrip.Builder tb = new ActionStrip.Builder()
             .addAction(new Action.Builder().setTitle(modeLbl).setOnClickListener(this::cycleMode).build())
-            .addAction(new Action.Builder().setTitle(map.satellite ? "Road map" : "Satellite").setOnClickListener(this::toggleStyle).build())
-            .build();
+            .addAction(new Action.Builder().setTitle(map.satellite ? "Road map" : "Satellite").setOnClickListener(this::toggleStyle).build());
+        JSONArray crews = cfg().optJSONArray("crews");
+        if (crews != null && crews.length() > 1)
+            tb.addAction(new Action.Builder().setTitle("Crews").setOnClickListener(this::openCrews).build());
+        ActionStrip top = tb.build();
         ActionStrip mapStrip = new ActionStrip.Builder()
             .addAction(Action.PAN)
             .addAction(new Action.Builder().setIcon(icon(R.drawable.ic_car_zoom_in)).setOnClickListener(() -> userZoom(1)).build())
@@ -131,7 +135,50 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
     }
     @Override public void onClick(float x, float y) {
         CarMapRenderer.Person p = map.hit(x, y);
-        if (p != null) CarToast.makeText(getCarContext(), (p.me ? "You" : p.name) + (p.status == null || p.status.isEmpty() ? "" : " · " + p.status), CarToast.LENGTH_SHORT).show();
+        if (p == null || p.me) return;
+        CarMapRenderer.Person me = null;
+        for (CarMapRenderer.Person q : map.people) if (q.me) me = q;
+        String line = p.status == null ? "" : p.status;
+        if (me != null) {
+            double mi = miles(me.lat, me.lng, p.lat, p.lng);
+            String dist = mi < 0.2 ? Math.round(mi * 5280) + " ft away" : (mi < 10 ? String.format(java.util.Locale.US, "%.1f mi away", mi) : Math.round(mi) + " mi away");
+            line = line.isEmpty() ? dist : line + " · " + dist;
+        }
+        getScreenManager().push(new CarPersonScreen(getCarContext(), p.name, line, p.lat, p.lng));
+    }
+
+    // ── crews ──
+    /** The crew the truck shows: the phone's crew, unless one was picked on the truck screen since
+     *  the phone last changed crews. */
+    private String activeCrew(JSONObject c) {
+        String phone = c.optString("cur", "");
+        SharedPreferences sp = prefs();
+        String ov = sp.getString("car_cur", ""), base = sp.getString("car_cur_base", "");
+        if (!ov.isEmpty() && !base.equals(phone)) { sp.edit().remove("car_cur").remove("car_cur_base").apply(); ov = ""; }
+        return ov.isEmpty() ? phone : ov;
+    }
+    private void openCrews() {
+        JSONObject c = cfg();
+        JSONArray crews = c.optJSONArray("crews"); if (crews == null) return;
+        String cur = activeCrew(c);
+        androidx.car.app.model.ItemList.Builder lb = new androidx.car.app.model.ItemList.Builder();
+        for (int i = 0; i < crews.length() && i < 6; i++) {
+            JSONObject cr = crews.optJSONObject(i); if (cr == null) continue;
+            final String k = cr.optString("k"), n = cr.optString("n", k);
+            lb.addItem(new androidx.car.app.model.Row.Builder().setTitle(n + (k.equals(cur) ? "  (showing)" : ""))
+                .setOnClickListener(() -> { pickCrew(k, c.optString("cur", "")); getScreenManager().pop(); }).build());
+        }
+        getScreenManager().push(new Screen(getCarContext()) {
+            @NonNull @Override public Template onGetTemplate() {
+                return new androidx.car.app.model.ListTemplate.Builder().setTitle("Crews").setHeaderAction(Action.BACK).setSingleList(lb.build()).build();
+            }
+        });
+    }
+    private void pickCrew(String k, String phoneCur) {
+        prefs().edit().putString("car_cur", k).putString("car_cur_base", phoneCur).apply();
+        map.people = new ArrayList<>(); map.trails = new HashMap<>(); map.pins = new ArrayList<>(); map.pinNames = new ArrayList<>();
+        lastExtraAt = 0; pausedUntil = 0; warnedNoPicks = false;
+        map.requestDraw(); poll();
     }
 
     // ── data ──
@@ -147,7 +194,7 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
         if (fetching) return;
         final JSONObject c = cfg();
         final String uid = c.optString("uid", ""), site = c.optString("site", CarChat.SITE);
-        String cur = c.optString("cur", "");
+        String cur = activeCrew(c);
         JSONArray crews = c.optJSONArray("crews");
         String tok = "", name = "";
         if (crews != null) for (int i = 0; i < crews.length(); i++) {
@@ -158,13 +205,17 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             if (!warnedNoKey) { warnedNoKey = true; CarToast.makeText(getCarContext(), "Open GroundLink on your phone and go into a crew", CarToast.LENGTH_LONG).show(); }
             return;
         }
+        if (!cur.equals(crewKey)) lastExtraAt = 0;
         crewKey = cur; crewName = name;
         final String fTok = tok, fCur = cur;
+        final boolean extra = System.currentTimeMillis() - lastExtraAt > EXTRA_MS;
+        if (extra) lastExtraAt = System.currentTimeMillis();
         fetching = true;
         io.execute(() -> {
             JSONObject res = null;
             try {
                 JSONObject body = new JSONObject().put("group", fCur).put("uid", uid).put("tok", fTok);
+                if (extra) body.put("extra", 1);
                 HttpURLConnection con = (HttpURLConnection) new URL(site + "/api/car/crew").openConnection();
                 con.setRequestMethod("POST"); con.setDoOutput(true);
                 con.setConnectTimeout(8000); con.setReadTimeout(10000);
@@ -179,7 +230,12 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
                 con.disconnect();
             } catch (Exception e) { Log.w(TAG, "crew fetch failed: " + e); }
             final JSONObject fr = res;
-            main.post(() -> { fetching = false; if (fr != null && fr.optBoolean("ok")) apply(fr, c); });
+            main.post(() -> {
+                fetching = false;
+                if (fr == null || !fr.optBoolean("ok")) { if (extra) lastExtraAt = 0; return; }
+                if (!fCur.equals(crewKey)) return;          // the crew was switched while this was in flight
+                apply(fr, c);
+            });
         });
     }
 
@@ -207,6 +263,25 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             out.add(p);
         }
         map.people = out;
+        // Trails and pins only come on the 30-second "extra" asks; keep the last ones in between.
+        JSONObject tr = r.optJSONObject("trails");
+        if (tr != null) {
+            Map<String, double[][]> t = new HashMap<>();
+            java.util.Iterator<String> it = tr.keys();
+            while (it.hasNext()) {
+                String id = it.next(); JSONArray a = tr.optJSONArray(id); if (a == null) continue;
+                double[][] pts = new double[a.length()][];
+                for (int i = 0; i < a.length(); i++) { JSONArray q = a.optJSONArray(i); pts[i] = new double[]{ q.optDouble(0), q.optDouble(1) }; }
+                t.put(id, pts);
+            }
+            map.trails = t;
+        }
+        JSONArray pa = r.optJSONArray("pins");
+        if (pa != null) {
+            List<double[]> pl = new ArrayList<>(); List<String> pn = new ArrayList<>();
+            for (int i = 0; i < pa.length(); i++) { JSONObject q = pa.optJSONObject(i); if (q == null) continue; pl.add(new double[]{ q.optDouble("lat"), q.optDouble("lng") }); pn.add(q.optString("n")); }
+            map.pins = pl; map.pinNames = pn;
+        }
         aimCamera();
         map.requestDraw();
     }

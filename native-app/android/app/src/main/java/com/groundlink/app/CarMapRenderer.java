@@ -46,6 +46,10 @@ class CarMapRenderer {
     double tLat = lat, tLng = lng, tZoom = zoom;           // target
     boolean satellite = true;
     List<Person> people = new ArrayList<>();
+    // Stage 2 (1.5.1): last hour of each person's trail, and the crew's dropped pins.
+    java.util.Map<String, double[][]> trails = new java.util.HashMap<>();
+    List<double[]> pins = new ArrayList<>();
+    List<String> pinNames = new ArrayList<>();
     private boolean haveCam = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -176,6 +180,8 @@ class CarMapRenderer {
             c = s.lockHardwareCanvas();
             c.drawColor(0xFF1B2A1E);
             drawTiles(c);
+            drawTrails(c);
+            drawPins(c);
             drawPeople(c);
         } catch (Exception e) {
         } finally {
@@ -238,6 +244,48 @@ class CarMapRenderer {
             });
         });
         return null;
+    }
+
+    private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.Path path = new android.graphics.Path();
+    /** Each person's last hour as a line in their colour, on a dark casing so it shows on the photo. */
+    private void drawTrails(Canvas c) {
+        if (trails.isEmpty()) return;
+        line.setStyle(Paint.Style.STROKE); line.setStrokeCap(Paint.Cap.ROUND); line.setStrokeJoin(Paint.Join.ROUND);
+        for (Person p : people) {
+            double[][] t = trails.get(p.uid);
+            if (t == null || t.length < 2) continue;
+            path.reset();
+            for (int i = 0; i < t.length; i++) {
+                float x = sx(t[i][1]), y = sy(t[i][0]);
+                if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+            }
+            path.lineTo(sx(p.lng), sy(p.lat));      // join the line to where they are now
+            line.setColor(0x99101417); line.setStrokeWidth(7 * k); c.drawPath(path, line);
+            line.setColor(p.stale ? 0xFF9AA4AE : p.color); line.setStrokeWidth(4 * k); c.drawPath(path, line);
+        }
+    }
+    /** Dropped pins: gold diamonds (round = person, diamond = place), names when zoomed in. */
+    private void drawPins(Canvas c) {
+        if (pins.isEmpty()) return;
+        float d = 8 * k;
+        boolean names = zoom >= 13.5;
+        text.setTextSize(12 * k);
+        for (int i = 0; i < pins.size(); i++) {
+            double[] q = pins.get(i);
+            float x = sx(q[1]), y = sy(q[0]);
+            if (x < -40 * k || y < -40 * k || x > w + 40 * k || y > h + 40 * k) continue;
+            path.reset(); path.moveTo(x, y - d); path.lineTo(x + d, y); path.lineTo(x, y + d); path.lineTo(x - d, y); path.close();
+            fill.setColor(0xFFF0A500); c.drawPath(path, fill);
+            ring.setColor(Color.WHITE); ring.setStrokeWidth(2f * k); c.drawPath(path, ring);
+            String n = i < pinNames.size() ? pinNames.get(i) : "";
+            if (names && n != null && !n.isEmpty()) {
+                float tw = text.measureText(n);
+                RectF bg = new RectF(x - tw / 2 - 5 * k, y + d + 3 * k, x + tw / 2 + 5 * k, y + d + 20 * k);
+                c.drawRoundRect(bg, 6 * k, 6 * k, pill);
+                c.drawText(n, x, bg.bottom - 4.5f * k, text);
+            }
+        }
     }
 
     private void drawPeople(Canvas c) {

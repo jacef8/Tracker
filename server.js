@@ -1866,8 +1866,34 @@ app.post('/api/car/crew', rateLimit(60, 60000), async function (req, res) {
       if (!ts || now - ts > 3 * 24 * 3600 * 1000) return;
       out.push({ u: k, n: String(u.name).slice(0, 40), lat: lat, lng: lng, spd: +u.spd || 0, ts: ts, fx: +(u.fixTs || ts), c: String(u.color || ''), hs: +u.hereSince || 0, me: k === uid ? 1 : 0 });
     });
+    // Stage 2 (Android 1.5.1): with extra=1, each shown person's last hour of trail (thinned to
+    // at most 200 points) and the crew's dropped pins. Asked for every 30 s, not every 5.
+    let trails = null, pins = null;
+    if (b.extra) {
+      trails = {};
+      await Promise.all(out.map(async function (p) {
+        try {
+          const v = (await adminDb.ref('gl/' + group + '/trails/' + p.u).limitToLast(900).once('value')).val() || {};
+          let pts = Object.keys(v).map(function (k) { return v[k] || {}; })
+            .filter(function (q) { return +q.ts > now - 3600000 && isFinite(+q.lat) && isFinite(+q.lng) && (!q.acc || +q.acc <= 50); })
+            .sort(function (a, c) { return a.ts - c.ts; });
+          if (pts.length > 200) { const step = pts.length / 200; const th = []; for (let i = 0; i < 200; i++) th.push(pts[Math.floor(i * step)]); th.push(pts[pts.length - 1]); pts = th; }
+          if (pts.length > 1) trails[p.u] = pts.map(function (q) { return [Math.round(+q.lat * 1e6) / 1e6, Math.round(+q.lng * 1e6) / 1e6]; });
+        } catch (e) {}
+      }));
+      try {
+        const pv = (await adminDb.ref('gl/' + group + '/pins').once('value')).val() || {};
+        pins = [];
+        Object.keys(pv).forEach(function (k) {
+          const q = pv[k] || {};
+          if (q.exp && +q.exp < now) return;
+          if (!isFinite(+q.lat) || !isFinite(+q.lng)) return;
+          if (pins.length < 400) pins.push({ lat: +q.lat, lng: +q.lng, n: String(q.label || q.cat || '').slice(0, 30) });
+        });
+      } catch (e) {}
+    }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out });
+    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out, trails: trails, pins: pins });
   } catch (e) {
     console.warn('/api/car/crew error:', e.message);
     res.status(500).json({ ok: false });
