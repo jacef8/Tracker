@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1078;
+var APP_BUILD = 1079;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27943,6 +27943,16 @@ async function _downloadParcelsForArea(b) {
 var GLR_MINZ = 12, GLR_TZ = 13;
 var GLR_FS = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RoadBasic_01/MapServer/0/query';
 var GLR_TIGER = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/8/query';
+var GLR_TIGER_MAJ = ['https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/2/query',
+                     'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/6/query'];
+// 1079: "Still have overlapping roads and labels" (Jace, 2026-11-25, Esri Satellite on FR 116). Esri's
+// roads are a PICTURE (lines and names baked in), so one road can't be hidden from it. From this zoom
+// in, where our names start, Esri's road picture fades out and ours (forest, county, state, highway)
+// are the only roads drawn. Zoomed out, and with road names off, Esri's roads stay.
+var GLR_ESRI_OFF_Z = 12.5;
+window._esriRoadsOpacity = function () {
+  return window._glrOn() ? ['interpolate', ['linear'], ['zoom'], GLR_ESRI_OFF_Z - 0.2, 0.85, GLR_ESRI_OFF_Z, 0] : 0.85;
+};
 window._glrCache = {};          // tile key -> [features] (or 'loading')
 window._glrOn = function () { try { return localStorage.getItem('gl_roads') !== '0'; } catch (e) { return true; } };
 function _glrTile2lon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
@@ -27965,7 +27975,8 @@ function _glrFetchTile(x, y) {
   window._glrCache[k] = 'loading';
   var bbox = [_glrTile2lon(x, GLR_TZ), _glrTile2lat(y + 1, GLR_TZ), _glrTile2lon(x + 1, GLR_TZ), _glrTile2lat(y, GLR_TZ)].map(function (v) { return v.toFixed(5); });
   var get = function (u) { return fetch(u).then(function (r) { return r.ok ? r.json() : { features: [] }; }).catch(function () { return { features: [] }; }); };
-  Promise.all([get(_glrQuery(GLR_FS, bbox, 'id,name')), get(_glrQuery(GLR_TIGER, bbox, 'NAME'))]).then(function (res) {
+  Promise.all([get(_glrQuery(GLR_FS, bbox, 'id,name')), get(_glrQuery(GLR_TIGER, bbox, 'NAME')),
+               get(_glrQuery(GLR_TIGER_MAJ[0], bbox, 'NAME')), get(_glrQuery(GLR_TIGER_MAJ[1], bbox, 'NAME'))]).then(function (res) {
     var out = [];
     // Ground the forest roads cover: ~150 ft cells along every Forest Service line (filled in
     // every ~50 ft so long straight stretches count too).
@@ -28000,6 +28011,12 @@ function _glrFetchTile(x, y) {
       var p = f.properties || {};
       if (onForestRoad(f.geometry)) return;
       out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'loc', n: String(p.NAME || '').trim(), u: _glrKey('loc', f.geometry) } });
+    });
+    [res[2], res[3]].forEach(function (r) {
+      (r.features || []).forEach(function (f) {
+        var p = f.properties || {};
+        out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'hwy', n: String(p.NAME || '').trim(), u: _glrKey('hwy', f.geometry) } });
+      });
     });
     // A failed fetch is not cached as "no roads here": it tries again next time this ground is shown.
     if (!res[0].features && !res[1].features) { delete window._glrCache[k]; return; }
@@ -28095,8 +28112,13 @@ function _glrPaint() {
       var out = [];
       feats.forEach(function (f) {
         var p = f.properties;
+        if (p.k === 'hwy' && !esriRoads) return;          // Mapbox draws and names these itself
+        if (esriRoads) {
+          // Zoomed out Esri's own road picture shows, so ours would double it: forest roads only.
+          if (p.k !== 'fs' && map.getZoom() < GLR_ESRI_OFF_Z - 0.2) return;
+          out.push(f); return;
+        }
         if (p.k !== 'loc') { out.push(f); return; }
-        if (esriRoads) return;
         var dup = !!(baseNames && p.n && baseNames[_glrNorm(p.n)]);
         out.push(dup === !!p.dup ? f : { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, p, { dup: dup ? 1 : 0 }) });
       });
@@ -28106,7 +28128,7 @@ function _glrPaint() {
       if (!esriRoads) _glrHideBaseForestNames(out);
       // setData re-renders, and a re-render ends in 'idle', which calls this again: only send
       // when something actually changed.
-      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|');
+      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|') + (esriRoads ? '#e' : '');
       if (sig === window._glrSig && src._glrSet) return;
       window._glrSig = sig; src._glrSet = 1;
       src.setData({ type: 'FeatureCollection', features: out });
@@ -28159,8 +28181,8 @@ window._glrEnsure = function () {
       paint: { 'line-color': '#101417', 'line-opacity': 0.55, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6] } }, {}), before);
     if (!map.getLayer('gl-roads-line')) map.addLayer(Object.assign({ id: 'gl-roads-line', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': col, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.2, 16, 3] } }, {}), before);
-    if (!map.getLayer('gl-roads-label')) map.addLayer({ id: 'gl-roads-label', type: 'symbol', source: 'gl-roads', minzoom: 13,
+      paint: { 'line-color': col, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, ['match', ['get', 'k'], 'hwy', 2, 1.2], 16, ['match', ['get', 'k'], 'hwy', 4.5, 3]] } }, {}), before);
+    if (!map.getLayer('gl-roads-label')) map.addLayer({ id: 'gl-roads-label', type: 'symbol', source: 'gl-roads', minzoom: GLR_ESRI_OFF_Z,
       filter: ['all', ['!=', ['get', 'n'], ''], ['!=', ['get', 'dup'], 1]],
       layout: { 'symbol-placement': 'line', 'text-field': ['get', 'n'], 'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
                 'text-size': ['interpolate', ['linear'], ['zoom'], 13, 13, 16, 16], 'text-max-angle': 30, 'symbol-spacing': 320, 'text-padding': 4 },
@@ -28173,6 +28195,7 @@ window._glrToggle = function () {
   var on = !window._glrOn();
   try { localStorage.setItem('gl_roads', on ? '1' : '0'); } catch (e) {}
   try { window._glrUpdate(); _glrPaint(); } catch (e) {}
+  try { if (map.getLayer('esri-roads-layer')) map.setPaintProperty('esri-roads-layer', 'raster-opacity', window._esriRoadsOpacity()); } catch (e) {}
   try { toast(on ? 'Road names on' : 'Road names off', 1600); } catch (e) {}
   return on;
 };
@@ -28193,7 +28216,7 @@ window._esriStyle = function () {
     },
     layers: [
       { id: 'esri-imagery-layer', type: 'raster', source: 'esri-imagery' },
-      { id: 'esri-roads-layer', type: 'raster', source: 'esri-roads', paint: { 'raster-opacity': 0.85 } },
+      { id: 'esri-roads-layer', type: 'raster', source: 'esri-roads', paint: { 'raster-opacity': (window._esriRoadsOpacity ? window._esriRoadsOpacity() : 0.85) } },
       { id: 'esri-places-layer', type: 'raster', source: 'esri-places' }
     ]
   };
