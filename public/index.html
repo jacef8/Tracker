@@ -5689,7 +5689,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1084;
+var APP_BUILD = 1085;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -17659,9 +17659,10 @@ window._checkAndroidUpdate = function () {
   fetch('/native-latest.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }).then(function (j) {
     var latest = parseInt((j || {}).android, 10);
     if (isFinite(latest) && latest > mine) {
-      // http://, not https://: a different address from the app's own, so the app opens it in
-      // Chrome. Inside the app the page could not download anything (Jace, 2026-11-25).
-      _showNativeUpdateBar('A new GroundLink app is ready. Tap Download, then open the file to install it.', 'http://' + location.host + '/download', mine, latest, 'Download');
+      // The file itself, from GitHub: the app claims every link on its own site, so a download
+      // there was handed back into the app, which cannot download (Jace, 2026-11-25). GitHub is an
+      // address the app does not claim, so Android opens it in Chrome, which downloads it.
+      _showNativeUpdateBar('A new GroundLink app is ready. Tap Download, then open the file to install it.', 'https://raw.githubusercontent.com/jacef8/Tracker/main/public/GroundLink.apk', mine, latest, 'Download');
     } else {
       _hideNativeUpdateBar();
     }
