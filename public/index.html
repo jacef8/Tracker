@@ -5671,7 +5671,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1075;
+var APP_BUILD = 1076;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18793,7 +18793,8 @@ function initMap() {
   });
   map.once('load', function () { try { window._markOpen('map'); } catch (e) {} });
   // 1057: forest and local roads with their names, on every base map.
-  map.on('style.load', function () { setTimeout(window._glrEnsure, 0); });
+  map.on('style.load', function () { setTimeout(window._glrEnsure, 0); setTimeout(window._savedUnderEnsure, 0); });
+  map.on('load', function () { window._savedUnderEnsure(); });
   map.on('load', function () { window._glrEnsure(); });
   map.on('moveend', function () { window._glrUpdate(); });
   map.on('idle', function () { try { _glrPaint(); } catch (e) {} });   // 1063: base-map road names are in now
@@ -18855,7 +18856,7 @@ function initMap() {
     var _tileFails = [];
     map.on('error', function (e) {
       try {
-        if (!e || !e.tile || _curBase() === 'usgs-aerial') return;
+        if (!e || !e.tile || _curBase() === 'usgs-aerial' || e.sourceId === 'gl-saved') return;
         if (e.error && e.error.status) return;           // a server answer (404 etc.) is not lost signal
         var now = Date.now(); _tileFails.push(now);
         _tileFails = _tileFails.filter(function (t) { return now - t < 20000; });
@@ -18878,7 +18879,7 @@ function initMap() {
   // Catch map errors
   map.on('error', function(e) {
     console.error('Map error:', e);
-    if (e.sourceId === 'usda-clu') return;
+    if (e.sourceId === 'usda-clu' || e.sourceId === 'gl-saved') return;   // 1076: a saved picture that isn't on the phone
     if (e.error && (e.error.status === 401 || e.error.status === 403)) {
       toast('Map error ' + e.error.status + ' — check Mapbox token', 5000);
     }
@@ -22386,9 +22387,11 @@ function listenUsers() {
   // actual render logic below is completely unchanged, just called less often, always with the
   // LATEST snapshot by the time it runs.
   var _USERS_RENDER_DEBOUNCE_MS = 400;
+  window._reprocessUsers = function () { if (window._lastUsersSnapObj) _processUsersSnap(window._lastUsersSnapObj); };
   function _processUsersSnap(snap) {
     var _t0 = performance.now();
     try { if (snap && snap.val && snap.val()) window._markOpen('people'); } catch (e) {}
+    window._lastUsersSnapObj = snap;   // 1076: re-drawn with new names after Rename for me
     try { _processUsersSnapInner(snap); } finally {
       var _d = Math.round(performance.now() - _t0);
       window._snapMs = _d;
@@ -22430,7 +22433,17 @@ function listenUsers() {
     // Feed the room-index writer: this is the freshest read of the current room's presence,
     // and the writer derives live/resting counts + a few names from it. Throttled inside the
     // writer, so calling it on every snapshot is cheap.
-    try { window._roomLiveSnap = allUsers; window._writeRoomIndex(groupName); } catch (e) {}
+    try { window._roomLiveSnap = Object.assign({}, allUsers); window._writeRoomIndex(groupName); } catch (e) {}
+    // 1076: names you gave people (Rename for me). Each renamed row is swapped for a copy, so the
+    // server's row and the room index keep the person's own name.
+    try {
+      var _nk = window._glNicks(); window._glRealNames = window._glRealNames || {};
+      Object.keys(allUsers).forEach(function (k) {
+        var r0 = allUsers[k]; if (!r0) return;
+        window._glRealNames[k] = r0.name || '';
+        if (_nk[k]) allUsers[k] = Object.assign({}, r0, { name: _nk[k], realName: r0.name || '' });
+      });
+    } catch (e) {}
 
     // Keep all valid users — including no-GPS users (PC/desktop)
     // GPS users: keep for 8 hours (STALE_MS)
@@ -23256,6 +23269,7 @@ function listenUsers() {
             (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
             '<div class="ms-appv" data-uid="' + escapeHtmlJs(uid) + '" style="font-size:11px;color:#8d97a1;margin-top:3px">' + escapeHtmlJs(String(data.appv || (window._appvCache || {})[uid] || '')) + '</div>' +
             (_msGfExcl ? '<div style="margin-top:6px">' + _msGfExcl + '</div>' : '') +
+            (!isMine ? '<div style="margin-top:6px"><button onclick="window._renameForMe(\'' + uid + '\')" style="padding:6px 10px;background:none;border:1px solid var(--border);border-radius:9px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;white-space:nowrap">✎ Rename for me</button></div>' : '') +
           '</div>' +
           _msTalk +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' + _msFollow + _msNav + _msLive + _msHist + _msFav + _msMore + '</div>';
@@ -25111,7 +25125,7 @@ function listenChat() {
       const canDel = isMine || window._isRoomOwner || window._isRoomAdmin;
       const div = document.createElement('div');
       div.className = 'msg ' + (isMine ? 'mine' : 'theirs');
-      div.innerHTML = (isMine ? '' : '<div class="sender">' + escapeHtmlJs(m.name) + '</div>') + escapeHtmlJs(m.text) +
+      div.innerHTML = (isMine ? '' : '<div class="sender">' + escapeHtmlJs(window._nickOf(m.uid, m.name)) + '</div>') + escapeHtmlJs(m.text) +
         (canDel ? ' <button class="msg-del" data-k="' + m._key + '" title="Delete message" style="margin-left:6px;background:none;border:none;color:rgba(230,237,243,.45);font-size:12px;line-height:1;cursor:pointer;padding:0 2px;vertical-align:middle">&#10005;</button>' : '');
       container.appendChild(div);
     });
@@ -27521,7 +27535,7 @@ function _offlineProgress(frac) {
 // fetched ONE AT A TIME, each waiting on the government server's round trip, so a 100 MB area
 // (~5,000 tiles) took the better part of an hour. Now 8 at a time. Shared by Save and Update.
 async function _fetchTilesInto(cache, ids, onProgress) {
-  var r = { done: 0, bytes: 0, failed: 0, capped: false, stopped: false }, next = 0, started = 0;
+  var r = { done: 0, bytes: 0, failed: 0, none: 0, capped: false, stopped: false }, next = 0, started = 0;   // none: the server has no picture there (404)
   var worker = async function () {
     while (true) {
       if (window._offlineCancel) { r.stopped = true; return; }
@@ -27532,6 +27546,7 @@ async function _fetchTilesInto(cache, ids, onProgress) {
       try {
         var resp = await fetch(url + '?dl=1', { mode: 'cors' });   // 1075: dl = straight from the server, past sw.js (no stretched or old saved copies)
         if (resp.ok) { r.bytes += parseInt(resp.headers.get('content-length') || '0', 10) || 18000; await cache.put(url, resp); r.done++; }
+        else if (resp.status === 404) r.none++;
         else r.failed++;
       } catch (e) { r.failed++; }
       if (++started % 10 === 0 && onProgress) { try { onProgress(started, r.done, r.bytes); } catch (e) {} }
@@ -27603,11 +27618,12 @@ window._renderMapsLib = async function (renameId) {
       (ren ? '<input class="ml-ren" maxlength="60" value="' + _mlEsc(a.name || '') + '">'
            : '<div class="ml-name">' + _mlEsc(a.name || 'Saved area') + '</div>') +
       '<div class="ml-meta">' + _fmtMB(a.bytes || 0) + ' · saved ' + _mlDate(a.updated || a.ts) + (a.parcelKeys && a.parcelKeys.length ? ' · property lines' : '') + '</div>' +
+      (a.missing > 0 && !busy ? '<div class="ml-meta" style="color:#E3A008;font-weight:800">Not finished: ' + Math.min(99, Math.floor((a.total - a.missing) / a.total * 100)) + '% saved. Tap Finish to get the rest.</div>' : '') +
       '<div class="ml-meta ml-st">' + (busy ? 'Updating…' : '') + '</div>' +
       '<div class="ml-btns">' +
         (ren ? _mlBtn('Save name', 'savename') + _mlBtn('Cancel', 'cancel')
              : busy ? _mlBtn('Stop', 'stop')
-             : _mlBtn('Show on map', 'show') + _mlBtn('Rename', 'rename') + _mlBtn('Update', 'update') + _mlBtn('Delete', 'delete', 'del')) +
+             : _mlBtn('Show on map', 'show') + (a.missing > 0 ? _mlBtn('Finish', 'finish') : '') + _mlBtn('Rename', 'rename') + _mlBtn('Update', 'update') + _mlBtn('Delete', 'delete', 'del')) +
       '</div></div></div>';
   });
   body.innerHTML = h;
@@ -27631,6 +27647,7 @@ document.addEventListener('click', function (e) {
   else if (act === 'savename') { var inp = card.querySelector('.ml-ren'); window._mlSaveName(id, inp && inp.value); }
   else if (act === 'cancel') window._renderMapsLib();
   else if (act === 'update') window._mlUpdate(id);
+  else if (act === 'finish') window._mlFinish(id);
   else if (act === 'stop') window._offlineCancel = true;
   else if (act === 'delete') window._mlDelete(id);
 });
@@ -27647,6 +27664,29 @@ window._mlDelete = function (id) {
     await window._doDeleteOfflineArea(id, a);
     window._renderMapsLib();
   }, { danger: true, yes: 'Delete' });
+};
+// 1076: finish a download that was stopped or lost signal part way. Only the missing pieces.
+window._mlFinish = async function (id) {
+  if (window._mapsLibBusy) { try { toast('One download at a time', 2000); } catch (e) {} return; }
+  var a = _getAreas().filter(function (x) { return x.id === id; })[0]; if (!a || !a.bbox) return;
+  window._mapsLibBusy = id; window._offlineCancel = false;
+  window._renderMapsLib();
+  var cache = await caches.open(a.cache || ('gltiles_' + id));
+  var all = _areaTileIds(a.bbox), need = [];
+  for (var i = 0; i < all.length; i++) {
+    var p = all[i].split('/');
+    if (!(await cache.match(GL_AERIAL_TPL.replace('{z}', p[0]).replace('{y}', p[1]).replace('{x}', p[2])))) need.push(all[i]);
+  }
+  var r = need.length ? await _fetchTilesInto(cache, need, function (n) {
+    var c = document.querySelector('#maps-lib .ml-card[data-id="' + id + '"] .ml-st');
+    if (c) c.textContent = 'Finishing… ' + Math.round(n / need.length * 100) + '%';
+  }) : { done: 0, bytes: 0, stopped: false };
+  window._mapsLibBusy = null;
+  var left = Math.max(0, need.length - r.done - (r.none || 0));
+  _setAreas(_getAreas().map(function (x) { if (x.id === id) { x.count = (x.count || 0) + r.done; x.bytes = (x.bytes || 0) + r.bytes; x.total = all.length; x.missing = left; } return x; }));
+  try { toast(left ? (r.stopped ? 'Stopped. ' : 'Signal dropped. ') + 'Tap Finish again to get the rest.' : '"' + (a.name || 'Area') + '" is complete', 3000); } catch (e) {}
+  try { window._evt && window._evt('offline area "' + (a.name || id) + '" finish: +' + r.done + ' tiles, ' + left + ' still missing'); } catch (e) {}
+  window._renderMapsLib();
 };
 // Download the area again for fresh pictures. New tiles go into a fresh cache and replace the old
 // one only once the download finished, so a stopped or failed update keeps the old pictures.
@@ -27669,7 +27709,7 @@ window._mlUpdate = async function (id) {
     try { toast(r.stopped ? 'Update stopped. The old pictures are kept.' : 'Could not update. Check signal and try again.', 3000); } catch (e) {}
   } else {
     try { await caches.delete(a.cache || ('gltiles_' + id)); } catch (e) {}
-    _setAreas(_getAreas().map(function (x) { if (x.id === id) { x.cache = newName; x.count = r.done; x.bytes = r.bytes; x.updated = Date.now(); } return x; }));
+    _setAreas(_getAreas().map(function (x) { if (x.id === id) { x.cache = newName; x.count = r.done; x.bytes = r.bytes; x.updated = Date.now(); x.total = ids.length; x.missing = Math.max(0, ids.length - r.done - (r.none || 0)); } return x; }));
     try { toast('"' + (a.name || 'Area') + '" updated', 2500); } catch (e) {}
   }
   window._renderMapsLib();
@@ -27699,7 +27739,8 @@ window._confirmOfflineDownload = async function () {
   if (done > 0) {
     if (!stopped) { try { _setOfflineStatus('Saving parcels for "' + name + '"…'); parcelKeys = await _downloadParcelsForArea(bnds); } catch (e) {} }
     var areas = _getAreas();
-    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng, bbox: bbox, parcelKeys: parcelKeys });
+    areas.push({ id: id, name: name, count: done, bytes: bytes, ts: Date.now(), lat: c.lat, lng: c.lng, bbox: bbox, parcelKeys: parcelKeys,
+                 total: ids.length, missing: Math.max(0, ids.length - done - (_r.none || 0)) });   // 1076: unfinished areas say so
     _setAreas(areas);
     if (nameEl) nameEl.value = '';
     _renderOfflineAreas();
@@ -28051,6 +28092,26 @@ window._glrUpdate = function () {
   } catch (e) {}
 };
 // Put the source and layers on the current base map (a style change wipes them). Under the pins.
+// 1076: "I re-downloaded basically that same area and allowed it to complete, that's the map that
+// should be showing up instead of that green dash box" (Jace, 2026-11-24). The area HAD saved
+// (2150 pictures, 7:48 PM), but the map was on Satellite with a signal that came and went, so it
+// sat waiting on Satellite pictures and never looked at the saved ones. Now the saved pictures lie
+// UNDER whatever map is up: where Satellite (or any map) loads, it covers them; where it doesn't,
+// the saved map shows instead of black. ?saved=1 tells sw.js to answer only from the phone --
+// never the network -- so this costs no data and adds no load on a weak signal.
+window._savedUnderEnsure = function () {
+  try {
+    if (typeof map === 'undefined' || !map || !map.getStyle || !map.getStyle()) return;
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;   // without sw.js it would download
+    if (map.getSource('usgs-aerial')) return;                                     // Offline Photo is already the map
+    if (map.getLayer('gl-saved-under')) return;
+    if (!map.getSource('gl-saved')) map.addSource('gl-saved', { type: 'raster', tileSize: 256, minzoom: 8, maxzoom: 17,
+      tiles: [GL_AERIAL_TPL + '?saved=1'] });
+    var ls = map.getStyle().layers || [], before;
+    for (var i = 0; i < ls.length; i++) { if (ls[i].type !== 'background') { before = ls[i].id; break; } }
+    map.addLayer({ id: 'gl-saved-under', type: 'raster', source: 'gl-saved', paint: { 'raster-fade-duration': 0 } }, before);
+  } catch (e) {}
+};
 window._glrEnsure = function () {
   try {
     if (typeof map === 'undefined' || !map || !map.getStyle || !map.getStyle()) return;
@@ -32696,6 +32757,7 @@ try {
       f.get(f.ref(f.db, 'gl/_users/' + u)).then(function (snap) {
         window._pullBusy = 0;
         var v = snap && snap.val && snap.val();
+        if (v && v.nicks) { try { window._mergeNicks(v.nicks); } catch (e) {} }   // 1076
         if (!v || !window._applyProfilePublic) return;
         var before = '';
         try { before = localStorage.getItem('gl_saved_pins') || ''; } catch (e) {}
@@ -33941,6 +34003,65 @@ window._endPeek = function () {
   if (!window._peekUid) return;
   window._peekUid = null;
   _rerenderPeople();
+};
+// 1076: "we also need the ability to change people's names ... that phone is Jim but when he
+// signed up he only put J ... would only show changed for me not for everyone else" (Jace,
+// 2026-11-24). A name YOU give someone, seen only by you: kept on the phone and in your own
+// account (gl/_users/<you>/nicks), never on their row, so nobody else sees it.
+window._glNicks = function () { try { return JSON.parse(localStorage.getItem('gl_nicks') || '{}') || {}; } catch (e) { return {}; } };
+window._nickOf = function (uid, fallback) { var n = uid && window._glNicks()[uid]; return n || fallback; };
+window._mergeNicks = function (remote) {
+  try {
+    if (!remote || typeof remote !== 'object') return;
+    var cur = window._glNicks(), changed = false;
+    Object.keys(remote).forEach(function (k) { var v = remote[k] || null; if (v && cur[k] !== v) { cur[k] = String(v).slice(0, 40); changed = true; } });
+    if (changed) { localStorage.setItem('gl_nicks', JSON.stringify(cur)); window._nicksChanged(); }
+  } catch (e) {}
+};
+window._nicksChanged = function () {
+  // Re-read the room so every pin, chip, list and sheet picks the name up from one place.
+  try { if (window._reprocessUsers) window._reprocessUsers(); } catch (e) {}
+};
+window._renameForMe = function (uid) {
+  var row = (window._glRealNames && window._glRealNames[uid]) || '';
+  var cur = window._glNicks()[uid] || '';
+  var m = document.getElementById('gl-nick-modal');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'gl-nick-modal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px';
+    document.body.appendChild(m);
+  }
+  m.innerHTML = '<div style="background:var(--surface,#161b22);border:1px solid var(--border);border-radius:16px;padding:18px;width:100%;max-width:360px">' +
+    '<div style="font-size:18px;font-weight:800;color:var(--text)">Rename for me</div>' +
+    '<div style="font-size:14px;color:var(--muted);margin:6px 0 12px">Only you will see this name. Everyone else still sees <b style="color:var(--text)">' + _escHtml(row || 'their own name') + '</b>.</div>' +
+    '<input id="gl-nick-inp" maxlength="40" placeholder="Name" style="width:100%;box-sizing:border-box;padding:12px;font-size:17px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text)">' +
+    '<div style="display:flex;gap:8px;margin-top:14px">' +
+      (cur ? '<button id="gl-nick-clear" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;font-size:15px">Use their name</button>' : '') +
+      '<button id="gl-nick-cancel" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;font-size:15px">Cancel</button>' +
+      '<button id="gl-nick-save" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#0d1117;font-weight:800;font-size:15px">Save</button>' +
+    '</div></div>';
+  m.style.display = 'flex';
+  var inp = document.getElementById('gl-nick-inp'); inp.value = cur || row; setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 100);
+  var close = function () { m.style.display = 'none'; };
+  var save = function (val) {
+    var v = String(val || '').trim().slice(0, 40);
+    if (v && v === row) v = '';                          // same as their own name: nothing to keep
+    var all = window._glNicks();
+    if (v) all[uid] = v; else delete all[uid];
+    try { localStorage.setItem('gl_nicks', JSON.stringify(all)); } catch (e) {}
+    try {
+      var acct = (typeof _myAcct === 'function') ? _myAcct() : '', f = window._fb;
+      if (acct && f && f.update) { var up = {}; up[uid] = v || null; f.update(f.ref(f.db, 'gl/_users/' + acct + '/nicks'), up).catch(function () {}); }
+    } catch (e) {}
+    close();
+    window._nicksChanged();
+    try { if (window._openMemberUid === uid && userMarkers[uid]) window._showMemberSheet(uid); } catch (e) {}
+    try { toast(v ? 'You\u2019ll see them as ' + v : 'Showing their own name again', 2500); } catch (e) {}
+  };
+  document.getElementById('gl-nick-save').onclick = function () { save(inp.value); };
+  document.getElementById('gl-nick-cancel').onclick = close;
+  var clr = document.getElementById('gl-nick-clear'); if (clr) clr.onclick = function () { save(''); };
+  inp.onkeydown = function (e) { if (e.key === 'Enter') save(inp.value); if (e.key === 'Escape') close(); };
 };
 window._openPersonSheet = function (uid, data) {
   if (!uid) return;
@@ -37744,7 +37865,9 @@ window._voiceMod().then(function (m) {
       ? '<button class="ss-act talk" type="button" onclick="window._openVoiceTo(\'' + esc(r.uid) + '\',\'' + esc(q) + '\')"><svg class="licon"><use href="#ic-mic"/></svg>Talk to ' + nm + '</button>' : '';
     var nav = (!r.mine && s.has) ? '<button class="ss-act" type="button" onclick="window._navigateTo(' + s.lat + ',' + s.lng + ',\'' + esc(q) + '\')"><svg><use href="#ss-i-nav"/></svg>Directions</button>' : '';
     var find = s.has ? '<button class="ss-act" type="button" onclick="window._ssFind(\'' + esc(r.uid) + '\')"><svg><use href="#ss-i-pin"/></svg>Find on map</button>' : '';
-    var h = '<div class="ss-top">' + avatar(r) + '<div style="min-width:0"><div class="ss-name">' + nm + (r.mine ? ' <small>(you)</small>' : '') + '</div>' +
+    // 1076: Rename for me sits by the name, where it is seen without dragging the card up.
+    var rn = !r.mine ? ' <button type="button" onclick="window._renameForMe(\'' + esc(r.uid) + '\')" style="vertical-align:middle;margin-left:6px;padding:4px 10px;font-size:13px;font-weight:700;border-radius:14px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer">\u270E Rename</button>' : '';
+    var h = '<div class="ss-top">' + avatar(r) + '<div style="min-width:0"><div class="ss-name">' + nm + (r.mine ? ' <small>(you)</small>' : '') + rn + '</div>' +
       '<div class="ss-where" style="font-size:18px">' + s.where + '</div>' + (s.when ? '<div class="ss-when" style="font-size:16px">' + esc(s.when) + '</div>' : '') + '</div>' +
       '<button class="ss-round ss-x" type="button" aria-label="Back to family" onclick="window._ssClosePerson()"><svg><use href="#ss-i-x"/></svg></button></div>' +
       (s.attn ? '<div class="ss-attn" style="margin-top:14px;font-size:16px">⚠ ' + esc(s.attn) + ' — this location may be old</div>' : '') +

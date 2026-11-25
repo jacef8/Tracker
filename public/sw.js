@@ -53,13 +53,7 @@ self.addEventListener('message', e => {
 
 // Saved map pictures (Offline Photo): any gltiles_* cache, or the old single cache.
 async function _savedTile(u) {
-  var keys = await caches.keys();
-  for (var i = 0; i < keys.length; i++) {
-    if (keys[i].indexOf('gltiles_') === 0 || keys[i] === 'gl-offline-tiles') {
-      var hit = await (await caches.open(keys[i])).match(u);
-      if (hit) return hit;
-    }
-  }
+  try { var any = await caches.match(u); if (any) return any; } catch (e) {}
   return null;
 }
 // 1075: the piece of a saved wider-zoom picture that covers this tile, enlarged to full size.
@@ -108,6 +102,17 @@ self.addEventListener('fetch', e => {
   // cache first so a downloaded hunting area works with NO signal; otherwise fall
   // through to the network (un-downloaded areas still load online).
   if (url.hostname.indexOf('basemap.nationalmap.gov') !== -1) {
+    // 1076: ?saved=1 is the saved-pictures layer under every map. Answer from the phone only --
+    // the saved picture, or a wider one enlarged -- and never touch the network.
+    if (url.searchParams.has('saved')) {
+      e.respondWith((async function () {
+        var bare = e.request.url.replace(/\?.*$/, '');
+        try { var h = await _savedTile(bare); if (h) return h; } catch (e2) {}
+        try { var up = await _stretchedTile(bare); if (up) return up; } catch (e3) {}
+        return new Response('', { status: 404 });
+      })());
+      return;
+    }
     e.respondWith((async function() {
       try { var hit = await _savedTile(e.request.url); if (hit) return hit; } catch (e2) {}
       // 1075: zoomed in past what was saved, or outside it, with no or weak signal, the map went
