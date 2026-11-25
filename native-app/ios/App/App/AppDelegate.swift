@@ -1190,8 +1190,32 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
             }
         }
 
+        // ── Offline trail queue (1.0.22) ────────────────────────────────────────────────────
+        // "large jumps that got off the road ... gaps in the trail" (Jace, 2026-11-24, J's iPhone
+        // in the Apalachicola NF). With no signal every background position was taken and then
+        // thrown away: the PATCH below failed, only the LAST fix was kept for a re-send, and the
+        // trail writer (headless.html) cannot even load when iOS relaunches the app offline --
+        // it comes over the network. So the trail drew a straight line across every dead zone.
+        // Now this fix's trail points (the route since the last report plus the fix itself) are
+        // kept on the phone when sending fails, and uploaded once a later write gets through.
+        var qPts: [[String: Any]] = []
+        if !circles.isEmpty, loc.horizontalAccuracy > 0, loc.horizontalAccuracy <= 50 {
+            let acc = Int(loc.horizontalAccuracy.rounded())
+            if let route = body["path"] as? [[Any]] {
+                for q in route where q.count >= 3 {
+                    if let la = q[0] as? Double, let ln = q[1] as? Double, let t = q[2] as? Int, t < fixTs {
+                        qPts.append(["k": pushKey(t), "lat": la, "lng": ln, "ts": t, "acc": acc, "src": "nq"])
+                    }
+                }
+            }
+            qPts.append(["k": pushKey(fixTs), "lat": loc.coordinate.latitude, "lng": loc.coordinate.longitude,
+                         "ts": fixTs, "acc": acc, "src": "nq"])
+        }
+
         withAuthToken(apiKey: apiKey, rt: (cfg["rt"] as? String) ?? "") { [weak self] token in
             guard let token = token else {
+                // No signal reaches here too (the token refresh is a network call): keep the trail.
+                if !qPts.isEmpty { DispatchQueue.main.async { self?.enqueueTrail(qPts) } }
                 // Couldn't authenticate — hand the fix to the WebView path instead of dropping it.
                 DispatchQueue.main.async { self?.writeDone(); self?.reportFixViaWebView(loc); done?(false) }
                 return
@@ -1249,6 +1273,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
                     // the persisted record as unsent and the next wakeHeartbeat re-sends it.
                     self?.lastReportedAt = Date()
                     self?.markLastFixSent(fixTs: fixTs)
+                    // Signal is back: send the trail kept while it was gone.
+                    self?.flushTrailQueue(dbUrl: dbUrl, token: token, uid: uid, circles: circles, histOn: histOn)
+                } else if !qPts.isEmpty {
+                    self?.enqueueTrail(qPts)
                 }
                 self?.writeDone()
                 self?.endBackgroundTaskIfNeeded()
@@ -1310,6 +1338,91 @@ class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate
         for n in 0..<pts.count where keep[n] { out.append(pts[n]) }
         return out
     }
+    // MARK: - Offline trail queue (1.0.22)
+    // Kept in UserDefaults so it outlives iOS ending the app. Capped at 4000 points (about 11
+    // hours of driving at one point per 10 s) -- the oldest go first if it ever fills.
+    private let trailQKey = "gl_trailq"
+    private var trailFlushBusy = false
+    private static let pushChars = Array("-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz")
+    private var lastPushMs = 0
+    private var lastPushRand: [Int] = []
+    /// A Firebase push id for time `ms`: same shape as the web SDK's, so keys sort by time and
+    /// the web's oldest-first trail pruning keeps working on points sent from here.
+    private func pushKey(_ ms: Int) -> String {
+        var t = ms
+        var head = [Character](repeating: "-", count: 8)
+        for i in stride(from: 7, through: 0, by: -1) { head[i] = AppDelegate.pushChars[t % 64]; t /= 64 }
+        if ms == lastPushMs && lastPushRand.count == 12 {
+            var i = 11
+            while i >= 0 && lastPushRand[i] == 63 { lastPushRand[i] = 0; i -= 1 }
+            if i >= 0 { lastPushRand[i] += 1 }
+        } else {
+            lastPushRand = (0..<12).map { _ in Int.random(in: 0..<64) }
+        }
+        lastPushMs = ms
+        return String(head) + String(lastPushRand.map { AppDelegate.pushChars[$0] })
+    }
+    private func trailQueue() -> [[String: Any]] {
+        return (UserDefaults.standard.array(forKey: trailQKey) as? [[String: Any]]) ?? []
+    }
+    private func enqueueTrail(_ pts: [[String: Any]]) {
+        var q = trailQueue()
+        q.append(contentsOf: pts)
+        if q.count > 4000 { q.removeFirst(q.count - 4000) }
+        UserDefaults.standard.set(q, forKey: trailQKey)
+        GLFlight.log("trailq", ["n": q.count])
+    }
+    /// Upload kept trail points (up to 500 at a time) to every Crew's live trail and, with
+    /// history on, its day history. The same keys go to both, so a retry can never double a point.
+    private func flushTrailQueue(dbUrl: String, token: String, uid: String, circles: [String], histOn: Bool) {
+        if trailFlushBusy || circles.isEmpty { return }
+        let q = trailQueue()
+        if q.isEmpty { return }
+        trailFlushBusy = true
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"; df.timeZone = .current
+        var trailBody: [String: Any] = [:]
+        var histByDate: [String: [String: Any]] = [:]
+        for p in q.prefix(500) {
+            guard let k = p["k"] as? String, let ts = p["ts"] as? Int else { continue }
+            var pt = p
+            pt.removeValue(forKey: "k")
+            trailBody[k] = pt
+            histByDate[df.string(from: Date(timeIntervalSince1970: Double(ts) / 1000)), default: [:]][k] = pt
+        }
+        let group = DispatchGroup()
+        var ok = true
+        let lock = NSLock()
+        let send: (String, [String: Any]) -> Void = { path, b in
+            guard let u = URL(string: "\(dbUrl)/\(path).json?auth=\(token)"),
+                  let data = try? JSONSerialization.data(withJSONObject: b) else { return }
+            var r = URLRequest(url: u)
+            r.httpMethod = "PATCH"
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = data
+            r.timeoutInterval = 25
+            group.enter()
+            URLSession.shared.dataTask(with: r) { _, resp, _ in
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                if code < 200 || code >= 300 { lock.lock(); ok = false; lock.unlock() }
+                group.leave()
+            }.resume()
+        }
+        for room in circles {
+            send("gl/\(room)/trails/\(uid)", trailBody)
+            if histOn { for (d, b) in histByDate { send("glh/\(room)/\(uid)/\(d)", b) } }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
+            self.trailFlushBusy = false
+            guard ok else { GLFlight.log("trailflush", ["ok": 0]); return }
+            let sent = Set(trailBody.keys)
+            let left = self.trailQueue().filter { !sent.contains(($0["k"] as? String) ?? "") }
+            UserDefaults.standard.set(left, forKey: self.trailQKey)
+            GLFlight.log("trailflush", ["n": sent.count, "left": left.count])
+            if !left.isEmpty { self.flushTrailQueue(dbUrl: dbUrl, token: token, uid: uid, circles: circles, histOn: histOn) }
+        }
+    }
+
     private func pathTake() -> [[Any]]? {
         let raw = pathBuf
         pathBuf = []

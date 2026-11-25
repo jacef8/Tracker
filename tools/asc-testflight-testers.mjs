@@ -141,6 +141,10 @@ if (mode === 'submitversion') {
   // Per-version release notes. Falls back to a generic line for a version with none written,
   // rather than re-sending an older version's list as though it were new.
   const NOTES = {
+    '1.0.22': [
+      '- Trails no longer have gaps after driving through areas with no signal: positions taken without signal are kept on the phone and sent when signal returns',
+      '- Fixes and reliability improvements for background location',
+    ],
     '1.0.21': [
       '- Fixes and reliability improvements for background location',
     ],
