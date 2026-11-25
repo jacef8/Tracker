@@ -2034,6 +2034,19 @@ window._timedOnValue = function (orig) {
   .glsh .glsh-pan { position: relative; width: 100%; max-width: 520px; max-height: 84vh; display: flex; flex-direction: column; overflow: hidden;
     background: #161b22; color: #f0f6fc; border-radius: 20px 20px 0 0; padding: 18px 16px calc(14px + env(safe-area-inset-bottom)); }
   .glsh.wide .glsh-pan { max-width: 760px; }
+  .glsh.side { align-items: stretch; justify-content: flex-end; pointer-events: none; }
+  .glsh.side .glsh-bd { display: none; }
+  .glsh.side .glsh-pan { pointer-events: auto; max-width: 780px; width: 780px; max-height: none; height: 100%; border-radius: 0; border-left: 2px solid #30363d; padding: 18px 18px 14px; }
+  .glsh .glsh-filt { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .glsh .glsh-chip { min-height: 40px; padding: 0 12px; border-radius: 20px; border: 1px solid #30363d; background: #21262d; color: #f0f6fc; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .glsh .glsh-chip.on { background: #f0a500; color: #1a1206; border-color: #f0a500; }
+  .glsh .glsh-tab { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .glsh .glsh-tab th { position: sticky; top: 0; background: #161b22; text-align: left; font-size: 13px; color: #f0a500; padding: 6px 6px; border-bottom: 1px solid #30363d; }
+  .glsh .glsh-tab td { padding: 5px 6px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  .glsh .glsh-tab tr:hover td { background: #1c2128; }
+  .glsh .glsh-cell { min-height: 40px; font-size: 15px; }
+  .glsh .glsh-tab td:first-child { min-width: 230px; }
+  .glsh .glsh-dim { color: #c9d1d9; font-size: 14px; }
   .glsh .glsh-t { font-size: 20px; font-weight: 800; }
   .glsh .glsh-s { font-size: 15px; color: #c9d1d9; margin: 4px 0 12px; line-height: 1.35; }
   .glsh .glsh-note { font-size: 14px; color: #c9d1d9; margin: 6px 0; }
@@ -4777,7 +4790,7 @@ window._timedOnValue = function (orig) {
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
         <!-- 1086: draw a road the maps don't have; tap any road on the map to rename it. -->
         <button onclick="window._startDrawRoad()" style="padding:13px 14px;background:var(--bg);border:1px solid #FF9F43;border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:#FF9F43;flex-shrink:0"><use href="#ic-map"/></svg><span style="flex:1"><span style="display:block">Draw a road</span><small style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Tap along it, then name it. Tap any road to rename it</small></span></button>
-        <button id="layer-roadtable-btn" onclick="window._openRoadTable()" style="display:none;padding:13px 14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-layers"/></svg><span style="flex:1"><span style="display:block">Crew roads table</span><small style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Owner only: every renamed and drawn road</small></span><span style="color:var(--muted);font-size:20px">&rsaquo;</span></button>
+        <button id="layer-roadtable-btn" onclick="window._openRoadTable()" style="display:none;padding:13px 14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-layers"/></svg><span style="flex:1"><span style="display:block">Crew roads table</span><small style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Owner, on a computer: every road in an area you draw</small></span><span style="color:var(--muted);font-size:20px">&rsaquo;</span></button>
       </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
@@ -5716,7 +5729,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1086;
+var APP_BUILD = 1087;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -28319,7 +28332,7 @@ function _glrRK(f) {
   } catch (e) { return ''; }
 }
 window._roadNames = {}; window._crewRoads = {}; window._crV = 0;
-setInterval(function () { try { var b = document.getElementById('layer-roadtable-btn'); if (b) b.style.display = window._isRoomOwner ? 'flex' : 'none'; } catch (e) {} }, 1500);
+setInterval(function () { try { var b = document.getElementById('layer-roadtable-btn'); if (b) b.style.display = window._rdTableOK && window._rdTableOK() ? 'flex' : 'none'; } catch (e) {} }, 1500);
 setInterval(function () {
   try {
     var g = (typeof groupName !== 'undefined' && groupName) || '';
@@ -28427,9 +28440,10 @@ window._rdDeleteCrew = function (id) {
 };
 // Draw a road: tap along it, Finish, name it.
 window._roadDrawMode = false; window._rdPts = []; window._rdVtx = [];
-window._startDrawRoad = function () {
+window._startDrawRoad = function (asArea) {
   try { closeLayerSheet(); } catch (e) {} try { window._ssPopClose && window._ssPopClose(); } catch (e) {}
   if (!groupName) { toast('Open a crew first', 2000); return; }
+  window._rdAreaMode = asArea === true;
   window._roadDrawMode = true; window._rdPts = [];
   try { map.getCanvas().style.cursor = 'crosshair'; } catch (e) {}
   var bar = document.getElementById('draw-road-bar');
@@ -28446,15 +28460,16 @@ window._startDrawRoad = function () {
   }
   bar.style.display = 'flex';
   _rdDrawRender();
-  toast('Tap along the road, point by point, then Finish', 4000);
+  if (!window._rdAreaMode) toast('Tap along the road, point by point, then Finish', 4000);
 };
 window._drawRoadClick = function (ll) { window._rdPts.push([Math.round(ll.lng * 1e6) / 1e6, Math.round(ll.lat * 1e6) / 1e6]); _rdDrawRender(); };
 function _rdDrawRender() {
-  var pts = window._rdPts || [];
+  var pts = window._rdPts || [], need = window._rdAreaMode ? 3 : 2;
   var b = document.getElementById('dr-finish');
-  if (b) { b.disabled = pts.length < 2; b.style.opacity = pts.length < 2 ? '.45' : '1'; b.textContent = pts.length < 2 ? 'Finish (' + pts.length + '/2)' : 'Finish'; }
+  if (b) { b.disabled = pts.length < need; b.style.opacity = pts.length < need ? '.45' : '1'; b.textContent = pts.length < need ? 'Finish (' + pts.length + '/' + need + ')' : 'Finish'; }
   try {
-    var data = { type: 'FeatureCollection', features: pts.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: pts }, properties: {} }] : [] };
+    var line = window._rdAreaMode && pts.length >= 3 ? pts.concat([pts[0]]) : pts;
+    var data = { type: 'FeatureCollection', features: pts.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: line }, properties: {} }] : [] };
     if (!map.getSource('gl-rdraw')) {
       map.addSource('gl-rdraw', { type: 'geojson', data: data });
       map.addLayer({ id: 'gl-rdraw-line', type: 'line', source: 'gl-rdraw', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#FF9F43', 'line-width': 4, 'line-dasharray': [2, 1.2] } });
@@ -28475,6 +28490,13 @@ function _rdExitDraw() {
 }
 window._finishDrawRoad = function () {
   var pts = (window._rdPts || []).slice();
+  if (window._rdAreaMode) {
+    if (pts.length < 3) { toast('Click at least 3 corners', 2200); return; }
+    _rdExitDraw(); window._rdAreaMode = false;
+    if (groupName) fbSet(fbRef(db, 'gl/' + groupName + '/roadArea'), { pts: pts, by: userId, ts: Date.now() });
+    window._rdLoadArea(pts);
+    return;
+  }
   if (pts.length < 2) { toast('Tap at least 2 points along the road', 2200); return; }
   window._roadDrawMode = false;
   var bar = document.getElementById('draw-road-bar'); if (bar) bar.style.display = 'none';
@@ -28492,65 +28514,198 @@ window._rdSaveNew = function () {
   window._rdNewPts = null; window._rdClose(); _rdExitDraw(); toast('Road saved for the crew', 1800);
 };
 window._rdCancelNew = function () { window._rdNewPts = null; window._rdClose(); _rdExitDraw(); };
-// The owner's table of every renamed and drawn road in the crew.
+// ── 1087: CREW ROADS TABLE (owner, computers only) ───────────────────────────────────────
+// "the roads that show up in the table need to be roads inside a perimeter of a shape the owner
+// draws. it should be filterable by rd ownership. also only make it available on PCs" (Jace,
+// 2026-11-25). The owner draws an area (kept per crew at gl/<crew>/roadArea); the table lists
+// every road inside it -- Forest Service roads with their jurisdiction, Census county/state/US
+// roads by route type, and roads the crew drew -- with a filter by owner and a search box.
+// Typing a new name renames that stretch for the crew, the same as tapping it on the map.
+window._rdIsPC = function () {
+  try { return !_isNativeApp() && window.innerWidth >= 1000 && window.matchMedia('(pointer: fine)').matches; } catch (e) { return false; }
+};
+window._rdTableOK = function () { return !!(window._isRoomOwner && window._rdIsPC()); };
+function _rdTitle(s) { return String(s || '').toLowerCase().replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }); }
+function _rdOwnerFS(j) {
+  var c = String(j || '').split(' - ')[0].trim().toUpperCase();
+  return ({ FS: 'Forest Service', C: 'County', S: 'State', P: 'Private', F: 'Other federal', M: 'City', I: 'Tribal', CO: 'County' })[c] || (j ? _rdTitle(String(j).split(' - ').pop()) : 'Forest Service');
+}
+function _rdOwnerCensus(rt, mt) {
+  if (String(mt) === 'S1500') return '4WD trail';
+  return ({ I: 'US highway', U: 'US highway', S: 'State', C: 'County' })[String(rt || '').toUpperCase()] || 'Other';
+}
+function _rdPolyHas(poly, x, y) {
+  var inside = false;
+  for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    var xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function _rdQueryPoly(base, poly, fields, extra) {
+  var ring = poly.concat([poly[0]]);
+  var body = 'where=1%3D1&geometry=' + encodeURIComponent(JSON.stringify({ rings: [ring], spatialReference: { wkid: 4326 } })) +
+    '&geometryType=esriGeometryPolygon&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&outFields=' + fields +
+    '&returnGeometry=true&maxAllowableOffset=0.00002&resultRecordCount=2000&f=geojson' + (extra || '');
+  return fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+    .then(function (r) { return r.ok ? r.json() : { features: [] }; }).catch(function () { return { features: [], failed: 1 }; });
+}
+function _rdGeomMiles(g) {
+  var m = 0;
+  (g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []).forEach(function (l) {
+    for (var i = 1; i < l.length; i++) m += metersApart(l[i - 1][1], l[i - 1][0], l[i][1], l[i][0]);
+  });
+  return m / 1609.34;
+}
+// Entry point: owner on a computer. Uses the saved area, or asks for one.
 window._openRoadTable = function () {
   try { closeLayerSheet(); } catch (e) {} try { window._ssPopClose && window._ssPopClose(); } catch (e) {}
   if (!window._isRoomOwner) { toast('Only the crew owner can open the road table', 2400); return; }
-  var rn = window._roadNames || {}, cr = window._crewRoads || {};
-  var row = function (inner) { return '<div class="glsh-tr">' + inner + '</div>'; };
-  var who = function (r) { return _escHtml(r.byName || 'someone') + (r.ts ? ' · ' + new Date(r.ts).toLocaleDateString() : ''); };
-  var h = '<div class="glsh-t">Crew roads</div><div class="glsh-s">Every road your crew renamed or drew. Changes save when you tap Save.</div><div class="glsh-list">';
-  var ids = Object.keys(cr).sort(function (a, b) { return String(cr[a].n || '').localeCompare(String(cr[b].n || '')); });
-  h += '<div class="glsh-sec">Drawn roads (' + ids.length + ')</div>';
-  ids.forEach(function (id) {
-    var r = cr[id] || {}, mi = Array.isArray(r.pts) ? _rdMiles(r.pts) : 0;
-    h += row('<input class="glsh-in" data-kind="crew" data-id="' + _escHtml(id) + '" maxlength="40" value="' + _escHtml(r.n || '') + '" placeholder="Unnamed road">' +
-             '<div class="glsh-meta">' + (mi < 0.1 ? Math.round(mi * 5280) + ' ft' : mi.toFixed(1) + ' mi') + ' · drawn by ' + who(r) + '</div>' +
-             '<div class="glsh-acts"><button class="glsh-sm" onclick="window._rdTableGo(\'crew\',\'' + id + '\')">Show</button><button class="glsh-sm glsh-red" onclick="window._rdTableDel(\'crew\',\'' + id + '\')">Delete</button></div>');
-  });
-  if (!ids.length) h += '<div class="glsh-note">None yet. Use Draw a road in Map Layers.</div>';
-  var ks = Object.keys(rn).sort(function (a, b) { return String(rn[a].n || '').localeCompare(String(rn[b].n || '')); });
-  h += '<div class="glsh-sec">Renamed roads (' + ks.length + ')</div>';
-  ks.forEach(function (k) {
-    var r = rn[k] || {};
-    h += row('<input class="glsh-in" data-kind="name" data-id="' + _escHtml(k) + '" maxlength="40" value="' + _escHtml(r.n || '') + '">' +
-             '<div class="glsh-meta">was ' + _escHtml(r.was || 'unnamed') + ' · renamed by ' + who(r) + '</div>' +
-             '<div class="glsh-acts">' + (r.mid ? '<button class="glsh-sm" onclick="window._rdTableGo(\'name\',\'' + k + '\')">Show</button>' : '') +
-             '<button class="glsh-sm glsh-red" onclick="window._rdTableDel(\'name\',\'' + k + '\')">Use regular name</button></div>');
-  });
-  if (!ks.length) h += '<div class="glsh-note">None yet. Tap a road on the map to rename it.</div>';
-  h += '</div><div class="glsh-btns"><button class="glsh-go" onclick="window._rdTableSave()">Save</button><button class="glsh-no" onclick="window._rdClose()">Close</button></div>';
-  var el = _rdSheet(h); el.classList.add('wide');
+  if (!window._rdIsPC()) { toast('The road table opens on a computer', 2400); return; }
+  if (typeof fbGet === 'function' || (window._fb && window._fb.get)) {
+    var get = window._fb.get;
+    get(fbRef(db, 'gl/' + groupName + '/roadArea')).then(function (snap) {
+      var v = snap.val();
+      if (v && Array.isArray(v.pts) && v.pts.length >= 3) window._rdLoadArea(v.pts); else window._rdDrawArea();
+    }).catch(function () { window._rdDrawArea(); });
+  } else window._rdDrawArea();
 };
-window._rdTableSave = function () {
-  if (!window._isRoomOwner) return;
-  var n = 0;
-  document.querySelectorAll('#gl-road-sheet input.glsh-in').forEach(function (i) {
-    var id = i.getAttribute('data-id'), kind = i.getAttribute('data-kind'), v = String(i.value || '').trim().slice(0, 40);
-    if (kind === 'crew') { var r = (window._crewRoads || {})[id]; if (r && (r.n || '') !== v) { fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + id + '/n'), v); n++; } }
-    else { var q = (window._roadNames || {})[id]; if (q && v && q.n !== v) { fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + id + '/n'), v); n++; } }
-  });
-  window._rdClose(); toast(n ? 'Saved ' + n + (n === 1 ? ' change' : ' changes') : 'Nothing changed', 1800);
+// Draw the area: tap corners, Finish.
+window._rdDrawArea = function () {
+  window._rdClose(); _rdAreaShow(null);
+  window._roadDrawMode = true; window._rdAreaMode = true; window._rdPts = [];
+  window._startDrawRoad.call(null, true);
+  toast('Click the corners of the area to list its roads, then Finish', 4200);
 };
-window._rdTableDel = function (kind, id) {
-  if (!window._isRoomOwner) return;
-  var btn = event && event.target;
-  if (btn && !btn.getAttribute('data-sure')) { btn.setAttribute('data-sure', '1'); btn.textContent = 'Tap again'; return; }
-  fbRemove(fbRef(db, 'gl/' + groupName + '/' + (kind === 'crew' ? 'roads/' : 'roadNames/') + id));
-  setTimeout(window._openRoadTable, 300);
-};
-window._rdTableGo = function (kind, id) {
+function _rdAreaShow(pts) {
   try {
-    var c = null, geom = null;
-    if (kind === 'crew') { var r = (window._crewRoads || {})[id]; if (r && r.pts) { geom = { type: 'LineString', coordinates: r.pts }; c = r.pts[Math.floor(r.pts.length / 2)]; } }
-    else { var q = (window._roadNames || {})[id]; if (q && q.mid) c = q.mid; }
-    if (!c) return;
-    window._rdClose();
-    try { if (typeof _stopFitAll === 'function' && fitAllInterval) _stopFitAll(); } catch (e) {}
-    map.flyTo({ center: c, zoom: Math.max(map.getZoom(), 15), duration: 900 });
-    if (geom) _rdSelect(geom);
-    setTimeout(function () { _rdSelect(null); }, 6000);
+    var data = { type: 'FeatureCollection', features: pts && pts.length >= 3 ? [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts.concat([pts[0]])] }, properties: {} }] : [] };
+    if (!map.getSource('gl-rarea')) {
+      map.addSource('gl-rarea', { type: 'geojson', data: data });
+      map.addLayer({ id: 'gl-rarea-fill', type: 'fill', source: 'gl-rarea', paint: { 'fill-color': '#39D0FF', 'fill-opacity': 0.07 } });
+      map.addLayer({ id: 'gl-rarea-line', type: 'line', source: 'gl-rarea', paint: { 'line-color': '#39D0FF', 'line-width': 2.5, 'line-dasharray': [2, 1.5] } });
+    } else map.getSource('gl-rarea').setData(data);
   } catch (e) {}
+}
+window._rdLoadArea = function (poly) {
+  window._rdArea = poly; _rdAreaShow(poly);
+  try {
+    var xs = poly.map(function (p) { return p[0]; }), ys = poly.map(function (p) { return p[1]; });
+    map.fitBounds([[Math.min.apply(null, xs), Math.min.apply(null, ys)], [Math.max.apply(null, xs), Math.max.apply(null, ys)]], { padding: { top: 90, bottom: 90, left: 60, right: 820 }, duration: 700, maxZoom: 15 });
+  } catch (e) {}
+  var el = _rdSheet('<div class="glsh-t">Crew roads</div><div class="glsh-s">Finding the roads inside your area…</div>');
+  el.classList.add('side');
+  Promise.all([
+    _rdQueryPoly(GLR_FS, poly, 'id,name,jurisdiction,primary_maintainer,surface_type,oper_maint_level,openforuseto'),
+    _rdQueryPoly(GLR_TIGER, poly, 'NAME,RTTYP,MTFCC'),
+    _rdQueryPoly(GLR_TIGER_MAJ[0], poly, 'NAME,RTTYP,MTFCC'),
+    _rdQueryPoly(GLR_TIGER_MAJ[1], poly, 'NAME,RTTYP,MTFCC')
+  ]).then(function (res) {
+    var rows = [], seen = {};
+    // Forest roads first, and the ground they cover, so the Census copy of the same road is skipped.
+    var CELL = 0.0004, near = {};
+    var lines = function (g) { return !g ? [] : g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []; };
+    (res[0].features || []).forEach(function (f) {
+      var p = f.properties || {}, id = String(p.id || '').trim(), nm = _rdTitle(String(p.name || '').trim());
+      var official = id ? ('FR ' + id + (nm && nm.toUpperCase() !== id.toUpperCase() ? ' ' + nm : '')) : nm;
+      var ff = { type: 'Feature', geometry: f.geometry, properties: { k: 'fs' } };
+      lines(f.geometry).forEach(function (l) { for (var i = 1; i < l.length; i++) { var a = l[i - 1], b = l[i], st = Math.max(1, Math.ceil(Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) / 0.00015)); for (var j = 0; j <= st; j++) near[Math.floor((a[0] + (b[0] - a[0]) * j / st) / CELL) + ',' + Math.floor((a[1] + (b[1] - a[1]) * j / st) / CELL)] = 1; } });
+      var maint = String(p.oper_maint_level || ''), surf = String(p.surface_type || '');
+      rows.push({ key: _glrRK(ff), kind: 'fs', official: official || 'Unnamed forest road', owner: _rdOwnerFS(p.jurisdiction),
+        info: [surf ? _rdTitle(surf.split(' - ').pop()) : '', maint ? _rdTitle(maint.split(' - ').pop()) : '', p.openforuseto && p.openforuseto !== 'ALL' ? 'Open to ' + _rdTitle(p.openforuseto) : ''].filter(Boolean).join(' · '),
+        miles: _rdGeomMiles(f.geometry), geom: f.geometry });
+    });
+    var onFS = function (g) { var n = 0, hit = 0; lines(g).forEach(function (l) { l.forEach(function (pt) { n++; var cx = Math.floor(pt[0] / CELL), cy = Math.floor(pt[1] / CELL), ok = false; for (var dx = -1; dx <= 1 && !ok; dx++) for (var dy = -1; dy <= 1 && !ok; dy++) if (near[(cx + dx) + ',' + (cy + dy)]) ok = true; if (ok) hit++; }); }); return n > 0 && hit / n >= 0.6; };
+    [[res[1], 'loc'], [res[2], 'hwy'], [res[3], 'hwy']].forEach(function (pair) {
+      (pair[0].features || []).forEach(function (f) {
+        if (pair[1] === 'loc' && onFS(f.geometry)) return;
+        var ff = { type: 'Feature', geometry: f.geometry, properties: { k: pair[1] } }, key = _glrRK(ff);
+        if (seen[key]) return; seen[key] = 1;
+        var p = f.properties || {};
+        rows.push({ key: key, kind: pair[1], official: String(p.NAME || '').trim() || 'Unnamed road', owner: _rdOwnerCensus(p.RTTYP, p.MTFCC),
+          info: String(p.MTFCC) === 'S1500' ? 'Four-wheel-drive trail' : '', miles: _rdGeomMiles(f.geometry), geom: f.geometry });
+      });
+    });
+    var cr = window._crewRoads || {};
+    Object.keys(cr).forEach(function (id) {
+      var r = cr[id] || {}; if (!Array.isArray(r.pts) || r.pts.length < 2) return;
+      if (!r.pts.some(function (q) { return _rdPolyHas(poly, +q[0], +q[1]); })) return;
+      rows.push({ crewId: id, kind: 'crew', official: r.n || 'Unnamed road', owner: 'Crew-drawn', info: 'Drawn by ' + (r.byName || 'someone') + (r.ts ? ' · ' + new Date(r.ts).toLocaleDateString() : ''),
+        miles: _rdMiles(r.pts), geom: { type: 'LineString', coordinates: r.pts }, by: r.by });
+    });
+    var failed = res.some(function (x) { return x.failed; }), capped = res.some(function (x) { return x.exceededTransferLimit || (x.properties && x.properties.exceededTransferLimit); });
+    window._rdRows = rows; window._rdFilter = { owner: '', q: '' };
+    _rdRenderTable(failed, capped);
+  });
+};
+function _rdRenderTable(failed, capped) {
+  var rows = window._rdRows || [], f = window._rdFilter || { owner: '', q: '' }, rn = window._roadNames || {};
+  var owners = {}; rows.forEach(function (r) { owners[r.owner] = (owners[r.owner] || 0) + 1; });
+  var q = String(f.q || '').toLowerCase();
+  var shown = rows.filter(function (r) {
+    if (f.owner && r.owner !== f.owner) return false;
+    if (!q) return true;
+    var nm = r.key && rn[r.key] ? rn[r.key].n : '';
+    return (r.official + ' ' + nm + ' ' + r.owner + ' ' + r.info).toLowerCase().indexOf(q) >= 0;
+  }).sort(function (a, b) { return a.owner === b.owner ? String(a.official).localeCompare(String(b.official)) : String(a.owner).localeCompare(String(b.owner)); });
+  window._rdShown = shown;
+  var chip = function (o, n) { return '<button class="glsh-chip' + ((f.owner || '') === o ? ' on' : '') + '" onclick="window._rdSetOwner(this.getAttribute(\'data-o\'))" data-o="' + _escHtml(o) + '">' + _escHtml(o || 'All') + ' (' + n + ')</button>'; };
+  var h = '<div class="glsh-t">Crew roads <span style="font-weight:600;color:#c9d1d9;font-size:15px">· ' + rows.length + ' in your area</span></div>' +
+    '<div class="glsh-s">Type a new name to rename a road for the whole crew. Leave it blank for the regular name.' + (failed ? ' <b style="color:#ff7b72">Some road lists did not load; try again.</b>' : '') + (capped ? ' <b style="color:#f0a500">Big area: some roads were left out. Draw a smaller area.</b>' : '') + '</div>' +
+    '<div class="glsh-filt">' + chip('', rows.length) + Object.keys(owners).sort().map(function (o) { return chip(o, owners[o]); }).join('') + '</div>' +
+    '<input class="glsh-in" id="rd-search" placeholder="Search roads" value="' + _escHtml(f.q || '') + '" oninput="window._rdSetQ(this.value)" style="margin-bottom:8px">' +
+    '<div class="glsh-list"><table class="glsh-tab"><thead><tr><th>New name (crew)</th><th>Official name</th><th>Owner</th><th>Details</th><th>Miles</th><th></th></tr></thead><tbody>';
+  shown.forEach(function (r, i) {
+    var cur = r.kind === 'crew' ? (r.official === 'Unnamed road' ? '' : r.official) : (r.key && rn[r.key] ? rn[r.key].n : '');
+    h += '<tr><td><input class="glsh-in glsh-cell" data-i="' + i + '" maxlength="40" value="' + _escHtml(cur) + '" placeholder="' + (r.kind === 'crew' ? 'Name' : 'Keep regular') + '"></td>' +
+      '<td>' + _escHtml(r.kind === 'crew' ? '—' : r.official) + '</td><td>' + _escHtml(r.owner) + '</td><td class="glsh-dim">' + _escHtml(r.info || '') + '</td>' +
+      '<td>' + (r.miles < 0.1 ? Math.round(r.miles * 5280) + ' ft' : r.miles.toFixed(1)) + '</td>' +
+      '<td style="white-space:nowrap"><button class="glsh-sm" onclick="window._rdRowGo(' + i + ')">Show</button>' +
+      (r.kind === 'crew' ? ' <button class="glsh-sm glsh-red" onclick="window._rdRowDel(' + i + ', this)">Delete</button>' : '') + '</td></tr>';
+  });
+  if (!shown.length) h += '<tr><td colspan="6" class="glsh-dim">No roads match.</td></tr>';
+  h += '</tbody></table></div><div class="glsh-btns"><button class="glsh-go" onclick="window._rdRowsSave()">Save names</button><button class="glsh-no" onclick="window._rdDrawArea()">Change area</button><button class="glsh-no" onclick="window._rdTableClose()">Close</button></div>';
+  var el = _rdSheet(h); el.classList.add('side');
+  if (window._rdArea) _rdAreaShow(window._rdArea);
+  if (f.q) { var si = document.getElementById('rd-search'); if (si) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); } }
+}
+window._rdSetOwner = function (o) { (window._rdFilter = window._rdFilter || {}).owner = o || ''; _rdRenderTable(); };
+window._rdSetQ = function (v) { (window._rdFilter = window._rdFilter || {}).q = v || ''; clearTimeout(window._rdQT); window._rdQT = setTimeout(function () { _rdRenderTable(); }, 250); };
+window._rdTableClose = function () { window._rdClose(); _rdAreaShow(null); };
+window._rdRowGo = function (i) {
+  var r = (window._rdShown || [])[i]; if (!r || !r.geom) return;
+  try {
+    var c = r.geom.type === 'LineString' ? r.geom.coordinates : r.geom.coordinates[0];
+    var xs = c.map(function (p) { return p[0]; }), ys = c.map(function (p) { return p[1]; });
+    try { if (typeof _stopFitAll === 'function' && fitAllInterval) _stopFitAll(); } catch (e) {}
+    map.fitBounds([[Math.min.apply(null, xs), Math.min.apply(null, ys)], [Math.max.apply(null, xs), Math.max.apply(null, ys)]], { padding: { top: 90, bottom: 90, left: 60, right: 820 }, duration: 700, maxZoom: 16 });
+    _rdSelect(r.geom);
+  } catch (e) {}
+};
+window._rdRowDel = function (i, btn) {
+  var r = (window._rdShown || [])[i]; if (!r || r.kind !== 'crew') return;
+  if (btn && !btn.getAttribute('data-sure')) { btn.setAttribute('data-sure', '1'); btn.textContent = 'Tap again'; return; }
+  fbRemove(fbRef(db, 'gl/' + groupName + '/roads/' + r.crewId));
+  window._rdRows = (window._rdRows || []).filter(function (x) { return x !== r; });
+  _rdRenderTable();
+};
+window._rdRowsSave = function () {
+  if (!window._rdTableOK()) return;
+  var rn = window._roadNames || {}, n = 0;
+  document.querySelectorAll('#gl-road-sheet input.glsh-cell').forEach(function (inp) {
+    var r = (window._rdShown || [])[+inp.getAttribute('data-i')]; if (!r) return;
+    var v = String(inp.value || '').trim().slice(0, 40);
+    if (r.kind === 'crew') {
+      var cur = r.official === 'Unnamed road' ? '' : r.official;
+      if (v !== cur) { fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + r.crewId + '/n'), v); r.official = v || 'Unnamed road'; n++; }
+      return;
+    }
+    var had = rn[r.key];
+    if (v && (!had || had.n !== v)) {
+      fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + r.key), { n: v, was: r.official, kind: r.kind, mid: _rdMid(r.geom), by: userId, byName: userName || '', ts: Date.now() }); n++;
+    } else if (!v && had) { fbRemove(fbRef(db, 'gl/' + groupName + '/roadNames/' + r.key)); n++; }
+  });
+  toast(n ? 'Saved ' + n + (n === 1 ? ' change' : ' changes') + ' for the crew' : 'Nothing changed', 2000);
 };
 window._glrToggle = function () {
   var on = !window._glrOn();
@@ -38558,8 +38713,8 @@ window._voiceMod().then(function (m) {
     // 1086: crew roads.
     '<div class="ss-row" onclick="window._startDrawRoad()"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
       '<div class="ss-who"><div class="ss-name">Draw a road</div><div class="ss-where">Tap along it, then name it. Tap any road to rename it</div></div></div>' +
-    (window._isRoomOwner ? '<div class="ss-row" onclick="window._openRoadTable()"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
-      '<div class="ss-who"><div class="ss-name">Crew roads table</div><div class="ss-where">Every renamed and drawn road in this crew</div></div></div>' : '') +
+    (window._rdTableOK && window._rdTableOK() ? '<div class="ss-row" onclick="window._openRoadTable()"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
+      '<div class="ss-who"><div class="ss-name">Crew roads table</div><div class="ss-where">Every road in an area you draw, by owner</div></div></div>' : '') +
     // 1073: the saved-maps library, from the simple map menu too.
     '<div class="ss-row" onclick="window._openMapsLib()"><div class="ss-av ic"><svg class="licon"><use href="#ic-download"/></svg></div>' +
       '<div class="ss-who"><div class="ss-name">Saved maps</div><div class="ss-where">Areas saved for no signal: see, rename, update, delete</div></div></div>');
