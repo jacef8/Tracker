@@ -47,11 +47,11 @@
 
   <!-- ░░ ANDROID — install the native app ░░ -->
   <div class="block" id="android-block">
-    <a class="btn" href="/GroundLink.apk" download>
+    <a class="btn" id="apk-btn" href="/GroundLink.apk" download>
       <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
       Install the Android app
     </a>
-    <div class="note">Android app &middot; 4.5&nbsp;MB &middot; free &middot; built 24 Sep 2026</div>
+    <div class="note" id="apk-note">Android app &middot; free</div>
     <div class="steps">
       <h2>How to install</h2>
       <div class="step"><div class="num">1</div><p>Tap <b>Install the Android app</b> above to download the app file.</p></div>
@@ -105,6 +105,23 @@
 </div>
 
 <script>
+// 2026-11-25: "Nothing is happening and I do not have any downloads in Chrome" (Jace). Opened from the
+// app's update bar, this page ran inside GroundLink, whose built-in browser cannot download files.
+// There, the button hands the file to Chrome: an http:// link (the server forwards it to https) is
+// a different address from the app's own, so the app opens it in Chrome, which downloads it.
+(function () {
+  try {
+    if (/GroundLinkNative/i.test(navigator.userAgent || '')) {
+      var b = document.getElementById('apk-btn');
+      if (b) { b.removeAttribute('download'); b.setAttribute('href', 'http://' + location.host + '/GroundLink.apk'); }
+    }
+    fetch('/native-latest.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var n = document.getElementById('apk-note');
+      if (n && j && j.androidVersion) n.innerHTML = 'Android app &middot; version ' + String(j.androidVersion).replace(/[^0-9.]/g, '') + ' &middot; free';
+    }).catch(function () {});
+  } catch (e) {}
+})();
+
   (function () {
     var ua = navigator.userAgent || '';
     // iPadOS 13+ Safari reports a desktop ("Macintosh") UA, so also treat a touch-capable Mac as iOS.
