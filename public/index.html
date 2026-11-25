@@ -5729,7 +5729,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1087;
+var APP_BUILD = 1088;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -18955,7 +18955,7 @@ function initMap() {
       var t = e.target && e.target.closest && e.target.closest('.layer-base-btn');
       if (t && e.isTrusted) window._glOffPrev = null;
     }, true);
-    window.addEventListener('offline', function () { try { window._offlineSwitch('offline'); } catch (e) {} });
+    window.addEventListener('offline', function () { try { window._savedUnderTrip(); } catch (e) {} try { window._offlineSwitch('offline'); } catch (e) {} });
     window.addEventListener('online', function () { setTimeout(function () { try { window._onlineSwitchBack(); } catch (e) {} }, 1500); });
     // Phones often still say "online" with a bar and no data. Count the map's failed tiles: 6 in
     // 20 s on an online map means the signal is gone in practice.
@@ -18964,6 +18964,7 @@ function initMap() {
       try {
         if (!e || !e.tile || _curBase() === 'usgs-aerial' || e.sourceId === 'gl-saved') return;
         if (e.error && e.error.status) return;           // a server answer (404 etc.) is not lost signal
+        try { window._savedUnderTrip(); } catch (x2) {}   // 1088: a picture didn't arrive -> saved map underneath
         var now = Date.now(); _tileFails.push(now);
         _tileFails = _tileFails.filter(function (t) { return now - t < 20000; });
         if (_tileFails.length >= 6) { _tileFails = []; window._offlineSwitch('weak'); }
@@ -28267,8 +28268,28 @@ window._glrUpdate = function () {
 // UNDER whatever map is up: where Satellite (or any map) loads, it covers them; where it doesn't,
 // the saved map shows instead of black. ?saved=1 tells sw.js to answer only from the phone --
 // never the network -- so this costs no data and adds no load on a weak signal.
+// 1088: "as im panning the map it seems like maybe two map layers ... a different map for a
+// moment until the top map loads" (Jace, 2026-11-25). On a good signal the saved map flashed
+// under Satellite on every pan. Now it only goes under the map when the map is really failing
+// (a tile that never arrived, or the phone offline), and comes back off 10 minutes after the
+// last failure.
+window._savedUnderUntil = 0;
+window._savedUnderNeeded = function () {
+  return navigator.onLine === false || Date.now() < (window._savedUnderUntil || 0);
+};
+window._savedUnderTrip = function () {
+  window._savedUnderUntil = Date.now() + 10 * 60 * 1000;
+  try { window._savedUnderEnsure(); } catch (e) {}
+};
+setInterval(function () {
+  try {
+    if (window._savedUnderNeeded()) return;
+    if (typeof map !== 'undefined' && map && map.getLayer && map.getLayer('gl-saved-under')) map.removeLayer('gl-saved-under');
+  } catch (e) {}
+}, 30000);
 window._savedUnderEnsure = function () {
   try {
+    if (!window._savedUnderNeeded()) return;
     if (typeof map === 'undefined' || !map || !map.getStyle || !map.getStyle()) return;
     if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;   // without sw.js it would download
     if (map.getSource('usgs-aerial')) return;                                     // Offline Photo is already the map
