@@ -5733,7 +5733,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1090;
+var APP_BUILD = 1091;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27092,11 +27092,22 @@ window._sendRoomInvite = function(uid, btn) {
 // the Crew disclosure behind it.
 // Silent wake: ask the server to send a content-available push to this member's device.
 // Nothing visible happens on their phone; if it worked, their dot refreshes in ~15-30s.
+// 1091: say WHY a phone can't be reached, so the sender knows to text them instead.
+// "Couldn't reach their device" left Jace guessing about Page, whose phone had simply never
+// turned on GroundLink notifications (2026-11-25).
+window._unreachMsg = function (nm, reason) {
+  var who = nm || 'Their';
+  var r = String(reason || '');
+  if (r === 'not-in-your-rooms') return 'You can only reach people in your own crews.';
+  if (/^no-(subscription|token)/.test(r))
+    return who + '\u2019s phone never turned on GroundLink notifications, so it can\u2019t be reached. Text them to open GroundLink and allow notifications.';
+  return who + '\u2019s phone didn\u2019t take the notification. GroundLink may be deleted or its notifications turned off. Text them to open GroundLink.';
+};
 window._bumpMember = function (uid, nm) {
   try {
     window._glFetch('/bump', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid }) })
       .then(function (r) { return r.json(); })
-      .then(function (j) { toast(j && j.ok ? 'Asked ' + (nm || 'their') + "'s phone for a fresh fix — watch for ~30s" : 'Couldn\u2019t reach their device (no push subscription)', 3200); })
+      .then(function (j) { if (j && j.ok) toast('Asked ' + (nm || 'their') + "'s phone for a fresh fix — watch for ~30s", 3200); else toast(window._unreachMsg(nm, j && j.reason), 7000); })
       .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
   } catch (e) {}
 };
@@ -27106,7 +27117,7 @@ window._nudgeMember = function (uid, nm) {
   _confirm('Send ' + (nm || 'them') + ' a notification asking them to reopen GroundLink? Use this when their location has been stuck a while.', function () {
     window._glFetch('/nudge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid, fromName: userName || 'Someone' }) })
       .then(function (r) { return r.json(); })
-      .then(function (j) { toast(j && j.ok ? 'Nudge sent' : 'Couldn\u2019t reach their device', 2600); })
+      .then(function (j) { if (j && j.ok) toast('Nudge sent', 2600); else toast(window._unreachMsg(nm, j && j.reason), 7000); })
       .catch(function () { toast('Couldn\u2019t reach the server', 2500); });
   }, { yes: 'Send nudge' });
 };
