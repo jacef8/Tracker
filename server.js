@@ -1878,7 +1878,7 @@ app.post('/api/car/crew', rateLimit(60, 60000), async function (req, res) {
     });
     // Stage 2 (Android 1.5.1): with extra=1, each shown person's last hour of trail (thinned to
     // at most 200 points) and the crew's dropped pins. Asked for every 30 s, not every 5.
-    let trails = null, pins = null;
+    let trails = null, pins = null, roads = null, roadNames = null;
     if (b.extra) {
       trails = {};
       await Promise.all(out.map(async function (p) {
@@ -1901,9 +1901,25 @@ app.post('/api/car/crew', rateLimit(60, 60000), async function (req, res) {
           if (pins.length < 400) pins.push({ lat: +q.lat, lng: +q.lng, n: String(q.label || q.cat || '').slice(0, 30) });
         });
       } catch (e) {}
+      // 1086: the crew's own roads -- ones they drew, and names they gave existing stretches.
+      try {
+        const rv = (await adminDb.ref('gl/' + group + '/roads').once('value')).val() || {};
+        roads = [];
+        Object.keys(rv).forEach(function (k) {
+          const r = rv[k] || {};
+          const pts = (Array.isArray(r.pts) ? r.pts : []).filter(function (q) { return q && isFinite(+q[0]) && isFinite(+q[1]); }).slice(0, 400);
+          if (pts.length >= 2 && roads.length < 200) roads.push({ n: String(r.n || '').slice(0, 40), pts: pts.map(function (q) { return [+q[0], +q[1]]; }) });
+        });
+        const nv = (await adminDb.ref('gl/' + group + '/roadNames').once('value')).val() || {};
+        roadNames = [];
+        Object.keys(nv).forEach(function (k) {
+          const r = nv[k] || {};
+          if (r.n && Array.isArray(r.mid) && roadNames.length < 300) roadNames.push({ n: String(r.n).slice(0, 40), mid: [+r.mid[0], +r.mid[1]] });
+        });
+      } catch (e) {}
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out, trails: trails, pins: pins });
+    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out, trails: trails, pins: pins, roads: roads, roadNames: roadNames });
   } catch (e) {
     console.warn('/api/car/crew error:', e.message);
     res.status(500).json({ ok: false });

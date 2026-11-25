@@ -2029,6 +2029,27 @@ window._timedOnValue = function (orig) {
   }
   #map-controls button svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55)); }
   /* Locate-button flyout (Follow Me / Show Group) */
+  .glsh { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-end; justify-content: center; }
+  .glsh .glsh-bd { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+  .glsh .glsh-pan { position: relative; width: 100%; max-width: 520px; max-height: 84vh; display: flex; flex-direction: column; overflow: hidden;
+    background: #161b22; color: #f0f6fc; border-radius: 20px 20px 0 0; padding: 18px 16px calc(14px + env(safe-area-inset-bottom)); }
+  .glsh.wide .glsh-pan { max-width: 760px; }
+  .glsh .glsh-t { font-size: 20px; font-weight: 800; }
+  .glsh .glsh-s { font-size: 15px; color: #c9d1d9; margin: 4px 0 12px; line-height: 1.35; }
+  .glsh .glsh-note { font-size: 14px; color: #c9d1d9; margin: 6px 0; }
+  .glsh .glsh-in { width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 14px; border-radius: 12px; border: 1px solid #30363d; background: #0d1117; color: #f0f6fc; font-size: 17px; font-weight: 700; }
+  .glsh .glsh-list { overflow: auto; min-height: 0; flex: 1 1 auto; }
+  .glsh .glsh-sec { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #f0a500; margin: 14px 0 6px; }
+  .glsh .glsh-tr { padding: 10px 0; border-bottom: 1px solid #21262d; }
+  .glsh .glsh-meta { font-size: 14px; color: #c9d1d9; margin: 6px 2px; }
+  .glsh .glsh-acts { display: flex; gap: 8px; }
+  .glsh .glsh-sm { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid #30363d; background: #21262d; color: #f0f6fc; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .glsh .glsh-red { color: #ff7b72; }
+  .glsh .glsh-btns { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .glsh .glsh-btns button { flex: 1; min-height: 56px; border-radius: 14px; font-size: 17px; font-weight: 800; border: 0; cursor: pointer; padding: 0 12px; }
+  .glsh .glsh-go { background: #f0a500; color: #1a1206; }
+  .glsh .glsh-no { background: #21262d; color: #f0f6fc; }
+  .glsh .glsh-del { background: #da3633; color: #fff; }
   #gf-pick { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-end; justify-content: center; }
   #gf-pick .gfp-bd { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
   #gf-pick .gfp-pan { position: relative; width: 100%; max-width: 520px; max-height: 80vh; display: flex; flex-direction: column;
@@ -4752,6 +4773,12 @@ window._timedOnValue = function (orig) {
         <!-- 1073: one place for saved maps (the library), instead of a list buried here. -->
         <button id="layer-savedmaps-btn" onclick="window._openMapsLib && window._openMapsLib()" style="padding:13px 14px;background:var(--bg);border:1px solid var(--accent);border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-download"/></svg><span style="flex:1"><span style="display:block">Saved maps</span><small id="layer-savedmaps-sub" style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Areas saved for no signal</small></span><span style="color:var(--muted);font-size:20px">&rsaquo;</span></button>
       </div>
+      <div class="section-title">Crew roads</div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
+        <!-- 1086: draw a road the maps don't have; tap any road on the map to rename it. -->
+        <button onclick="window._startDrawRoad()" style="padding:13px 14px;background:var(--bg);border:1px solid #FF9F43;border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:#FF9F43;flex-shrink:0"><use href="#ic-map"/></svg><span style="flex:1"><span style="display:block">Draw a road</span><small style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Tap along it, then name it. Tap any road to rename it</small></span></button>
+        <button id="layer-roadtable-btn" onclick="window._openRoadTable()" style="display:none;padding:13px 14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;font-size:15px;font-weight:800;color:var(--text);cursor:pointer;align-items:center;gap:10px;text-align:left"><svg class="licon" style="color:var(--accent);flex-shrink:0"><use href="#ic-layers"/></svg><span style="flex:1"><span style="display:block">Crew roads table</span><small style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">Owner only: every renamed and drawn road</small></span><span style="color:var(--muted);font-size:20px">&rsaquo;</span></button>
+      </div>
       <div class="section-title">Overlays</div>
       <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
         <!-- Shaded relief and contour lines, drawn OVER whatever base map is chosen. This is
@@ -5689,7 +5716,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1085;
+var APP_BUILD = 1086;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -19278,6 +19305,8 @@ function initMap() {
 
     // ── 1a2. Area draw mode — each tap is a polygon corner ─────────
     if (window._drawMode) { window._drawAreaClick(e.lngLat); return; }
+    // ── 1a3. 1086: road draw mode — each tap is a point along the road ──
+    if (window._roadDrawMode) { window._drawRoadClick(e.lngLat); return; }
 
     // ── 1b. Place drop mode (geofence center) ──────────────────────
     if (placeMode) {
@@ -19350,6 +19379,9 @@ function initMap() {
         return; // don't also open a parcel popup underneath
       }
     }
+
+    // ── 2b. 1086: tapped a road line -> its card (rename / drawn-road details) ──
+    if (!pinMode && window._rdTap && window._rdTap(e.point)) return;
 
     // ── 3. FL statewide parcel tap ────────────────────────────────
     if (flParcelsOn && map.getZoom() >= 12) {
@@ -28103,6 +28135,7 @@ function _glrHideBaseForestNames(feats) {
     if (!map.getSource('composite')) return;
     var fsNames = {}, fsRefs = {};
     feats.forEach(function (f) { var p = f.properties; if (p.k !== 'fs') return; if (p.fnm) fsNames[_glrNorm(p.fnm)] = 1; if (p.fid) fsRefs[p.fid] = 1; });
+    Object.keys(window._glrHideOld || {}).forEach(function (n) { if (n) fsNames[n] = 1; });   // 1086: renamed by the crew
     var names = {}, refs = {};
     map.querySourceFeatures('composite', { sourceLayer: 'road' }).forEach(function (f) {
       var p = f.properties || {};
@@ -28157,6 +28190,17 @@ function _glrPaint() {
       // 2026-11-24, Satellite 1 over Bristol). Dropping a road whole wherever Mapbox printed its
       // name left only the roads Mapbox left blank, in bits. Now every county road keeps its line,
       // so the network is whole, and only OUR NAME is hidden where Mapbox already names it.
+      // 1086: crew road names. A renamed stretch carries the crew's name instead of the official
+      // one ("only the new name", Jace 2026-11-25), and the base map's own label for that old
+      // name is hidden too (see _glrHideBaseForestNames).
+      var _rn = window._roadNames || {}, _hideOld = {};
+      feats = feats.map(function (f) {
+        var k = _glrRK(f), r = k && _rn[k];
+        if (!r || !r.n) return f;
+        if (f.properties.n) _hideOld[_glrNorm(f.properties.n)] = 1;
+        return { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, f.properties, { n: String(r.n), was: f.properties.n || '', rk: k, dup: 0, ren: 1 }) };
+      });
+      window._glrHideOld = _hideOld;
       var out = [];
       feats.forEach(function (f) {
         var p = f.properties;
@@ -28166,17 +28210,25 @@ function _glrPaint() {
           if (p.k !== 'fs' && map.getZoom() < GLR_ESRI_OFF_Z - 0.2) return;
           out.push(f); return;
         }
-        if (p.k !== 'loc') { out.push(f); return; }
-        var dup = !!(baseNames && p.n && baseNames[_glrNorm(p.n)]);
+        if (p.k !== 'loc' || p.ren) { out.push(f); return; }
+        var dup = !!(baseNames && p.n && baseNames[_glrNorm(p.n)] && !_hideOld[_glrNorm(p.n)]);
         out.push(dup === !!p.dup ? f : { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, p, { dup: dup ? 1 : 0 }) });
       });
       // 1066: forest roads the other way round: Mapbox Satellite writes "Five Points Rd" and an
       // "FS 112" sign on FR 112, a second name next to ours. Ours carries the FR number hunters go
       // by, so it stays and Mapbox's name and number sign for that road are hidden.
       if (!esriRoads) _glrHideBaseForestNames(out);
+      // 1086: roads the crew drew themselves (orange), always shown, road names on or off.
+      var _cr = window._crewRoads || {};
+      Object.keys(_cr).forEach(function (id) {
+        var r = _cr[id] || {}, pts = Array.isArray(r.pts) ? r.pts.filter(function (q) { return q && isFinite(+q[0]) && isFinite(+q[1]); }) : [];
+        if (pts.length < 2) return;
+        out.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: pts.map(function (q) { return [+q[0], +q[1]]; }) },
+                   properties: { k: 'crew', n: String(r.n || ''), u: 'crew:' + id, rid: id, dup: 0 } });
+      });
       // setData re-renders, and a re-render ends in 'idle', which calls this again: only send
       // when something actually changed.
-      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : ''); }).join('|') + (esriRoads ? '#e' : '');
+      var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : '') + (f.properties.ren ? '=' + f.properties.n : ''); }).join('|') + (esriRoads ? '#e' : '') + '#v' + (window._crV || 0);
       if (sig === window._glrSig && src._glrSet) return;
       window._glrSig = sig; src._glrSet = 1;
       src.setData({ type: 'FeatureCollection', features: out });
@@ -28222,7 +28274,7 @@ window._glrEnsure = function () {
     if (!map.getSource('gl-roads')) map.addSource('gl-roads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     var before;
     (map.getStyle().layers || []).some(function (l) { if (/^(pin|pins|trail|gl-trail|place|places)/.test(l.id)) { before = l.id; return true; } return false; });
-    var col = ['match', ['get', 'k'], 'fs', '#FFD54A', '#FFFFFF'];
+    var col = ['match', ['get', 'k'], 'fs', '#FFD54A', 'crew', '#FF9F43', '#FFFFFF'];
 
     if (!map.getLayer('gl-roads-case')) map.addLayer(Object.assign({ id: 'gl-roads-case', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -28235,8 +28287,269 @@ window._glrEnsure = function () {
       layout: { 'symbol-placement': 'line', 'text-field': ['get', 'n'], 'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
                 'text-size': ['interpolate', ['linear'], ['zoom'], 13, 13, 16, 16], 'text-max-angle': 30, 'symbol-spacing': 320, 'text-padding': 4 },
       paint: { 'text-color': col, 'text-halo-color': '#0B0F11', 'text-halo-width': 1.8 } }, before);
+    // 1086: the road you tapped, outlined while its card is open.
+    if (!map.getSource('gl-road-sel')) map.addSource('gl-road-sel', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    if (!map.getLayer('gl-road-sel')) map.addLayer({ id: 'gl-road-sel', type: 'line', source: 'gl-road-sel',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#39D0FF', 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 10] } }, 'gl-roads-line');
+    try { if (window._roadSelGeom) map.getSource('gl-road-sel').setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: window._roadSelGeom, properties: {} }] }); } catch (e) {}
     _glrPaint();
     window._glrUpdate();
+  } catch (e) {}
+};
+// ── 1086: CREW ROADS ─────────────────────────────────────────────────────────────────────────
+// "being able to select a Rd segment and rename it would be nice. Those name changes could be
+// shared across the crew" / "would be nice to be able to add a road too" / "a table editor for
+// roads, one only the crew owner can access" (Jace, 2026-11-25). Per crew:
+//   gl/<crew>/roadNames/<key> = { n, was, kind, mid:[lng,lat], by, byName, ts }   renamed stretches
+//   gl/<crew>/roads/<id>      = { n, pts:[[lng,lat],...], by, byName, ts }        roads drawn by hand
+// Anyone in the crew can rename and draw; deleting a drawn road is for whoever drew it or the
+// owner/admins; the table of all of them is for the owner.
+// A stretch is known by its kind and its two end points, which stay the same however the road
+// service thins the line in between (Firebase keys can't hold "." so it is swapped).
+function _glrRK(f) {
+  try {
+    var p = f.properties || {};
+    if (p.k === 'crew') return '';
+    if (p.rk) return p.rk;
+    var g = f.geometry, c = g.type === 'LineString' ? g.coordinates : g.coordinates[0], l = g.type === 'LineString' ? g.coordinates : g.coordinates[g.coordinates.length - 1];
+    var a = c[0], b = l[l.length - 1];
+    var k = (p.k || 'r') + '_' + a[0].toFixed(5) + '_' + a[1].toFixed(5) + '_' + b[0].toFixed(5) + '_' + b[1].toFixed(5);
+    return k.replace(/\./g, 'p');
+  } catch (e) { return ''; }
+}
+window._roadNames = {}; window._crewRoads = {}; window._crV = 0;
+setInterval(function () { try { var b = document.getElementById('layer-roadtable-btn'); if (b) b.style.display = window._isRoomOwner ? 'flex' : 'none'; } catch (e) {} }, 1500);
+setInterval(function () {
+  try {
+    var g = (typeof groupName !== 'undefined' && groupName) || '';
+    if (g === window._crRoom || typeof db === 'undefined' || !db) return;
+    window._crRoom = g;
+    (window._crOffs || []).forEach(function (off) { try { off(); } catch (e) {} });
+    window._crOffs = []; window._roadNames = {}; window._crewRoads = {}; window._crV++;
+    if (!g) return;
+    var a = fbOnValue(fbRef(db, 'gl/' + g + '/roadNames'), function (snap) { window._roadNames = snap.val() || {}; window._crV++; try { _glrPaint(); } catch (e) {} });
+    var b = fbOnValue(fbRef(db, 'gl/' + g + '/roads'), function (snap) { window._crewRoads = snap.val() || {}; window._crV++; try { _glrPaint(); } catch (e) {} });
+    [a, b].forEach(function (o) { if (typeof o === 'function') window._crOffs.push(o); });
+  } catch (e) {}
+}, 1500);
+function _rdMid(geom) {
+  try {
+    var c = geom.type === 'LineString' ? geom.coordinates : geom.coordinates[0];
+    var q = c[Math.floor(c.length / 2)]; return [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6];
+  } catch (e) { return null; }
+}
+function _rdMiles(pts) {
+  var m = 0; for (var i = 1; i < pts.length; i++) m += metersApart(pts[i - 1][1], pts[i - 1][0], pts[i][1], pts[i][0]);
+  return m / 1609.34;
+}
+function _rdSelect(geom) {
+  window._roadSelGeom = geom || null;
+  try { var src = map.getSource('gl-road-sel'); if (src) src.setData({ type: 'FeatureCollection', features: geom ? [{ type: 'Feature', geometry: geom, properties: {} }] : [] }); } catch (e) {}
+}
+function _rdMayDelete(r) { return !!(r && (r.by === userId || window._canManageRoom())); }
+// A small sheet (works in Simple and Hunting).
+function _rdSheet(html) {
+  var old = document.getElementById('gl-road-sheet'); if (old) old.remove();
+  var el = document.createElement('div'); el.id = 'gl-road-sheet'; el.className = 'glsh';
+  el.innerHTML = '<div class="glsh-bd" onclick="window._rdClose()"></div><div class="glsh-pan">' + html + '</div>';
+  document.body.appendChild(el);
+  return el;
+}
+window._rdClose = function () { var el = document.getElementById('gl-road-sheet'); if (el) el.remove(); _rdSelect(null); };
+// Tapped a road line on the map.
+window._rdTap = function (point) {
+  try {
+    if (!map.getLayer('gl-roads-line')) return false;
+    var fs = map.queryRenderedFeatures([[point.x - 9, point.y - 9], [point.x + 9, point.y + 9]], { layers: ['gl-roads-line'] });
+    if (!fs.length) return false;
+    var f = fs[0], p = f.properties || {};
+    // Rendered geometry is cut at tile edges; find the whole stretch in the source data.
+    var full = null;
+    try { (map.getSource('gl-roads')._data.features || []).some(function (q) { if (q.properties && q.properties.u === p.u) { full = q; return true; } return false; }); } catch (e) {}
+    var geom = (full && full.geometry) || f.geometry;
+    _rdSelect(geom);
+    var kind = p.k === 'fs' ? 'Forest road' : p.k === 'hwy' ? 'Highway / state road' : p.k === 'crew' ? 'Drawn by the crew' : 'County road';
+    var name = p.n || 'Unnamed road', h = '';
+    if (p.k === 'crew') {
+      var r = (window._crewRoads || {})[p.rid] || {};
+      var mi = Array.isArray(r.pts) ? _rdMiles(r.pts) : 0;
+      h = '<div class="glsh-t">' + _escHtml(name || 'Unnamed road') + '</div>' +
+          '<div class="glsh-s">Drawn by ' + _escHtml(r.byName || 'someone') + (r.ts ? ' · ' + new Date(r.ts).toLocaleDateString() : '') + ' · ' + (mi < 0.1 ? Math.round(mi * 5280) + ' ft' : mi.toFixed(1) + ' mi') + '</div>' +
+          '<div class="glsh-row"><input id="rd-name" class="glsh-in" maxlength="40" value="' + _escHtml(r.n || '') + '" placeholder="Road name"></div>' +
+          '<div class="glsh-btns"><button class="glsh-go" onclick="window._rdSaveCrewName(\'' + p.rid + '\')">Save name</button>' +
+          (_rdMayDelete(r) ? '<button class="glsh-del" onclick="window._rdDeleteCrew(\'' + p.rid + '\')">Delete road</button>' : '') +
+          '<button class="glsh-no" onclick="window._rdClose()">Close</button></div>';
+    } else {
+      var rk = p.rk || _glrRK({ properties: p, geometry: geom });
+      var cur = (window._roadNames || {})[rk];
+      window._rdPending = { rk: rk, was: p.was || p.n || '', kind: p.k || '', mid: _rdMid(geom) };
+      h = '<div class="glsh-t">' + _escHtml(name) + '</div>' +
+          '<div class="glsh-s">' + kind + (cur ? ' · renamed by ' + _escHtml(cur.byName || 'someone') + (p.was ? ' (was ' + _escHtml(p.was) + ')' : '') : '') + '</div>' +
+          '<div class="glsh-row"><input id="rd-name" class="glsh-in" maxlength="40" value="' + _escHtml(cur ? cur.n : '') + '" placeholder="New name for this stretch"></div>' +
+          '<div class="glsh-note">The new name shows for everyone in this crew.</div>' +
+          '<div class="glsh-btns"><button class="glsh-go" onclick="window._rdSaveRename()">Rename</button>' +
+          (cur ? '<button class="glsh-no" onclick="window._rdResetName()">Use the regular name</button>' : '') +
+          '<button class="glsh-no" onclick="window._rdClose()">Close</button></div>';
+    }
+    _rdSheet(h);
+    return true;
+  } catch (e) { return false; }
+};
+window._rdSaveRename = function () {
+  var pd = window._rdPending; if (!pd || !pd.rk || !groupName) return;
+  var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
+  if (!n) { toast('Type a name first', 1800); return; }
+  fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + pd.rk), { n: n, was: pd.was || '', kind: pd.kind || '', mid: pd.mid || null, by: userId, byName: userName || '', ts: Date.now() });
+  window._rdClose(); toast('Renamed for the crew', 1800);
+};
+window._rdResetName = function () {
+  var pd = window._rdPending; if (!pd || !pd.rk || !groupName) return;
+  fbRemove(fbRef(db, 'gl/' + groupName + '/roadNames/' + pd.rk));
+  window._rdClose(); toast('Back to the regular name', 1800);
+};
+window._rdSaveCrewName = function (id) {
+  var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
+  fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + id + '/n'), n);
+  window._rdClose(); toast('Saved', 1500);
+};
+window._rdDeleteCrew = function (id) {
+  var r = (window._crewRoads || {})[id];
+  if (!_rdMayDelete(r)) { toast('Only the person who drew it or the crew owner can delete it', 2600); return; }
+  var el = document.querySelector('#gl-road-sheet .glsh-btns');
+  if (el && !el.getAttribute('data-sure')) {
+    el.setAttribute('data-sure', '1');
+    el.innerHTML = '<button class="glsh-del" onclick="window._rdDeleteCrew(\'' + id + '\')">Yes, delete it</button><button class="glsh-no" onclick="window._rdClose()">Keep it</button>';
+    return;
+  }
+  fbRemove(fbRef(db, 'gl/' + groupName + '/roads/' + id));
+  window._rdClose(); toast('Road deleted', 1600);
+};
+// Draw a road: tap along it, Finish, name it.
+window._roadDrawMode = false; window._rdPts = []; window._rdVtx = [];
+window._startDrawRoad = function () {
+  try { closeLayerSheet(); } catch (e) {} try { window._ssPopClose && window._ssPopClose(); } catch (e) {}
+  if (!groupName) { toast('Open a crew first', 2000); return; }
+  window._roadDrawMode = true; window._rdPts = [];
+  try { map.getCanvas().style.cursor = 'crosshair'; } catch (e) {}
+  var bar = document.getElementById('draw-road-bar');
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'draw-road-bar';
+    bar.style.cssText = 'display:none;position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);left:50%;transform:translateX(-50%);z-index:420;gap:8px;background:rgba(13,17,23,.96);border:1px solid #FF9F43;border-radius:14px;padding:9px;box-shadow:0 4px 18px rgba(0,0,0,.5)';
+    bar.innerHTML = '<button id="dr-finish" style="min-height:48px;padding:10px 18px;background:#FF9F43;border:none;border-radius:10px;color:#1a1206;font-size:15px;font-weight:800;cursor:pointer">Finish</button>' +
+      '<button id="dr-undo" style="min-height:48px;padding:10px 16px;background:transparent;border:1px solid #30363d;border-radius:10px;color:#f0f6fc;font-size:15px;font-weight:700;cursor:pointer">Undo</button>' +
+      '<button id="dr-cancel" style="min-height:48px;padding:10px 16px;background:transparent;border:1px solid #30363d;border-radius:10px;color:#c9d1d9;font-size:15px;font-weight:700;cursor:pointer">Cancel</button>';
+    document.body.appendChild(bar);
+    document.getElementById('dr-finish').onclick = function () { window._finishDrawRoad(); };
+    document.getElementById('dr-undo').onclick = function () { window._rdPts.pop(); _rdDrawRender(); };
+    document.getElementById('dr-cancel').onclick = function () { _rdExitDraw(); };
+  }
+  bar.style.display = 'flex';
+  _rdDrawRender();
+  toast('Tap along the road, point by point, then Finish', 4000);
+};
+window._drawRoadClick = function (ll) { window._rdPts.push([Math.round(ll.lng * 1e6) / 1e6, Math.round(ll.lat * 1e6) / 1e6]); _rdDrawRender(); };
+function _rdDrawRender() {
+  var pts = window._rdPts || [];
+  var b = document.getElementById('dr-finish');
+  if (b) { b.disabled = pts.length < 2; b.style.opacity = pts.length < 2 ? '.45' : '1'; b.textContent = pts.length < 2 ? 'Finish (' + pts.length + '/2)' : 'Finish'; }
+  try {
+    var data = { type: 'FeatureCollection', features: pts.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: pts }, properties: {} }] : [] };
+    if (!map.getSource('gl-rdraw')) {
+      map.addSource('gl-rdraw', { type: 'geojson', data: data });
+      map.addLayer({ id: 'gl-rdraw-line', type: 'line', source: 'gl-rdraw', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#FF9F43', 'line-width': 4, 'line-dasharray': [2, 1.2] } });
+    } else map.getSource('gl-rdraw').setData(data);
+  } catch (e) {}
+  (window._rdVtx || []).forEach(function (m) { try { m.remove(); } catch (e) {} });
+  window._rdVtx = pts.map(function (q) {
+    var el = document.createElement('div');
+    el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#FF9F43;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6)';
+    return new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat(q).addTo(map);
+  });
+}
+function _rdExitDraw() {
+  window._roadDrawMode = false; window._rdPts = [];
+  _rdDrawRender();
+  try { map.getCanvas().style.cursor = ''; } catch (e) {}
+  var bar = document.getElementById('draw-road-bar'); if (bar) bar.style.display = 'none';
+}
+window._finishDrawRoad = function () {
+  var pts = (window._rdPts || []).slice();
+  if (pts.length < 2) { toast('Tap at least 2 points along the road', 2200); return; }
+  window._roadDrawMode = false;
+  var bar = document.getElementById('draw-road-bar'); if (bar) bar.style.display = 'none';
+  window._rdNewPts = pts;
+  var mi = _rdMiles(pts);
+  _rdSheet('<div class="glsh-t">Name this road</div><div class="glsh-s">' + pts.length + ' points · ' + (mi < 0.1 ? Math.round(mi * 5280) + ' ft' : mi.toFixed(1) + ' mi') + ' · everyone in this crew will see it</div>' +
+    '<div class="glsh-row"><input id="rd-name" class="glsh-in" maxlength="40" placeholder="e.g. Back gate road"></div>' +
+    '<div class="glsh-btns"><button class="glsh-go" onclick="window._rdSaveNew()">Save road</button><button class="glsh-no" onclick="window._rdCancelNew()">Cancel</button></div>');
+  setTimeout(function () { try { document.getElementById('rd-name').focus(); } catch (e) {} }, 50);
+};
+window._rdSaveNew = function () {
+  var pts = window._rdNewPts; if (!pts || pts.length < 2 || !groupName) return;
+  var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
+  fbPush(fbRef(db, 'gl/' + groupName + '/roads'), { n: n, pts: pts, by: userId, byName: userName || '', ts: Date.now() });
+  window._rdNewPts = null; window._rdClose(); _rdExitDraw(); toast('Road saved for the crew', 1800);
+};
+window._rdCancelNew = function () { window._rdNewPts = null; window._rdClose(); _rdExitDraw(); };
+// The owner's table of every renamed and drawn road in the crew.
+window._openRoadTable = function () {
+  try { closeLayerSheet(); } catch (e) {} try { window._ssPopClose && window._ssPopClose(); } catch (e) {}
+  if (!window._isRoomOwner) { toast('Only the crew owner can open the road table', 2400); return; }
+  var rn = window._roadNames || {}, cr = window._crewRoads || {};
+  var row = function (inner) { return '<div class="glsh-tr">' + inner + '</div>'; };
+  var who = function (r) { return _escHtml(r.byName || 'someone') + (r.ts ? ' · ' + new Date(r.ts).toLocaleDateString() : ''); };
+  var h = '<div class="glsh-t">Crew roads</div><div class="glsh-s">Every road your crew renamed or drew. Changes save when you tap Save.</div><div class="glsh-list">';
+  var ids = Object.keys(cr).sort(function (a, b) { return String(cr[a].n || '').localeCompare(String(cr[b].n || '')); });
+  h += '<div class="glsh-sec">Drawn roads (' + ids.length + ')</div>';
+  ids.forEach(function (id) {
+    var r = cr[id] || {}, mi = Array.isArray(r.pts) ? _rdMiles(r.pts) : 0;
+    h += row('<input class="glsh-in" data-kind="crew" data-id="' + _escHtml(id) + '" maxlength="40" value="' + _escHtml(r.n || '') + '" placeholder="Unnamed road">' +
+             '<div class="glsh-meta">' + (mi < 0.1 ? Math.round(mi * 5280) + ' ft' : mi.toFixed(1) + ' mi') + ' · drawn by ' + who(r) + '</div>' +
+             '<div class="glsh-acts"><button class="glsh-sm" onclick="window._rdTableGo(\'crew\',\'' + id + '\')">Show</button><button class="glsh-sm glsh-red" onclick="window._rdTableDel(\'crew\',\'' + id + '\')">Delete</button></div>');
+  });
+  if (!ids.length) h += '<div class="glsh-note">None yet. Use Draw a road in Map Layers.</div>';
+  var ks = Object.keys(rn).sort(function (a, b) { return String(rn[a].n || '').localeCompare(String(rn[b].n || '')); });
+  h += '<div class="glsh-sec">Renamed roads (' + ks.length + ')</div>';
+  ks.forEach(function (k) {
+    var r = rn[k] || {};
+    h += row('<input class="glsh-in" data-kind="name" data-id="' + _escHtml(k) + '" maxlength="40" value="' + _escHtml(r.n || '') + '">' +
+             '<div class="glsh-meta">was ' + _escHtml(r.was || 'unnamed') + ' · renamed by ' + who(r) + '</div>' +
+             '<div class="glsh-acts">' + (r.mid ? '<button class="glsh-sm" onclick="window._rdTableGo(\'name\',\'' + k + '\')">Show</button>' : '') +
+             '<button class="glsh-sm glsh-red" onclick="window._rdTableDel(\'name\',\'' + k + '\')">Use regular name</button></div>');
+  });
+  if (!ks.length) h += '<div class="glsh-note">None yet. Tap a road on the map to rename it.</div>';
+  h += '</div><div class="glsh-btns"><button class="glsh-go" onclick="window._rdTableSave()">Save</button><button class="glsh-no" onclick="window._rdClose()">Close</button></div>';
+  var el = _rdSheet(h); el.classList.add('wide');
+};
+window._rdTableSave = function () {
+  if (!window._isRoomOwner) return;
+  var n = 0;
+  document.querySelectorAll('#gl-road-sheet input.glsh-in').forEach(function (i) {
+    var id = i.getAttribute('data-id'), kind = i.getAttribute('data-kind'), v = String(i.value || '').trim().slice(0, 40);
+    if (kind === 'crew') { var r = (window._crewRoads || {})[id]; if (r && (r.n || '') !== v) { fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + id + '/n'), v); n++; } }
+    else { var q = (window._roadNames || {})[id]; if (q && v && q.n !== v) { fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + id + '/n'), v); n++; } }
+  });
+  window._rdClose(); toast(n ? 'Saved ' + n + (n === 1 ? ' change' : ' changes') : 'Nothing changed', 1800);
+};
+window._rdTableDel = function (kind, id) {
+  if (!window._isRoomOwner) return;
+  var btn = event && event.target;
+  if (btn && !btn.getAttribute('data-sure')) { btn.setAttribute('data-sure', '1'); btn.textContent = 'Tap again'; return; }
+  fbRemove(fbRef(db, 'gl/' + groupName + '/' + (kind === 'crew' ? 'roads/' : 'roadNames/') + id));
+  setTimeout(window._openRoadTable, 300);
+};
+window._rdTableGo = function (kind, id) {
+  try {
+    var c = null, geom = null;
+    if (kind === 'crew') { var r = (window._crewRoads || {})[id]; if (r && r.pts) { geom = { type: 'LineString', coordinates: r.pts }; c = r.pts[Math.floor(r.pts.length / 2)]; } }
+    else { var q = (window._roadNames || {})[id]; if (q && q.mid) c = q.mid; }
+    if (!c) return;
+    window._rdClose();
+    try { if (typeof _stopFitAll === 'function' && fitAllInterval) _stopFitAll(); } catch (e) {}
+    map.flyTo({ center: c, zoom: Math.max(map.getZoom(), 15), duration: 900 });
+    if (geom) _rdSelect(geom);
+    setTimeout(function () { _rdSelect(null); }, 6000);
   } catch (e) {}
 };
 window._glrToggle = function () {
@@ -38242,6 +38555,11 @@ window._voiceMod().then(function (m) {
     '<div class="ss-row" onclick="window._glrToggle(); window._ssMaps();"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
       '<div class="ss-who"><div class="ss-name">Road names</div><div class="ss-where">Forest roads by number, back roads by name</div></div>' +
       '<span class="ss-ok" style="' + (rn ? '' : 'background:var(--ss-e2);color:var(--ss-ink2)') + '">' + (rn ? 'On' : 'Off') + '</span></div>' +
+    // 1086: crew roads.
+    '<div class="ss-row" onclick="window._startDrawRoad()"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
+      '<div class="ss-who"><div class="ss-name">Draw a road</div><div class="ss-where">Tap along it, then name it. Tap any road to rename it</div></div></div>' +
+    (window._isRoomOwner ? '<div class="ss-row" onclick="window._openRoadTable()"><div class="ss-av ic"><svg class="licon"><use href="#ic-map"/></svg></div>' +
+      '<div class="ss-who"><div class="ss-name">Crew roads table</div><div class="ss-where">Every renamed and drawn road in this crew</div></div></div>' : '') +
     // 1073: the saved-maps library, from the simple map menu too.
     '<div class="ss-row" onclick="window._openMapsLib()"><div class="ss-av ic"><svg class="licon"><use href="#ic-download"/></svg></div>' +
       '<div class="ss-who"><div class="ss-name">Saved maps</div><div class="ss-where">Areas saved for no signal: see, rename, update, delete</div></div></div>');
