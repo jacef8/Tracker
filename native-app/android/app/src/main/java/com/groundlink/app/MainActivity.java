@@ -293,6 +293,8 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // Non-fatal: every other part of the app works without the instrument screens.
         }
+        // Android Auto map (1.5.0): the page hands the truck screen its crew keys and picks.
+        try { this.getBridge().getWebView().addJavascriptInterface(new GLCarBridge(this), "GLCar"); } catch (Exception e) {}
         // Expose the car-radio audio router to the web app (voice.js).
         try {
             audioRouter = new AudioRouter(this);

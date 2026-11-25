@@ -1807,6 +1807,73 @@ app.post('/api/aa-reply', rateLimit(20, 60000), async function (req, res) {
   }
 });
 
+// ─── Android Auto map (Android 1.5.0, 2026-11-25) ───────────────────────────────────────────
+// The truck screen draws the crew map natively and has no database sign-in, so it reads the crew
+// through here with a CAR KEY: an HMAC over (crew, this phone's uid, expiry), 60 days. The phone
+// app asks for keys while signed in, and only gets one for a crew its account belongs to
+// (roomAccess). A car key can only READ that crew's positions; it can't post (that is aa-reply's
+// own key, a different secret).
+const CAR_SECRET = crypto.createHash('sha256').update('gl-car|' + String(process.env.AA_REPLY_SECRET || process.env.FIREBASE_SERVICE_ACCOUNT || 'groundlink')).digest();
+const CAR_TTL_MS = 60 * 24 * 3600 * 1000;
+function _carKey(group, uid) {
+  const exp = Date.now() + CAR_TTL_MS;
+  return exp + '.' + crypto.createHmac('sha256', CAR_SECRET).update(group + '|' + uid + '|' + exp).digest('base64url');
+}
+function _carKeyOk(group, uid, tok) {
+  const m = /^(\d{10,16})\.([A-Za-z0-9_-]{20,})$/.exec(String(tok || ''));
+  if (!m || +m[1] < Date.now()) return false;
+  const want = crypto.createHmac('sha256', CAR_SECRET).update(group + '|' + uid + '|' + m[1]).digest('base64url');
+  const a = Buffer.from(want), b = Buffer.from(m[2]);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+app.post('/api/car-keys', rateLimit(20, 60000), requireUser, async function (req, res) {
+  try {
+    const b = req.body || {};
+    const uid = String(b.uid || '');
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return res.status(400).json({ ok: false, reason: 'bad-uid' });
+    const groups = (Array.isArray(b.groups) ? b.groups : []).slice(0, 20).map(String).filter(function (g) { return /^[a-z0-9_-]{1,80}$/.test(g); });
+    const keys = {};
+    for (const g of groups) { if (await roomAccess(g, req.authUid)) keys[g] = _carKey(g, uid); }
+    res.json({ ok: true, keys: keys });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
+});
+// One crew's people for the truck map: position, speed, age, colour. Same filters as the phone
+// map: hidden rows, private devices (other than this phone's own), owner-hidden ids, and rows
+// with no real position are left out. Nothing older than 3 days.
+app.post('/api/car/crew', rateLimit(60, 60000), async function (req, res) {
+  try {
+    const b = req.body || {};
+    const group = String(b.group || ''), uid = String(b.uid || '');
+    if (!/^[a-z0-9_-]{1,80}$/.test(group) || !/^[A-Za-z0-9_-]{6,64}$/.test(uid)) return res.status(400).json({ ok: false, reason: 'bad-request' });
+    if (!_carKeyOk(group, uid, b.tok)) return res.status(403).json({ ok: false, reason: 'bad-key' });
+    if (!adminDb) return res.status(503).json({ ok: false, reason: 'no-admin' });
+    const [users, cfg, own] = await Promise.all([
+      _dbGet('gl/' + group + '/users'), _cachedGet('gl/' + group + '/config', 30000), _cachedGet('gl/_devOwner', 60000)]);
+    const mh = (cfg && cfg.mapHidden) || {};
+    const myAcct = own && own[uid] && own[uid].acct;
+    const now = Date.now(), out = [];
+    Object.keys(users || {}).forEach(function (k) {
+      const u = users[k] || {};
+      const lat = +u.lat, lng = +u.lng;
+      if (!u.name || u.hidden || u.claiming || !isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) return;
+      const acct = own && own[k] && own[k].acct;
+      if (mh[k] || (acct && mh[acct])) return;
+      const mine = k === uid || (myAcct && acct === myAcct);
+      if (u.priv && !mine) return;
+      const ts = +(u.ts || u.fixTs || 0);
+      if (!ts || now - ts > 3 * 24 * 3600 * 1000) return;
+      out.push({ u: k, n: String(u.name).slice(0, 40), lat: lat, lng: lng, spd: +u.spd || 0, ts: ts, fx: +(u.fixTs || ts), c: String(u.color || ''), hs: +u.hereSince || 0, me: k === uid ? 1 : 0 });
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out });
+  } catch (e) {
+    console.warn('/api/car/crew error:', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
 app.get('/version', function(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.send(CURRENT_VERSION);

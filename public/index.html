@@ -5689,7 +5689,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1082;
+var APP_BUILD = 1083;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -34263,6 +34263,41 @@ window._gfApplyPicks = function () {
   window._gfStartGroup();
   toast('Following ' + a.length + (a.length === 1 ? ' person' : ' people'), 1800);
 };
+// 1083: hand the truck map (Android 1.5.0, window.GLCar) what it needs: this phone's uid, the crew
+// it is in, a car key per crew (server /api/car-keys, only for crews this account belongs to),
+// Follow-my-picks per crew, people hidden on this phone, and Rename-for-me names. Re-sent whenever
+// any of that changes; keys are fetched again after a week or when a crew has none.
+window._carSync = function (forceKeys) {
+  try {
+    if (!window.GLCar || !window.GLCar.setConfig || typeof groupName === 'undefined' || !groupName || !userId) return;
+    var crews = {}; try { var c = _getCircles(); Object.keys(c).forEach(function (k) { crews[k] = c[k]; }); } catch (e) {}
+    if (!crews[groupName]) crews[groupName] = (typeof _prettyGroup === 'function') ? _prettyGroup(groupName) : groupName;
+    var ks = {}; try { ks = JSON.parse(localStorage.getItem('gl_car_keys') || '{}') || {}; } catch (e) {}
+    var need = forceKeys || ks.uid !== userId || !ks.at || Date.now() - ks.at > 7 * 864e5 || Object.keys(crews).some(function (k) { return !(ks.keys || {})[k]; });
+    var send = function () {
+      var picks = {}; Object.keys(crews).forEach(function (k) { var a = window._gfPicks(k); if (a.length) picks[k] = a; });
+      var list = Object.keys(crews).filter(function (k) { return (ks.keys || {})[k]; }).map(function (k) {
+        var n = crews[k]; if (typeof n !== 'string' || !n || n === k) { try { n = _prettyGroup(k); } catch (e) { n = k; } }
+        return { k: k, n: n, tok: ks.keys[k] };
+      });
+      var cfg = { site: location.origin, uid: userId, cur: groupName, crews: list, picks: picks,
+                  hide: (typeof _getMemberHidden === 'function') ? _getMemberHidden() : {}, nick: window._glNicks || {} };
+      var sig = JSON.stringify(cfg);
+      if (sig === window._carSig) return;
+      window._carSig = sig;
+      window.GLCar.setConfig(sig);
+    };
+    if (!need) { send(); return; }
+    if (!forceKeys && Date.now() - (window._carKeysTried || 0) < 300000) { send(); return; }   // at most every 5 min
+    if (window._carKeysBusy) return; window._carKeysBusy = true; window._carKeysTried = Date.now();
+    window._glFetch('/api/car-keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: userId, groups: Object.keys(crews) }) })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.keys) { ks = { uid: userId, at: Date.now(), keys: Object.assign({}, ks.uid === userId ? ks.keys : {}, j.keys) }; try { localStorage.setItem('gl_car_keys', JSON.stringify(ks)); } catch (e) {} } send(); })
+      .catch(function () { send(); })
+      .then(function () { window._carKeysBusy = false; });
+  } catch (e) {}
+};
+setInterval(function () { try { window._carSync(false); } catch (e) {} }, 4000);
 // Start (or re-aim) the group camera with whatever mode is set.
 window._gfStartGroup = function () {
   try { if (typeof followUid !== 'undefined' && followUid && typeof stopFollowing === 'function') stopFollowing(); } catch (e) {}

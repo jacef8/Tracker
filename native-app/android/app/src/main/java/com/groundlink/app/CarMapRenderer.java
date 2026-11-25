@@ -1,0 +1,271 @@
+package com.groundlink.app;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.LruCache;
+import android.view.Surface;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Draws the truck map onto the Android Auto surface: Esri photo tiles (plus Esri's road and name
+ * layer on top), or Esri's street map, then the crew as round markers with a name/status label.
+ *
+ * Plain Web Mercator with 256 px tiles. The camera is (lat, lng, zoom); it eases toward a target
+ * set by CarMapScreen (fit the group, the picks, or follow me). A tile that is not loaded yet is
+ * drawn from a lower-zoom tile already in memory, stretched, so panning never shows black.
+ */
+class CarMapRenderer {
+    static final String ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+
+    static class Person {
+        String uid, name, status; double lat, lng; int color; boolean me, stale;
+    }
+
+    // ── state ──
+    private Surface surface;
+    private int w, h; private float k = 1.5f;              // k = density scale (dp -> px)
+    Rect visible = new Rect(), stable = new Rect();
+    double lat = 30.43, lng = -84.98, zoom = 11;          // current camera
+    double tLat = lat, tLng = lng, tZoom = zoom;           // target
+    boolean satellite = true;
+    List<Person> people = new ArrayList<>();
+    private boolean haveCam = false;
+
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService net = Executors.newFixedThreadPool(5);
+    private final LruCache<String, Bitmap> tiles = new LruCache<String, Bitmap>(40 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
+    };
+    private final Set<String> loading = new HashSet<>();
+    private final Set<String> failed = new HashSet<>();
+    private boolean drawQueued = false;
+
+    private final Paint tilePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    CarMapRenderer() {
+        ring.setStyle(Paint.Style.STROKE);
+        text.setColor(Color.WHITE);
+        text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        text.setTextAlign(Paint.Align.CENTER);
+        pill.setColor(0xE6101417);
+    }
+
+    void setSurface(Surface s, int width, int height, int dpi) {
+        surface = s; w = width; h = height; k = Math.max(1f, dpi / 160f);
+        if (visible.isEmpty()) visible.set(0, 0, w, h);
+        if (stable.isEmpty()) stable.set(0, 0, w, h);
+        requestDraw();
+    }
+    void clearSurface() { surface = null; }
+    boolean hasCamera() { return haveCam; }
+
+    // ── projection (world pixels at zoom z) ──
+    static double wx(double lng, double z) { return (lng + 180.0) / 360.0 * 256.0 * Math.pow(2, z); }
+    static double wy(double lat, double z) {
+        double s = Math.sin(Math.toRadians(Math.max(-85, Math.min(85, lat))));
+        return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256.0 * Math.pow(2, z);
+    }
+    static double lngOf(double x, double z) { return x / (256.0 * Math.pow(2, z)) * 360.0 - 180.0; }
+    static double latOf(double y, double z) {
+        double n = Math.PI - 2.0 * Math.PI * y / (256.0 * Math.pow(2, z));
+        return Math.toDegrees(Math.atan(Math.sinh(n)));
+    }
+    private float cx() { return visible.isEmpty() ? w / 2f : visible.exactCenterX(); }
+    private float cy() { return visible.isEmpty() ? h / 2f : visible.exactCenterY(); }
+    float sx(double plng) { return (float) (wx(plng, zoom) - wx(lng, zoom) + cx()); }
+    float sy(double plat) { return (float) (wy(plat, zoom) - wy(lat, zoom) + cy()); }
+
+    // ── camera ──
+    void jumpTo(double la, double ln, double z) { lat = tLat = la; lng = tLng = ln; zoom = tZoom = z; haveCam = true; requestDraw(); }
+    void aim(double la, double ln, double z) {
+        tLat = la; tLng = ln; tZoom = z;
+        if (!haveCam) { jumpTo(la, ln, z); return; }
+        requestDraw();
+    }
+    /** Fit these points into the stable area (the part no buttons cover), with room for labels. */
+    void fit(List<double[]> pts) {
+        if (pts.isEmpty()) return;
+        if (pts.size() == 1) { aim(pts.get(0)[0], pts.get(0)[1], Math.max(tZoom, 14.5)); return; }
+        double minX = 1e18, maxX = -1e18, minY = 1e18, maxY = -1e18;
+        for (double[] p : pts) {
+            double x = wx(p[1], 0), y = wy(p[0], 0);
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+        Rect a = stable.isEmpty() ? new Rect(0, 0, w, h) : stable;
+        float padX = 46 * k, padTop = 34 * k, padBot = 52 * k;      // marker radius + label below
+        double aw = Math.max(80, a.width() - 2 * padX), ah = Math.max(80, a.height() - padTop - padBot);
+        double dx = Math.max(1e-9, maxX - minX), dy = Math.max(1e-9, maxY - minY);
+        double z = Math.log(Math.min(aw / dx, ah / dy)) / Math.log(2);
+        z = Math.max(3, Math.min(16, z));
+        // Centre the box in the stable area (shifted for the label room), then express that as
+        // the camera centre, which sits in the middle of the visible area.
+        double bcx = (minX + maxX) / 2 * Math.pow(2, z), bcy = (minY + maxY) / 2 * Math.pow(2, z);
+        double scx = a.exactCenterX(), scy = a.exactCenterY() + (padTop - padBot) / 2;
+        double camX = bcx - (scx - cx()), camY = bcy - (scy - cy());
+        aim(latOf(camY, z), lngOf(camX, z), z);
+    }
+    void panBy(float dx, float dy) {
+        double x = wx(lng, zoom) + dx, y = wy(lat, zoom) + dy;
+        lng = tLng = lngOf(x, zoom); lat = tLat = latOf(y, zoom); tZoom = zoom; requestDraw();
+    }
+    void zoomBy(double dz, float fx, float fy) {
+        double nz = Math.max(3, Math.min(18, zoom + dz));
+        if (Float.isNaN(fx) || fx < 0) { fx = cx(); fy = cy(); }
+        // keep the point under the fingers still
+        double gx = wx(lng, zoom) + (fx - cx()), gy = wy(lat, zoom) + (fy - cy());
+        double glng = lngOf(gx, zoom), glat = latOf(gy, zoom);
+        double nx = wx(glng, nz) - (fx - cx()), ny = wy(glat, nz) - (fy - cy());
+        zoom = tZoom = nz; lng = tLng = lngOf(nx, nz); lat = tLat = latOf(ny, nz);
+        requestDraw();
+    }
+    /** Person under a tap, or null. */
+    Person hit(float x, float y) {
+        Person best = null; float bd = 34 * k;
+        for (Person p : people) {
+            float d = (float) Math.hypot(sx(p.lng) - x, sy(p.lat) - y);
+            if (d < bd) { bd = d; best = p; }
+        }
+        return best;
+    }
+
+    // ── drawing ──
+    void requestDraw() {
+        if (drawQueued) return;
+        drawQueued = true;
+        main.postDelayed(this::frame, 33);
+    }
+    private void frame() {
+        drawQueued = false;
+        boolean moving = false;
+        if (haveCam) {
+            double f = 0.18;
+            if (Math.abs(tZoom - zoom) > 0.002) { zoom += (tZoom - zoom) * f; moving = true; } else zoom = tZoom;
+            double ex = wx(tLng, zoom) - wx(lng, zoom), ey = wy(tLat, zoom) - wy(lat, zoom);
+            if (Math.abs(ex) > 0.5 || Math.abs(ey) > 0.5) {
+                lng = lngOf(wx(lng, zoom) + ex * f, zoom); lat = latOf(wy(lat, zoom) + ey * f, zoom); moving = true;
+            } else { lat = tLat; lng = tLng; }
+        }
+        draw();
+        if (moving) requestDraw();
+    }
+    private void draw() {
+        Surface s = surface; if (s == null || !s.isValid()) return;
+        Canvas c = null;
+        try {
+            c = s.lockHardwareCanvas();
+            c.drawColor(0xFF1B2A1E);
+            drawTiles(c);
+            drawPeople(c);
+        } catch (Exception e) {
+        } finally {
+            if (c != null) try { s.unlockCanvasAndPost(c); } catch (Exception e) {}
+        }
+    }
+
+    private String[] layers() {
+        return satellite ? new String[]{ "World_Imagery", "Reference/World_Transportation" } : new String[]{ "World_Street_Map" };
+    }
+    private void drawTiles(Canvas c) {
+        int tz = (int) Math.max(2, Math.min(18, Math.round(zoom)));
+        double scale = Math.pow(2, zoom - tz);
+        double ts = 256 * scale;
+        double ox = wx(lng, tz) * scale - cx(), oy = wy(lat, tz) * scale - cy();   // world px (at zoom) of screen 0,0
+        int x0 = (int) Math.floor(ox / ts), y0 = (int) Math.floor(oy / ts);
+        int x1 = (int) Math.floor((ox + w) / ts), y1 = (int) Math.floor((oy + h) / ts);
+        int n = 1 << tz;
+        for (String layer : layers()) {
+            for (int ty = y0; ty <= y1; ty++) {
+                if (ty < 0 || ty >= n) continue;
+                for (int tx = x0; tx <= x1; tx++) {
+                    int wxp = ((tx % n) + n) % n;
+                    RectF dst = new RectF((float) (tx * ts - ox), (float) (ty * ts - oy), (float) ((tx + 1) * ts - ox), (float) ((ty + 1) * ts - oy));
+                    Bitmap b = tile(layer, tz, wxp, ty, true);
+                    if (b != null) { c.drawBitmap(b, null, dst, tilePaint); continue; }
+                    // stretch a parent tile while this one loads
+                    for (int up = 1; up <= 5 && tz - up >= 0; up++) {
+                        int pz = tz - up, px = wxp >> up, py = ty >> up;
+                        Bitmap pb = tile(layer, pz, px, py, false);
+                        if (pb == null) continue;
+                        int span = 1 << up, sub = 256 / span;
+                        int ix = (wxp - (px << up)) * sub, iy = (ty - (py << up)) * sub;
+                        c.drawBitmap(pb, new Rect(ix, iy, ix + sub, iy + sub), dst, tilePaint);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    private Bitmap tile(String layer, int z, int x, int y, boolean fetch) {
+        String key = layer + "/" + z + "/" + y + "/" + x;
+        Bitmap b = tiles.get(key);
+        if (b != null || !fetch) return b;
+        if (loading.contains(key) || failed.contains(key)) return null;
+        loading.add(key);
+        net.execute(() -> {
+            Bitmap got = null;
+            try {
+                HttpURLConnection con = (HttpURLConnection) new URL(ESRI + layer + "/MapServer/tile/" + z + "/" + y + "/" + x).openConnection();
+                con.setConnectTimeout(8000); con.setReadTimeout(12000); con.setUseCaches(true);
+                if (con.getResponseCode() == 200) { try (InputStream in = con.getInputStream()) { got = BitmapFactory.decodeStream(in); } }
+                con.disconnect();
+            } catch (Exception e) {}
+            final Bitmap fb = got;
+            main.post(() -> {
+                loading.remove(key);
+                if (fb != null) { tiles.put(key, fb); requestDraw(); }
+                else { failed.add(key); main.postDelayed(() -> failed.remove(key), 20000); }
+            });
+        });
+        return null;
+    }
+
+    private void drawPeople(Canvas c) {
+        float r = 17 * k;
+        // others first, me on top
+        List<Person> order = new ArrayList<>();
+        for (Person p : people) if (!p.me) order.add(p);
+        for (Person p : people) if (p.me) order.add(p);
+        for (Person p : order) {
+            float x = sx(p.lng), y = sy(p.lat);
+            if (x < -60 * k || y < -60 * k || x > w + 60 * k || y > h + 60 * k) continue;
+            fill.setColor(p.stale ? 0xFF7D8590 : p.color);
+            c.drawCircle(x, y, r, fill);
+            ring.setColor(p.me ? 0xFFF0A500 : Color.WHITE);
+            ring.setStrokeWidth((p.me ? 4f : 2.5f) * k);
+            c.drawCircle(x, y, r, ring);
+            text.setTextSize(16 * k);
+            String ini = p.name == null || p.name.isEmpty() ? "?" : p.name.substring(0, 1).toUpperCase(Locale.US);
+            c.drawText(ini, x, y + 5.5f * k, text);
+            String lbl = p.me ? "You" : p.name;
+            if (p.status != null && !p.status.isEmpty()) lbl = lbl + " · " + p.status;
+            text.setTextSize(13 * k);
+            float tw = text.measureText(lbl);
+            RectF bg = new RectF(x - tw / 2 - 7 * k, y + r + 4 * k, x + tw / 2 + 7 * k, y + r + 24 * k);
+            c.drawRoundRect(bg, 8 * k, 8 * k, pill);
+            c.drawText(lbl, x, bg.bottom - 5.5f * k, text);
+        }
+    }
+
+    void shutdown() { net.shutdownNow(); main.removeCallbacksAndMessages(null); }
+}
