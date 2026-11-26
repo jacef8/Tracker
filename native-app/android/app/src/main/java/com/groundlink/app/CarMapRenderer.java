@@ -36,7 +36,33 @@ class CarMapRenderer {
 
     static class Person {
         String uid, name, status; double lat, lng; int color; boolean me, stale;
+        // 1.5.6: "when pins are moving they seem to be moving in little spurts ... like jumps not
+        // smooth movement" (Jace, 2026-11-26). lat/lng is now the DRAWN spot, worked out every frame
+        // from the last fix (fLat/fLng, its time on this phone's clock fixAt), the speed vector
+        // (degrees per ms) and a correction (oLat/oLng) that fades out over BLEND_MS when a new fix
+        // lands somewhere other than where the dot had got to.
+        double fLat, fLng, vLat, vLng, oLat, oLng; long fx, fixAt, corrAt;
     }
+    static final long EXTRAP_MS = 8000, BLEND_MS = 1200;
+    /** Where to draw p at time now: the fix, carried forward at its speed for up to 8 s, plus the
+     *  fading correction. With no speed this is just the fix. */
+    static void place(Person p, long now) {
+        double dt = Math.max(0, Math.min(EXTRAP_MS, now - p.fixAt));
+        double la = p.fLat + p.vLat * dt, ln = p.fLng + p.vLng * dt;
+        double b = p.corrAt > 0 ? 1.0 - (now - p.corrAt) / (double) BLEND_MS : 0;
+        if (b > 0) { la += p.oLat * b; ln += p.oLng * b; }
+        p.lat = la; p.lng = ln;
+    }
+    static boolean animating(Person p, long now) {
+        return ((p.vLat != 0 || p.vLng != 0) && now - p.fixAt < EXTRAP_MS) || (p.corrAt > 0 && now - p.corrAt < BLEND_MS);
+    }
+    static void copyMotion(Person from, Person to) {
+        to.fLat = from.fLat; to.fLng = from.fLng; to.vLat = from.vLat; to.vLng = from.vLng;
+        to.oLat = from.oLat; to.oLng = from.oLng; to.fx = from.fx; to.fixAt = from.fixAt; to.corrAt = from.corrAt;
+        to.lat = from.lat; to.lng = from.lng;
+    }
+    /** Run once per frame before drawing (the screen keeps the camera on moving dots with it). */
+    Runnable onFrame = null;
 
     // ── state ──
     private Surface surface;
@@ -124,9 +150,10 @@ class CarMapRenderer {
     // ── camera ──
     void jumpTo(double la, double ln, double z) { lat = tLat = la; lng = tLng = ln; zoom = tZoom = z; haveCam = true; requestDraw(); }
     void aim(double la, double ln, double z) {
+        boolean same = Math.abs(la - tLat) < 1e-7 && Math.abs(ln - tLng) < 1e-7 && Math.abs(z - tZoom) < 1e-4;
         tLat = la; tLng = ln; tZoom = z;
         if (!haveCam) { jumpTo(la, ln, z); return; }
-        requestDraw();
+        if (!same) requestDraw();      // called every frame now; an unchanged aim must not keep the loop alive
     }
     /** Fit these points into the stable area (the part no buttons cover), with room for labels. */
     void fit(List<double[]> pts) {
@@ -183,6 +210,9 @@ class CarMapRenderer {
     private void frame() {
         drawQueued = false;
         boolean moving = false;
+        long now = System.currentTimeMillis();
+        for (Person p : people) { place(p, now); if (animating(p, now)) moving = true; }
+        if (onFrame != null) try { onFrame.run(); } catch (Exception e) {}
         if (haveCam) {
             double f = 0.18;
             if (Math.abs(tZoom - zoom) > 0.002) { zoom += (tZoom - zoom) * f; moving = true; } else zoom = tZoom;

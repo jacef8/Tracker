@@ -44,12 +44,13 @@ import java.util.concurrent.Executors;
  * Camera modes, cycled by the top button: Everyone (fit the crew, leaving out anyone 100+ miles
  * away), My picks (the people picked on the phone with Follow my picks), Me (keep the truck in the
  * middle). Dragging or pinching the map, or the zoom buttons, pause the auto camera for 30 s.
- * Positions come from the server every 5 s with this phone's car key for the crew.
+ * Positions come from the server every 2 s with this phone's car key for the crew; the truck's own
+ * dot comes straight from this phone's GPS once a second (1.5.6), and every dot glides between fixes.
  */
 public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLifecycleObserver {
     private static final String TAG = "GLCarMap";
     private static final int MODE_ALL = 0, MODE_PICKS = 1, MODE_ME = 2;
-    private static final long POLL_MS = 5000, PAUSE_MS = 30000, EXTRA_MS = 30000;
+    private static final long POLL_MS = 2000, PAUSE_MS = 30000, EXTRA_MS = 30000;
     private long lastExtraAt = 0;
     private boolean loggedData = false;
     private volatile boolean loggedHttp = false;
@@ -69,6 +70,81 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
         SharedPreferences sp = prefs();
         mode = sp.getInt("mode", MODE_ALL);
         map.satellite = sp.getBoolean("sat", true);
+        map.onFrame = this::frameCam;
+    }
+
+    // ── 1.5.6: smooth motion ──
+    // Before, each 5-second answer from the server put every dot straight onto its newest fix, so
+    // a truck at 50 mph hopped 300-700 ft at a time and the camera hopped with it. Now each dot
+    // glides: carried forward at its reported speed along the line of its last two fixes, and
+    // eased onto each new fix. The truck's own dot uses this phone's GPS directly, once a second.
+    private long lastAim = 0;
+    private void frameCam() {
+        long t = System.currentTimeMillis();
+        if (t < pausedUntil) return;
+        if (mode == MODE_ME || t - lastAim > 250) { lastAim = t; aimCamera(); }
+    }
+    private CarMapRenderer.Person myFix = null;
+    private android.location.LocationManager lm = null;
+    private android.location.LocationListener ll = null;
+    private void startGps() {
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(getCarContext(), android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+            lm = (android.location.LocationManager) getCarContext().getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) return;
+            ll = this::onMyLocation;
+            lm.requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 1000L, 0f, ll, Looper.getMainLooper());
+            CarLog.step("truck gps on");
+        } catch (Throwable t) { CarLog.error("gps", t); }
+    }
+    private void stopGps() {
+        try { if (lm != null && ll != null) lm.removeUpdates(ll); } catch (Throwable t) {}
+        ll = null;
+    }
+    private void onMyLocation(android.location.Location loc) {
+        if (loc == null || (loc.hasAccuracy() && loc.getAccuracy() > 60)) return;
+        long now = System.currentTimeMillis();
+        CarMapRenderer.Person m = new CarMapRenderer.Person();
+        m.fLat = loc.getLatitude(); m.fLng = loc.getLongitude(); m.fx = now; m.fixAt = now;
+        if (loc.hasSpeed() && loc.hasBearing() && loc.getSpeed() > 1.3f) {
+            double ms = loc.getSpeed(), br = Math.toRadians(loc.getBearing());
+            m.vLat = ms * Math.cos(br) / 111320.0 / 1000.0;
+            m.vLng = ms * Math.sin(br) / (111320.0 * Math.cos(Math.toRadians(m.fLat))) / 1000.0;
+        }
+        myFix = m;
+        for (CarMapRenderer.Person p : map.people) if (p.me) { CarMapRenderer.place(p, now); useLocal(p, now, true); }
+        map.requestDraw();
+    }
+    /** Put the phone's own GPS fix on p, easing from where p is drawn now (when it has a spot). */
+    private void useLocal(CarMapRenderer.Person p, long now, boolean hadSpot) {
+        double dLat = p.lat, dLng = p.lng;
+        p.fLat = myFix.fLat; p.fLng = myFix.fLng; p.vLat = myFix.vLat; p.vLng = myFix.vLng;
+        p.fx = myFix.fx; p.fixAt = myFix.fixAt; p.corrAt = 0;
+        CarMapRenderer.place(p, now);
+        double oa = dLat - p.lat, ob = dLng - p.lng;
+        if (hadSpot && Math.abs(oa) < 0.01 && Math.abs(ob) < 0.01) { p.oLat = oa; p.oLng = ob; p.corrAt = now; CarMapRenderer.place(p, now); }
+    }
+    /** A crew member's fix from the server. Same fix as last time: keep gliding as before. A new
+     *  fix: speed from the server, direction from the last two fixes, eased in from the drawn spot. */
+    private void useFix(CarMapRenderer.Person p, CarMapRenderer.Person prev, long fx, long fixAt, double mph, long now) {
+        if (prev != null && prev.fx == fx) { CarMapRenderer.copyMotion(prev, p); return; }
+        double la = p.lat, ln = p.lng;
+        p.fLat = la; p.fLng = ln; p.fx = fx; p.fixAt = Math.min(fixAt, now); p.vLat = p.vLng = 0; p.corrAt = 0;
+        if (prev != null && !p.stale && mph >= 3 && prev.fx > 0 && fx - prev.fx >= 1000 && fx - prev.fx <= 60000) {
+            double cos = Math.cos(Math.toRadians(la));
+            double n = (la - prev.fLat) * 111320.0, e = (ln - prev.fLng) * 111320.0 * cos, d = Math.hypot(n, e);
+            if (d > 15) {
+                double ms = Math.min(mph, 100) * 0.44704;
+                p.vLat = ms * (n / d) / 111320.0 / 1000.0;
+                p.vLng = ms * (e / d) / (111320.0 * cos) / 1000.0;
+            }
+        }
+        CarMapRenderer.place(p, now);
+        if (prev != null) {
+            double oa = prev.lat - p.lat, ob = prev.lng - p.lng;
+            if (Math.abs(oa) < 0.01 && Math.abs(ob) < 0.01) { p.oLat = oa; p.oLng = ob; p.corrAt = now; CarMapRenderer.place(p, now); }
+        }
     }
 
     private SharedPreferences prefs() { return getCarContext().getSharedPreferences(GLCarBridge.PREFS, Context.MODE_PRIVATE); }
@@ -93,8 +169,8 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             }
         };
     }
-    @Override public void onStart(@NonNull LifecycleOwner o) { running = true; poll(); }
-    @Override public void onStop(@NonNull LifecycleOwner o) { running = false; main.removeCallbacksAndMessages(null); }
+    @Override public void onStart(@NonNull LifecycleOwner o) { running = true; startGps(); poll(); }
+    @Override public void onStop(@NonNull LifecycleOwner o) { running = false; stopGps(); main.removeCallbacksAndMessages(null); }
     @Override public void onDestroy(@NonNull LifecycleOwner o) { map.shutdown(); io.shutdownNow(); }
 
     // ── template: top buttons + map buttons ──
@@ -275,6 +351,9 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
         long now = r.optLong("now", System.currentTimeMillis());
         JSONObject hide = c.optJSONObject("hide"), nick = c.optJSONObject("nick");
         List<CarMapRenderer.Person> out = new ArrayList<>();
+        long tnow = System.currentTimeMillis();
+        Map<String, CarMapRenderer.Person> old = new HashMap<>();
+        for (CarMapRenderer.Person q : map.people) old.put(q.uid, q);
         for (int i = 0; i < arr.length(); i++) {
             JSONObject u = arr.optJSONObject(i); if (u == null) continue;
             String id = u.optString("u");
@@ -291,6 +370,14 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             else if (p.stale) p.status = ago(age);
             else if (hs > 0 && now - hs > 2 * 60000L) p.status = "parked " + ago(now - hs).replace(" ago", "");
             else p.status = "";
+            CarMapRenderer.Person prev = old.get(id);
+            if (p.me && myFix != null && tnow - myFix.fixAt < 15000) {
+                if (prev != null) { p.lat = prev.lat; p.lng = prev.lng; }
+                useLocal(p, tnow, prev != null);
+            } else {
+                long fx = u.optLong("fx", ts);
+                useFix(p, prev, fx, tnow - Math.max(0, now - fx), spd, tnow);
+            }
             out.add(p);
         }
         map.people = out;
