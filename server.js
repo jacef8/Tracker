@@ -805,6 +805,15 @@ function _shareBroken(u) {
   return '';
 }
 
+// 1092: "Someone stops sharing" and "battery is low" are opt-in (Jace, 2026-11-25: people
+// complained about the pop-ups). Send them only to a device whose prefs turned them ON;
+// every other type stays opt-out as before.
+const OPTIN_TYPES = { crew: 1, battlow: 1 };
+function _prefBlocks(type, pf) {
+  if (type === 'sos') return false;
+  if (OPTIN_TYPES[type]) return !(pf && (pf[type] === 1 || pf[type] === true));
+  return !!(pf && (pf[type] === 0 || pf[type] === false));
+}
 async function _alertCrew(room, aboutUid, aboutName, reason) {
   let subs = null;
   try { subs = await _dbGet('gl/' + room + '/pushSubs'); } catch (e) { return 0; }
@@ -815,12 +824,12 @@ async function _alertCrew(room, aboutUid, aboutName, reason) {
   // with no off switch in sight is the kind people silence at the operating system level --
   // which would also silence the ones that matter.
   const body = aboutName + ' is off the map. ' + reason + '. They need to set location back to '
-             + 'Always. You can turn these off in GroundLink Settings, under Notifications.';
+             + 'Always. You can turn these alerts off in GroundLink Settings, under Notifications.';
   let sent = 0;
   for (const [uid, rec] of Object.entries(subs)) {
     if (uid === aboutUid || !rec) continue;                  // never tell them about themselves
     // Same per-type preference every other notification obeys, under the key 'crew'.
-    if (rec.prefs && (rec.prefs.crew === 0 || rec.prefs.crew === false)) continue;
+    if (_prefBlocks('crew', rec.prefs)) continue;
     try {
       if (fcmAdmin && rec.fcm) {
         await fcmAdmin.messaging().send({
@@ -1474,7 +1483,9 @@ app.post('/pushTo', rateLimit(30, 60000), requireUser, async function(req, res) 
       const rec = r.rec;
       // Same per-type preference check /push applies, so muting "Someone talking (voice)"
       // silences a direct call too. SOS always goes through.
-      if (type !== 'sos' && r.prefsList.some(function (pf) { return pf && (pf[type] === 0 || pf[type] === false); })) { decisions.push(uid.slice(0, 10) + ':turned-off'); continue; }
+      if (type !== 'sos' && (OPTIN_TYPES[type]
+            ? !r.prefsList.some(function (pf) { return pf && (pf[type] === 1 || pf[type] === true); })
+            : r.prefsList.some(function (pf) { return pf && (pf[type] === 0 || pf[type] === false); }))) { decisions.push(uid.slice(0, 10) + ':turned-off'); continue; }
       if (fcmAdmin && rec.fcm) {
         try {
           const data = Object.assign({ type: type, url: '/', group: group, ts: ts, fromUid: String(req.authUid || '') }, extra);
@@ -1659,7 +1670,7 @@ async function _pushHandler(req, res) {
         try { if (JSON.parse(rec.sub).endpoint === senderEndpoint) { decisions.push(uid.slice(0, 10) + ':same-endpoint'); return; } } catch (e) {}
       }
       // Respect the recipient's per-type notification prefs (SOS always goes through).
-      if (b.type && b.type !== 'sos' && rec.prefs && (rec.prefs[b.type] === 0 || rec.prefs[b.type] === false)) { decisions.push(uid.slice(0, 10) + ':turned-off'); return; }
+      if (b.type && _prefBlocks(b.type, rec.prefs)) { decisions.push(uid.slice(0, 10) + ':turned-off'); return; }
       // Already told this person about this, via another Crew they share with the sender.
       // SOS is exempt: a repeat there is far cheaper than a miss.
       // A pin's body is the same for every pin in a crew ("Our Crew -- tap to see where") and two
