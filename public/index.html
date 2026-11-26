@@ -5734,7 +5734,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1092;
+var APP_BUILD = 1093;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -19022,6 +19022,25 @@ function initMap() {
         if (_tileFails.length >= 6) { _tileFails = []; window._offlineSwitch('weak'); }
       } catch (x) {}
     });
+    // 1093: on a weak signal the photo usually doesn't FAIL -- it just never comes, and no error
+    // fires. A map photo still loading after 9 s means the saved map is needed.
+    var _hangFor = 0;
+    setInterval(function () {
+      try {
+        if (document.visibilityState !== 'visible' || _curBase() === 'usgs-aerial') { _hangFor = 0; return; }
+        var s = window._baseImgSrc();
+        if (!s || !map.getSource(s) || map.isSourceLoaded(s)) { _hangFor = 0; return; }
+        _hangFor += 3;
+        if (_hangFor >= 9) { _hangFor = 0; window._savedUnderTrip(); }
+      } catch (e) {}
+    }, 3000);
+    map.on('sourcedata', function (e) {
+      try {
+        if (!e || !e.tile || !window._savedUnderUntil || e.sourceId !== window._baseImgSrc()) return;
+        window._savedOk = (window._savedOk || 0) + 1;
+        if (window._savedOk >= 12 && Date.now() - (window._savedLastFail || 0) > 20000) window._savedUnderClear();
+      } catch (x) {}
+    });
     // With "online" never changing, check every 45 s whether real data gets through again.
     setInterval(function () {
       if (!window._glOffPrev || navigator.onLine === false || document.visibilityState !== 'visible') return;
@@ -28137,7 +28156,10 @@ function _glrFetchTile(x, y) {
     var out = [];
     // Ground the forest roads cover: ~150 ft cells along every Forest Service line (filled in
     // every ~50 ft so long straight stretches count too).
-    var CELL = 0.0004, near = {};
+    // 1093: kept across every square fetched (window._glrFsNear), not just this one: a Census
+    // road crossing into the next square was checked there only against THAT square's forest
+    // roads, came out "not a forest road", and was drawn beside FR 105 (Jace, 2026-11-26).
+    var CELL = GLR_CELL, near = window._glrFsNear;
     var cellKey = function (lng, lat) { return Math.floor(lng / CELL) + ',' + Math.floor(lat / CELL); };
     var linesOf = function (g) { return !g ? [] : g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []; };
     (res[0].features || []).forEach(function (f) {
@@ -28152,21 +28174,10 @@ function _glrFetchTile(x, y) {
         }
       });
     });
-    var onForestRoad = function (g) {
-      var n = 0, hit = 0;
-      linesOf(g).forEach(function (l) {
-        l.forEach(function (pt) {
-          n++;
-          var cx = Math.floor(pt[0] / CELL), cy = Math.floor(pt[1] / CELL), found = false;
-          for (var dx = -1; dx <= 1 && !found; dx++) for (var dy = -1; dy <= 1 && !found; dy++) if (near[(cx + dx) + ',' + (cy + dy)]) found = true;
-          if (found) hit++;
-        });
-      });
-      return n > 0 && hit / n >= 0.6;
-    };
+    window._glrFsV = (window._glrFsV || 0) + 1;      // forest ground grew: re-check the Census roads at paint
     (res[1].features || []).forEach(function (f) {
       var p = f.properties || {};
-      if (onForestRoad(f.geometry)) return;
+      if (_glrOnForestRoad(f.geometry)) return;
       out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'loc', n: String(p.NAME || '').trim(), u: _glrKey('loc', f.geometry) } });
     });
     [res[2], res[3]].forEach(function (r) {
@@ -28180,6 +28191,23 @@ function _glrFetchTile(x, y) {
     window._glrCache[k] = out;
     _glrPaint();
   });
+}
+// 1093: ground within ~150 ft of any Forest Service road fetched this session, and the test for a
+// Census line that mostly runs on it (the same road twice, e.g. "NFS Rd 105" on FR 105 Mercer).
+var GLR_CELL = 0.0004;
+window._glrFsNear = {};
+function _glrOnForestRoad(g) {
+  var near = window._glrFsNear, n = 0, hit = 0;
+  var ls = !g ? [] : g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+  ls.forEach(function (l) {
+    l.forEach(function (pt) {
+      n++;
+      var cx = Math.floor(pt[0] / GLR_CELL), cy = Math.floor(pt[1] / GLR_CELL), found = false;
+      for (var dx = -1; dx <= 1 && !found; dx++) for (var dy = -1; dy <= 1 && !found; dy++) if (near[(cx + dx) + ',' + (cy + dy)]) found = true;
+      if (found) hit++;
+    });
+  });
+  return n > 0 && hit / n >= 0.6;
 }
 // "NW Hoecake Rd", "Hoecake Road" -> "hoecake": the part both maps agree on.
 var GLR_DIRS = { n: 1, s: 1, e: 1, w: 1, ne: 1, nw: 1, se: 1, sw: 1, north: 1, south: 1, east: 1, west: 1 };
@@ -28207,7 +28235,7 @@ function _glrBaseRoadNames() {
   } catch (e) { return null; }
 }
 // Hide the base map's own label and number sign on the forest roads we label ourselves.
-function _glrHideBaseForestNames(feats) {
+function _glrHideBaseForestNames(feats, allIn) {
   try {
     if (!map.getSource('composite')) return;
     var fsNames = {}, fsRefs = {};
@@ -28219,22 +28247,76 @@ function _glrHideBaseForestNames(feats) {
       if (p.name && fsNames[_glrNorm(p.name)]) names[p.name] = 1;
       if (p.ref && fsRefs[_glrRef(p.ref)]) refs[p.ref] = 1;
     });
-    var nl = Object.keys(names).sort(), rl = Object.keys(refs).sort(), sig = nl.join('|') + '#' + rl.join('|');
+    var nl = Object.keys(names).sort(), rl = Object.keys(refs).sort(), sig = nl.join('|') + '#' + rl.join('|') + (allIn ? '#all' : '');
     var style = map.getStyle(), orig = window._glrBaseFilters;
     // A new base map (style) brings fresh layers: remember their own filters again.
     if (!orig || orig._style !== style.sprite + ':' + (style.layers || []).length) { orig = window._glrBaseFilters = { _style: style.sprite + ':' + (style.layers || []).length }; window._glrHideSig = null; }
     if (sig === window._glrHideSig) return;
     window._glrHideSig = sig;
     (style.layers || []).forEach(function (l) {
-      if (l.type !== 'symbol' || !/^road-(label|number-shield|exit-shield)/.test(l.id)) return;
+      if (l.type !== 'symbol' || !/^road-(label|number-shield|exit-shield|intersection)/.test(l.id)) return;
       if (!(l.id in orig)) orig[l.id] = l.filter === undefined ? null : l.filter;
       var parts = ['all'];
       if (orig[l.id]) parts.push(orig[l.id]);
       if (nl.length) parts.push(['!', ['in', ['coalesce', ['get', 'name'], ''], ['literal', nl]]]);
       if (rl.length) parts.push(['!', ['in', ['coalesce', ['get', 'ref'], ''], ['literal', rl]]]);
+      if (allIn) parts.push(['step', ['zoom'], true, GLR_ESRI_OFF_Z - 0.2, false]);   // 1093: ours name every road from here in
       try { map.setFilter(l.id, parts.length > 1 ? parts : orig[l.id]); } catch (e) {}
     });
   } catch (e) {}
+}
+// 1093: Mapbox's own car-road lines (not trails) step out from GLR_ESRI_OFF_Z in, where ours take
+// over. Their own filters are kept and put back when road names go off or the map changes.
+function _glrHideBaseLines(on) {
+  try {
+    var style = map.getStyle(); if (!style) return;
+    var tag = style.sprite + ':' + (style.layers || []).length;
+    var st = window._glrLineHide;
+    if (!st || st.tag !== tag) st = window._glrLineHide = { tag: tag, orig: {}, on: null };
+    if (st.on === on) return;
+    st.on = on;
+    (style.layers || []).forEach(function (l) {
+      if (l.type !== 'line' || !/^(road|bridge|tunnel)-/.test(l.id) || /path|steps|pedestrian/.test(l.id)) return;
+      if (!(l.id in st.orig)) st.orig[l.id] = l.filter === undefined ? null : l.filter;
+      var o = st.orig[l.id], cut = ['step', ['zoom'], true, GLR_ESRI_OFF_Z - 0.2, false];
+      try { map.setFilter(l.id, on ? (o ? ['all', o, cut] : cut) : o); } catch (e) {}
+    });
+  } catch (e) {}
+}
+// 1093: "we need to get rid of all these duplicate names" (Jace, 2026-11-26). The Census splits a
+// road at every crossing, so "Co Rd 12" was printed once per piece -- twice on one short stretch.
+// Names now ride on one joined line per road (pieces whose ends meet), spaced well apart. The
+// pieces themselves stay as they are for tapping and renaming.
+function _glrLabelLines(feats) {
+  var groups = {}, out = [];
+  var pk = function (c) { return (+c[0]).toFixed(5) + ',' + (+c[1]).toFixed(5); };
+  feats.forEach(function (f) {
+    var p = f.properties || {}, g = f.geometry;
+    if (!p.n || p.dup || !g) return;
+    var parts = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+    var key = p.k + '|' + p.n, grp = groups[key] || (groups[key] = { k: p.k, n: p.n, parts: [] });
+    parts.forEach(function (l) { if (l && l.length > 1) grp.parts.push(l); });
+  });
+  Object.keys(groups).forEach(function (key) {
+    var g = groups[key], parts = g.parts, used = [], ends = {};
+    parts.forEach(function (l, i) { [pk(l[0]), pk(l[l.length - 1])].forEach(function (e) { (ends[e] = ends[e] || []).push(i); }); });
+    var take = function (e) { var a = ends[e] || []; for (var j = 0; j < a.length; j++) if (!used[a[j]]) { used[a[j]] = 1; return a[j]; } return -1; };
+    for (var i = 0; i < parts.length; i++) {
+      if (used[i]) continue;
+      used[i] = 1;
+      var line = parts[i].slice(), n, q;
+      while ((n = take(pk(line[line.length - 1]))) >= 0) {
+        q = parts[n]; if (pk(q[0]) !== pk(line[line.length - 1])) q = q.slice().reverse();
+        line = line.concat(q.slice(1));
+      }
+      while ((n = take(pk(line[0]))) >= 0) {
+        q = parts[n]; if (pk(q[q.length - 1]) !== pk(line[0])) q = q.slice().reverse();
+        line = q.slice(0, -1).concat(line);
+      }
+      out.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: line }, properties: { k: g.k, n: g.n, lbl: 1 } });
+    }
+  });
+  return out;
 }
 var _glrPaintT = null;
 function _glrPaint() {
@@ -28262,7 +28344,14 @@ function _glrPaint() {
       // the county roads are left to Esri. On Satellite 1 a county road Mapbox already names is
       // dropped whole (line and name); a road Mapbox leaves blank keeps ours. Forest roads always stay.
       var esriRoads = !!map.getLayer('esri-roads-layer');
-      var baseNames = esriRoads ? null : _glrBaseRoadNames();
+      // 1093: "Still has duplicate roads" (Jace, 2026-11-26, Mapbox Satellite on FR 105 / Co Rd 12).
+      // We already hid Mapbox's NAMES for our roads, but its own white LINE still ran a few feet
+      // beside ours. Same rule as Esri (1079): from GLR_ESRI_OFF_Z in, with road names on, ours are
+      // the only car roads drawn; Mapbox keeps its trails and everything zoomed out.
+      var mbSat = !esriRoads && !!map.getLayer('satellite') && !!map.getSource('composite');
+      var ownRoads = esriRoads || mbSat;
+      _glrHideBaseLines(mbSat && window._glrOn());
+      var baseNames = ownRoads ? null : _glrBaseRoadNames();
       // 1071: "scattered pieces of road sections that are not contiguous to any other road" (Jace,
       // 2026-11-24, Satellite 1 over Bristol). Dropping a road whole wherever Mapbox printed its
       // name left only the roads Mapbox left blank, in bits. Now every county road keeps its line,
@@ -28278,11 +28367,21 @@ function _glrPaint() {
         return { type: 'Feature', geometry: f.geometry, properties: Object.assign({}, f.properties, { n: String(r.n), was: f.properties.n || '', rk: k, dup: 0, ren: 1 }) };
       });
       window._glrHideOld = _hideOld;
+      var fsIds = {};
+      feats.forEach(function (f) { if (f.properties.k === 'fs' && f.properties.fid) fsIds[f.properties.fid] = 1; });
+      feats = feats.filter(function (f) {
+        var p = f.properties;
+        if (p.k !== 'loc' || p.ren) return true;
+        var m = /^(nfs|nfsr|fs|fr|forest)\s*(rd|road|service road|route)?\s*([0-9]+[a-z0-9-]*)$/i.exec(String(p.n || '').trim());
+        if (m && fsIds[_glrRef(m[3])]) return false;                 // "NFS Rd 105" on a screen with FR 105
+        if (p._fsV !== window._glrFsV) { p._fsV = window._glrFsV; p._onFs = _glrOnForestRoad(f.geometry); }
+        return !p._onFs;
+      });
       var out = [];
       feats.forEach(function (f) {
         var p = f.properties;
-        if (p.k === 'hwy' && !esriRoads) return;          // Mapbox draws and names these itself
-        if (esriRoads) {
+        if (p.k === 'hwy' && !ownRoads) return;           // Mapbox draws and names these itself
+        if (ownRoads) {
           // Zoomed out Esri's own road picture shows, so ours would double it: forest roads only.
           if (p.k !== 'fs' && map.getZoom() < GLR_ESRI_OFF_Z - 0.2) return;
           out.push(f); return;
@@ -28294,7 +28393,7 @@ function _glrPaint() {
       // 1066: forest roads the other way round: Mapbox Satellite writes "Five Points Rd" and an
       // "FS 112" sign on FR 112, a second name next to ours. Ours carries the FR number hunters go
       // by, so it stays and Mapbox's name and number sign for that road are hidden.
-      if (!esriRoads) _glrHideBaseForestNames(out);
+      if (!esriRoads) _glrHideBaseForestNames(out, mbSat && window._glrOn());
       // 1086: roads the crew drew themselves (orange), always shown, road names on or off.
       var _cr = window._crewRoads || {};
       Object.keys(_cr).forEach(function (id) {
@@ -28308,7 +28407,7 @@ function _glrPaint() {
       var sig = out.map(function (f) { return (f.properties.u || '') + (f.properties.dup ? '*' : '') + (f.properties.ren ? '=' + f.properties.n : ''); }).join('|') + (esriRoads ? '#e' : '') + '#v' + (window._crV || 0);
       if (sig === window._glrSig && src._glrSet) return;
       window._glrSig = sig; src._glrSet = 1;
-      src.setData({ type: 'FeatureCollection', features: out });
+      src.setData({ type: 'FeatureCollection', features: out.concat(_glrLabelLines(out)) });
     } catch (e) {}
   }, 120);
 }
@@ -28342,7 +28441,25 @@ window._savedUnderNeeded = function () {
 };
 window._savedUnderTrip = function () {
   window._savedUnderUntil = Date.now() + 10 * 60 * 1000;
+  window._savedOk = 0; window._savedLastFail = Date.now();
   try { window._savedUnderEnsure(); } catch (e) {}
+};
+// 1093: the saved map now sits over the photo, so take it away as soon as the photo is coming in
+// fine again (a dozen pictures in a row, nothing lost for 20 s) instead of holding it 10 minutes.
+window._savedUnderClear = function () {
+  window._savedUnderUntil = 0;
+  try { if (navigator.onLine !== false && map.getLayer('gl-saved-under')) map.removeLayer('gl-saved-under'); } catch (e) {}
+};
+// The source of the map's own photo ('satellite' on Mapbox, 'esri-imagery' on Esri), or ''.
+window._baseImgSrc = function () {
+  try {
+    var ls = map.getStyle().layers || [];
+    for (var i = 0; i < ls.length; i++) {
+      var l = ls[i];
+      if (l.type === 'raster' && l.source !== 'gl-saved' && !/^esri-(roads|places)$/.test(l.source)) return l.source;
+    }
+  } catch (e) {}
+  return '';
 };
 setInterval(function () {
   try {
@@ -28359,8 +28476,18 @@ window._savedUnderEnsure = function () {
     if (map.getLayer('gl-saved-under')) return;
     if (!map.getSource('gl-saved')) map.addSource('gl-saved', { type: 'raster', tileSize: 256, minzoom: 8, maxzoom: 17,
       tiles: [GL_AERIAL_TPL + '?saved=1'] });
+    // 1093: "the low/no signal maps ain't coming up like they supposed to" (Jace, 2026-11-26: a
+    // blurry green smear instead of his saved map). Under the satellite picture the saved map was
+    // hidden by the satellite's own low-detail picture, stretched over the gap while the sharp
+    // one never came. While the signal is failing the saved pictures now go ON TOP of the
+    // satellite photo (under roads, names and pins); where nothing was saved they are see-through.
     var ls = map.getStyle().layers || [], before;
-    for (var i = 0; i < ls.length; i++) { if (ls[i].type !== 'background') { before = ls[i].id; break; } }
+    for (var i = 0; i < ls.length; i++) {
+      var l = ls[i];
+      if (l.type === 'background') continue;
+      if (l.type === 'raster' && !/^esri-(roads|places)$/.test(l.source)) continue;   // the photo itself
+      before = l.id; break;
+    }
     map.addLayer({ id: 'gl-saved-under', type: 'raster', source: 'gl-saved', paint: { 'raster-fade-duration': 0 } }, before);
   } catch (e) {}
 };
@@ -28374,15 +28501,17 @@ window._glrEnsure = function () {
     var col = ['match', ['get', 'k'], 'fs', '#FFD54A', 'crew', '#FF9F43', '#FFFFFF'];
 
     if (!map.getLayer('gl-roads-case')) map.addLayer(Object.assign({ id: 'gl-roads-case', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
+      filter: ['!=', ['get', 'lbl'], 1],
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': '#101417', 'line-opacity': 0.55, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6] } }, {}), before);
     if (!map.getLayer('gl-roads-line')) map.addLayer(Object.assign({ id: 'gl-roads-line', type: 'line', source: 'gl-roads', minzoom: GLR_MINZ - 0.5,
+      filter: ['!=', ['get', 'lbl'], 1],
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': col, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, ['match', ['get', 'k'], 'hwy', 2, 1.2], 16, ['match', ['get', 'k'], 'hwy', 4.5, 3]] } }, {}), before);
     if (!map.getLayer('gl-roads-label')) map.addLayer({ id: 'gl-roads-label', type: 'symbol', source: 'gl-roads', minzoom: GLR_ESRI_OFF_Z,
-      filter: ['all', ['!=', ['get', 'n'], ''], ['!=', ['get', 'dup'], 1]],
+      filter: ['==', ['get', 'lbl'], 1],
       layout: { 'symbol-placement': 'line', 'text-field': ['get', 'n'], 'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 13, 13, 16, 16], 'text-max-angle': 30, 'symbol-spacing': 320, 'text-padding': 4 },
+                'text-size': ['interpolate', ['linear'], ['zoom'], 13, 13, 16, 16], 'text-max-angle': 30, 'symbol-spacing': 700, 'text-padding': 4 },
       paint: { 'text-color': col, 'text-halo-color': '#0B0F11', 'text-halo-width': 1.8 } }, before);
     // 1086: the road you tapped, outlined while its card is open.
     if (!map.getSource('gl-road-sel')) map.addSource('gl-road-sel', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
