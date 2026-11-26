@@ -559,6 +559,82 @@ app.post('/crew/remove', rateLimit(20, 60000), requireUser, async function (req,
   } catch (e) { res.json({ ok: false, reason: e.message }); }
 });
 
+// 1094: fold an old or duplicate entry of a person into the one to keep (Jace, 2026-11-26: two
+// Jareds, two Pages, two Allies). Two callers:
+//  - the crew's owner/admin, from the "Same person?" card: any non-protected drop.
+//  - the person themselves, signed in (self:1): only entries with EXACTLY their full name, not
+//    seen for 14+ days, not tied to any other signed-in account. Everything is re-checked here.
+// Every dropped entry is copied to gl/_mergeBackup/<room>/<ts> first. If a dropped entry was on
+// the Crew list and the kept one is not, the kept one takes its place there.
+function _nameKey(s) { return String(s || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim(); }
+app.post('/crew/merge', rateLimit(20, 60000), requireUser, async function (req, res) {
+  if (!adminDb) return res.json({ ok: false, reason: 'no-db' });
+  const b = req.body || {};
+  const room = String(b.room || '').trim();
+  if (!room || !/^[a-z0-9_-]{1,64}$/i.test(room) || room.charAt(0) === '_') return res.status(400).json({ ok: false, reason: 'bad-room' });
+  const idOk = function (u) { return /^[A-Za-z0-9_-]{6,64}$/.test(u); };
+  const keep = String(b.keep || '');
+  const drops = (Array.isArray(b.drop) ? b.drop : []).map(function (u) { return String(u || ''); }).filter(idOk).filter(function (u) { return u !== keep; }).slice(0, 4);
+  if (!idOk(keep) || !drops.length) return res.status(400).json({ ok: false, reason: 'bad-ids' });
+  const me = req.authUid;
+  const R = 'gl/' + room;
+  const val = async function (p) { try { return (await adminDb.ref(p).get()).val(); } catch (e) { return null; } };
+  const cfg = (await val(R + '/config')) || {};
+  let mgr = !!(cfg.owner === me || (cfg.admins && cfg.admins[me]));
+  if (!mgr && cfg.owner) { const acct = await val('gl/_devOwner/' + cfg.owner + '/acct'); if (acct === me) mgr = true; }
+  const acctOf = async function (u) { return (await val('gl/_devOwner/' + u + '/acct')) || ''; };
+  const protectedId = async function (u) {
+    const a = await acctOf(u);
+    return [u, a].some(function (x) { return x && (x === cfg.owner || (cfg.admins && cfg.admins[x])); });
+  };
+  const rec = {};
+  for (const u of [keep].concat(drops)) {
+    rec[u] = { members: await val(R + '/members/' + u), users: await val(R + '/users/' + u), acl: await val(R + '/acl/' + u),
+               invited: await val(R + '/config/invited/' + u), diag: await val(R + '/diag/' + u) };
+  }
+  for (const d of drops) if (await protectedId(d)) return res.status(403).json({ ok: false, reason: 'protected' });
+  if (!mgr) {
+    if (!b.self) return res.status(403).json({ ok: false, reason: 'not-owner' });
+    const keepAcct = await acctOf(keep);
+    if (!(keep === me || keepAcct === me)) return res.status(403).json({ ok: false, reason: 'not-yours' });
+    let myName = _nameKey((rec[keep].users || {}).name || ((await val(R + '/members/' + me)) || {}).name);
+    if (myName.split(' ').length < 2 || myName.length < 5) return res.status(403).json({ ok: false, reason: 'need-full-name' });
+    for (const d of drops) {
+      const r = rec[d];
+      const nm = _nameKey((r.users || {}).name || (r.members || {}).name || (r.invited || {}).name);
+      if (nm !== myName) return res.status(403).json({ ok: false, reason: 'name-differs' });
+      const ts = (r.users && (r.users.fixTs || r.users.ts)) || 0;
+      if (r.users && Date.now() - ts < 14 * 86400000) return res.status(403).json({ ok: false, reason: 'too-recent' });
+      for (const x of [d, await acctOf(d)]) {
+        if (!x || x === me) continue;
+        try { const u = await fcmAdmin.auth().getUser(x); if (u.providerData && u.providerData.length) return res.status(403).json({ ok: false, reason: 'other-account' }); } catch (e) {}
+      }
+    }
+  }
+  try {
+    const ts = Date.now();
+    const bak = { by: me, self: !mgr, keep: keep, drops: {} };
+    drops.forEach(function (d) { bak.drops[d] = rec[d]; });
+    await adminDb.ref('gl/_mergeBackup/' + room + '/' + ts).set(JSON.parse(JSON.stringify(bak)));
+    const upd = {}, rootUpd = {};
+    let wasMember = null, hadAcl = null;
+    for (const d of drops) {
+      const r = rec[d];
+      if (r.members) wasMember = wasMember || r.members;
+      if (r.acl) hadAcl = hadAcl || r.acl;
+      upd['members/' + d] = null; upd['users/' + d] = null; upd['diag/' + d] = null; upd['acl/' + d] = null; upd['config/invited/' + d] = null;
+      ((r.invited && r.invited.inbox) || []).forEach(function (p) { if (/^[A-Za-z0-9_-]{6,64}\/[A-Za-z0-9_-]{6,40}$/.test(String(p))) rootUpd['gl/_invites/' + p] = null; });
+    }
+    const keepId = (await acctOf(keep)) || keep;
+    const keepName = (rec[keep].users || {}).name || (wasMember && wasMember.name) || '';
+    if (wasMember && !rec[keep].members && !(await val(R + '/members/' + keepId))) upd['members/' + keepId] = { name: keepName, addedAt: ts, addedBy: me, merged: 1 };
+    if (hadAcl && !rec[keep].acl && !(await val(R + '/acl/' + keepId))) upd['acl/' + keepId] = { by: 'merge', glUid: keep, name: keepName, ts: ts };
+    await adminDb.ref(R).update(upd);
+    if (Object.keys(rootUpd).length) await adminDb.ref().update(rootUpd);
+    res.json({ ok: true, removed: drops.length, backup: ts });
+  } catch (e) { res.json({ ok: false, reason: e.message }); }
+});
+
 // 1020: hand a phone from the ANONYMOUS guest session it started with to the account its owner
 // then signed in with. The app opens as an anonymous guest, the phone is registered to that
 // guest (gl/_devOwner), and the rule on _devOwner refuses any later change -- so a person who

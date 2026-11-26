@@ -3354,7 +3354,7 @@ window._timedOnValue = function (orig) {
           <div class="field-label">Your name</div>
           <div class="input-icon-wrap">
             <svg class="licon licon-sm input-icon"><use href="#ic-user"/></svg>
-            <input class="join-input" id="inp-name" placeholder="e.g. Hank" maxlength="24" autocomplete="off" />
+            <input class="join-input" id="inp-name" placeholder="First and last name, e.g. Hank Jones" maxlength="24" autocomplete="off" />
           </div>
           <div id="name-required-msg" style="display:none;align-items:center;gap:6px;color:var(--danger);font-size:12px;margin-top:4px;font-weight:600"><svg class="licon licon-sm" style="margin-right:5px"><use href="#ic-alert"/></svg>Name is required to join a room</div>
         </div>
@@ -3565,7 +3565,7 @@ window._timedOnValue = function (orig) {
             <div class="field-label" style="margin-bottom:6px">Your name</div>
             <div class="input-icon-wrap">
               <svg class="licon licon-sm input-icon"><use href="#ic-user"/></svg>
-              <input class="join-input" id="acct-name-input" placeholder="e.g. Hank" maxlength="24" autocomplete="off"
+              <input class="join-input" id="acct-name-input" placeholder="First and last name, e.g. Hank Jones" maxlength="24" autocomplete="off"
                 onchange="window._setMyName(this.value)" onblur="window._setMyName(this.value)" />
             </div>
           </div>
@@ -5734,7 +5734,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1093;
+var APP_BUILD = 1094;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7189,6 +7189,223 @@ var MK_MERGE_LIFT = 46;
 // empty means it joined as a guest.
 window._isGuestDevice = function () {
   try { return !((typeof _myAcct === 'function') && _myAcct()); } catch (e) { return false; }
+};
+// == 1094: TELL SAME-NAMED PEOPLE APART ==============================================
+// "How can we avoid a situation where we don't know if 'Justin' is the Justin I'm looking for?"
+// (Jace, 2026-11-26, after two Jareds sat in Outkasts.) Five parts, all here or called from here:
+// a who-is-this line under names, a last-name nudge, self clean-up on sign-in, a "not seen in
+// 30+ days" fold in People, and an owner card for leftovers ("same person? keep the newer").
+window._glNameKey = function (s) { return String(s || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim(); };
+// "Page" ~ "Page Wahlquist", "Jared" ~ "Jared Roberts". NOT "Justin Ford" ~ "Justin Smith":
+// two full names with different last names are two people.
+window._namesAlike = function (a, b) {
+  var A = window._glNameKey(a), B = window._glNameKey(b);
+  if (!A || !B) return false;
+  if (A === B) return A.length >= 3;
+  var aw = A.split(' '), bw = B.split(' ');
+  if (aw[0].length < 3 || aw[0] !== bw[0]) return false;
+  if (aw.length > 1 && bw.length > 1 && aw[aw.length - 1] !== bw[bw.length - 1]) return false;
+  return true;
+};
+window._glAgo = function (ms) {
+  if (!(ms >= 0)) return '';
+  var m = Math.round(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  var h = Math.round(m / 60); if (h < 24) return h + ' hr ago';
+  var d = Math.round(h / 24); if (d < 60) return d + ' day' + (d === 1 ? '' : 's') + ' ago';
+  return Math.round(d / 30) + ' months ago';
+};
+window._glDevWord = function (d) {
+  d = d || {};
+  var a = String(d.appv || '');
+  if (/iphone|ios/i.test(a)) return 'iPhone';
+  if (/android/i.test(a)) return 'Android';
+  var dv = String(d.dev || '');
+  if (/^pc$/i.test(dv)) return 'computer';
+  if (/tablet/i.test(dv)) return 'tablet';
+  if (d.plat === 'web') return dv ? dv + ' (browser)' : 'browser';
+  return dv;
+};
+// The other crews (of mine) this person is also in: the best single tell of WHICH Justin.
+window._glAlsoIn = function (uid) {
+  var out = [];
+  try {
+    var pid = window._personId ? window._personId(uid) : uid;
+    var c = (typeof _getCircles === 'function' ? _getCircles() : {}) || {};
+    var all = window._circleUsersAll || {};
+    Object.keys(c).forEach(function (k) {
+      if (k === groupName) return;
+      var u = all[k] || {}, ro = (k === groupName ? window._roomMembersRoster : null) || {};
+      var hit = Object.keys(u).some(function (x) { return x === uid || (window._personId && window._personId(x) === pid); }) || ro[pid];
+      if (hit) out.push((typeof _cleanName === 'function' ? _cleanName(c[k]) : '') || (typeof _prettyGroup === 'function' ? _prettyGroup(k) : k));
+    });
+  } catch (e) {}
+  return out;
+};
+// "signed in · iPhone · seen 27 days ago · also in Outkasts". Seen is left off a live row
+// (its status line already says so) unless o.seen.
+window._whoLine = function (uid, d, o) {
+  o = o || {}; d = d || {};
+  var parts = [];
+  if (d.guest === 1) parts.push('not signed in'); else if (d.guest === 0) parts.push('signed in');
+  var dw = window._glDevWord(d); if (dw) parts.push(dw);
+  var ts = d.fixTs || d.ts || 0;
+  if (ts && (o.seen || Date.now() - ts > 3600000)) parts.push('seen ' + window._glAgo(Date.now() - ts));
+  var also = o.noAlso ? [] : window._glAlsoIn(uid);
+  if (also.length) parts.push('also in ' + also.slice(0, 2).join(', ') + (also.length > 2 ? ' +' + (also.length - 2) : ''));
+  return parts.join(' \u00b7 ');
+};
+// Freshest record of a uid in any crew I can see (for lists outside the open room).
+window._glAnyRec = function (uid) {
+  var best = null;
+  try {
+    var all = window._circleUsersAll || {};
+    Object.keys(all).forEach(function (k) { var r = (all[k] || {})[uid]; if (r && (!best || (r.ts || 0) > (best.ts || 0))) best = r; });
+    if (!best && typeof userMarkers !== 'undefined' && userMarkers[uid]) best = userMarkers[uid]._data || null;
+  } catch (e) {}
+  return best;
+};
+window._glProtected = function (id) {
+  if (!id) return false;
+  try {
+    if (id === window._roomOwnerUid) return true;
+    if (window._personId && window._personId(id) === window._roomOwnerUid) return true;
+    if (window._isAdminUid && window._isAdminUid(id)) return true;
+  } catch (e) {}
+  return false;
+};
+// Owner/admin card at the top of People: pairs that look like one person, at least one of them
+// stale, a roster entry that never shows up, or an invite. Two phones both reporting in the
+// last 3 days are two people until the owner says otherwise, so they are never offered.
+window._glSamePerson = function (listEl, users) {
+  if (!listEl || !groupName || !(window._canManageRoom && window._canManageRoom())) return;
+  var esc = _escHtml, now = Date.now(), DAY = 86400000;
+  var myPid = window._personId ? window._personId(userId) : userId;
+  var ro = window._roomMembersRoster || {}, inv = window._roomInvited || {};
+  var ids = [];
+  Object.keys(users || {}).forEach(function (u) { var d = users[u] || {}; ids.push({ id: u, name: (window._glRealNames && window._glRealNames[u]) || d.name || '', fresh: d.fixTs || d.ts || 0, kind: 'map', d: d }); });
+  (window._glOffRoster || []).forEach(function (r) { ids.push(r); });
+  Object.keys(inv).forEach(function (u) { if ((users || {})[u] || ro[u]) return; ids.push({ id: u, name: (inv[u] || {}).name || '', fresh: (inv[u] || {}).ts || 0, kind: 'invite' }); });
+  ids.forEach(function (x) { x.pid = window._personId ? window._personId(x.id) : x.id; });
+  var rank = function (x) { return x.kind === 'map' ? 2e13 + x.fresh : x.kind === 'roster' ? 1e13 : x.fresh; };
+  var notSame = {}; try { notSame = JSON.parse(localStorage.getItem('gl_notsame') || '{}') || {}; } catch (e) {}
+  var pairs = [], used = {};
+  for (var i = 0; i < ids.length; i++) for (var j = i + 1; j < ids.length; j++) {
+    var a = ids[i], b = ids[j];
+    if (a.pid === b.pid || a.id === userId || b.id === userId || a.pid === myPid || b.pid === myPid) continue;
+    if (!window._namesAlike(a.name, b.name)) continue;
+    if (a.kind === 'map' && b.kind === 'map' && now - a.fresh < 3 * DAY && now - b.fresh < 3 * DAY) continue;
+    var keep = rank(a) >= rank(b) ? a : b, drop = keep === a ? b : a;
+    if (used[drop.id] || used[keep.id] || window._glProtected(drop.id)) continue;
+    var key = groupName + '|' + [a.id, b.id].sort().join('|');
+    if (notSame[key]) continue;
+    used[drop.id] = used[keep.id] = 1;
+    pairs.push({ keep: keep, drop: drop, key: key });
+  }
+  if (!pairs.length) return;
+  var line = function (x) {
+    var w = x.kind === 'invite' ? ('invited ' + window._glAgo(now - x.fresh) + ', never joined')
+      : x.kind === 'roster' ? ('on the Crew list, never shows on the map')
+      : (window._whoLine(x.id, x.d, { seen: true, noAlso: true }) || 'on the map');
+    return '<div style="font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.35"><b style="color:var(--text)">' + esc(x.name) + '</b>: ' + esc(w) + '</div>';
+  };
+  var box = document.createElement('div');
+  box.style.cssText = 'border:1px solid #d29922;background:rgba(210,153,34,.12);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:12px';
+  pairs.slice(0, 3).forEach(function (p) {
+    var el = document.createElement('div');
+    el.innerHTML = '<div style="font-size:14px;font-weight:800;color:var(--text)">Same person?</div>' + line(p.keep) + line(p.drop) +
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">' +
+        '<button class="gsp-keep" style="flex:1;min-width:140px;min-height:44px;padding:9px 12px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:13px;font-weight:800;cursor:pointer">Keep ' + esc(p.keep.name) + ' (newer)</button>' +
+        '<button class="gsp-no" style="flex:1;min-width:120px;min-height:44px;padding:9px 12px;background:none;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer">They\u2019re different</button>' +
+      '</div>';
+    el.querySelector('.gsp-no').addEventListener('click', function (e) {
+      e.stopPropagation();
+      try { var ns = JSON.parse(localStorage.getItem('gl_notsame') || '{}') || {}; ns[p.key] = Date.now(); localStorage.setItem('gl_notsame', JSON.stringify(ns)); } catch (e2) {}
+      try { el.remove(); if (!box.children.length) box.remove(); } catch (e2) {}
+    });
+    el.querySelector('.gsp-keep').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var room = groupName;
+      window._confirm('Keep ' + p.keep.name + ' and take the older "' + p.drop.name + '" off this Crew?\n\nIf the older one was on the Crew list, ' + p.keep.name + ' takes its place.', function () {
+        window._glFetch('/crew/merge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: room, keep: p.keep.id, drop: [p.drop.id] }) })
+          .then(function (r) { return r.json(); }).then(function (j) {
+            if (j && j.ok) {
+              try { delete (window._roomInvited || {})[p.drop.id]; delete (window._roomMembersRoster || {})[p.drop.id]; } catch (e2) {}
+              toast('Kept ' + p.keep.name, 2500);
+              try { el.remove(); if (!box.children.length) box.remove(); } catch (e2) {}
+            } else toast('Couldn\u2019t do that' + (j && j.reason === 'protected' ? ': that one is the owner or an admin' : j && j.reason === 'not-owner' ? ': only the owner or an admin can' : ', try again'), 3500);
+          }).catch(function () { toast('Couldn\u2019t do that, check your connection', 3500); });
+      }, { title: 'Same person', yes: 'Keep ' + p.keep.name });
+    });
+    box.appendChild(el);
+  });
+  listEl.insertBefore(box, listEl.firstChild);
+};
+// Signed in with a full name: once per crew per session, ask the server to retire MY old
+// entries there (same full name, not seen for 14+ days, or a roster line / invite that never
+// became me). The server re-checks every one of those conditions; nothing else is touched.
+window._glTidyDone = window._glTidyDone || {};
+window._glSelfTidy = function (users) {
+  try {
+    if (!groupName || !window._roomMembersRoster || window._glTidyDone[groupName]) return;
+    if (window._isGuestDevice && window._isGuestDevice()) return;
+    var mine = window._glNameKey(userName);
+    if (mine.split(' ').length < 2 || mine.length < 5) return;
+    if (!users || !users[userId] || !window._devOwnerAll) return;
+    window._glTidyDone[groupName] = 1;
+    var myPid = window._personId(userId), now = Date.now(), drop = [];
+    Object.keys(users).forEach(function (u) {
+      if (u === userId || window._personId(u) === myPid) return;
+      var d = users[u] || {};
+      if (window._glNameKey((window._glRealNames || {})[u] || d.name) !== mine) return;
+      if (now - (d.fixTs || d.ts || 0) < 14 * 86400000) return;
+      drop.push(u);
+    });
+    (window._glOffRoster || []).forEach(function (r) { if (window._personId(r.id) !== myPid && window._glNameKey(r.name) === mine) drop.push(r.id); });
+    var inv = window._roomInvited || {};
+    Object.keys(inv).forEach(function (u) { if (window._personId(u) !== myPid && window._glNameKey((inv[u] || {}).name) === mine) drop.push(u); });
+    drop = drop.filter(function (x) { return !window._glProtected(x); });
+    if (!drop.length) return;
+    var room = groupName;
+    window._glFetch('/crew/merge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: room, keep: userId, drop: drop.slice(0, 4), self: 1 }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { try { window._evt && window._evt('tidied my old entries in ' + room + ': ' + (j && j.ok ? (j.removed || 0) : ('refused ' + (j && j.reason)))); } catch (e) {} })
+      .catch(function () {});
+  } catch (e) {}
+};
+// A one-word name in a Crew: ask, once, for a last name. "Not now" waits a week.
+window._glNameNudge = function () {
+  try {
+    if (window._glNudged || !groupName || !window._roomMembersRoster) return;
+    var nm = String(userName || '').trim();
+    if (!nm || (/\s/.test(nm) && nm.replace(/\s/g, '').length >= 4)) return;
+    if (typeof _isDeviceLabelName === 'function' && _isDeviceLabelName(nm)) return;
+    var sn = 0; try { sn = +localStorage.getItem('gl_ln_snooze') || 0; } catch (e) {}
+    if (Date.now() < sn) return;
+    window._glNudged = 1;
+    setTimeout(function () {
+      if (document.getElementById('gl-ln-ov') || document.getElementById('gl-confirm-overlay')) { window._glNudged = 0; return; }
+      var ov = document.createElement('div'); ov.id = 'gl-ln-ov';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:6100;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;padding:16px';
+      ov.innerHTML = '<div style="width:100%;max-width:420px;background:var(--card,#161b22);border:1px solid var(--border);border-radius:16px;padding:18px">' +
+        '<div style="font-size:17px;font-weight:800;color:var(--text);margin-bottom:6px">Add your last name?</div>' +
+        '<div style="font-size:15px;color:var(--text);line-height:1.45;margin-bottom:12px">Your crew sees you as \u201c' + _escHtml(nm) + '\u201d. A last name lets them tell you apart from anyone else with the same name.</div>' +
+        '<input id="gl-ln-inp" maxlength="24" autocomplete="name" style="width:100%;box-sizing:border-box;padding:12px;font-size:17px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-bottom:12px">' +
+        '<div style="display:flex;gap:8px"><button id="gl-ln-no" style="flex:1;min-height:48px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-weight:700;cursor:pointer">Not now</button>' +
+        '<button id="gl-ln-yes" style="flex:1;min-height:48px;background:var(--accent);border:none;border-radius:10px;color:#0d1117;font-size:15px;font-weight:800;cursor:pointer">Save</button></div></div>';
+      document.body.appendChild(ov);
+      var inp = ov.querySelector('#gl-ln-inp'); inp.value = nm + ' ';
+      var close = function () { try { ov.remove(); } catch (e) {} };
+      var snooze = function () { try { localStorage.setItem('gl_ln_snooze', String(Date.now() + 7 * 86400000)); } catch (e) {} close(); };
+      ov.querySelector('#gl-ln-no').addEventListener('click', snooze);
+      ov.addEventListener('click', function (e) { if (e.target === ov) snooze(); });
+      ov.querySelector('#gl-ln-yes').addEventListener('click', function () {
+        var v = String(inp.value || '').replace(/\s+/g, ' ').trim();
+        if (!v || v === nm) { snooze(); return; }
+        try { window._setMyName(v); } catch (e) {}
+        close();
+      });
+    }, 4000);
+  } catch (e) {}
 };
 window._guestBadge = function (data) {
   try {
@@ -22862,6 +23079,7 @@ function listenUsers() {
     // should be visible at a glance. Non-Crew rooms keep the flat list (no roster concept).
     var _crewRoom = !!window._roomMembersRoster;
     var _rowsCrew = [], _rowsVis = [], _rowsPlain = [];
+    window._glOffRoster = [];   // 1094: roster lines with no presence, for the same-person card
     var _frMap = _getFriends();
     Object.entries(users).sort(function(a, b) {
       var fa = !!_frMap[a[0]], fb2 = !!_frMap[b[0]];
@@ -23463,6 +23681,7 @@ function listenUsers() {
             (_distLine ? '<div style="font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _distLine + '</div>' : '') +
             _msSpeed +
             '<div style="font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _meta + '</div>' +
+            (function () { try { var w = window._whoLine(uid, data, { seen: false }); return w ? '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + escapeHtmlJs(w) + '</div>' : ''; } catch (e) { return ''; } })() +
             (_why ? '<div style="font-size:12px;color:#ffb020;font-weight:700;margin-top:4px;line-height:1.35">\u26a0 ' + escapeHtmlJs(_why) + '</div>' : '') +
             (_coordsStr ? '<div style="font-size:11px;color:#8d97a1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="window._copyCoords(\'' + _coordsStr + '\')" title="Tap to copy">' + _coordsStr + '</div>' : '') +
             '<div class="ms-appv" data-uid="' + escapeHtmlJs(uid) + '" style="font-size:11px;color:#8d97a1;margin-top:3px">' + escapeHtmlJs(String(data.appv || (window._appvCache || {})[uid] || '')) + '</div>' +
@@ -23507,6 +23726,7 @@ function listenUsers() {
         row.dataset.person = window._personId ? window._personId(uid) : uid;
         row.dataset.fresh = String(data.fixTs || data.ts || 0);
         row.dataset.dev = (data.dev || '');
+        row.dataset.nm = String((window._glRealNames && window._glRealNames[uid]) || data.name || '');
       } catch (e) {}
       row.style.opacity = opacity;
       // Two stacked full-width lines instead of one flex line. The old single-line layout
@@ -23553,6 +23773,8 @@ function listenUsers() {
                 (_distLine ? '<span style="color:var(--muted)">' + _distLine + '</span>' : '') +
               '</div>'
             : '') +
+          // 1094: who is this -- signed in or not, which phone, how long ago, what other crews.
+          (function () { try { var w = window._whoLine(uid, data, {}); return w ? '<div class="ustatus uwho" style="margin-top:2px;color:var(--muted);font-size:11.5px">' + escapeHtmlJs(w) + '</div>' : ''; } catch (e) { return ''; } })() +
           // Coordinates are not on the row any more: they are for copying, which the person
           // sheet does with a button; on the list they were a third line of noise.
           // Just the one quick-talk mic now. Favorite (★), the ⋮ actions menu, and set-color
@@ -23673,6 +23895,7 @@ function listenUsers() {
           if (Object.keys(users).some(function (k) { return window._personId(k) === _pidR; })) return;
         } catch (e) {}
         var m = window._roomMembersRoster[uid] || {};
+        try { window._glOffRoster.push({ id: uid, name: m.name || '', fresh: 0, kind: 'roster' }); } catch (e) {}
         var orow = document.createElement('div');
         orow.className = 'user-item';
         orow.style.opacity = '0.55';
@@ -23682,6 +23905,7 @@ function listenUsers() {
             '<div class="uname">' + escapeHtmlJs(m.name || 'Member') +
               (_frMap[uid] ? ' <span title="One of your favorites" style="font-size:11px;color:var(--accent);vertical-align:1px">★</span>' : '') + '</div>' +
             '<div class="ustatus" style="color:var(--muted)">Offline — not sharing right now</div>' +
+            (function () { var a = window._glAlsoIn ? window._glAlsoIn(uid) : []; return a.length ? '<div class="ustatus" style="color:var(--muted);font-size:11.5px">also in ' + escapeHtmlJs(a.slice(0, 2).join(', ')) + '</div>' : ''; })() +
           '</div>' +
           '<div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:8px">' +
             '<span style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:var(--border);color:var(--muted)">OFFLINE</span>' +
@@ -23701,6 +23925,13 @@ function listenUsers() {
     // map but only the phone in this list (Jace, 2026-11-17). Each row already names its
     // device ("Jace Ford · tablet"), so nothing is lost by listing them all.
     // Plain (non-Crew) rooms have no sections — emit the collapsed rows straight away.
+    // 1094: anyone not seen in 30+ days folds into a closed section at the bottom, so an old
+    // phone (Allie's from September) stops reading as a second, current person.
+    var _rowsOld = [];
+    try {
+      var _isOld = function (r) { var f = +(r.dataset && r.dataset.fresh) || 0; return f > 0 && (now - f) > 30 * 86400000 && r.dataset.uid !== userId; };
+      [_rowsCrew, _rowsVis, _rowsPlain].forEach(function (arr) { for (var i = arr.length - 1; i >= 0; i--) if (_isOld(arr[i])) { _rowsOld.unshift(arr[i]); arr.splice(i, 1); } });
+    } catch (e) {}
     if (!_crewRoom) _rowsPlain.forEach(function (r) { listEl.appendChild(r); });
 
     // Assemble the sectioned list. Crew rows under a purple header; visitor rows inside an
@@ -23734,6 +23965,22 @@ function listenUsers() {
         listEl.appendChild(_visBox);
       }
     }
+    if (_rowsOld.length) {
+      var _od = document.createElement('details');
+      _od.style.cssText = 'border:1px dashed var(--border);border-radius:10px;padding:8px;margin-top:8px';
+      if (window._glOldOpen) _od.open = true;
+      _od.addEventListener('toggle', function () { window._glOldOpen = _od.open; });
+      var _osm = document.createElement('summary');
+      _osm.style.cssText = 'font-size:10.5px;font-weight:800;letter-spacing:.06em;color:var(--muted);cursor:pointer;padding:6px 2px;min-height:32px';
+      _osm.textContent = 'NOT SEEN IN 30+ DAYS (' + _rowsOld.length + ')';
+      _od.appendChild(_osm);
+      var _obx = document.createElement('div'); _obx.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+      _rowsOld.forEach(function (r) { _obx.appendChild(r); });
+      _od.appendChild(_obx); listEl.appendChild(_od);
+    }
+    try { window._glSamePerson(listEl, users); } catch (e) {}
+    try { window._glSelfTidy(users); } catch (e) {}
+    try { window._glNameNudge(); } catch (e) {}
     try { window._paintAvatars(listEl); } catch (e) {}   // rows are rebuilt often — re-apply photos
 
     // ── INVITED — asked, hasn't turned up yet ──────────────────────────────────────
@@ -26934,10 +27181,22 @@ function _renderInvitePeople(q) {
       seen[dev] = 1;
       var p = pres[dev];
       var ds = (window._mySessions || {})[dev];
-      people.push({ uid: dev, name: d.name, friend: false,
+      people.push({ uid: dev, name: d.name, friend: false, dir: 1,
                     online: !!p || !!(ds && ds.ts && (Date.now() - ds.ts) < 70000), room: p && p.room });
     });
   }
+  // 1094: one row per PERSON. A favorite saved off their phone and the same person found in the
+  // directory under their account were two rows, often with two different names.
+  try {
+    var _byP = {};
+    people = people.filter(function (pp) {
+      var k = window._personId ? window._personId(pp.uid) : pp.uid, c = _byP[k];
+      if (!c) { _byP[k] = pp; return true; }
+      if (pp.friend) c.friend = true;
+      if (pp.online && !c.online) { c.online = true; c.room = pp.room || c.room; }
+      return false;
+    });
+  } catch (e) {}
   if (q) people = people.filter(function(pp) { return (pp.name || '').toLowerCase().indexOf(q) !== -1; });
   var circleMode = window._invitePickerMode === 'circle';
   var circleMembers = window._circleInviteMembers || {};
@@ -27002,6 +27261,7 @@ function _renderInvitePeople(q) {
              '<div style="flex:1;min-width:0">' +
                '<div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (pp.friend ? '★ ' : '') + _escHtml(pp.name) + '</div>' +
                '<div style="font-size:11px;margin-top:1px">' + status + '</div>' +
+               (function () { try { var rec = window._glAnyRec(pp.uid) || (pp.dir ? { guest: 0 } : {}); var w = window._whoLine(pp.uid, rec, { seen: !pp.online }); return w ? '<div style="font-size:11px;margin-top:1px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(w) + '</div>' : ''; } catch (e) { return ''; } })() +
              '</div>' +
              (_sentAlready
                ? '<button disabled style="flex-shrink:0;background:#1f6f3a;border:none;border-radius:8px;color:#e9ffef;font-size:12px;font-weight:800;padding:7px 14px">Invited \u2713</button>'
@@ -38764,10 +39024,17 @@ window._voiceMod().then(function (m) {
     var rows = people();
     var html = rows.map(function (r) {
       var s = describe(r);
+      // 1094: two people with the same first name get a line saying which is which.
+      var twin = '';
+      try {
+        if (!r.mine && rows.some(function (o) { return o !== r && !o.mine && window._namesAlike(o.name, r.name); })) {
+          var w = window._whoLine(r.uid, r.d, {}); if (w) twin = '<div class="ss-when">' + esc(w) + '</div>';
+        }
+      } catch (e) {}
       return '<div class="ss-row" role="button" tabindex="0" data-uid="' + esc(r.uid) + '">' + avatar(r) +
         '<div class="ss-who"><div class="ss-name">' + esc(r.name) + (r.mine ? ' <small>(you)</small>' : '') + '</div>' +
         '<div class="ss-where">' + s.where + '</div>' + (s.when ? '<div class="ss-when">' + esc(s.when) + '</div>' : '') +
-        (s.attn ? '<div class="ss-attn">⚠ ' + esc(s.attn) + '</div>' : '') + '</div>' + batt(r) + '</div>';
+        twin + (s.attn ? '<div class="ss-attn">⚠ ' + esc(s.attn) + '</div>' : '') + '</div>' + batt(r) + '</div>';
     }).join('') || '<div id="ss-empty">Nobody is sharing in this circle yet. Tap the circle name at the top to switch, or open Settings to invite someone.</div>';
     if (html !== lastSig) { lastSig = html; $('ss-list').innerHTML = html; }
     if (openUid) drawCard(openUid);
@@ -38784,7 +39051,8 @@ window._voiceMod().then(function (m) {
     // 1076: Rename for me sits by the name, where it is seen without dragging the card up.
     var rn = !r.mine ? ' <button type="button" onclick="window._renameForMe(\'' + esc(r.uid) + '\')" style="vertical-align:middle;margin-left:6px;padding:4px 10px;font-size:13px;font-weight:700;border-radius:14px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer">\u270E Rename</button>' : '';
     var h = '<div class="ss-top">' + avatar(r) + '<div style="min-width:0"><div class="ss-name">' + nm + (r.mine ? ' <small>(you)</small>' : '') + rn + '</div>' +
-      '<div class="ss-where" style="font-size:18px">' + s.where + '</div>' + (s.when ? '<div class="ss-when" style="font-size:16px">' + esc(s.when) + '</div>' : '') + '</div>' +
+      '<div class="ss-where" style="font-size:18px">' + s.where + '</div>' + (s.when ? '<div class="ss-when" style="font-size:16px">' + esc(s.when) + '</div>' : '') +
+      (function () { try { var w = r.mine ? '' : window._whoLine(r.uid, r.d, {}); return w ? '<div class="ss-when" style="font-size:15px">' + esc(w) + '</div>' : ''; } catch (e) { return ''; } })() + '</div>' +
       '<button class="ss-round ss-x" type="button" aria-label="Back to family" onclick="window._ssClosePerson()"><svg><use href="#ss-i-x"/></svg></button></div>' +
       (s.attn ? '<div class="ss-attn" style="margin-top:14px;font-size:16px">⚠ ' + esc(s.attn) + ' — this location may be old</div>' : '') +
       ((talk || nav || find) ? '<div class="ss-acts">' + talk + nav + find + '</div>' : '') +
