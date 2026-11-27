@@ -1446,6 +1446,32 @@ app.post('/invitePush', rateLimit(20, 60000), requireUser, async function(req, r
       } catch (e) {}
     }
   }
+  // 1095: also ring every phone that is signed in to the invited ACCOUNT. The sender picks one
+  // device id -- often an old phone (Gary, 2026-11-27: invited on his old phone's id while he was
+  // setting up a new one, so nothing rang). A push address's authUid is written by the server from
+  // a verified sign-in, so it can't be claimed for someone else's account; _devOwner can't be
+  // trusted that way and is not used here. The notification carries no invite key.
+  if (fcmAdmin) {
+    try {
+      const toks = (await _cachedGet('gl/_pushTokens', 60000)) || {};
+      const fcmSeen = new Set();
+      for (const [dev, t] of Object.entries(toks)) {
+        if (!t || !t.fcm || seen.has(dev) || fcmSeen.has(t.fcm) || uids.indexOf(t.authUid) < 0) continue;
+        if (Date.now() - (t.ts || 0) > 60 * 86400000) continue;
+        fcmSeen.add(t.fcm);
+        try {
+          await fcmAdmin.messaging().send({
+            token: t.fcm,
+            notification: { title: title, body: body },
+            data: { type: 'invite', invKey: invKey, crew: crew ? '1' : '0' },
+            android: { priority: 'high', notification: { sound: 'default', channelId: 'groundlink' } },
+            apns: { payload: { aps: { sound: 'default' } } }
+          });
+          sent = true;
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
   res.json({ ok: sent, reason: sent ? undefined : 'no-subscription' });
 });
 

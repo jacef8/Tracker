@@ -364,6 +364,8 @@ window._timedOnValue = function (orig) {
     let _authResolved = false;
     onAuthStateChanged(auth, (u) => {
       if (u) _reconcileAuthIdentity(u);
+      // 1095: a new sign-in can now read the account's invite inbox -- start listening right away.
+      setTimeout(function () { try { if (window._watchInvites) window._watchInvites(); } catch (e) {} }, 400);
       if (!_authResolved) {
         _authResolved = true;
         if (!u) signInAnonymously(auth).catch((e) => console.warn('anonymous auth failed', e));
@@ -5734,7 +5736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1094;
+var APP_BUILD = 1095;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -27574,27 +27576,49 @@ function _selfHealCircleInvites() {
     });
   });
 }
+// 1095: Gary (2026-11-27) set up a new phone two minutes after Jace invited him to Outkasts and
+// never saw the invite. The invite sat in his ACCOUNT inbox, which the rules only let the app
+// read once it is signed in AS that account. On Android that sign-in finishes a few seconds after
+// launch, but this watcher had already started, been refused, and marked itself as listening --
+// so it never asked again and the account inbox was dead until the app was killed. Now each
+// listener remembers which sign-in it was started under, the account inbox waits until the app
+// really is that account, a refusal clears the mark so the next check retries, and the check
+// runs on every sign-in change and every 15 s.
+function _authUidNow() {
+  try { var u = window._fb && window._fb.auth && window._fb.auth.currentUser; return (u && u.uid) || ''; } catch (e) { return ''; }
+}
 function _watchInvites() {
   var f = window._fb; if (!f || !f.db) return;
+  var who = _authUidNow();
+  if (!who) return;                                     // not signed in to Firebase at all yet
   var uid = null; try { uid = localStorage.getItem('gl_uid'); } catch (e) {}
-  if (uid && window._inviteWatchUid !== uid) {
-    window._inviteWatchUid = uid;
+  if (uid && (window._inviteWatchUid !== uid || window._inviteWatchUidAs !== who)) {
+    try { if (window._invUnsubDev) window._invUnsubDev(); } catch (e) {}
+    window._inviteWatchUid = uid; window._inviteWatchUidAs = who;
     try {
-      f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
+      window._invUnsubDev = f.onValue(f.ref(f.db, 'gl/_invites/' + uid), function(snap) {
         window._deviceInvitesRaw = snap.val() || {};
         _mergeInvites();
-      });
-    } catch (e) {}
+      }, function () { window._inviteWatchUid = null; window._invUnsubDev = null; });
+    } catch (e) { window._inviteWatchUid = null; }
   }
   var acct = null; try { acct = localStorage.getItem('gl_account_uid') || null; } catch (e) {}
-  if (acct && window._inviteWatchAcct !== acct) {
-    window._inviteWatchAcct = acct;
-    try {
-      f.onValue(f.ref(f.db, 'gl/_invites/' + acct), function(snap) {
-        window._acctInvitesRaw = snap.val() || {};
-        _mergeInvites();
-      });
-    } catch (e) {}
+  if (acct && who === acct) {
+    if (window._inviteWatchAcct !== acct) {
+      try { if (window._invUnsubAcct) window._invUnsubAcct(); } catch (e) {}
+      window._inviteWatchAcct = acct;
+      try {
+        window._invUnsubAcct = f.onValue(f.ref(f.db, 'gl/_invites/' + acct), function(snap) {
+          window._acctInvitesRaw = snap.val() || {};
+          _mergeInvites();
+        }, function () { window._inviteWatchAcct = null; window._invUnsubAcct = null; });
+      } catch (e) { window._inviteWatchAcct = null; }
+    }
+  } else if (window._inviteWatchAcct) {
+    // Signed out, or signed in as someone else: this inbox is no longer ours to read.
+    try { if (window._invUnsubAcct) window._invUnsubAcct(); } catch (e) {}
+    window._invUnsubAcct = null; window._inviteWatchAcct = null; window._acctInvitesRaw = {};
+    try { _mergeInvites(); } catch (e) {}
   }
 }
 window._watchInvites = _watchInvites;
@@ -27776,6 +27800,8 @@ window._dismissInvite = function(key) {
     if (window._fb && window._fb.db) { _watchInvites(); }
     if (tries > 60) clearInterval(t);
   }, 500);
+  // 1095: and forever after, slowly. Cheap: it does nothing while both listeners are healthy.
+  setInterval(function () { try { if (window._fb && window._fb.db) _watchInvites(); } catch (e) {} }, 15000);
 })();
 
 // REMOVED: this used to unconditionally fbRemove() the user's own presence on every page
