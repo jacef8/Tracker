@@ -5736,7 +5736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1095;
+var APP_BUILD = 1096;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -28461,8 +28461,15 @@ function _glrFetchTile(x, y) {
       });
     });
     window._glrFsV = (window._glrFsV || 0) + 1;      // forest ground grew: re-check the Census roads at paint
+    // 1096: "The yellow line is correct. White is not" (Jace, 2026-11-27, FR 105/121/136 near
+    // Gully Creek). The white lines were Census roads with NO NAME: rough old traces that wander
+    // through the woods or run a few hundred feet beside a forest road. Where the Forest Service
+    // has roads in this square it is the better map, so nameless Census lines are left out there.
+    // Named Census roads (county roads) and nameless ones outside the forest stay.
+    var _fsHere = (res[0].features || []).length > 0;
     (res[1].features || []).forEach(function (f) {
       var p = f.properties || {};
+      if (_fsHere && !String(p.NAME || '').trim()) return;
       if (_glrOnForestRoad(f.geometry)) return;
       out.push({ type: 'Feature', geometry: f.geometry, properties: { k: 'loc', n: String(p.NAME || '').trim(), u: _glrKey('loc', f.geometry) } });
     });
