@@ -195,7 +195,8 @@ class CarMapRenderer {
     Person hit(float x, float y) {
         Person best = null; float bd = 34 * k;
         for (Person p : people) {
-            float d = (float) Math.hypot(sx(p.lng) - x, sy(p.lat) - y);
+            float[] o = drawnOff.get(p.uid);
+            float d = (float) Math.hypot(sx(p.lng) + (o == null ? 0 : o[0]) - x, sy(p.lat) + (o == null ? 0 : o[1]) - y);
             if (d < bd) { bd = d; best = p; }
         }
         return best;
@@ -340,25 +341,158 @@ class CarMapRenderer {
         }
     }
 
+    // 1.5.7: "These aren't showing the same info" (Jace, 2026-11-27). Gary and J stood 18 ft apart:
+    // the phone showed one G | J bubble, the truck drew two dots on one spot with their name tags
+    // printed over each other ("Gary J :Gee"). Same rules as the phone app now (builds 1047/1097):
+    //  - people within 50 ft, or within ~1,300 ft whose dots would overlap, become ONE marker with a
+    //    face for each (up to 4) and one tag like "Gary & J"; it sits on you if you are in it,
+    //    otherwise on the freshest fix;
+    //  - people further apart stay separate, and if their markers still overlap they are eased apart
+    //    (at most 40 px) with a thin line back to where each really is. Only when zoomed so far out
+    //    that their dots sit almost exactly on top of each other are they combined anyway.
+    static final double TOGETHER_M = 15, NEAR_M = 400;
+    /** uid -> how far its marker was moved from its true spot this frame, for taps. */
+    final java.util.Map<String, float[]> drawnOff = new java.util.HashMap<>();
+    static double metres(double la1, double ln1, double la2, double ln2) {
+        double a = (la2 - la1) * 111320.0, b = (ln2 - ln1) * 111320.0 * Math.cos(Math.toRadians(la1));
+        return Math.hypot(a, b);
+    }
+    private static String first(String n) {
+        if (n == null || n.trim().isEmpty()) return "?";
+        String t = n.trim(); int sp = t.indexOf(' '); return sp > 0 ? t.substring(0, sp) : t;
+    }
+    private static int root(int[] par, int i) { while (par[i] != i) { par[i] = par[par[i]]; i = par[i]; } return i; }
+    private static String initial(Person p) { return p.name == null || p.name.isEmpty() ? "?" : p.name.substring(0, 1).toUpperCase(Locale.US); }
+
     private void drawPeople(Canvas c) {
         float r = 17 * k;
-        // others first, me on top
-        List<Person> order = new ArrayList<>();
-        for (Person p : people) if (!p.me) order.add(p);
-        for (Person p : people) if (p.me) order.add(p);
-        for (Person p : order) {
+        List<Person> vis = new ArrayList<>();
+        for (Person p : people) {
             float x = sx(p.lng), y = sy(p.lat);
-            if (x < -60 * k || y < -60 * k || x > w + 60 * k || y > h + 60 * k) continue;
-            fill.setColor(p.stale ? 0xFF7D8590 : p.color);
-            c.drawCircle(x, y, r, fill);
-            ring.setColor(p.me ? 0xFFF0A500 : Color.WHITE);
-            ring.setStrokeWidth((p.me ? 4f : 2.5f) * k);
-            c.drawCircle(x, y, r, ring);
-            text.setTextSize(16 * k);
-            String ini = p.name == null || p.name.isEmpty() ? "?" : p.name.substring(0, 1).toUpperCase(Locale.US);
-            c.drawText(ini, x, y + 5.5f * k, text);
-            String lbl = p.me ? "You" : p.name;
-            if (p.status != null && !p.status.isEmpty()) lbl = lbl + " · " + p.status;
+            if (x < -80 * k || y < -80 * k || x > w + 80 * k || y > h + 80 * k) continue;
+            vis.add(p);
+        }
+        int n = vis.size();
+        int[] par = new int[n];
+        float[] px = new float[n], py = new float[n];
+        for (int i = 0; i < n; i++) { par[i] = i; px[i] = sx(vis.get(i).lng); py[i] = sy(vis.get(i).lat); }
+        for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++) {
+            Person a = vis.get(i), b = vis.get(j);
+            double m = metres(a.lat, a.lng, b.lat, b.lng);
+            float d = (float) Math.hypot(px[i] - px[j], py[i] - py[j]);
+            boolean join = m <= TOGETHER_M || (m <= NEAR_M && d < 2 * r + 6 * k) || d < 6 * k;
+            if (join) { int ra = root(par, i), rb = root(par, j); if (ra != rb) par[ra] = rb; }
+        }
+        java.util.Map<Integer, List<Integer>> gs = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < n; i++) {
+            int ro = root(par, i); List<Integer> l = gs.get(ro);
+            if (l == null) { l = new ArrayList<>(); gs.put(ro, l); }
+            l.add(i);
+        }
+        // Each group: [anchor, members in face order]. Anchor = you, else a live fix, else the freshest.
+        List<int[]> groups = new ArrayList<>();
+        for (List<Integer> l : gs.values()) {
+            int anc = l.get(0);
+            for (int i : l) {
+                Person p = vis.get(i), q = vis.get(anc);
+                if (q.me) break;
+                if (p.me || (q.stale && !p.stale) || (p.stale == q.stale && p.fixAt > q.fixAt)) anc = i;
+            }
+            int[] g = new int[l.size() + 1]; g[0] = anc; int t = 1;
+            if (vis.get(anc).me) g[t++] = anc;
+            for (int i : l) if (!(vis.get(anc).me && i == anc)) g[t++] = i;
+            groups.add(g);
+        }
+        int G = groups.size();
+        float[] gx = new float[G], gy = new float[G], ox = new float[G], oy = new float[G], hw = new float[G];
+        for (int g = 0; g < G; g++) {
+            int a = groups.get(g)[0]; gx[g] = px[a]; gy[g] = py[a];
+            int cnt = Math.min(groups.get(g).length - 1, 4);
+            hw[g] = cnt > 1 ? cnt * r * 0.95f : r;
+        }
+        // Ease apart markers that still overlap: separate people, so they are NOT combined.
+        float maxOff = 40 * k;
+        for (int pass = 0; pass < 4; pass++) {
+            for (int i = 0; i < G; i++) for (int j = i + 1; j < G; j++) {
+                float dx = (gx[j] + ox[j]) - (gx[i] + ox[i]), dy = (gy[j] + oy[j]) - (gy[i] + oy[i]);
+                float need = hw[i] + hw[j] + 4 * k;
+                float d = (float) Math.hypot(dx, dy);
+                if (d >= need) continue;
+                if (d < 0.01f) { dx = (i % 2 == 0) ? 1 : -1; dy = 1; d = 1.414f; }
+                float push = (need - d) / 2, ux = dx / d, uy = dy / d;
+                ox[i] -= ux * push; oy[i] -= uy * push; ox[j] += ux * push; oy[j] += uy * push;
+            }
+        }
+        drawnOff.clear();
+        for (int g = 0; g < G; g++) {
+            float m = (float) Math.hypot(ox[g], oy[g]);
+            if (m > maxOff) { ox[g] = ox[g] / m * maxOff; oy[g] = oy[g] / m * maxOff; }
+            int[] gr = groups.get(g);
+            for (int t = 1; t < gr.length; t++) {
+                drawnOff.put(vis.get(gr[t]).uid, new float[]{ gx[g] + ox[g] - px[gr[t]], gy[g] + oy[g] - py[gr[t]] });
+            }
+        }
+        // A thin line from each moved marker back to its true spot.
+        line.setStyle(Paint.Style.STROKE); line.setStrokeWidth(2f * k); line.setColor(0xCCFFFFFF);
+        for (int g = 0; g < G; g++) {
+            if (Math.hypot(ox[g], oy[g]) < 10 * k) continue;
+            c.drawLine(gx[g], gy[g], gx[g] + ox[g], gy[g] + oy[g], line);
+            fill.setColor(Color.WHITE); c.drawCircle(gx[g], gy[g], 3 * k, fill);
+        }
+        // Others first, the marker holding you last (on top).
+        List<Integer> order = new ArrayList<>();
+        for (int g = 0; g < G; g++) if (!vis.get(groups.get(g)[0]).me) order.add(g);
+        for (int g = 0; g < G; g++) if (vis.get(groups.get(g)[0]).me) order.add(g);
+        for (int g : order) {
+            int[] gr = groups.get(g);
+            float x = gx[g] + ox[g], y = gy[g] + oy[g];
+            String lbl;
+            if (gr.length == 2) {
+                Person p = vis.get(gr[1]);
+                fill.setColor(p.stale ? 0xFF7D8590 : p.color);
+                c.drawCircle(x, y, r, fill);
+                ring.setColor(p.me ? 0xFFF0A500 : Color.WHITE);
+                ring.setStrokeWidth((p.me ? 4f : 2.5f) * k);
+                c.drawCircle(x, y, r, ring);
+                text.setTextSize(16 * k);
+                c.drawText(initial(p), x, y + 5.5f * k, text);
+                lbl = p.me ? "You" : p.name;
+                if (p.status != null && !p.status.isEmpty()) lbl = lbl + " · " + p.status;
+            } else {
+                boolean hasMe = false;
+                for (int t = 1; t < gr.length; t++) if (vis.get(gr[t]).me) hasMe = true;
+                int cnt = Math.min(gr.length - 1, 4);
+                float half = hw[g];
+                RectF box = new RectF(x - half, y - r, x + half, y + r);
+                android.graphics.Path clip = new android.graphics.Path();
+                clip.addRoundRect(box, r, r, android.graphics.Path.Direction.CW);
+                c.save(); c.clipPath(clip);
+                float cw = (2 * half) / cnt;
+                text.setTextSize(15 * k);
+                for (int t = 0; t < cnt; t++) {
+                    Person p = vis.get(gr[t + 1]);
+                    fill.setColor(p.stale ? 0xFF7D8590 : p.color);
+                    c.drawRect(box.left + t * cw, box.top, box.left + (t + 1) * cw, box.bottom, fill);
+                    c.drawText(initial(p), box.left + t * cw + cw / 2, y + 5.5f * k, text);
+                }
+                c.restore();
+                ring.setColor(hasMe ? 0xFFF0A500 : Color.WHITE);
+                ring.setStrokeWidth((hasMe ? 4f : 2.5f) * k);
+                c.drawRoundRect(box, r, r, ring);
+                StringBuilder sb = new StringBuilder();
+                int names = Math.min(gr.length - 1, 3);
+                for (int t = 1; t <= names; t++) {
+                    Person p = vis.get(gr[t]);
+                    if (t > 1) sb.append(t == names && gr.length - 1 <= 3 ? " & " : ", ");
+                    sb.append(p.me ? "You" : first(p.name));
+                }
+                if (gr.length - 1 > 3) sb.append(" +").append(gr.length - 4);
+                // A shared status (the same speed, say) only when everyone in it agrees.
+                String st = vis.get(gr[1]).status;
+                boolean same = st != null && !st.isEmpty();
+                for (int t = 2; t < gr.length && same; t++) same = st.equals(vis.get(gr[t]).status);
+                lbl = sb.toString() + (same ? " · " + st : "");
+            }
             text.setTextSize(13 * k);
             float tw = text.measureText(lbl);
             RectF bg = new RectF(x - tw / 2 - 7 * k, y + r + 4 * k, x + tw / 2 + 7 * k, y + r + 24 * k);
