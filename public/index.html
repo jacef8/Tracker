@@ -5736,7 +5736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1097;
+var APP_BUILD = 1098;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -28856,6 +28856,76 @@ function _glrRK(f) {
   } catch (e) { return ''; }
 }
 window._roadNames = {}; window._crewRoads = {}; window._crV = 0;
+// 1098: "If people make adjustments to the road names while they're offline will it upload when
+// they get back online" (Jace, 2026-11-27). Firebase holds an offline write only in memory, so a
+// rename made out of signal was lost if the app was closed before signal came back -- while the
+// phone showed it as saved. Every road edit (rename, reset, name a drawn road, draw, delete) now
+// goes into a list kept on the phone (localStorage gl_roadq) and leaves it only once the server
+// has accepted it. The list is sent at launch, on reconnect, on return to the app and every 20 s
+// while anything is waiting, and its edits are shown on this phone's map in the meantime.
+function _rdQ() { try { return JSON.parse(localStorage.getItem('gl_roadq') || '[]') || []; } catch (e) { return []; } }
+function _rdQSet(a) { try { if (a.length) localStorage.setItem('gl_roadq', JSON.stringify(a.slice(-300))); else localStorage.removeItem('gl_roadq'); } catch (e) {} }
+window._rdInFlight = {};
+function _rdW(path, val) {
+  // A later edit to the same spot replaces any earlier one still waiting; so does deleting a road
+  // replace a waiting rename of it.
+  var q = _rdQ().filter(function (x) { return x.path !== path && x.path.indexOf(path + '/') !== 0; });
+  q.push({ id: 'r' + Date.now() + Math.random().toString(36).slice(2, 6), path: path, val: (val === undefined ? null : val), ts: Date.now() });
+  _rdQSet(q);
+  try { _rdOverlay(); window._crV++; _glrPaint(); } catch (e) {}
+  window._rdFlush();
+}
+window._rdFlush = function () {
+  try {
+    if (typeof db === 'undefined' || !db || typeof fbSet !== 'function') return;
+    if (typeof _authUidNow === 'function' && !_authUidNow()) return;   // not signed in yet: wait
+    _rdQ().forEach(function (it) {
+      if (window._rdInFlight[it.id]) return;
+      window._rdInFlight[it.id] = 1;
+      Promise.resolve(fbSet(fbRef(db, it.path), it.val)).then(function () {
+        delete window._rdInFlight[it.id];
+        _rdQSet(_rdQ().filter(function (x) { return x.id !== it.id; }));
+      }).catch(function () {
+        delete window._rdInFlight[it.id];
+        // Refused (e.g. no longer in that crew): try again later, but give up after 30 refusals
+        // or 30 days so a dead edit cannot sit in the list forever.
+        var q = _rdQ(), keep = [];
+        q.forEach(function (x) {
+          if (x.id === it.id) { x.f = (x.f || 0) + 1; if (x.f >= 30 || Date.now() - x.ts > 30 * 86400000) return; }
+          keep.push(x);
+        });
+        _rdQSet(keep);
+      });
+    });
+  } catch (e) {}
+};
+// Waiting edits drawn on top of what the server last sent, so this phone keeps showing them.
+function _rdOverlay() {
+  try {
+    var g = (typeof groupName !== 'undefined' && groupName) || ''; if (!g) return;
+    var pre = 'gl/' + g + '/';
+    _rdQ().forEach(function (it) {
+      if (it.path.indexOf(pre) !== 0) return;
+      var parts = it.path.slice(pre.length).split('/');
+      if (parts[0] === 'roadNames' && parts.length === 2) {
+        window._roadNames = Object.assign({}, window._roadNames);
+        if (it.val == null) delete window._roadNames[parts[1]]; else window._roadNames[parts[1]] = it.val;
+      } else if (parts[0] === 'roads' && parts.length === 2) {
+        window._crewRoads = Object.assign({}, window._crewRoads);
+        if (it.val == null) delete window._crewRoads[parts[1]]; else window._crewRoads[parts[1]] = it.val;
+      } else if (parts[0] === 'roads' && parts.length === 3 && parts[2] === 'n' && window._crewRoads && window._crewRoads[parts[1]]) {
+        window._crewRoads = Object.assign({}, window._crewRoads);
+        window._crewRoads[parts[1]] = Object.assign({}, window._crewRoads[parts[1]], { n: it.val || '' });
+      }
+    });
+  } catch (e) {}
+}
+try {
+  window.addEventListener('online', function () { window._rdFlush(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') window._rdFlush(); });
+  setInterval(function () { try { if (localStorage.getItem('gl_roadq')) window._rdFlush(); } catch (e) {} }, 20000);
+  setTimeout(function () { window._rdFlush(); }, 5000);
+} catch (e) {}
 setInterval(function () { try { var b = document.getElementById('layer-roadtable-btn'); if (b) b.style.display = window._rdTableOK && window._rdTableOK() ? 'flex' : 'none'; } catch (e) {} }, 1500);
 setInterval(function () {
   try {
@@ -28865,8 +28935,8 @@ setInterval(function () {
     (window._crOffs || []).forEach(function (off) { try { off(); } catch (e) {} });
     window._crOffs = []; window._roadNames = {}; window._crewRoads = {}; window._crV++;
     if (!g) return;
-    var a = fbOnValue(fbRef(db, 'gl/' + g + '/roadNames'), function (snap) { window._roadNames = snap.val() || {}; window._crV++; try { _glrPaint(); } catch (e) {} });
-    var b = fbOnValue(fbRef(db, 'gl/' + g + '/roads'), function (snap) { window._crewRoads = snap.val() || {}; window._crV++; try { _glrPaint(); } catch (e) {} });
+    var a = fbOnValue(fbRef(db, 'gl/' + g + '/roadNames'), function (snap) { window._roadNames = snap.val() || {}; _rdOverlay(); window._crV++; try { _glrPaint(); } catch (e) {} });
+    var b = fbOnValue(fbRef(db, 'gl/' + g + '/roads'), function (snap) { window._crewRoads = snap.val() || {}; _rdOverlay(); window._crV++; try { _glrPaint(); } catch (e) {} });
     [a, b].forEach(function (o) { if (typeof o === 'function') window._crOffs.push(o); });
   } catch (e) {}
 }, 1500);
@@ -28937,17 +29007,17 @@ window._rdSaveRename = function () {
   var pd = window._rdPending; if (!pd || !pd.rk || !groupName) return;
   var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
   if (!n) { toast('Type a name first', 1800); return; }
-  fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + pd.rk), { n: n, was: pd.was || '', kind: pd.kind || '', mid: pd.mid || null, by: userId, byName: userName || '', ts: Date.now() });
+  _rdW('gl/' + groupName + '/roadNames/' + pd.rk, { n: n, was: pd.was || '', kind: pd.kind || '', mid: pd.mid || null, by: userId, byName: userName || '', ts: Date.now() });
   window._rdClose(); toast('Renamed for the crew', 1800);
 };
 window._rdResetName = function () {
   var pd = window._rdPending; if (!pd || !pd.rk || !groupName) return;
-  fbRemove(fbRef(db, 'gl/' + groupName + '/roadNames/' + pd.rk));
+  _rdW('gl/' + groupName + '/roadNames/' + pd.rk, null);
   window._rdClose(); toast('Back to the regular name', 1800);
 };
 window._rdSaveCrewName = function (id) {
   var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
-  fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + id + '/n'), n);
+  _rdW('gl/' + groupName + '/roads/' + id + '/n', n);
   window._rdClose(); toast('Saved', 1500);
 };
 window._rdDeleteCrew = function (id) {
@@ -28959,7 +29029,7 @@ window._rdDeleteCrew = function (id) {
     el.innerHTML = '<button class="glsh-del" onclick="window._rdDeleteCrew(\'' + id + '\')">Yes, delete it</button><button class="glsh-no" onclick="window._rdClose()">Keep it</button>';
     return;
   }
-  fbRemove(fbRef(db, 'gl/' + groupName + '/roads/' + id));
+  _rdW('gl/' + groupName + '/roads/' + id, null);
   window._rdClose(); toast('Road deleted', 1600);
 };
 // Draw a road: tap along it, Finish, name it.
@@ -29034,7 +29104,7 @@ window._finishDrawRoad = function () {
 window._rdSaveNew = function () {
   var pts = window._rdNewPts; if (!pts || pts.length < 2 || !groupName) return;
   var n = String((document.getElementById('rd-name') || {}).value || '').trim().slice(0, 40);
-  fbPush(fbRef(db, 'gl/' + groupName + '/roads'), { n: n, pts: pts, by: userId, byName: userName || '', ts: Date.now() });
+  _rdW('gl/' + groupName + '/roads/' + fbPush(fbRef(db, 'gl/' + groupName + '/roads')).key, { n: n, pts: pts, by: userId, byName: userName || '', ts: Date.now() });
   window._rdNewPts = null; window._rdClose(); _rdExitDraw(); toast('Road saved for the crew', 1800);
 };
 window._rdCancelNew = function () { window._rdNewPts = null; window._rdClose(); _rdExitDraw(); };
@@ -29209,7 +29279,7 @@ window._rdRowGo = function (i) {
 window._rdRowDel = function (i, btn) {
   var r = (window._rdShown || [])[i]; if (!r || r.kind !== 'crew') return;
   if (btn && !btn.getAttribute('data-sure')) { btn.setAttribute('data-sure', '1'); btn.textContent = 'Tap again'; return; }
-  fbRemove(fbRef(db, 'gl/' + groupName + '/roads/' + r.crewId));
+  _rdW('gl/' + groupName + '/roads/' + r.crewId, null);
   window._rdRows = (window._rdRows || []).filter(function (x) { return x !== r; });
   _rdRenderTable();
 };
@@ -29221,13 +29291,13 @@ window._rdRowsSave = function () {
     var v = String(inp.value || '').trim().slice(0, 40);
     if (r.kind === 'crew') {
       var cur = r.official === 'Unnamed road' ? '' : r.official;
-      if (v !== cur) { fbSet(fbRef(db, 'gl/' + groupName + '/roads/' + r.crewId + '/n'), v); r.official = v || 'Unnamed road'; n++; }
+      if (v !== cur) { _rdW('gl/' + groupName + '/roads/' + r.crewId + '/n', v); r.official = v || 'Unnamed road'; n++; }
       return;
     }
     var had = rn[r.key];
     if (v && (!had || had.n !== v)) {
-      fbSet(fbRef(db, 'gl/' + groupName + '/roadNames/' + r.key), { n: v, was: r.official, kind: r.kind, mid: _rdMid(r.geom), by: userId, byName: userName || '', ts: Date.now() }); n++;
-    } else if (!v && had) { fbRemove(fbRef(db, 'gl/' + groupName + '/roadNames/' + r.key)); n++; }
+      _rdW('gl/' + groupName + '/roadNames/' + r.key, { n: v, was: r.official, kind: r.kind, mid: _rdMid(r.geom), by: userId, byName: userName || '', ts: Date.now() }); n++;
+    } else if (!v && had) { _rdW('gl/' + groupName + '/roadNames/' + r.key, null); n++; }
   });
   toast(n ? 'Saved ' + n + (n === 1 ? ' change' : ' changes') + ' for the crew' : 'Nothing changed', 2000);
 };
