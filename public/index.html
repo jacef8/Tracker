@@ -5736,7 +5736,7 @@ const COLORS = ['#3fb950','#58a6ff','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#e6
 // Single source of truth for the build number. Bump this AND public/version.json on every
 // deploy. The service worker is registered with this as a ?v= query, so every deploy forces
 // a fresh worker (new script URL) that purges old caches — no more PWAs stuck on old builds.
-var APP_BUILD = 1096;
+var APP_BUILD = 1097;
 // 986: how long opening the app takes on each phone, in ms from the tap: page (the page itself
 // arrived), fb (signed in and connected), map (map drawn), people (first member positions).
 // Sent with _writeDiag so a real phone's numbers can be read from outside.
@@ -7668,6 +7668,8 @@ function _spreadOverlappingMarkers() {
       _drawMarkerLeaders([]);
       return;
     }
+    // 1097: Simple mode pins are 56px, so 46 left them overlapping by a third after the nudge.
+    var _hit = document.body.classList.contains('simple-ui') ? 60 : SPREAD_HIT_PX;
     for (var pass = 0; pass < SPREAD_PASSES; pass++) {
       for (var i = 0; i < vis.length; i++) {
         for (var j = i + 1; j < vis.length; j++) {
@@ -7675,10 +7677,10 @@ function _spreadOverlappingMarkers() {
           var ax = a.x + a.dx, ay = a.y + a.dy, bx = b.x + b.dx, by = b.y + b.dy;
           var dx = bx - ax, dy = by - ay;
           var d = Math.sqrt(dx * dx + dy * dy);
-          if (d >= SPREAD_HIT_PX) continue;
+          if (d >= _hit) continue;
           // Exactly coincident: pick a deterministic direction so it does not jitter.
           if (d < 0.001) { dx = (i % 2 ? 1 : -1); dy = (j % 2 ? 1 : -1); d = Math.sqrt(2); }
-          var push = (SPREAD_HIT_PX - d) / 2;
+          var push = (_hit - d) / 2;
           var ux = dx / d, uy = dy / d;
           a.dx -= ux * push; a.dy -= uy * push;
           b.dx += ux * push; b.dy += uy * push;
@@ -7806,7 +7808,15 @@ function _updateMarkerGrouping(immediate) {
         var _spx = Math.sqrt(_sdx * _sdx + _sdy * _sdy);
         // Same join/split hysteresis as the distance test, so a dot sitting exactly on the
         // threshold cannot flicker between merged and separate every pass.
-        if (_spx < (wasTogether ? MERGE_SCREEN_SPLIT_PX : MERGE_SCREEN_JOIN_PX)) { union(a, b); continue; }
+        // 1097: "I would rather the call outs be used more often for individual pins instead of
+        // immediately going to groupings" (Jace, 2026-11-27: Gary and J, 2,450 ft apart, went into
+        // one bubble that pointed at Gary's spot). People more than MERGE_PX_MAX_M apart now stay
+        // separate pins, nudged aside with a line back to their true spot by the spread pass. Only
+        // when zoomed so far out that their dots are almost exactly on top of each other (8 px)
+        // do they still combine -- that is the whole-state view where nudging misplaced Laura.
+        var _far = d > MERGE_PX_MAX_M;
+        var _scrJoin = _far ? (wasTogether ? 12 : 8) : (wasTogether ? MERGE_SCREEN_SPLIT_PX : MERGE_SCREEN_JOIN_PX);
+        if (_spx < _scrJoin) { union(a, b); continue; }
       } catch (_spe) {}
     }
   }
@@ -7841,6 +7851,14 @@ function _updateMarkerGrouping(immediate) {
         for (var _j = _i + 1; _j < _bx.length; _j++) {
           var A = _bx[_i], B = _bx[_j];
           if (find(A.r) === find(B.r)) continue;
+          // 1097: two single pins are not combined just because their shapes touch when the
+          // people are over MERGE_PX_MAX_M apart -- the spread pass moves single pins aside with a
+          // callout line. Bubbles cannot be moved aside (their point marks the spot), so a bubble
+          // touching anything still joins as before (1068).
+          if (A.ms.length === 1 && B.ms.length === 1) {
+            var _la = userMarkers[A.ms[0]]._ll, _lb = userMarkers[B.ms[0]]._ll;
+            if (metersApart(_la[1], _la[0], _lb[1], _lb[0]) > MERGE_PX_MAX_M) continue;
+          }
           // Hysteresis as elsewhere: shapes that were one group stay one until there is a clear
           // 10 px gap between them, so a group on the edge cannot flicker.
           var was = A.ms.some(function (a) { return B.ms.some(function (b) { return window._prevGroupOf[a] && window._prevGroupOf[a] === window._prevGroupOf[b]; }); });
