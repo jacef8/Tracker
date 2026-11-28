@@ -370,11 +370,24 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
                         }
                     }
                     if (bytes == null) continue;
-                    android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                    // Shrink to about 128 px: a marker is never bigger, and a full-size photo is
+                    // the kind of thing the hardware canvas refuses to draw.
+                    android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                    o.inJustDecodeBounds = true;
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
+                    int ss = 1; while (Math.max(o.outWidth, o.outHeight) / (ss * 2) >= 128) ss *= 2;
+                    o = new android.graphics.BitmapFactory.Options(); o.inSampleSize = ss;
+                    android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
+                    if (b != null && Math.max(b.getWidth(), b.getHeight()) > 160) {
+                        float f = 160f / Math.max(b.getWidth(), b.getHeight());
+                        b = android.graphics.Bitmap.createScaledBitmap(b, Math.max(1, Math.round(b.getWidth() * f)), Math.max(1, Math.round(b.getHeight() * f)), true);
+                    }
+                    if (b != null && b.getConfig() == android.graphics.Bitmap.Config.HARDWARE) b = b.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
                     if (b != null) got.put(id, b);
                 } catch (Throwable t) {}
             }
             main.post(() -> { map.photos.putAll(got); map.requestDraw(); });
+            try { CarLog.step("photos decoded: " + got.size()); } catch (Throwable t) {}
         }).start();
     }
 

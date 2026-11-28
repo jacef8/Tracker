@@ -243,17 +243,45 @@ class CarMapRenderer {
         try {
             c = s.lockHardwareCanvas();
             c.drawColor(0xFF1B2A1E);
-            drawTiles(c);
-            drawCrewRoads(c);
-            drawTrails(c);
-            drawPins(c);
-            drawPeople(c);
-            drawHud(c);
-        } catch (Exception e) {
+            // 1.5.9: each layer on its own. 1.5.8 crashed the whole app on the truck (2026-11-28):
+            // a layer that threw while a clip was saved left the canvas unbalanced, which the
+            // hardware renderer does not survive. Now a failing layer is put back to its saved
+            // state, skipped, and reported once, and the map keeps drawing.
+            layer(c, 0); layer(c, 1); layer(c, 2); layer(c, 3); layer(c, 4); layer(c, 5);
+        } catch (Throwable e) {
+            reportOnce("draw", e);
         } finally {
-            if (c != null) try { s.unlockCanvasAndPost(c); } catch (Exception e) {}
+            if (c != null) try { s.unlockCanvasAndPost(c); } catch (Throwable e) { reportOnce("post", e); }
+            if (!drawnOnce && c != null) { drawnOnce = true; try { CarLog.step("first frame drawn, photos " + photos.size()); } catch (Throwable t) {} }
         }
     }
+
+    private final Set<String> reported = new HashSet<>();
+    private void reportOnce(String where, Throwable e) {
+        if (reported.add(where)) { try { CarLog.error("draw " + where, e); } catch (Throwable t) {} }
+    }
+    private final boolean[] layerOff = new boolean[6];
+    private int layerFails[] = new int[6];
+    private void layer(Canvas c, int i) {
+        if (layerOff[i]) return;
+        int sc = c.save();
+        try {
+            switch (i) {
+                case 0: drawTiles(c); break;
+                case 1: drawCrewRoads(c); break;
+                case 2: drawTrails(c); break;
+                case 3: drawPins(c); break;
+                case 4: drawPeople(c); break;
+                default: drawHud(c); break;
+            }
+        } catch (Throwable e) {
+            reportOnce("layer" + i, e);
+            if (++layerFails[i] >= 5 && i != 0 && i != 4) layerOff[i] = true;   // give up on an extra, never on the map or the people
+        } finally {
+            try { c.restoreToCount(sc); } catch (Throwable t) {}
+        }
+    }
+    private boolean drawnOnce = false;
 
     private String[] layers() {
         return satellite ? new String[]{ "World_Imagery", "Reference/World_Transportation" } : new String[]{ "World_Street_Map" };
