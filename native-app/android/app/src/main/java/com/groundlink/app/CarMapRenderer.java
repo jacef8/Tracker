@@ -12,6 +12,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.LruCache;
 import android.view.Surface;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -177,7 +180,7 @@ class CarMapRenderer {
             minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
         }
         Rect a = stable.isEmpty() ? new Rect(0, 0, w, h) : stable;
-        float padX = 46 * k, padTop = 34 * k, padBot = 52 * k;      // marker radius + label below
+        float padX = 46 * k, padTop = 58 * k, padBot = 62 * k;      // marker + label, clear of the crew card and Closest bar
         double aw = Math.max(80, a.width() - 2 * padX), ah = Math.max(80, a.height() - padTop - padBot);
         double dx = Math.max(1e-9, maxX - minX), dy = Math.max(1e-9, maxY - minY);
         double z = Math.log(Math.min(aw / dx, ah / dy)) / Math.log(2);
@@ -247,7 +250,7 @@ class CarMapRenderer {
             // a layer that threw while a clip was saved left the canvas unbalanced, which the
             // hardware renderer does not survive. Now a failing layer is put back to its saved
             // state, skipped, and reported once, and the map keeps drawing.
-            layer(c, 0); layer(c, 1); layer(c, 2); layer(c, 3); layer(c, 4); layer(c, 5);
+            layer(c, 0); layer(c, 1); layer(c, 2); layer(c, 3); layer(c, 5); layer(c, 4);
         } catch (Throwable e) {
             reportOnce("draw", e);
         } finally {
@@ -304,9 +307,10 @@ class CarMapRenderer {
                     Paint tp = layer.startsWith("Reference") ? roadPaint : tilePaint;
                     if (b != null) { c.drawBitmap(b, null, dst, tp); continue; }
                     // stretch a parent tile while this one loads
+                    boolean miss = failed.contains(layer + "/" + tz + "/" + ty + "/" + wxp);
                     for (int up = 1; up <= 5 && tz - up >= 0; up++) {
                         int pz = tz - up, px = wxp >> up, py = ty >> up;
-                        Bitmap pb = tile(layer, pz, px, py, false);
+                        Bitmap pb = tile(layer, pz, px, py, miss);
                         if (pb == null) continue;
                         int span = 1 << up, sub = 256 / span;
                         int ix = (wxp - (px << up)) * sub, iy = (ty - (py << up)) * sub;
@@ -317,6 +321,15 @@ class CarMapRenderer {
             }
         }
     }
+    // 1.5.10: "Does the auto version use offline maps?" (Jace, 2026-11-28). It only had a short-lived
+    // web cache, so in a dead zone the map went blank. Every map picture the truck shows is now kept
+    // on the phone (up to about 400 MB, oldest dropped first) and read from there first, so any
+    // place the truck has already shown still draws with no signal.
+    static File tileDir;
+    private static File tileFile(String layer, int z, int x, int y) {
+        if (tileDir == null) return null;
+        return new File(tileDir, layer.replace('/', '_') + "/" + z + "/" + y + "/" + x + ".t");
+    }
     private Bitmap tile(String layer, int z, int x, int y, boolean fetch) {
         String key = layer + "/" + z + "/" + y + "/" + x;
         Bitmap b = tiles.get(key);
@@ -325,10 +338,25 @@ class CarMapRenderer {
         loading.add(key);
         net.execute(() -> {
             Bitmap got = null;
+            File f = tileFile(layer, z, x, y);
             try {
+                if (f != null && f.length() > 0) { got = BitmapFactory.decodeFile(f.getPath()); if (got != null) f.setLastModified(System.currentTimeMillis()); }
+            } catch (Throwable e) {}
+            if (got == null) try {
                 HttpURLConnection con = (HttpURLConnection) new URL(ESRI + layer + "/MapServer/tile/" + z + "/" + y + "/" + x).openConnection();
                 con.setConnectTimeout(8000); con.setReadTimeout(12000); con.setUseCaches(true);
-                if (con.getResponseCode() == 200) { try (InputStream in = con.getInputStream()) { got = BitmapFactory.decodeStream(in); } }
+                if (con.getResponseCode() == 200) {
+                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                    try (InputStream in = con.getInputStream()) { byte[] buf = new byte[16384]; int r; while ((r = in.read(buf)) > 0) bo.write(buf, 0, r); }
+                    byte[] bytes = bo.toByteArray();
+                    got = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                    if (got != null && f != null) try {
+                        f.getParentFile().mkdirs();
+                        File tmp = new File(f.getPath() + ".part");
+                        try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(bytes); }
+                        tmp.renameTo(f);
+                    } catch (Throwable e) {}
+                }
                 con.disconnect();
             } catch (Exception e) {}
             final Bitmap fb = got;
@@ -406,7 +434,15 @@ class CarMapRenderer {
     private static int root(int[] par, int i) { while (par[i] != i) { par[i] = par[par[i]]; i = par[i]; } return i; }
     private static String initial(Person p) { return p.name == null || p.name.isEmpty() ? "?" : p.name.substring(0, 1).toUpperCase(Locale.US); }
 
+    /** Where markers and tags were drawn (last frame), so the crew card and Closest bar can get out of the way. */
+    private List<RectF> markRects = new ArrayList<>(), lastMarks = new ArrayList<>();
+    private boolean underMarks(RectF box) { for (RectF m : lastMarks) if (RectF.intersects(m, box)) return true; return false; }
     private void drawPeople(Canvas c) {
+        markRects = new ArrayList<>(); closeCand.clear();
+        try { drawPeople0(c); } finally { lastMarks = markRects; lastCand = new ArrayList<>(closeCand); }
+    }
+    private List<Object[]> lastCand = new ArrayList<>();
+    private void drawPeople0(Canvas c) {
         float r = 17 * k;
         List<Person> vis = new ArrayList<>();
         for (Person p : people) {
@@ -499,6 +535,8 @@ class CarMapRenderer {
                 ring.setColor(p.me ? GOLD : Color.WHITE);
                 ring.setStrokeWidth((p.me ? 4.5f : 3f) * k);
                 c.drawCircle(x, y, rr, ring);
+                markRects.add(new RectF(x - rr - 4 * k, y - rr - 4 * k, x + rr + 4 * k, y + rr + 4 * k));
+                if (!p.me) closeCand.add(new Object[]{ first(p.name), p.lat, p.lng, !p.stale });
                 if (p.stale) { ageBadge(c, x + rr * 0.8f, y - rr * 0.8f, p.status); continue; }
                 drawTag(c, x, y + rr, p.me ? "You" : first(p.name), p.status, p.me, false);
                 continue;
@@ -521,6 +559,7 @@ class CarMapRenderer {
                 ring.setColor(hasMe ? 0xFFF0A500 : Color.WHITE);
                 ring.setStrokeWidth((hasMe ? 4f : 2.5f) * k);
                 c.drawRoundRect(box, r, r, ring);
+                markRects.add(new RectF(box.left - 4 * k, box.top - 4 * k, box.right + 4 * k, box.bottom + 4 * k));
                 StringBuilder sb = new StringBuilder();
                 int names = Math.min(gr.length - 1, 3);
                 for (int t = 1; t <= names; t++) {
@@ -605,15 +644,19 @@ class CarMapRenderer {
         if (st != null && !st.endsWith("mph")) st = "";
         if (zoom < 10.5 && !me) st = "";
         String a = name == null ? "" : name, b = (st == null || st.isEmpty()) ? "" : " · " + st;
+        // 1.5.10: the size was never set here, so each tag took whatever the last drawing used
+        // (the big initial letter, a road tag...) and tags came out different sizes (Jace, 2026-11-28).
+        text.setTextSize(15 * k);
         text.setFakeBoldText(true);
         float wa = text.measureText(a);
         text.setFakeBoldText(false);
         float wb = b.isEmpty() ? 0 : text.measureText(b);
         float tw = wa + wb;
-        RectF bg = new RectF(x - tw / 2 - 7 * k, yb + 4 * k, x + tw / 2 + 7 * k, yb + 25 * k);
+        RectF bg = new RectF(x - tw / 2 - 8 * k, yb + 4 * k, x + tw / 2 + 8 * k, yb + 26 * k);
         Paint bgp = me ? goldPill : pill;
         c.drawRoundRect(bg, 10 * k, 10 * k, bgp);
         float base = bg.bottom - 6 * k, left = x - tw / 2;
+        markRects.add(new RectF(bg));
         Paint.Align al = text.getTextAlign();
         int col = text.getColor();
         text.setTextAlign(Paint.Align.LEFT);
@@ -641,6 +684,7 @@ class CarMapRenderer {
             line.setColor(0xFFFF9F43); line.setStrokeWidth(4.5f * k); c.drawPath(path, line);
         }
         if (zoom < 12) return;
+        text.setTextAlign(Paint.Align.CENTER);
         for (int i = 0; i < crewRoads.size(); i++) {
             String n = i < crewRoadNames.size() ? crewRoadNames.get(i) : "";
             double[][] rd = crewRoads.get(i); if (n == null || n.isEmpty() || rd.length < 2) continue;
@@ -677,23 +721,27 @@ class CarMapRenderer {
         text.setTextSize(13 * k); text.setFakeBoldText(false); float w2 = text.measureText(t2);
         float cl = a.left + 12 * k, ct = a.top + 12 * k;
         RectF card = new RectF(cl, ct, cl + 34 * k + Math.max(w1, w2) + 14 * k, ct + 52 * k);
+        // 1.5.10: "The crew pill sits on top of other components" (Jace, 2026-11-28). The card is now
+        // drawn under the people, and when someone is behind it, it turns see-through.
+        boolean dim = underMarks(card);
+        c.saveLayerAlpha(card, dim ? 70 : 255);
         fill.setColor(0xF0101417); c.drawRoundRect(card, 14 * k, 14 * k, fill);
         fill.setColor(live > 0 ? 0xFF5DCB6A : 0xFF7D8590); c.drawCircle(cl + 18 * k, ct + 26 * k, 6 * k, fill);
         text.setColor(Color.WHITE); text.setTextSize(16 * k); text.setFakeBoldText(true);
         c.drawText(t1, cl + 34 * k, ct + 23 * k, text);
         text.setFakeBoldText(false); text.setTextSize(13 * k); text.setColor(0xFFC9D1D9);
         c.drawText(t2, cl + 34 * k, ct + 42 * k, text);
+        c.restore();
         // closest
         Person me = null; for (Person p : people) if (p.me) me = p;
         Object[] best = null; double bd = Double.MAX_VALUE;
         if (me != null) for (int pass = 0; pass < 2 && best == null; pass++) {
-            for (Object[] o : closeCand) {
+            for (Object[] o : lastCand) {
                 if (pass == 0 && !(Boolean) o[3]) continue;
                 double d = metres(me.lat, me.lng, (Double) o[1], (Double) o[2]);
                 if (d < bd) { bd = d; best = o; }
             }
         }
-        closeCand.clear();
         if (best != null) {
             double mi = bd / 1609.34;
             String dist = mi < 0.2 ? Math.round(bd * 3.28084) + " ft" : mi < 10 ? String.format(Locale.US, "%.1f mi", mi) : Math.round(mi) + " mi";
@@ -708,6 +756,7 @@ class CarMapRenderer {
             text.setFakeBoldText(false);
             float bl = a.left + 12 * k, bb = a.bottom - 12 * k;
             RectF bar = new RectF(bl, bb - 60 * k, bl + 14 * k + Math.max(wn, 60 * k) + 18 * k + wd + 12 * k + wr + 14 * k, bb);
+            c.saveLayerAlpha(bar, underMarks(bar) ? 70 : 255);
             fill.setColor(0xF0101417); c.drawRoundRect(bar, 14 * k, 14 * k, fill);
             text.setTextSize(12 * k); text.setColor(0xFFC9D1D9);
             c.drawText("Closest", bl + 14 * k, bb - 40 * k, text);
@@ -719,6 +768,7 @@ class CarMapRenderer {
             text.setTextSize(15 * k); text.setColor(0xFFC9D1D9);
             c.drawText(dir, dx + wd + 12 * k, bb - 16 * k, text);
             text.setFakeBoldText(false);
+            c.restore();
         }
         text.setTextAlign(al); text.setColor(col);
     }

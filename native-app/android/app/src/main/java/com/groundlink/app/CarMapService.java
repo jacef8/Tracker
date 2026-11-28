@@ -28,6 +28,22 @@ public class CarMapService extends CarAppService {
             if (HttpResponseCache.getInstalled() == null)
                 HttpResponseCache.install(new File(getCacheDir(), "car-tiles"), 80L * 1024 * 1024);
         } catch (Exception e) {}
+        // 1.5.10: map pictures kept on the phone for no-signal use; trim the oldest past ~400 MB.
+        final File td = new File(getFilesDir(), "car-tiles-keep");
+        CarMapRenderer.tileDir = td;
+        new Thread(() -> { try { trimTiles(td, 400L << 20, 320L << 20); } catch (Throwable e) {} }).start();
+    }
+    private static void trimTiles(File dir, long max, long target) {
+        java.util.List<File> all = new java.util.ArrayList<>();
+        java.util.ArrayDeque<File> st = new java.util.ArrayDeque<>(); st.push(dir);
+        long total = 0;
+        while (!st.isEmpty()) {
+            File[] ls = st.pop().listFiles(); if (ls == null) continue;
+            for (File f : ls) { if (f.isDirectory()) st.push(f); else { all.add(f); total += f.length(); } }
+        }
+        if (total <= max) return;
+        java.util.Collections.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (File f : all) { if (total <= target) break; total -= f.length(); f.delete(); }
     }
 
     @NonNull
