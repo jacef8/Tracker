@@ -180,7 +180,7 @@ class CarMapRenderer {
             minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
         }
         Rect a = stable.isEmpty() ? new Rect(0, 0, w, h) : stable;
-        float padX = 46 * k, padTop = 58 * k, padBot = 62 * k;      // marker + label, clear of the crew card and Closest bar
+        float padX = 46 * k, padTop = 58 * k, padBot = 96 * k;      // marker + label, clear of the crew card and Closest bar
         double aw = Math.max(80, a.width() - 2 * padX), ah = Math.max(80, a.height() - padTop - padBot);
         double dx = Math.max(1e-9, maxX - minX), dy = Math.max(1e-9, maxY - minY);
         double z = Math.log(Math.min(aw / dx, ah / dy)) / Math.log(2);
@@ -250,7 +250,7 @@ class CarMapRenderer {
             // a layer that threw while a clip was saved left the canvas unbalanced, which the
             // hardware renderer does not survive. Now a failing layer is put back to its saved
             // state, skipped, and reported once, and the map keeps drawing.
-            layer(c, 0); layer(c, 1); layer(c, 2); layer(c, 3); layer(c, 5); layer(c, 4);
+            layer(c, 0); layer(c, 1); layer(c, 2); layer(c, 3); layer(c, 5); layer(c, 4); layer(c, 6);
         } catch (Throwable e) {
             reportOnce("draw", e);
         } finally {
@@ -263,8 +263,8 @@ class CarMapRenderer {
     private void reportOnce(String where, Throwable e) {
         if (reported.add(where)) { try { CarLog.error("draw " + where, e); } catch (Throwable t) {} }
     }
-    private final boolean[] layerOff = new boolean[6];
-    private int layerFails[] = new int[6];
+    private final boolean[] layerOff = new boolean[7];
+    private int layerFails[] = new int[7];
     private void layer(Canvas c, int i) {
         if (layerOff[i]) return;
         int sc = c.save();
@@ -275,7 +275,8 @@ class CarMapRenderer {
                 case 2: drawTrails(c); break;
                 case 3: drawPins(c); break;
                 case 4: drawPeople(c); break;
-                default: drawHud(c); break;
+                case 5: drawHud(c); break;
+                default: drawDock(c); break;
             }
         } catch (Throwable e) {
             reportOnce("layer" + i, e);
@@ -732,7 +733,54 @@ class CarMapRenderer {
         text.setFakeBoldText(false); text.setTextSize(13 * k); text.setColor(0xFFC9D1D9);
         c.drawText(t2, cl + 34 * k, ct + 42 * k, text);
         c.restore();
-        // closest
+        text.setTextAlign(al); text.setColor(col);
+    }
+
+    // 1.5.11: "It needs a nice looking toolbar along the bottom with a border and colors and some
+    // transparency" (Jace, 2026-11-28). Android Auto draws its own buttons plainly and hides them
+    // until the screen is touched, so the map now carries its own toolbar: a see-through dark bar
+    // with a gold border holding the Closest readout and coloured buttons for what to follow, map
+    // style, crews and re-centre. Taps on it come in through the screen's onClick (dockHit).
+    String modeLabel = "Everyone";
+    boolean multiCrew = false;
+    private final List<RectF> dockRects = new ArrayList<>();
+    private final List<String> dockIds = new ArrayList<>();
+    private String pressedId = null; private long pressedAt = 0;
+    private final Paint dockBg = new Paint(Paint.ANTI_ALIAS_FLAG), dockEdge = new Paint(Paint.ANTI_ALIAS_FLAG);
+    { dockEdge.setStyle(Paint.Style.STROKE); }
+    float dockHeight() { return 68 * k; }
+    /** Which toolbar button is under a tap ("mode", "style", "crews", "center"), or null. */
+    String dockHit(float x, float y) {
+        for (int i = 0; i < dockRects.size(); i++) {
+            RectF r = dockRects.get(i);
+            if (x >= r.left - 4 * k && x <= r.right + 4 * k && y >= r.top - 6 * k && y <= r.bottom + 6 * k) {
+                pressedId = dockIds.get(i); pressedAt = System.currentTimeMillis(); requestDraw();
+                main.postDelayed(this::requestDraw, 260);
+                return pressedId;
+            }
+        }
+        return null;
+    }
+    boolean inDock(float x, float y) { return dockBox != null && dockBox.contains(x, y); }
+    private RectF dockBox = null;
+
+    private void drawDock(Canvas c) {
+        Rect a = stable.isEmpty() ? new Rect(0, 0, w, h) : stable;
+        Paint.Align al = text.getTextAlign(); int col = text.getColor();
+        text.setTextAlign(Paint.Align.LEFT);
+        float m = 10 * k, H = dockHeight();
+        RectF bar = new RectF(a.left + m, a.bottom - m - H, a.right - m, a.bottom - m);
+        dockBox = bar;
+        // body: dark, see-through, with a soft top-to-bottom shade and a gold border
+        dockBg.setShader(new android.graphics.LinearGradient(0, bar.top, 0, bar.bottom, 0xC81C2530, 0xD80C1116, android.graphics.Shader.TileMode.CLAMP));
+        c.drawRoundRect(bar, 20 * k, 20 * k, dockBg);
+        dockEdge.setStrokeWidth(2f * k); dockEdge.setColor(0xCCF0A500);
+        c.drawRoundRect(bar, 20 * k, 20 * k, dockEdge);
+        dockEdge.setStrokeWidth(1f * k); dockEdge.setColor(0x33FFFFFF);
+        RectF inner = new RectF(bar.left + 3 * k, bar.top + 3 * k, bar.right - 3 * k, bar.bottom - 3 * k);
+        c.drawRoundRect(inner, 17 * k, 17 * k, dockEdge);
+
+        // closest (left section)
         Person me = null; for (Person p : people) if (p.me) me = p;
         Object[] best = null; double bd = Double.MAX_VALUE;
         if (me != null) for (int pass = 0; pass < 2 && best == null; pass++) {
@@ -742,35 +790,105 @@ class CarMapRenderer {
                 if (d < bd) { bd = d; best = o; }
             }
         }
+        float x = bar.left + 18 * k, mid = bar.centerY();
         if (best != null) {
             double mi = bd / 1609.34;
             String dist = mi < 0.2 ? Math.round(bd * 3.28084) + " ft" : mi < 10 ? String.format(Locale.US, "%.1f mi", mi) : Math.round(mi) + " mi";
             double br = Math.toDegrees(Math.atan2(((Double) best[2] - me.lng) * Math.cos(Math.toRadians(me.lat)), (Double) best[1] - me.lat));
             if (br < 0) br += 360;
-            String[] dn = { "N ↑", "NE ↗", "E →", "SE ↘", "S ↓", "SW ↙", "W ←", "NW ↖" };
+            String[] dn = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
             String dir = dn[(int) Math.round(br / 45) % 8];
             String nm = (String) best[0];
-            text.setTextSize(16 * k); text.setFakeBoldText(true); float wn = text.measureText(nm);
-            text.setTextSize(22 * k); float wd = text.measureText(dist);
-            text.setTextSize(15 * k); float wr = text.measureText(dir);
+            if (nm.length() > 14) nm = nm.substring(0, 13) + "…";
+            // compass disc with an arrow pointing the way to them (north up)
+            float cr = 19 * k, ccx = x + cr, ccy = mid;
+            fill.setColor(0xFF233041); c.drawCircle(ccx, ccy, cr, fill);
+            ring.setColor(0xFFFFD54A); ring.setStrokeWidth(2f * k); c.drawCircle(ccx, ccy, cr, ring);
+            double ang = Math.toRadians(br);
+            float ux = (float) Math.sin(ang), uy = (float) -Math.cos(ang), px = -uy, py = ux;
+            path.reset();
+            path.moveTo(ccx + ux * 13 * k, ccy + uy * 13 * k);
+            path.lineTo(ccx - ux * 8 * k + px * 7 * k, ccy - uy * 8 * k + py * 7 * k);
+            path.lineTo(ccx - ux * 3 * k, ccy - uy * 3 * k);
+            path.lineTo(ccx - ux * 8 * k - px * 7 * k, ccy - uy * 8 * k - py * 7 * k);
+            path.close();
+            fill.setColor(0xFFFFD54A); c.drawPath(path, fill);
+            float tx = ccx + cr + 12 * k;
+            text.setFakeBoldText(true); text.setTextSize(12 * k); text.setColor(0xFF9FB3C8);
+            c.drawText("CLOSEST · " + dir, tx, mid - 6 * k, text);
+            text.setTextSize(17 * k); text.setColor(Color.WHITE);
+            float wn = text.measureText(nm);
+            c.drawText(nm, tx, mid + 15 * k, text);
+            text.setTextSize(17 * k); text.setColor(0xFFFFD54A);
+            c.drawText(dist, tx + wn + 9 * k, mid + 15 * k, text);
+            float wd = text.measureText(dist);
+            text.setTextSize(12 * k);
+            x = Math.max(tx + text.measureText("CLOSEST · NW"), tx + wn + 9 * k + wd) + 16 * k;
+            // divider
+            line.setStyle(Paint.Style.STROKE); line.setStrokeWidth(1.5f * k); line.setColor(0x55FFFFFF);
+            c.drawLine(x, bar.top + 14 * k, x, bar.bottom - 14 * k, line);
+            x += 12 * k;
+        }
+        text.setFakeBoldText(false);
+
+        // buttons share what is left
+        List<String> ids = new ArrayList<>(), lbls = new ArrayList<>(); List<Integer> cols = new ArrayList<>();
+        ids.add("mode");  lbls.add(modeLabel);                           cols.add(0xFF4FC3F7);   // sky blue
+        ids.add("style"); lbls.add(satellite ? "Road map" : "Satellite"); cols.add(0xFF66BB6A);   // green
+        if (multiCrew) { ids.add("crews"); lbls.add("Crews"); cols.add(0xFFBA8CFF); }             // violet
+        ids.add("center"); lbls.add("Center");                            cols.add(0xFFF0A500);   // gold
+        dockRects.clear(); dockIds.clear();
+        float right = bar.right - 10 * k, gap = 8 * k;
+        int nb = ids.size();
+        float bw = Math.min(150 * k, (right - x - gap * (nb - 1)) / nb);
+        if (bw < 56 * k) { bw = 56 * k; }
+        float bx = right - nb * bw - (nb - 1) * gap;
+        boolean recentPress = System.currentTimeMillis() - pressedAt < 250;
+        for (int i = 0; i < nb; i++) {
+            RectF b = new RectF(bx, bar.top + 10 * k, bx + bw, bar.bottom - 10 * k);
+            int cc = cols.get(i);
+            boolean down = recentPress && ids.get(i).equals(pressedId);
+            fill.setColor((cc & 0x00FFFFFF) | (down ? 0x88000000 : 0x2E000000));
+            c.drawRoundRect(b, 13 * k, 13 * k, fill);
+            ring.setColor((cc & 0x00FFFFFF) | 0xD0000000); ring.setStrokeWidth(1.8f * k);
+            c.drawRoundRect(b, 13 * k, 13 * k, ring);
+            // icon + label
+            float iy = b.centerY(), ix = b.left + 20 * k;
+            drawDockIcon(c, ids.get(i), ix, iy, cc);
+            text.setFakeBoldText(true); text.setTextSize(15 * k); text.setColor(Color.WHITE);
+            String l = lbls.get(i);
+            float room = b.right - (ix + 16 * k) - 8 * k;
+            if (text.measureText(l) > room) { text.setTextSize(13 * k); }
+            if (text.measureText(l) <= room) c.drawText(l, ix + 16 * k, iy + 5.5f * k, text);
             text.setFakeBoldText(false);
-            float bl = a.left + 12 * k, bb = a.bottom - 12 * k;
-            RectF bar = new RectF(bl, bb - 60 * k, bl + 14 * k + Math.max(wn, 60 * k) + 18 * k + wd + 12 * k + wr + 14 * k, bb);
-            c.saveLayerAlpha(bar, underMarks(bar) ? 70 : 255);
-            fill.setColor(0xF0101417); c.drawRoundRect(bar, 14 * k, 14 * k, fill);
-            text.setTextSize(12 * k); text.setColor(0xFFC9D1D9);
-            c.drawText("Closest", bl + 14 * k, bb - 40 * k, text);
-            text.setTextSize(16 * k); text.setFakeBoldText(true); text.setColor(Color.WHITE);
-            c.drawText(nm, bl + 14 * k, bb - 16 * k, text);
-            float dx = bl + 14 * k + Math.max(wn, 60 * k) + 18 * k;
-            text.setTextSize(22 * k); text.setColor(0xFFFFD54A);
-            c.drawText(dist, dx, bb - 16 * k, text);
-            text.setTextSize(15 * k); text.setColor(0xFFC9D1D9);
-            c.drawText(dir, dx + wd + 12 * k, bb - 16 * k, text);
-            text.setFakeBoldText(false);
-            c.restore();
+            dockRects.add(b); dockIds.add(ids.get(i));
+            bx += bw + gap;
         }
         text.setTextAlign(al); text.setColor(col);
+    }
+    private void drawDockIcon(Canvas c, String id, float x, float y, int cc) {
+        fill.setColor(cc); ring.setColor(cc); ring.setStrokeWidth(2.2f * k);
+        switch (id) {
+            case "mode":     // eye: following
+                path.reset();
+                path.moveTo(x - 10 * k, y); path.quadTo(x, y - 9 * k, x + 10 * k, y); path.quadTo(x, y + 9 * k, x - 10 * k, y); path.close();
+                c.drawPath(path, ring); c.drawCircle(x, y, 3.2f * k, fill); break;
+            case "style":    // two stacked layers
+                path.reset();
+                path.moveTo(x, y - 8 * k); path.lineTo(x + 10 * k, y - 3 * k); path.lineTo(x, y + 2 * k); path.lineTo(x - 10 * k, y - 3 * k); path.close();
+                c.drawPath(path, fill);
+                path.reset();
+                path.moveTo(x - 10 * k, y + 2 * k); path.lineTo(x, y + 7 * k); path.lineTo(x + 10 * k, y + 2 * k);
+                c.drawPath(path, ring); break;
+            case "crews":    // two heads
+                c.drawCircle(x - 4 * k, y - 3 * k, 3.6f * k, fill); c.drawCircle(x + 5 * k, y - 4 * k, 3.2f * k, fill);
+                c.drawRoundRect(new RectF(x - 10 * k, y + 2 * k, x + 2 * k, y + 8 * k), 3 * k, 3 * k, fill);
+                c.drawRoundRect(new RectF(x, y + 1 * k, x + 10 * k, y + 7 * k), 3 * k, 3 * k, fill); break;
+            default:         // crosshair: centre
+                c.drawCircle(x, y, 7 * k, ring); c.drawCircle(x, y, 2.6f * k, fill);
+                c.drawLine(x, y - 11 * k, x, y - 7 * k, ring); c.drawLine(x, y + 7 * k, x, y + 11 * k, ring);
+                c.drawLine(x - 11 * k, y, x - 7 * k, y, ring); c.drawLine(x + 7 * k, y, x + 11 * k, y, ring);
+        }
     }
 
     void shutdown() { net.shutdownNow(); main.removeCallbacksAndMessages(null); }

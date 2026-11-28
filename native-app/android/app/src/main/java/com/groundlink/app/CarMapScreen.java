@@ -194,6 +194,7 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             .addAction(new Action.Builder().setTitle(modeLbl).setOnClickListener(this::cycleMode).build())
             .addAction(new Action.Builder().setTitle(map.satellite ? "Road map" : "Satellite").setOnClickListener(this::toggleStyle).build());
         JSONArray crews = cfg().optJSONArray("crews");
+        map.modeLabel = modeLbl; map.multiCrew = crews != null && crews.length() > 1; map.requestDraw();
         if (crews != null && crews.length() > 1)
             tb.addAction(new Action.Builder().setTitle("Crews").setOnClickListener(this::openCrews).build());
         ActionStrip top = tb.build();
@@ -240,6 +241,17 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
         if (f > 0) map.zoomBy(Math.log(f) / Math.log(2), fx, fy);
     }
     @Override public void onClick(float x, float y) {
+        String b = map.dockHit(x, y);
+        if (b != null) {
+            switch (b) {
+                case "mode": cycleMode(); break;
+                case "style": toggleStyle(); break;
+                case "crews": openCrews(); break;
+                default: recenter();
+            }
+            return;
+        }
+        if (map.inDock(x, y)) return;
         CarMapRenderer.Person p = map.hit(x, y);
         if (p == null || p.me) return;
         CarMapRenderer.Person me = null;
