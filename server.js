@@ -2031,8 +2031,23 @@ app.post('/api/car/crew', rateLimit(60, 60000), async function (req, res) {
         });
       } catch (e) {}
     }
+    // Android 1.5.8: with ava=1 (asked every 10 min), each shown person's profile photo from
+    // gl/_avatars/<account> -- a small data: image or an https URL -- for the truck markers.
+    let ava = null;
+    if (b.ava) {
+      ava = {};
+      await Promise.all(out.map(async function (p) {
+        try {
+          const acct = (own && own[p.u] && own[p.u].acct) || p.u;
+          let a = await _cachedGet('gl/_avatars/' + acct, 300000);
+          if (!a && acct !== p.u) a = await _cachedGet('gl/_avatars/' + p.u, 300000);
+          const src = a && String(a.img || a.url || '');
+          if (src && src.length < 120000 && (src.indexOf('data:image/') === 0 || src.indexOf('https://') === 0)) ava[p.u] = src;
+        } catch (e) {}
+      }));
+    }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out, trails: trails, pins: pins, roads: roads, roadNames: roadNames });
+    res.json({ ok: true, group: group, name: String((cfg && cfg.name) || ''), now: now, people: out, trails: trails, pins: pins, roads: roads, roadNames: roadNames, ava: ava });
   } catch (e) {
     console.warn('/api/car/crew error:', e.message);
     res.status(500).json({ ok: false });

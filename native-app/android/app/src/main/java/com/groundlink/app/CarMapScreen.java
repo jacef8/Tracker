@@ -322,6 +322,7 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
             try {
                 JSONObject body = new JSONObject().put("group", fCur).put("uid", uid).put("tok", fTok);
                 if (extra) body.put("extra", 1);
+                if (extra && System.currentTimeMillis() - lastAvaAt > 600000L) { lastAvaAt = System.currentTimeMillis(); body.put("ava", 1); }
                 HttpURLConnection con = (HttpURLConnection) new URL(site + "/api/car/crew").openConnection();
                 con.setRequestMethod("POST"); con.setDoOutput(true);
                 con.setConnectTimeout(8000); con.setReadTimeout(10000);
@@ -346,7 +347,62 @@ public class CarMapScreen extends Screen implements SurfaceCallback, DefaultLife
         });
     }
 
+    private long lastAvaAt = 0;
+    /** 1.5.8: profile photos, as data: URLs (or https) per person; decoded off the main thread. */
+    private void takePhotos(JSONObject av) {
+        if (av == null) return;
+        final JSONObject a = av;
+        new Thread(() -> {
+            java.util.Iterator<String> it = a.keys();
+            java.util.Map<String, android.graphics.Bitmap> got = new java.util.HashMap<>();
+            while (it.hasNext()) {
+                String id = it.next(); String v = a.optString(id, "");
+                try {
+                    byte[] bytes = null;
+                    if (v.startsWith("data:")) { int cm = v.indexOf(','); if (cm > 0) bytes = android.util.Base64.decode(v.substring(cm + 1), android.util.Base64.DEFAULT); }
+                    else if (v.startsWith("https://")) {
+                        java.net.HttpURLConnection hc = (java.net.HttpURLConnection) new java.net.URL(v).openConnection();
+                        hc.setConnectTimeout(8000); hc.setReadTimeout(8000);
+                        try (java.io.InputStream in = hc.getInputStream()) {
+                            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[8192]; int n;
+                            while ((n = in.read(buf)) > 0 && bo.size() < 400000) bo.write(buf, 0, n);
+                            bytes = bo.toByteArray();
+                        }
+                    }
+                    if (bytes == null) continue;
+                    android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                    if (b != null) got.put(id, b);
+                } catch (Throwable t) {}
+            }
+            main.post(() -> { map.photos.putAll(got); map.requestDraw(); });
+        }).start();
+    }
+
     private void apply(JSONObject r, JSONObject c) {
+        map.crewName = r.optString("name", "");
+        takePhotos(r.optJSONObject("ava"));
+        JSONArray rds = r.optJSONArray("roads");
+        if (rds != null) {
+            List<double[][]> rl = new ArrayList<>(); List<String> rn = new ArrayList<>();
+            for (int i = 0; i < rds.length(); i++) {
+                JSONObject q = rds.optJSONObject(i); if (q == null) continue;
+                JSONArray pts = q.optJSONArray("pts"); if (pts == null || pts.length() < 2) continue;
+                double[][] a = new double[pts.length()][];
+                for (int j = 0; j < pts.length(); j++) { JSONArray pp = pts.optJSONArray(j); a[j] = new double[]{ pp.optDouble(0), pp.optDouble(1) }; }
+                rl.add(a); rn.add(q.optString("n", ""));
+            }
+            map.crewRoads = rl; map.crewRoadNames = rn;
+        }
+        JSONArray rnm = r.optJSONArray("roadNames");
+        if (rnm != null) {
+            List<double[]> mids = new ArrayList<>(); List<String> tx = new ArrayList<>();
+            for (int i = 0; i < rnm.length(); i++) {
+                JSONObject q = rnm.optJSONObject(i); if (q == null) continue;
+                JSONArray m = q.optJSONArray("mid"); if (m == null) continue;
+                mids.add(new double[]{ m.optDouble(0), m.optDouble(1) }); tx.add(q.optString("n", ""));
+            }
+            map.nameMids = mids; map.nameTxt = tx;
+        }
         JSONArray arr = r.optJSONArray("people"); if (arr == null) return;
         long now = r.optLong("now", System.currentTimeMillis());
         JSONObject hide = c.optJSONObject("hide"), nick = c.optJSONObject("nick");

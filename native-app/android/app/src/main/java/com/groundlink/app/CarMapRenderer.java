@@ -82,6 +82,18 @@ class CarMapRenderer {
     java.util.Map<String, double[][]> trails = new java.util.HashMap<>();
     List<double[]> pins = new ArrayList<>();
     List<String> pinNames = new ArrayList<>();
+    // 1.5.8: "the truck screen is very plain and boring" (Jace, 2026-11-28). He picked the mock-up
+    // with: profile photos on the dots, a heading arrow on anyone moving, speed / "parked 4 min"
+    // in the tag, your own dot bigger and gold, a crew card (top left), a "Closest" readout
+    // (bottom left) and the crew's own road names in dark tags.
+    String crewName = "";
+    /** uid -> profile photo, already cropped square. */
+    final java.util.Map<String, Bitmap> photos = new java.util.HashMap<>();
+    List<double[][]> crewRoads = new ArrayList<>();   // each [lng,lat] points
+    List<String> crewRoadNames = new ArrayList<>();
+    List<double[]> nameMids = new ArrayList<>();       // [lng,lat] of a renamed stretch
+    List<String> nameTxt = new ArrayList<>();
+    static final int GOLD = 0xFFF0A500;
     private boolean haveCam = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -232,9 +244,11 @@ class CarMapRenderer {
             c = s.lockHardwareCanvas();
             c.drawColor(0xFF1B2A1E);
             drawTiles(c);
+            drawCrewRoads(c);
             drawTrails(c);
             drawPins(c);
             drawPeople(c);
+            drawHud(c);
         } catch (Exception e) {
         } finally {
             if (c != null) try { s.unlockCanvasAndPost(c); } catch (Exception e) {}
@@ -315,7 +329,7 @@ class CarMapRenderer {
             }
             path.lineTo(sx(p.lng), sy(p.lat));      // join the line to where they are now
             line.setColor(0x99101417); line.setStrokeWidth(7 * k); c.drawPath(path, line);
-            line.setColor(p.stale ? 0xFF9AA4AE : p.color); line.setStrokeWidth(4 * k); c.drawPath(path, line);
+            line.setColor(p.me ? GOLD : (p.stale ? 0xFF9AA4AE : p.color)); line.setStrokeWidth((p.me ? 5 : 4) * k); c.drawPath(path, line);
         }
     }
     /** Dropped pins: gold diamonds (round = person, diamond = place), names when zoomed in. */
@@ -449,15 +463,17 @@ class CarMapRenderer {
             String lbl;
             if (gr.length == 2) {
                 Person p = vis.get(gr[1]);
-                fill.setColor(p.stale ? 0xFF7D8590 : p.color);
-                c.drawCircle(x, y, r, fill);
-                ring.setColor(p.me ? 0xFFF0A500 : Color.WHITE);
-                ring.setStrokeWidth((p.me ? 4f : 2.5f) * k);
-                c.drawCircle(x, y, r, ring);
-                text.setTextSize(16 * k);
-                c.drawText(initial(p), x, y + 5.5f * k, text);
-                lbl = p.me ? "You" : p.name;
-                if (p.status != null && !p.status.isEmpty()) lbl = lbl + " · " + p.status;
+                // Quiet people (no report in 30+ min) are drawn smaller with only a small age badge:
+                // full names and "2h 13m ago" tags were covering the map (Jace, 2026-11-28).
+                float rr = p.me ? 21 * k : (p.stale ? 13 * k : r);
+                drawArrow(c, p, x, y, rr);
+                drawFace(c, p, x - rr, y - rr, x + rr, y + rr, true, 18 * k);
+                ring.setColor(p.me ? GOLD : Color.WHITE);
+                ring.setStrokeWidth((p.me ? 4.5f : 3f) * k);
+                c.drawCircle(x, y, rr, ring);
+                if (p.stale) { ageBadge(c, x + rr * 0.8f, y - rr * 0.8f, p.status); continue; }
+                drawTag(c, x, y + rr, p.me ? "You" : first(p.name), p.status, p.me, false);
+                continue;
             } else {
                 boolean hasMe = false;
                 for (int t = 1; t < gr.length; t++) if (vis.get(gr[t]).me) hasMe = true;
@@ -471,9 +487,7 @@ class CarMapRenderer {
                 text.setTextSize(15 * k);
                 for (int t = 0; t < cnt; t++) {
                     Person p = vis.get(gr[t + 1]);
-                    fill.setColor(p.stale ? 0xFF7D8590 : p.color);
-                    c.drawRect(box.left + t * cw, box.top, box.left + (t + 1) * cw, box.bottom, fill);
-                    c.drawText(initial(p), box.left + t * cw + cw / 2, y + 5.5f * k, text);
+                    drawFace(c, p, box.left + t * cw, box.top, box.left + (t + 1) * cw, box.bottom, false, 15 * k);
                 }
                 c.restore();
                 ring.setColor(hasMe ? 0xFFF0A500 : Color.WHITE);
@@ -491,14 +505,194 @@ class CarMapRenderer {
                 String st = vis.get(gr[1]).status;
                 boolean same = st != null && !st.isEmpty();
                 for (int t = 2; t < gr.length && same; t++) same = st.equals(vis.get(gr[t]).status);
-                lbl = sb.toString() + (same ? " · " + st : "");
+                lbl = sb.toString();
+                drawTag(c, x, y + r, lbl, same ? st : "", hasMe, false);
             }
-            text.setTextSize(13 * k);
-            float tw = text.measureText(lbl);
-            RectF bg = new RectF(x - tw / 2 - 7 * k, y + r + 4 * k, x + tw / 2 + 7 * k, y + r + 24 * k);
-            c.drawRoundRect(bg, 8 * k, 8 * k, pill);
-            c.drawText(lbl, x, bg.bottom - 5.5f * k, text);
+            // Remember for the Closest readout.
+            if (!hasMeIn(vis, gr)) {
+                Person a = vis.get(gr[0]);
+                String nm = gr.length == 2 ? a.name : lbl;
+                boolean live = false; for (int t = 1; t < gr.length; t++) if (!vis.get(gr[t]).stale) live = true;
+                closeCand.add(new Object[]{ nm, a.lat, a.lng, live });
+            }
         }
+    }
+    private final List<Object[]> closeCand = new ArrayList<>();
+    private static boolean hasMeIn(List<Person> vis, int[] gr) { for (int t = 1; t < gr.length; t++) if (vis.get(gr[t]).me) return true; return false; }
+
+    /** A face: the photo cropped to fill the box, else the person's colour and initial. Round when
+     *  `round`, otherwise the caller has already clipped (a cell of a group marker). */
+    private final Paint bmp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final android.graphics.Path fpath = new android.graphics.Path();
+    private void drawFace(Canvas c, Person p, float l, float t, float rgt, float b, boolean round, float ts) {
+        Bitmap ph = photos.get(p.uid);
+        if (round) { fpath.reset(); fpath.addCircle((l + rgt) / 2, (t + b) / 2, (rgt - l) / 2, android.graphics.Path.Direction.CW); c.save(); c.clipPath(fpath); }
+        if (ph != null && !ph.isRecycled()) {
+            float bw = rgt - l, bh = b - t;
+            int sw = ph.getWidth(), sh = ph.getHeight();
+            float sc = Math.max(bw / sw, bh / sh);
+            float cw = bw / sc, ch = bh / sc;
+            Rect src = new Rect((int) ((sw - cw) / 2), (int) ((sh - ch) / 2), (int) ((sw + cw) / 2), (int) ((sh + ch) / 2));
+            bmp.setAlpha(p.stale ? 140 : 255);
+            fill.setColor(0xFF2A2F36); c.drawRect(l, t, rgt, b, fill);
+            c.drawBitmap(ph, src, new RectF(l, t, rgt, b), bmp);
+        } else {
+            fill.setColor(p.stale ? 0xFF7D8590 : p.color);
+            c.drawRect(l, t, rgt, b, fill);
+            text.setTextSize(ts);
+            c.drawText(initial(p), (l + rgt) / 2, (t + b) / 2 + ts * 0.36f, text);
+        }
+        if (round) c.restore();
+    }
+    /** A wedge just outside the ring pointing the way someone is going (only while moving). */
+    private void drawArrow(Canvas c, Person p, float x, float y, float rr) {
+        if (p.stale || (p.vLat == 0 && p.vLng == 0)) return;
+        double ang = Math.atan2(p.vLng * Math.cos(Math.toRadians(p.lat)), p.vLat);   // 0 = north, clockwise
+        float d0 = rr + 2 * k, d1 = rr + 14 * k, wv = 8 * k;
+        float sx0 = (float) Math.sin(ang), cy0 = (float) -Math.cos(ang);
+        float px = -cy0, py = sx0;   // perpendicular
+        path.reset();
+        path.moveTo(x + sx0 * d1, y + cy0 * d1);
+        path.lineTo(x + sx0 * d0 + px * wv, y + cy0 * d0 + py * wv);
+        path.lineTo(x + sx0 * d0 - px * wv, y + cy0 * d0 - py * wv);
+        path.close();
+        fill.setColor(p.me ? GOLD : Color.WHITE); c.drawPath(path, fill);
+        ring.setColor(0xFF101417); ring.setStrokeWidth(1.5f * k); c.drawPath(path, ring);
+    }
+    /** Name tag under a marker: name in white, then the status coloured by what it says. You get a
+     *  gold tag. */
+    private void ageBadge(Canvas c, float x, float y, String st) {
+        String t = st == null ? "" : st.trim(); int sp = t.indexOf(' '); if (sp > 0) t = t.substring(0, sp);
+        if (t.isEmpty()) return;
+        Paint.Align al = text.getTextAlign(); int col = text.getColor();
+        text.setTextAlign(Paint.Align.CENTER); text.setTextSize(11 * k); text.setFakeBoldText(true);
+        float tw = text.measureText(t);
+        RectF bg = new RectF(x - tw / 2 - 5 * k, y - 9 * k, x + tw / 2 + 5 * k, y + 9 * k);
+        fill.setColor(0xF0101417); c.drawRoundRect(bg, 9 * k, 9 * k, fill);
+        text.setColor(0xFFC9D1D9); c.drawText(t, x, y + 4 * k, text);
+        text.setFakeBoldText(false); text.setTextAlign(al); text.setColor(col);
+    }
+    private void drawTag(Canvas c, float x, float yb, String name, String st, boolean me, boolean stale) {
+        // Speed only: "parked 4 min" and ages made the tags too long to see the map past.
+        if (st != null && !st.endsWith("mph")) st = "";
+        if (zoom < 10.5 && !me) st = "";
+        String a = name == null ? "" : name, b = (st == null || st.isEmpty()) ? "" : " · " + st;
+        text.setFakeBoldText(true);
+        float wa = text.measureText(a);
+        text.setFakeBoldText(false);
+        float wb = b.isEmpty() ? 0 : text.measureText(b);
+        float tw = wa + wb;
+        RectF bg = new RectF(x - tw / 2 - 7 * k, yb + 4 * k, x + tw / 2 + 7 * k, yb + 25 * k);
+        Paint bgp = me ? goldPill : pill;
+        c.drawRoundRect(bg, 10 * k, 10 * k, bgp);
+        float base = bg.bottom - 6 * k, left = x - tw / 2;
+        Paint.Align al = text.getTextAlign();
+        int col = text.getColor();
+        text.setTextAlign(Paint.Align.LEFT);
+        text.setFakeBoldText(true);
+        text.setColor(me ? 0xFF2A1D00 : (stale ? 0xFFC9D1D9 : Color.WHITE));
+        c.drawText(a, left, base, text);
+        text.setFakeBoldText(false);
+        if (!b.isEmpty()) {
+            int sc = me ? 0xFF2A1D00 : stale ? 0xFFAEB7C2 : (st.startsWith("parked") ? 0xFF8FD18A : 0xFFFFD54A);
+            text.setColor(sc);
+            c.drawText(b, left + wa, base, text);
+        }
+        text.setColor(col); text.setTextAlign(al);
+    }
+    private final Paint goldPill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    { goldPill.setColor(GOLD); }
+
+    /** The crew's own roads (drawn by hand) in orange, and names they gave existing stretches. */
+    private void drawCrewRoads(Canvas c) {
+        line.setStyle(Paint.Style.STROKE); line.setStrokeCap(Paint.Cap.ROUND); line.setStrokeJoin(Paint.Join.ROUND);
+        for (double[][] rd : crewRoads) {
+            path.reset();
+            for (int i = 0; i < rd.length; i++) { float x = sx(rd[i][0]), y = sy(rd[i][1]); if (i == 0) path.moveTo(x, y); else path.lineTo(x, y); }
+            line.setColor(0xCC101417); line.setStrokeWidth(8 * k); c.drawPath(path, line);
+            line.setColor(0xFFFF9F43); line.setStrokeWidth(4.5f * k); c.drawPath(path, line);
+        }
+        if (zoom < 12) return;
+        for (int i = 0; i < crewRoads.size(); i++) {
+            String n = i < crewRoadNames.size() ? crewRoadNames.get(i) : "";
+            double[][] rd = crewRoads.get(i); if (n == null || n.isEmpty() || rd.length < 2) continue;
+            double[] m = rd[rd.length / 2];
+            roadTag(c, sx(m[0]), sy(m[1]), n, 0xFFFF9F43);
+        }
+        for (int i = 0; i < nameMids.size(); i++) {
+            double[] m = nameMids.get(i);
+            roadTag(c, sx(m[0]), sy(m[1]), nameTxt.get(i), 0xFFFFD54A);
+        }
+    }
+    private void roadTag(Canvas c, float x, float y, String n, int col) {
+        if (x < -60 * k || y < -30 * k || x > w + 60 * k || y > h + 30 * k) return;
+        text.setTextSize(13 * k); text.setFakeBoldText(true);
+        float tw = text.measureText(n);
+        RectF bg = new RectF(x - tw / 2 - 6 * k, y - 11 * k, x + tw / 2 + 6 * k, y + 11 * k);
+        fill.setColor(0xF0101417); c.drawRoundRect(bg, 5 * k, 5 * k, fill);
+        int cc = text.getColor(); text.setColor(col);
+        c.drawText(n, x, y + 4.5f * k, text);
+        text.setColor(cc); text.setFakeBoldText(false);
+    }
+
+    /** Crew card (top left) and the Closest readout (bottom left), inside the area no button covers. */
+    private void drawHud(Canvas c) {
+        Rect a = stable.isEmpty() ? new Rect(0, 0, w, h) : stable;
+        Paint.Align al = text.getTextAlign(); int col = text.getColor();
+        text.setTextAlign(Paint.Align.LEFT);
+        // crew card
+        int live = 0, quiet = 0;
+        for (Person p : people) { if (p.stale) quiet++; else live++; }
+        String t1 = crewName == null || crewName.isEmpty() ? "Crew" : crewName;
+        String t2 = live + " live" + (quiet > 0 ? " · " + quiet + " quiet" : "");
+        text.setTextSize(16 * k); text.setFakeBoldText(true); float w1 = text.measureText(t1);
+        text.setTextSize(13 * k); text.setFakeBoldText(false); float w2 = text.measureText(t2);
+        float cl = a.left + 12 * k, ct = a.top + 12 * k;
+        RectF card = new RectF(cl, ct, cl + 34 * k + Math.max(w1, w2) + 14 * k, ct + 52 * k);
+        fill.setColor(0xF0101417); c.drawRoundRect(card, 14 * k, 14 * k, fill);
+        fill.setColor(live > 0 ? 0xFF5DCB6A : 0xFF7D8590); c.drawCircle(cl + 18 * k, ct + 26 * k, 6 * k, fill);
+        text.setColor(Color.WHITE); text.setTextSize(16 * k); text.setFakeBoldText(true);
+        c.drawText(t1, cl + 34 * k, ct + 23 * k, text);
+        text.setFakeBoldText(false); text.setTextSize(13 * k); text.setColor(0xFFC9D1D9);
+        c.drawText(t2, cl + 34 * k, ct + 42 * k, text);
+        // closest
+        Person me = null; for (Person p : people) if (p.me) me = p;
+        Object[] best = null; double bd = Double.MAX_VALUE;
+        if (me != null) for (int pass = 0; pass < 2 && best == null; pass++) {
+            for (Object[] o : closeCand) {
+                if (pass == 0 && !(Boolean) o[3]) continue;
+                double d = metres(me.lat, me.lng, (Double) o[1], (Double) o[2]);
+                if (d < bd) { bd = d; best = o; }
+            }
+        }
+        closeCand.clear();
+        if (best != null) {
+            double mi = bd / 1609.34;
+            String dist = mi < 0.2 ? Math.round(bd * 3.28084) + " ft" : mi < 10 ? String.format(Locale.US, "%.1f mi", mi) : Math.round(mi) + " mi";
+            double br = Math.toDegrees(Math.atan2(((Double) best[2] - me.lng) * Math.cos(Math.toRadians(me.lat)), (Double) best[1] - me.lat));
+            if (br < 0) br += 360;
+            String[] dn = { "N ↑", "NE ↗", "E →", "SE ↘", "S ↓", "SW ↙", "W ←", "NW ↖" };
+            String dir = dn[(int) Math.round(br / 45) % 8];
+            String nm = (String) best[0];
+            text.setTextSize(16 * k); text.setFakeBoldText(true); float wn = text.measureText(nm);
+            text.setTextSize(22 * k); float wd = text.measureText(dist);
+            text.setTextSize(15 * k); float wr = text.measureText(dir);
+            text.setFakeBoldText(false);
+            float bl = a.left + 12 * k, bb = a.bottom - 12 * k;
+            RectF bar = new RectF(bl, bb - 60 * k, bl + 14 * k + Math.max(wn, 60 * k) + 18 * k + wd + 12 * k + wr + 14 * k, bb);
+            fill.setColor(0xF0101417); c.drawRoundRect(bar, 14 * k, 14 * k, fill);
+            text.setTextSize(12 * k); text.setColor(0xFFC9D1D9);
+            c.drawText("Closest", bl + 14 * k, bb - 40 * k, text);
+            text.setTextSize(16 * k); text.setFakeBoldText(true); text.setColor(Color.WHITE);
+            c.drawText(nm, bl + 14 * k, bb - 16 * k, text);
+            float dx = bl + 14 * k + Math.max(wn, 60 * k) + 18 * k;
+            text.setTextSize(22 * k); text.setColor(0xFFFFD54A);
+            c.drawText(dist, dx, bb - 16 * k, text);
+            text.setTextSize(15 * k); text.setColor(0xFFC9D1D9);
+            c.drawText(dir, dx + wd + 12 * k, bb - 16 * k, text);
+            text.setFakeBoldText(false);
+        }
+        text.setTextAlign(al); text.setColor(col);
     }
 
     void shutdown() { net.shutdownNow(); main.removeCallbacksAndMessages(null); }
